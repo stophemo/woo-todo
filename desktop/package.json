@@ -1,7 +1,7 @@
 {
-  "name": "woo-todo-macos",
+  "name": "woo-todo-desktop",
   "version": "0.1.0",
-  "description": "无我待办 macOS 桌面端 - 透明悬浮待办列表",
+  "description": "无我待办桌面端 (macOS/Win/Linux) - 透明悬浮待办列表",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",

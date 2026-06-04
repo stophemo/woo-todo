@@ -6,8 +6,8 @@
 
 系统由三个独立进程组成，通过 WebSocket 进行实时双向同步：
 
-- **macOS 桌面端**：Electron 主进程 + Vue 3 渲染进程，以透明悬浮窗形态运行
-- **Android 移动端**：原生 Kotlin + Jetpack Compose，Material 3 设计
+- **桌面端**：Electron 主进程 + Vue 3 渲染进程，以透明悬浮窗形态运行。跨 macOS、Windows、Linux，优先支持 macOS
+- **移动端**：Flutter 框架，Material 3 设计。跨 Android、HarmonyOS、iOS，优先支持 Android
 - **同步服务**：Node.js 轻量服务，提供 REST API 和 WebSocket 通道
 
 ### 1.2 数据流
@@ -18,25 +18,33 @@
 
 每个客户端维护完整的本地数据副本，离线可正常工作。上线后通过增量同步合并变更。
 
+### 1.3 跨平台策略
+
+| 端 | 框架 | 优先目标 | 扩展目标 |
+|---|---|---|---|
+| 桌面端 | Electron + Vue 3 + TypeScript | macOS (Apple Silicon) | Windows, Linux |
+| 移动端 | Flutter + Dart | Android | HarmonyOS (OpenHarmony), iOS |
+| 服务端 | Node.js + Express + SQLite | — | — |
+
 ---
 
-## 2. macOS 桌面端设计
+## 2. 桌面端设计
 
 ### 2.1 窗口架构
 
-Electron BrowserWindow 配置：
+Electron BrowserWindow 配置 — 跨 macOS/Windows/Linux 统一接口：
 
 ```typescript
 const mainWindow = new BrowserWindow({
   width: 320,
   height: 500,
   transparent: true,       // 窗口背景透明
-  frame: false,            // 无边框
+  frame: false,            // 无边框（跨平台有效）
   alwaysOnTop: true,       // 默认置顶
   resizable: false,
-  skipTaskbar: true,       // 不显示在 Dock
-  type: 'panel',           // macOS 面板样式
-  vibrancy: 'under-window', // macOS 毛玻璃效果
+  skipTaskbar: true,       // 不显示在任务栏/Dock
+  type: process.platform === 'darwin' ? 'panel' : 'toolbar',
+  vibrancy: process.platform === 'darwin' ? 'under-window' : undefined,
   webPreferences: {
     preload: path.join(__dirname, 'preload.js'),
     nodeIntegration: false,
@@ -59,13 +67,15 @@ const mainWindow = new BrowserWindow({
 - 显示勾选框、输入框、删除按钮
 - 通过全局快捷键或托盘菜单切换
 
-### 2.3 全局快捷键
+### 2.3 全局快捷键（macOS 优先）
 
 | 快捷键 | 功能 |
 |--------|------|
 | `Cmd+Shift+T` | 切换窗口置顶 |
 | `Cmd+Shift+G` | 切换透明穿透模式 |
 | `Cmd+Shift+N` | 快速新增待办（自动切到交互模式） |
+
+> Windows 对应快捷键：`Ctrl+Shift+T`, `Ctrl+Shift+G`, `Ctrl+Shift+N`
 
 ### 2.4 UI 布局
 
@@ -90,44 +100,58 @@ const mainWindow = new BrowserWindow({
 
 - **Vue 3 Composition API** + `ref`/`reactive` 管理状态
 - **electron-store** 持久化本地设置
-- **CSS backdrop-filter** 实现毛玻璃效果
+- **CSS backdrop-filter** 实现毛玻璃效果（macOS） / 降级为纯色背景（Windows）
 - **IPC 通信**：主进程控制窗口属性，渲染进程通过 `contextBridge` 调用
+- **平台差异处理**：快捷键修饰键 (`Cmd` vs `Ctrl`)、窗口行为、视觉风格
 
 ---
 
-## 3. Android 移动端设计
+## 3. 移动端设计
 
 ### 3.1 技术选型
 
-| 层级 | 技术 |
-|------|------|
-| UI | Jetpack Compose + Material 3 |
-| 本地存储 | Room Database |
-| 网络 | OkHttp (REST) + Ktor Client (WebSocket) |
-| 状态管理 | ViewModel + StateFlow |
-| DI | Hilt |
+| 层级 | 技术 | 说明 |
+|------|------|------|
+| UI 框架 | Flutter 3.2+ | 一套代码跨 Android / HarmonyOS / iOS |
+| 状态管理 | Provider + ChangeNotifier | 轻量级，适合中等复杂度应用 |
+| 本地存储 | sqflite | SQLite 封装，跨平台统一 |
+| 网络 (REST) | http | Dart 官方 HTTP 客户端 |
+| 网络 (WS) | web_socket_channel | WebSocket 客户端 |
+| 平台适配 | Flutter Platform Channels | 需要平台原生能力时使用 |
 
 ### 3.2 数据模型
 
-```kotlin
-@Entity(tableName = "todos")
-data class Todo(
-    @PrimaryKey val id: String = UUID.randomUUID().toString(),
-    val title: String,
-    val completed: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis(),
-    val syncedAt: Long = 0,
-    val isDeleted: Boolean = false
-)
+```dart
+class Todo {
+  final String id;
+  final String title;
+  final bool completed;
+  final int createdAt;
+  final int updatedAt;
+  final bool isDeleted;
+
+  // 与 shared/types/todo.ts 保持字段完全一致
+  // 通过 toJson()/fromJson() 实现与服务器格式兼容
+}
 ```
 
 ### 3.3 同步策略
 
-- Room 作为唯一数据源 (Single Source of Truth)
-- 本地变更立即写入 Room，标记 `syncedAt = 0`
-- SyncWorker 定期将未同步记录推送到服务器
-- WebSocket 接收远程变更，写入 Room 并触发 UI 重组
+- sqflite 作为唯一数据源 (Single Source of Truth)
+- 本地变更立即写入数据库
+- WebSocket 接收远程推送 + REST 定期拉取增量
+- LWW (Last-Write-Wins) 冲突策略
+- 离线队列：网络不可用时暂存变更，恢复后批量提交
+
+### 3.4 平台适配
+
+| 能力 | Android | HarmonyOS | iOS |
+|------|---------|-----------|-----|
+| Material 3 主题 | ✓ | ✓ | ✓ |
+| 本地 SQLite | ✓ | ✓ | ✓ |
+| 网络请求 | ✓ | ✓ | ✓ |
+| WebSocket | ✓ | ✓ | ✓ |
+| 后台同步 | WorkManager | 待适配 | BackgroundTasks |
 
 ---
 
@@ -183,7 +207,7 @@ CREATE INDEX idx_todos_updated ON todos(updated_at);
 ## 5. 共享类型定义
 
 ```typescript
-// shared/types/todo.ts
+// shared/types/todo.ts — 桌面端与移动端共享的数据契约
 interface Todo {
   id: string
   title: string
@@ -202,28 +226,32 @@ interface SyncPayload {
 }
 ```
 
+> 移动端 Dart 的 `Todo.toJson()` / `Todo.fromJson()` 与此结构保持严格一致。
+
 ---
 
 ## 6. 部署方案
 
 ### 6.1 开发环境
 
-- macOS 端：`pnpm dev`，Vite HMR 热更新
-- Server 端：`pnpm dev`，tsx watch 热重载
-- Android 端：Android Studio 直接运行
+- **桌面端**：`cd desktop && pnpm dev`，Vite HMR 热更新
+- **移动端**：`cd mobile && flutter run`，支持 hot reload
+- **Server 端**：`cd server && pnpm dev`，tsx watch 热重载
 
 ### 6.2 生产部署
 
-- **macOS 端**：electron-builder 打包为 `.dmg`
-- **同步服务**：可部署到任意 VPS（2C2G 即可），或运行在 macOS 本机作为局域网服务
-- **Android 端**：Gradle 构建 APK/AAB
+- **桌面端**：electron-builder 打包 `.dmg`(macOS) / `.exe`(Win) / `.AppImage`(Linux)
+- **移动端**：Flutter build — APK/AAB(Android) / HAP(HarmonyOS) / IPA(iOS)
+- **同步服务**：可部署到任意 VPS (2C2G)，或运行在局域网内作为个人同步节点
 
 ---
 
 ## 7. 后续规划
 
-- [ ] iOS 端支持（SwiftUI）
+- [ ] Windows 桌面端适配（快捷键、视觉效果降级方案）
+- [ ] HarmonyOS 端适配（OpenHarmony Flutter 引擎）
+- [ ] iOS 端发布
 - [ ] 待办分类/标签
 - [ ] 截止日期提醒
-- [ ] iCloud 同步（替代自建服务）
+- [ ] iCloud / WebDAV 同步（替代自建服务）
 - [ ] 桌面小组件 (macOS Widget)

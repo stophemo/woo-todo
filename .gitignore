@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.mypy_cache/
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Electron
+macos/electron-builder.yml
+
+# Android
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/*.apk
+android/*.aab
+
+# Server
+server/data/
+server/*.db

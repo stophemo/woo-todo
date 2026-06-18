@@ -1,0 +1,19 @@
+{
+  "name": "woo-todo",
+  "version": "2.0.0",
+  "private": true,
+  "description": "跨端待办应用 - 透明悬浮窗桌面端 + 移动端 + 同步服务",
+  "scripts": {
+    "dev:desktop": "pnpm --filter @woo-todo/desktop dev",
+    "dev:mobile": "pnpm --filter @woo-todo/mobile start",
+    "dev:server": "pnpm --filter @woo-todo/server dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=7"
+  }
+}

@@ -1,98 +1,53 @@
-import { Router, Request, Response } from 'express'
-import { getDb, TodoRow } from '../db'
-import { broadcast } from '../sync/websocket'
-import { v4 as uuid } from 'uuid'
+import { Router, type Request, type Response } from 'express';
+import { todoRepo, listRepo } from '../db/repos.js';
+import { getServerTime } from '../db/index.js';
+import type { Todo, TodoList, SyncMessage } from '@woo-todo/core';
 
-const router = Router()
+export const todosRouter = Router();
 
-interface TodoInput {
-  id?: string
-  title: string
-  completed?: boolean
-  isDeleted?: boolean
-}
-
-// 获取增量变更
-router.get('/', (req: Request, res: Response) => {
-  const since = parseInt(req.query.since as string) || 0
-  const db = getDb()
-
-  const rows = db
-    .prepare('SELECT * FROM todos WHERE updated_at > ? ORDER BY updated_at ASC')
-    .all(since) as TodoRow[]
-
-  const todos = rows.map(rowToTodo)
-  res.json({ todos, serverTime: Date.now() })
-})
-
-// 批量提交变更
-router.post('/', (req: Request, res: Response) => {
-  const { todos } = req.body as { todos: TodoInput[] }
-  const db = getDb()
-  const serverTime = Date.now()
-  const syncedIds: string[] = []
-
-  const upsert = db.prepare(`
-    INSERT INTO todos (id, title, completed, created_at, updated_at, is_deleted)
-    VALUES (@id, @title, @completed, @created_at, @updated_at, @is_deleted)
-    ON CONFLICT(id) DO UPDATE SET
-      title = CASE WHEN @updated_at > updated_at THEN @title ELSE title END,
-      completed = CASE WHEN @updated_at > updated_at THEN @completed ELSE completed END,
-      is_deleted = CASE WHEN @updated_at > updated_at THEN @is_deleted ELSE is_deleted END,
-      updated_at = CASE WHEN @updated_at > updated_at THEN @updated_at ELSE updated_at END
-  `)
-
-  const transaction = db.transaction(() => {
-    for (const todo of todos) {
-      const id = todo.id || uuid()
-      upsert.run({
-        id,
-        title: todo.title,
-        completed: todo.completed ? 1 : 0,
-        created_at: serverTime,
-        updated_at: serverTime,
-        is_deleted: todo.isDeleted ? 1 : 0,
-      })
-      syncedIds.push(id)
-    }
-  })
-
-  transaction()
-
-  // 广播变更给所有 WebSocket 客户端
-  const updatedRows = db
-    .prepare('SELECT * FROM todos WHERE id IN (' + syncedIds.map(() => '?').join(',') + ')')
-    .all(...syncedIds) as TodoRow[]
-
-  broadcast({
-    type: 'update',
-    todos: updatedRows.map(rowToTodo),
-    serverTime,
-  })
-
-  res.json({ syncedIds, serverTime })
-})
-
-// 软删除
-router.delete('/:id', (req: Request, res: Response) => {
-  const db = getDb()
-  const serverTime = Date.now()
-
-  db.prepare('UPDATE todos SET is_deleted = 1, updated_at = ? WHERE id = ?').run(serverTime, req.params.id)
-
-  broadcast({ type: 'update', todos: [], serverTime, deletedId: req.params.id })
-  res.json({ success: true, serverTime })
-})
-
-function rowToTodo(row: TodoRow) {
-  return {
-    id: row.id,
-    title: row.title,
-    completed: row.completed === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    isDeleted: row.is_deleted === 1,
+// GET /api/todos?since=<timestamp> 增量拉取
+todosRouter.get('/', (req: Request, res: Response) => {
+  const since = Number(req.query.since ?? 0);
+  if (Number.isNaN(since) || since < 0) {
+    res.status(400).json({ error: 'invalid since parameter' });
+    return;
   }
-}
+  const todos = todoRepo.getSince(since).map((r) => JSON.parse(r.data) as Todo);
+  const lists = listRepo.getSince(since).map((r) => JSON.parse(r.data) as TodoList);
+  const deletedTodoIds = todoRepo.getSince(since).filter((r) => r.deleted_at != null).map((r) => r.id);
+  const deletedListIds = listRepo.getSince(since).filter((r) => r.deleted_at != null).map((r) => r.id);
+  res.json({
+    todos,
+    lists,
+    deletedTodoIds,
+    deletedListIds,
+    serverTime: getServerTime(),
+  });
+});
 
-export default router
+// POST /api/todos 批量提交变更
+todosRouter.post('/', (req: Request, res: Response) => {
+  const body = req.body as Partial<SyncMessage>;
+  if (!body || !Array.isArray(body.todos) || !Array.isArray(body.lists)) {
+    res.status(400).json({ error: 'invalid body' });
+    return;
+  }
+  // 服务端 REST 仅做落库 + 时间戳返回，广播走 WebSocket 通道
+  for (const t of body.todos) {
+    todoRepo.upsert({
+      id: t.id,
+      data: JSON.stringify(t),
+      updated_at: t.updatedAt,
+      deleted_at: t.deletedAt ?? null,
+    });
+  }
+  for (const l of body.lists) {
+    listRepo.upsert({
+      id: l.id,
+      data: JSON.stringify(l),
+      updated_at: l.updatedAt,
+      deleted_at: l.deletedAt ?? null,
+    });
+  }
+  res.json({ syncedIds: [...body.todos.map((t) => t.id), ...body.lists.map((l) => l.id)], serverTime: getServerTime() });
+});

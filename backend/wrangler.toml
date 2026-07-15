@@ -1,0 +1,15 @@
+name = "woo-todo-sync"
+main = "src/index.ts"
+compatibility_date = "2026-07-15"
+workers_dev = true
+minify = true
+
+[vars]
+APP_ENV = "development"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "woo-todo"
+# 创建远端 D1 数据库后，使用 Wrangler 输出的真实 ID 替换此占位值。
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"

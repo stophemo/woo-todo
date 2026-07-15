@@ -1,0 +1,15 @@
+.build/
+.swiftpm/xcode/
+.swiftpm/security/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.dSYM
+*.dSYM.zip
+*.xcarchive
+*.app
+*.dmg
+*.pkg
+*.p12
+*.pfx
+*.mobileprovision

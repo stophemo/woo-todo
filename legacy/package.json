@@ -1,0 +1,17 @@
+{
+  "name": "woo-todo-legacy",
+  "version": "2.0.0",
+  "private": true,
+  "description": "迁移前的跨端原型，仅供历史参考",
+  "scripts": {
+    "dev:desktop": "pnpm --filter @woo-todo/desktop dev",
+    "dev:mobile": "pnpm --filter @woo-todo/mobile start",
+    "dev:server": "pnpm --filter @woo-todo/server dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=7"
+  }
+}

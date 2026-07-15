@@ -1,95 +1,50 @@
-# 无我待办 (woo-todo)
+# 无我待办（woo-todo）
 
-跨端透明桌面待办应用 — 桌面端悬浮窗 + 移动端全功能，实时双向同步。
+一个为“今晚规划，明早开干”设计的轻量跨端待办应用，首要支持 macOS 与 Android。
 
-## 设计理念
+## 产品原则
 
-**不打扰，但随时可见。** 桌面端以透明悬浮窗形式浮于顶层，支持鼠标穿透模式——看到待办但不阻挡任何操作。需要编辑时一键切换交互模式。移动端数据实时同步，出门在外也能查看和编辑。
+- **不打扰，但始终可见**：macOS 使用可置顶、可毛玻璃、可鼠标穿透的原生悬浮任务板。
+- **手机负责规划**：Android 在睡前提醒规划明日任务，三星桌面 Widget 直接展示今日任务。
+- **本地优先**：所有操作先落本地，断网不影响使用，联网后异步同步。
+- **保持简单**：任务只有一句话；时间类型与任务级别相互独立，不引入笔记、附件和复杂项目管理。
+- **资源克制**：双端原生实现，不使用 Electron、Flutter 或常驻前台服务。
 
-## 平台支持
+## 首版能力
 
-| 端 | 框架 | 优先支持 | 后续扩展 |
-|---|---|---|---|
-| 桌面端 | Electron + Vue 3 | macOS | Windows, Linux |
-| 移动端 | Flutter | Android | HarmonyOS, iOS |
-| 服务端 | Node.js | — | — |
+- 时间类型：每日、每周、每月、闲时
+- 任务级别：主线、支线、外传
+- 一次性任务与周期重复任务
+- 完成、Pass、历史与履约统计
+- macOS 原生透明悬浮任务板
+- Android 桌面 Widget 与 23:10 睡前提醒
+- 无传统账号的设备配对与端到端加密同步
+- 加密备份导入导出，可手动保存到夸克网盘
 
-## 架构概览
+## 新架构
 
-```
-┌──────────────────┐       ┌──────────────┐       ┌──────────────────┐
-│     桌面端        │◄─────►│  Sync Server  │◄─────►│     移动端        │
-│ Electron + Vue 3 │  WS   │  Node.js      │  WS   │     Flutter      │
-│ macOS / Win      │       │  SQLite       │       │ Android · 鸿蒙   │
-│ 透明悬浮 · 穿透   │       │               │       │ iOS              │
-└──────────────────┘       └──────────────┘       └──────────────────┘
-```
+| 目录 | 说明 |
+|---|---|
+| `macos/` | Swift + AppKit/SwiftUI 原生客户端 |
+| `android/` | Kotlin + Android Views/RemoteViews 原生客户端 |
+| `backend/` | Cloudflare Workers + D1 增量同步服务 |
+| `shared/` | JSON Schema、跨端契约与测试样例 |
+| `docs/` | 产品规格、架构、执行计划与 ADR |
+| `legacy/` | 迁移前的 Tauri/React Native/Node.js 原型，仅供历史参考 |
 
-## 功能矩阵
+## 当前阶段
 
-| 功能 | 桌面端 | 移动端 |
-|------|--------|--------|
-| 透明悬浮显示 | ✓ | - |
-| 鼠标穿透模式 | ✓ | - |
-| 窗口置顶 | ✓ | - |
-| 全局快捷键 | ✓ | - |
-| 新增待办 | ✓ | ✓ |
-| 勾选完成 | ✓ | ✓ |
-| 删除待办 | ✓ | ✓ |
-| 离线使用 | ✓ | ✓ |
-| 实时双向同步 | ✓ | ✓ |
+v1 原生功能与本地/同步/备份主链路已实现，当前进入生产部署、目标真机验收、性能测量和 Release 打包阶段。进度见 [执行计划](docs/EXECUTION_PLAN.md)。
 
-## 快速开始
+详细文档：
 
-### 桌面端
+- [产品规格](docs/PRODUCT_SPEC.md)
+- [架构设计](docs/ARCHITECTURE.md)
+- [执行计划](docs/EXECUTION_PLAN.md)
+- [同步与安全](docs/SYNC_AND_SECURITY.md)
+- [加密备份与恢复](docs/BACKUP_AND_RESTORE.md)
+- [个人安装与首次使用](docs/INSTALLATION.md)
 
-```bash
-cd desktop
-pnpm install
-pnpm dev        # 开发模式 (Vite HMR)
-pnpm build      # 构建生产包
-```
+## 许可
 
-### 移动端
-
-```bash
-cd mobile
-flutter pub get
-flutter run      # 连接设备运行
-```
-
-### 同步服务
-
-```bash
-cd server
-pnpm install
-pnpm dev        # 启动同步服务 (localhost:3001)
-```
-
-## 项目结构
-
-```
-woo-todo/
-├── desktop/        # Electron + Vue 3 桌面端
-│   ├── electron/   # Electron 主进程（透明窗口、快捷键）
-│   └── src/        # Vue 3 渲染进程（待办 UI）
-├── mobile/         # Flutter 移动端 (Android · HarmonyOS · iOS)
-│   ├── lib/        # Dart 源码
-│   ├── android/    # Android 平台配置
-│   ├── ios/        # iOS 平台配置
-│   └── ohos/       # HarmonyOS 平台配置
-├── server/         # Node.js 同步服务
-├── shared/         # 共享类型定义
-└── docs/           # 设计文档
-```
-
-## 技术栈
-
-- **桌面端**: Electron 28+ / Vue 3 / TypeScript / Vite — 跨 macOS, Windows, Linux
-- **移动端**: Flutter 3.2+ / Dart — 跨 Android, HarmonyOS, iOS
-- **服务端**: Node.js / Express / ws / better-sqlite3
-- **同步**: WebSocket 实时推送 + REST 增量拉取，时间戳版本冲突解决
-
----
-
-详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+[MIT License](LICENSE)

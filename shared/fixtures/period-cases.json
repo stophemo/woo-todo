@@ -1,0 +1,34 @@
+{
+  "timezone": "Asia/Shanghai",
+  "weekStartsOn": "monday",
+  "cases": [
+    {
+      "name": "睡前仍属于当天",
+      "instant": "2026-07-15T15:30:00Z",
+      "expectedDayKey": "2026-07-15",
+      "expectedWeekKey": "2026-W29",
+      "expectedMonthKey": "2026-07"
+    },
+    {
+      "name": "北京时间午夜进入次日",
+      "instant": "2026-07-15T16:00:00Z",
+      "expectedDayKey": "2026-07-16",
+      "expectedWeekKey": "2026-W29",
+      "expectedMonthKey": "2026-07"
+    },
+    {
+      "name": "周一进入新自然周",
+      "instant": "2026-07-19T16:00:00Z",
+      "expectedDayKey": "2026-07-20",
+      "expectedWeekKey": "2026-W30",
+      "expectedMonthKey": "2026-07"
+    },
+    {
+      "name": "月初进入新自然月",
+      "instant": "2026-07-31T16:00:00Z",
+      "expectedDayKey": "2026-08-01",
+      "expectedWeekKey": "2026-W31",
+      "expectedMonthKey": "2026-08"
+    }
+  ]
+}

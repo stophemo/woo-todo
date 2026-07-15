@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.WooTodo" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorOnPrimary">@color/on_primary</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

@@ -1,0 +1,84 @@
+{
+  "formatVersion": 1,
+  "description": "woo-todo 跨端确定性 ID 与应用层密文 golden vectors。所有二进制字段均使用无填充 Base64URL。",
+  "encoding": "base64url-no-padding",
+  "occurrenceId": {
+    "description": "将规范字符串按 UTF-8 编码，取 SHA-256 摘要前 16 字节，再设置 UUID version 5 与 RFC 4122 variant 位。此算法不等同于基于 SHA-1 namespace 的标准 UUIDv5。",
+    "namespace": "woo-todo-occurrence-v1",
+    "canonicalFormat": "{namespace}|{seriesIdLowercase}|{timeType}|{periodStartYYYY-MM-DD}",
+    "digest": "SHA-256",
+    "digestPrefixBytes": 16,
+    "uuidVersion": 5,
+    "uuidVariant": "RFC-4122",
+    "vectors": [
+      {
+        "name": "每日任务与大写 series ID 归一化",
+        "input": {
+          "seriesId": "550E8400-E29B-41D4-A716-446655440000",
+          "timeType": "day",
+          "periodStart": "2026-07-16"
+        },
+        "canonical": "woo-todo-occurrence-v1|550e8400-e29b-41d4-a716-446655440000|day|2026-07-16",
+        "expectedUuid": "bd19b6b6-7f10-55af-bf1e-323457e79404"
+      },
+      {
+        "name": "每周任务与周一起点",
+        "input": {
+          "seriesId": "018F6A8C-7D2E-7A10-9B44-123456789ABC",
+          "timeType": "week",
+          "periodStart": "2026-07-13"
+        },
+        "canonical": "woo-todo-occurrence-v1|018f6a8c-7d2e-7a10-9b44-123456789abc|week|2026-07-13",
+        "expectedUuid": "9719d2c2-41bc-58f5-8bde-40fee482d81f"
+      },
+      {
+        "name": "每月任务与月初起点",
+        "input": {
+          "seriesId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          "timeType": "month",
+          "periodStart": "2026-08-01"
+        },
+        "canonical": "woo-todo-occurrence-v1|aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee|month|2026-08-01",
+        "expectedUuid": "2bb84837-2aa7-5bbc-bff4-262937bb216d"
+      }
+    ]
+  },
+  "aes256Gcm": {
+    "description": "ciphertext 字段按“加密正文 || 16 字节认证标签”拼接，客户端 API 若分离 tag，可使用 authenticationTag 字段核对。",
+    "algorithm": "AES-256-GCM",
+    "authenticationTagBytes": 16,
+    "ciphertextLayout": "encrypted-plaintext || authentication-tag",
+    "vectors": [
+      {
+        "name": "带中文任务正文和同步 AAD",
+        "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "nonce": "EBESExQVFhcYGRob",
+        "aad": "d29vLXRvZG8tc3luYy12MXx2YXVsdC1kZW1vfG9wLWRlbW8tMDAxfHRhc2stZGVtby0wMDF8dXBzZXJ0fDQyfGRldmljZS1kZW1vLTAwMQ",
+        "aadUtf8": "woo-todo-sync-v1|vault-demo|op-demo-001|task-demo-001|upsert|42|device-demo-001",
+        "plaintext": "eyJ0aXRsZSI6IuaYjuaXpeWujOaIkOWRqOaKpSIsInN0YXRlIjoicGVuZGluZyJ9",
+        "plaintextUtf8": "{\"title\":\"明日完成周报\",\"state\":\"pending\"}",
+        "ciphertext": "Btzsfz2lX5HwV-6FgZ_-9jL-wuiTUrIgTx9ownx4dqgkiCNm15xMnxtY9jjk_zFmi_fqG1d41RLMpaH6axs_HQ",
+        "authenticationTag": "i_fqG1d41RLMpaH6axs_HQ"
+      }
+    ]
+  },
+  "pairing": {
+    "description": "X25519 后使用 pairingSecret 作为 HKDF-SHA256 salt，并把 pairingId 绑定到 info；六位核对码和 vaultKey envelope 都从同一 sessionKey 派生。私钥仅用于测试。",
+    "pairingId": "pair-demo-001",
+    "claimedDeviceId": "device-android-demo",
+    "initiatorPrivateKey": "EAOXTerLOwU6N-uXBsYC0UPUIJtVRdAq9gp7RZXqGEc",
+    "initiatorPublicKey": "7rfZhVegZtRYb9HciBp923H90H69EUXYpwQ_YDIP3UQ",
+    "claimPrivateKey": "EEw-989hoMqNrIqz76c1xgOfvcHpaEYk-y-sBtk4r3M",
+    "claimPublicKey": "vksCGOLYjFQF6u5EojyzwJdKfCtJRrd3DeJburl3c38",
+    "sharedSecret": "FJx5ZvkUvZFBYgb-X0t7443-TZbR3XZvX-ovdirCJz4",
+    "pairingSecret": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "hkdfInfoUtf8": "woo-todo-pairing-v1|pair-demo-001",
+    "sessionKey": "RWymROiNlftjnZttAJ8asy7ayN3q9tbBe2T9gY21rzA",
+    "verificationInputUtf8": "woo-todo-pairing-code-v1|7rfZhVegZtRYb9HciBp923H90H69EUXYpwQ_YDIP3UQ|vksCGOLYjFQF6u5EojyzwJdKfCtJRrd3DeJburl3c38",
+    "verificationCode": "695919",
+    "vaultKey": "gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8",
+    "envelopeNonce": "QEFCQ0RFRkdISUpL",
+    "envelopeAadUtf8": "woo-todo-pair-v1|pair-demo-001|device-android-demo",
+    "vaultKeyCiphertext": "6M_ekN6wtiP9nFmIOGIUDSqiikbM0PGGpVq0f9xBJFnhlfhRlDB6p6125SLGS0Ir"
+  }
+}

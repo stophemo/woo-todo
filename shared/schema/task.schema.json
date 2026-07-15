@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woo-todo.dev/schema/task.schema.json",
+  "title": "woo-todo 任务密文正文协议",
+  "$defs": {
+    "TimeType": {
+      "type": "string",
+      "enum": ["day", "week", "month", "someday"]
+    },
+    "QuestLine": {
+      "type": "string",
+      "enum": ["main", "side", "extra"]
+    },
+    "TaskState": {
+      "type": "string",
+      "enum": ["pending", "completed", "pass"]
+    },
+    "TaskPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion", "entityType", "id", "seriesId", "title",
+        "timeType", "periodStart", "timezone", "questLine", "state",
+        "recurrence", "sortOrder", "createdAt", "updatedAt", "settledAt"
+      ],
+      "properties": {
+        "protocolVersion": { "const": 1 },
+        "entityType": { "const": "task" },
+        "id": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "seriesId": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "timeType": { "$ref": "#/$defs/TimeType" },
+        "periodStart": {
+          "type": ["string", "null"],
+          "format": "date",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "day 使用合法公历日期；week 必须为周一；month 必须为每月 1 日。week 的星期语义由客户端与共享 fixture 校验。"
+        },
+        "timezone": { "const": "Asia/Shanghai" },
+        "questLine": { "$ref": "#/$defs/QuestLine" },
+        "state": { "$ref": "#/$defs/TaskState" },
+        "recurrence": { "type": "string", "enum": ["once", "repeat"] },
+        "sortOrder": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "createdAt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "updatedAt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "settledAt": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "timeType": { "const": "someday" } } },
+          "then": {
+            "properties": {
+              "periodStart": { "type": "null" },
+              "recurrence": { "const": "once" }
+            }
+          },
+          "else": { "properties": { "periodStart": { "type": "string" } } }
+        },
+        {
+          "if": { "properties": { "timeType": { "const": "month" } } },
+          "then": {
+            "properties": {
+              "periodStart": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-01$" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "state": { "const": "pending" } } },
+          "then": { "properties": { "settledAt": { "type": "null" } } },
+          "else": { "properties": { "settledAt": { "type": "integer" } } }
+        }
+      ]
+    },
+    "TombstonePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "entityType", "id", "deletedAt"],
+      "properties": {
+        "protocolVersion": { "const": 1 },
+        "entityType": { "const": "tombstone" },
+        "id": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "deletedAt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/TaskPayload" },
+    { "$ref": "#/$defs/TombstonePayload" }
+  ]
+}

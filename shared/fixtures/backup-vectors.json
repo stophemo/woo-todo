@@ -1,0 +1,20 @@
+{
+  "format": "woo-todo-backup",
+  "version": 1,
+  "password": "晚安 Woo Todo ①",
+  "passwordNormalized": "晚安 Woo Todo 1",
+  "createdAt": 1784160000000,
+  "kdf": {
+    "algorithm": "pbkdf2-hmac-sha256",
+    "iterations": 210000,
+    "salt": "AAECAwQFBgcICQoLDA0ODw"
+  },
+  "cipher": {
+    "algorithm": "aes-256-gcm",
+    "nonce": "Dw4NDAsKCQgHBgUE",
+    "ciphertext": "RDY7MiWokYw0gSiSA4l4ZYSlEWLQW2Nf0lQrA3W6_IQlIjxmqTcy_Nr3INHVVIhQjNN08E3rDvRAM35mfLn7434I6EXp1w1Eoow2Ja-h70v5Bpkmtm5HHiNHYbtBY95D9rpT0ZTKWzG0IrPAZ9FtxCNRxlIraHbI_YuYIvZyhGEm2_tnMuIUlekn7cj3oPGxrw7fb1IveXw6xYDdtP53FsbFN2jEF5HOqmKXlx_ac1qx-PGAoJkpX0RWq7tNv3J-KXQTKPrP0GC5RF-RChYbyzauBHZh5_UsZJmvhEfm8qrBRgSd9pg5EcwF3kq1i02Ofm6TAVQViPEEjPDxY82zXl4Q4Y2mc02R3vC3hffpK3XPitOXSXzANaNxqeXw8bjM_Mam1SewMqM-LgXo6DD__DcKqPd0X6gXUtjnmXmbGqCY35CTGOHOrjZti3MVcqzUK4F7ga8RASPTnq4nu5wygox7zRRr7LZlEeG-1swn_IYIzK4Zpy165yLIhDlv9gZbDF1iL1VEabfPgyMiUZKjIgxElq7QfAR9yT-RifZ3yft5fD5zZ6u89RWp2mLks1U8866u0Yj-NN5uWTzPDOL5ZLmZii6B2sgY2s2cXwKeztDVniLfNQNLqSfJo1wcWBW74YxodrgN7u_6Apx_cWWOYmmiV6fQNLHFDid4FRuPXmitm8pb800tZuJC2pLNpf8eh9_vAqwhkTtuOdH1tMzSKK2OuG_33FrBzYQI6gfxJo6N6QHDL6cb4uvDZZhjcWeUA_xk0MhRaSGlKILiD2Ywm5lsAUI5JS3P-tQSIcpLxufg6MZhCJBcMnDAI9N44R4Z2tYXUHc9htxyNDZd4zYPhcrLM5oYx-9EpVUx4wdMXQ5euSZdqzvk_m16Lt-aIUwSLJXfPCRgrWaNZxleOu9o"
+  },
+  "aadUtf8": "woo-todo-backup-v1|1784160000000|pbkdf2-hmac-sha256|210000|AAECAwQFBgcICQoLDA0ODw|aes-256-gcm",
+  "derivedKey": "2PYcb2VhVAmvubteJ-7MgOl2haw-EtX2LWifZ_iQu9E",
+  "plaintextUtf8": "{\"exportedAt\":1784160000000,\"protocolVersion\":1,\"syncCredentials\":{\"deviceId\":\"device-backup-1\",\"deviceToken\":\"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI\",\"endpoint\":\"https://sync.example.test\",\"vaultId\":\"vault-backup-1\",\"vaultKey\":\"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM\"},\"tasks\":[{\"createdAt\":1784159000000,\"entityType\":\"task\",\"id\":\"550e8400-e29b-41d4-a716-446655440000\",\"periodStart\":\"2026-07-16\",\"protocolVersion\":1,\"questLine\":\"main\",\"recurrence\":\"once\",\"seriesId\":\"550e8400-e29b-41d4-a716-446655440000\",\"settledAt\":1784162600000,\"sortOrder\":0,\"state\":\"completed\",\"timeType\":\"day\",\"timezone\":\"Asia/Shanghai\",\"title\":\"提交周报\",\"updatedAt\":1784162600000}]}"
+}

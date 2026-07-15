@@ -1,0 +1,315 @@
+{
+  "valid": [
+    {
+      "name": "闰年每日任务与最大排序、时间整数",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000001",
+        "seriesId": "00000000-0000-4000-8000-000000000001",
+        "title": "闰日任务",
+        "timeType": "day",
+        "periodStart": "2028-02-29",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 2147483647,
+        "createdAt": 9007199254740991,
+        "updatedAt": 9007199254740991,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "周任务从周一开始",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "seriesId": "00000000-0000-4000-8000-000000000002",
+        "title": "本周任务",
+        "timeType": "week",
+        "periodStart": "2026-07-13",
+        "timezone": "Asia/Shanghai",
+        "questLine": "side",
+        "state": "completed",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1783900800000,
+        "updatedAt": 1783987200000,
+        "settledAt": 1783987200000
+      }
+    },
+    {
+      "name": "月任务从一日开始",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000003",
+        "seriesId": "00000000-0000-4000-8000-000000000003",
+        "title": "本月任务",
+        "timeType": "month",
+        "periodStart": "2026-08-01",
+        "timezone": "Asia/Shanghai",
+        "questLine": "extra",
+        "state": "pending",
+        "recurrence": "repeat",
+        "sortOrder": 1,
+        "createdAt": 1785513600000,
+        "updatedAt": 1785513600000,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "闲时任务没有周期起点",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000004",
+        "seriesId": "00000000-0000-4000-8000-000000000004",
+        "title": "闲时阅读",
+        "timeType": "someday",
+        "periodStart": null,
+        "timezone": "Asia/Shanghai",
+        "questLine": "extra",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1785513600000,
+        "updatedAt": 1785513600000,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "标题长度按 Unicode code point 计算",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000005",
+        "seriesId": "00000000-0000-4000-8000-000000000005",
+        "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+        "timeType": "day",
+        "periodStart": "2026-07-16",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "拒绝非固定时区",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000011",
+        "seriesId": "00000000-0000-4000-8000-000000000011",
+        "title": "错误时区",
+        "timeType": "day",
+        "periodStart": "2026-07-15",
+        "timezone": "UTC",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝超过 Int32 的排序值",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000012",
+        "seriesId": "00000000-0000-4000-8000-000000000012",
+        "title": "排序越界",
+        "timeType": "day",
+        "periodStart": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 2147483648,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝 createdAt 超过 JSON safe integer",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000013",
+        "seriesId": "00000000-0000-4000-8000-000000000013",
+        "title": "创建时间越界",
+        "timeType": "day",
+        "periodStart": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 9007199254740992,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝 updatedAt 超过 JSON safe integer",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000014",
+        "seriesId": "00000000-0000-4000-8000-000000000014",
+        "title": "更新时间越界",
+        "timeType": "day",
+        "periodStart": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 9007199254740992,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝 settledAt 超过 JSON safe integer",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000015",
+        "seriesId": "00000000-0000-4000-8000-000000000015",
+        "title": "结算时间越界",
+        "timeType": "day",
+        "periodStart": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "completed",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": 9007199254740992
+      }
+    },
+    {
+      "name": "拒绝不存在的公历日期",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000016",
+        "seriesId": "00000000-0000-4000-8000-000000000016",
+        "title": "不存在日期",
+        "timeType": "day",
+        "periodStart": "2026-02-30",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝不是周一的周起点",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000017",
+        "seriesId": "00000000-0000-4000-8000-000000000017",
+        "title": "错误周起点",
+        "timeType": "week",
+        "periodStart": "2026-07-14",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝不是一日的月起点",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000018",
+        "seriesId": "00000000-0000-4000-8000-000000000018",
+        "title": "错误月起点",
+        "timeType": "month",
+        "periodStart": "2026-08-02",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝公历零年",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000019",
+        "seriesId": "00000000-0000-4000-8000-000000000019",
+        "title": "零年任务",
+        "timeType": "day",
+        "periodStart": "0000-01-01",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝 tombstone 时间超过 JSON safe integer",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "tombstone",
+        "id": "00000000-0000-4000-8000-000000000020",
+        "deletedAt": 9007199254740992
+      }
+    },
+    {
+      "name": "拒绝超过 120 个 Unicode code point 的标题",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000021",
+        "seriesId": "00000000-0000-4000-8000-000000000021",
+        "title": "👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦",
+        "timeType": "day",
+        "periodStart": "2026-07-16",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    }
+  ]
+}

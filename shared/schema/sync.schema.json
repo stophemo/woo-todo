@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woo-todo.dev/schema/sync.schema.json",
+  "title": "woo-todo 增量同步协议",
+  "$defs": {
+    "OperationKind": {
+      "type": "string",
+      "enum": [
+        "upsert", "delete", "complete", "pass", "reorder"
+      ]
+    },
+    "PushOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opId", "entityId", "kind", "lamport", "nonce", "ciphertext"],
+      "properties": {
+        "opId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "kind": { "$ref": "#/$defs/OperationKind" },
+        "lamport": { "type": "integer", "minimum": 1 },
+        "nonce": { "type": "string", "minLength": 16, "maxLength": 16 },
+        "ciphertext": { "type": "string", "minLength": 22, "maxLength": 43691 }
+      }
+    },
+    "PulledOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serverSeq", "opId", "deviceId", "entityId", "kind", "lamport",
+        "nonce", "ciphertext", "createdAt"
+      ],
+      "properties": {
+        "serverSeq": { "type": "integer", "minimum": 1 },
+        "opId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "deviceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "kind": { "$ref": "#/$defs/OperationKind" },
+        "lamport": { "type": "integer", "minimum": 1 },
+        "nonce": { "type": "string", "minLength": 16, "maxLength": 16 },
+        "ciphertext": { "type": "string", "minLength": 22, "maxLength": 43691 },
+        "createdAt": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "SyncRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cursor", "push"],
+      "properties": {
+        "cursor": { "type": "integer", "minimum": 0 },
+        "ack": { "type": "integer", "minimum": 0 },
+        "pullLimit": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "push": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/PushOperation" }
+        }
+      }
+    },
+    "SyncData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["push", "pull", "cursor", "hasMore", "serverTime"],
+      "properties": {
+        "push": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["received", "inserted", "duplicates"],
+          "properties": {
+            "received": { "type": "integer", "minimum": 0 },
+            "inserted": { "type": "integer", "minimum": 0 },
+            "duplicates": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "pull": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/PulledOperation" }
+        },
+        "cursor": { "type": "integer", "minimum": 0 },
+        "hasMore": { "type": "boolean" },
+        "serverTime": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/SyncRequest" },
+    { "$ref": "#/$defs/SyncData" }
+  ]
+}

@@ -1,0 +1,7 @@
+<resources>
+    <color name="primary">#6750A4</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="widget_background">#E62A2730</color>
+    <color name="widget_row_background">#33FFFFFF</color>
+    <color name="widget_text">#FFFFFFFF</color>
+</resources>

@@ -95,10 +95,3 @@ captures/
 *.apks
 *.idsig
 *.hprof
-
-# 旧原型
-legacy/**/node_modules/
-legacy/**/dist/
-legacy/**/.turbo/
-legacy/**/.expo/
-legacy/**/target/

@@ -17,4 +17,4 @@
 
 优点是平台能力直接、后台开销可控、安装包无需携带浏览器或跨端引擎。代价是领域逻辑需要在 Swift 和 Kotlin 各实现一次，因此必须用 JSON Schema 和 golden fixtures 保证一致。
 
-旧 Tauri/React Native/Node.js 原型移入 `legacy/`，不再参与 v1 构建。
+旧 Tauri/React Native/Node.js 原型停止维护并从仓库移除。

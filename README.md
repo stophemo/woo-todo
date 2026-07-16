@@ -30,7 +30,6 @@
 | `backend/` | Cloudflare Workers + D1 增量同步服务 |
 | `shared/` | JSON Schema、跨端契约与测试样例 |
 | `docs/` | 产品规格、架构、执行计划与 ADR |
-| `legacy/` | 迁移前的 Tauri/React Native/Node.js 原型，仅供历史参考 |
 
 ## 当前阶段
 

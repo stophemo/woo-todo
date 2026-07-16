@@ -3,6 +3,26 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val releaseStoreFile = providers.environmentVariable("ANDROID_SIGNING_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("ANDROID_SIGNING_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("ANDROID_SIGNING_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("ANDROID_SIGNING_KEY_PASSWORD").orNull
+val releaseSigningValues = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+)
+val releaseBuildRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+
+if (releaseBuildRequested) {
+    check(releaseSigningValues.all { !it.isNullOrBlank() }) {
+        "Release 构建缺少 ANDROID_SIGNING_* 环境变量"
+    }
+}
+
 android {
     namespace = "com.wootodo"
     compileSdk = 36
@@ -26,12 +46,37 @@ android {
         jvmTarget = "17"
     }
 
+    signingConfigs {
+        if (releaseSigningValues.all { !it.isNullOrBlank() }) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseStoreFile))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+        }
+    }
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
     sourceSets {
         getByName("test").resources.srcDir(rootProject.file("../shared/fixtures"))
+    }
+}
+
+tasks.register("printVersionName") {
+    group = "help"
+    description = "输出 Android 应用版本号"
+    doLast {
+        println(android.defaultConfig.versionName)
     }
 }
 

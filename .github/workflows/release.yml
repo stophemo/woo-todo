@@ -1,0 +1,164 @@
+name: 正式发布
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: 构建 Android 正式安装包
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+      ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+      ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+      ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: 配置 Gradle 缓存
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 校验 tag 与应用版本
+        working-directory: android
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          SOURCE_VERSION="$(./gradlew -q printVersionName)"
+          test "$SOURCE_VERSION" = "$VERSION"
+
+      - name: 恢复 Android 签名密钥
+        env:
+          ANDROID_SIGNING_STORE_FILE: ${{ runner.temp }}/woo-todo-release.jks
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_SIGNING_STORE_PASSWORD"
+          test -n "$ANDROID_SIGNING_KEY_ALIAS"
+          test -n "$ANDROID_SIGNING_KEY_PASSWORD"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_SIGNING_STORE_FILE"
+          chmod 600 "$ANDROID_SIGNING_STORE_FILE"
+          echo "ANDROID_SIGNING_STORE_FILE=$ANDROID_SIGNING_STORE_FILE" >> "$GITHUB_ENV"
+
+      - name: 测试、检查并构建正式 APK
+        working-directory: android
+        run: ./gradlew testReleaseUnitTest lintRelease assembleRelease
+
+      - name: 验证签名并整理产物
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name apksigner -print | sort -V | tail -n 1)"
+          test -f "$APK"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          mkdir -p release
+          cp "$APK" "release/Woo-Todo-${GITHUB_REF_NAME}-android.apk"
+
+      - name: 上传 Android 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: release/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: 清理签名密钥
+        if: always()
+        run: rm -f "$ANDROID_SIGNING_STORE_FILE"
+
+  macos:
+    name: 构建 macOS Apple Silicon 安装包
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 验证 Runner 架构
+        run: test "$(uname -m)" = "arm64"
+
+      - name: 运行 Swift 全量测试
+        run: swift test --package-path macos
+
+      - name: 打包并验证应用
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' macos/Resources/Info.plist)"
+          test "$SOURCE_VERSION" = "$VERSION"
+          MARKETING_VERSION="$VERSION" BUILD_NUMBER="$GITHUB_RUN_NUMBER" \
+            ./macos/scripts/package-app.sh --zip
+          APP="macos/dist/Woo Todo.app"
+          ZIP="macos/dist/Woo Todo-$VERSION-macos.zip"
+          test -d "$APP"
+          test -f "$ZIP"
+          test "$(lipo -archs "$APP/Contents/MacOS/woo-todo-mac")" = "arm64"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          mkdir -p release
+          mv "$ZIP" "release/Woo-Todo-${GITHUB_REF_NAME}-macos-arm64.zip"
+
+      - name: 上传 macOS 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: 创建 GitHub Release
+    needs:
+      - android
+      - macos
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载安装包
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-release"
+          path: release
+          merge-multiple: true
+
+      - name: 生成 SHA-256 校验文件
+        run: |
+          set -euo pipefail
+          cd release
+          shasum -a 256 ./*.apk ./*.zip > SHA256SUMS.txt
+
+      - name: 发布安装包
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE="docs/releases/${GITHUB_REF_NAME}.md"
+          test -f "$NOTES_FILE"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "Woo Todo $GITHUB_REF_NAME" \
+              --notes-file "$NOTES_FILE"
+          else
+            gh release create "$GITHUB_REF_NAME" release/* \
+              --verify-tag \
+              --title "Woo Todo $GITHUB_REF_NAME" \
+              --notes-file "$NOTES_FILE"
+          fi

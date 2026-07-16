@@ -33,7 +33,7 @@
 
 ## 当前阶段
 
-v1 原生功能与本地/同步/备份主链路已实现，当前进入生产部署、目标真机验收、性能测量和 Release 打包阶段。进度见 [执行计划](docs/EXECUTION_PLAN.md)。
+`v0.1.0` 已具备自动化双端安装包发布链路。应用功能、本地/同步/备份主链路与 CI 已完成；公共同步服务尚未部署，目标真机验收和长期性能测量仍需继续。进度见 [执行计划](docs/EXECUTION_PLAN.md)。
 
 详细文档：
 
@@ -43,6 +43,7 @@ v1 原生功能与本地/同步/备份主链路已实现，当前进入生产部
 - [同步与安全](docs/SYNC_AND_SECURITY.md)
 - [加密备份与恢复](docs/BACKUP_AND_RESTORE.md)
 - [个人安装与首次使用](docs/INSTALLATION.md)
+- [发版与签名维护](docs/RELEASING.md)
 
 ## 许可
 

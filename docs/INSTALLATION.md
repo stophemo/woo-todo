@@ -1,6 +1,6 @@
 # 个人安装与首次使用
 
-woo-todo v1 不依赖应用商店。当前仓库产物适合开发验收和个人侧载；正式长期使用前仍应完成目标真机验收并自行保管 Android 签名密钥。
+woo-todo 不依赖应用商店。`v0.1.0` 起可从 GitHub Releases 下载双端安装包；正式长期使用前仍应完成目标真机验收并定期导出加密备份。
 
 ## 1. 先部署同步服务
 
@@ -25,14 +25,16 @@ npx wrangler deploy
 
 ## 2. 安装 macOS 客户端
 
-要求完整 Xcode 与当前 macOS SDK/Swift 编译器匹配。仅有版本不匹配的 Command Line Tools 时不能作为 Release 构建环境。
+从 GitHub Releases 下载 `Woo-Todo-v0.1.0-macos-arm64.zip`，校验 `SHA256SUMS.txt` 后解压，把 `Woo Todo.app` 拖到“应用程序”。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
+
+需要自行构建时，要求完整 Xcode 与当前 macOS SDK/Swift 编译器匹配。仅有版本不匹配的 Command Line Tools 时不能作为 Release 构建环境：
 
 ```bash
 cd macos
 ./scripts/package-app.sh --zip
 ```
 
-产物位于 `macos/dist/Woo Todo.app`。把它拖到“应用程序”后打开。当前脚本使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
+自行构建的产物位于 `macos/dist/Woo Todo.app`。
 
 首次运行后：
 
@@ -43,14 +45,24 @@ cd macos
 
 ## 3. 安装 Android 客户端
 
-开发验收 APK：
+从 GitHub Releases 下载 `Woo-Todo-v0.1.0-android.apk`，校验 `SHA256SUMS.txt` 后从三星“我的文件”打开并允许本次来源安装。连接 ADB 时也可执行：
+
+```bash
+adb install -r Woo-Todo-v0.1.0-android.apk
+```
+
+正式 APK 使用项目专用 Release 密钥签名，后续 GitHub Release 可直接覆盖升级。Debug 包与正式包签名不同，不能相互覆盖；切换前先导出 `.wootodo`，再卸载旧包。
+
+正式签名证书 SHA-256 为 `77d9b1ff936a9ea9da7ccae4360ede8f1b32b25761378826de7d812bccdba7f7`。
+
+开发验收 APK 可从源码构建：
 
 ```bash
 cd android
 ./gradlew testDebugUnitTest assembleDebug lintDebug
 ```
 
-产物为 `android/app/build/outputs/apk/debug/app-debug.apk`。可复制到 Galaxy S23 Ultra 后从“我的文件”打开，也可在连接 ADB 后执行：
+产物为 `android/app/build/outputs/apk/debug/app-debug.apk`。连接 ADB 后可执行：
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk

@@ -7,19 +7,27 @@ struct SyncRuntimeStateTests {
     @Test("未配置时忽略触发，运行中请求合并为一次")
     func coalescesTriggers() {
         var machine = SyncRuntimeStateMachine(isConfigured: false)
-        #expect(!machine.request(.launch))
+        let startsBeforeConfiguration = machine.request(.launch)
+        #expect(!startsBeforeConfiguration)
 
         machine.setConfigured(true)
-        #expect(machine.request(.launch))
-        #expect(!machine.request(.localChange))
-        #expect(!machine.request(.manual))
+        let startsLaunch = machine.request(.launch)
+        let startsLocalChange = machine.request(.localChange)
+        let startsManual = machine.request(.manual)
+        #expect(startsLaunch)
+        #expect(!startsLocalChange)
+        #expect(!startsManual)
         #expect(machine.snapshot.hasPendingRun)
 
         let successAt = Date(timeIntervalSince1970: 100)
-        #expect(machine.succeed(at: successAt) == .manual)
+        let nextTriggerAfterSuccess = machine.succeed(at: successAt)
+        #expect(nextTriggerAfterSuccess == .manual)
         #expect(machine.snapshot.isRunning)
         #expect(!machine.snapshot.hasPendingRun)
-        #expect(machine.succeed(at: Date(timeIntervalSince1970: 101)) == nil)
+        let nextTriggerAfterFinalSuccess = machine.succeed(
+            at: Date(timeIntervalSince1970: 101)
+        )
+        #expect(nextTriggerAfterFinalSuccess == nil)
         #expect(!machine.snapshot.isRunning)
         #expect(machine.snapshot.lastSuccessfulAt == Date(timeIntervalSince1970: 101))
     }
@@ -31,11 +39,14 @@ struct SyncRuntimeStateTests {
             isConfigured: true,
             lastSuccessfulAt: previous
         )
-        #expect(machine.request(.wake))
-        #expect(machine.fail(message: "网络不可用") == nil)
+        let startsWake = machine.request(.wake)
+        let nextTriggerAfterFailure = machine.fail(message: "网络不可用")
+        #expect(startsWake)
+        #expect(nextTriggerAfterFailure == nil)
         #expect(machine.snapshot.lastSuccessfulAt == previous)
         #expect(machine.snapshot.lastErrorMessage == "网络不可用")
-        #expect(machine.request(.networkRestored))
+        let startsRetry = machine.request(.networkRestored)
+        #expect(startsRetry)
     }
 }
 

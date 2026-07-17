@@ -13,6 +13,7 @@ Thumbs.db
 .codegraph/
 .codex/
 .agents/
+.vercel/
 
 # 本地环境、凭据与用户数据
 .env

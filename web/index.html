@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>无我待办 | 今晚规划，明早开干</title>
+  <meta name="description" content="面向 macOS 与 Android 的轻量本地优先待办应用。手机睡前规划，Mac 次日直接查看。">
+  <meta name="author" content="Woo Todo">
+  <meta name="theme-color" content="#171817">
+  <meta name="color-scheme" content="light">
+  <link rel="canonical" href="https://woo-todo.vercel.app/">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:url" content="https://woo-todo.vercel.app/">
+  <meta property="og:title" content="无我待办 | 今晚规划，明早开干">
+  <meta property="og:description" content="macOS 原生悬浮任务板与 Android 今日桌面 Widget，本地优先、端到端加密。">
+  <meta property="og:image" content="https://woo-todo.vercel.app/assets/og-cover.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://woo-todo.vercel.app/assets/og-cover.png">
+  <link rel="icon" href="/assets/app-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#top" aria-label="无我待办首页">
+        <img src="/assets/app-icon.svg" width="34" height="34" alt="">
+        <span>无我待办</span>
+      </a>
+      <nav class="primary-nav" aria-label="主导航">
+        <a href="#workflow">使用方式</a>
+        <a href="#features">能力</a>
+        <a href="#download">安装</a>
+        <a href="https://github.com/stophemo/woo-todo" target="_blank" rel="noreferrer">GitHub</a>
+      </nav>
+      <a class="header-download" href="#download">下载 v0.1.0</a>
+    </div>
+  </header>
+
+  <main id="main-content">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-rule hero-rule-one" aria-hidden="true"></div>
+      <div class="hero-rule hero-rule-two" aria-hidden="true"></div>
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <p class="release-line"><span>v0.1.0</span> macOS + Android</p>
+          <h1 id="hero-title">无我待办</h1>
+          <p class="hero-tagline">今晚规划，明早开干。</p>
+          <p class="hero-support">手机睡前列好明日任务，Mac 次日直接展开今日清单。双端原生、本地优先，断网也不耽误做事。</p>
+          <div class="hero-actions" aria-label="下载与项目链接">
+            <a class="button button-primary" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/Woo-Todo-v0.1.0-android.apk">下载 Android</a>
+            <a class="button button-secondary" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/Woo-Todo-v0.1.0-macos-arm64.zip">下载 macOS</a>
+          </div>
+          <p class="hero-meta">MIT 开源 · 无传统账号 · 无应用商店依赖</p>
+        </div>
+
+        <div class="hero-scene" aria-label="无我待办今日任务界面演示">
+          <section class="mac-board" aria-label="macOS 今日悬浮任务板">
+            <header class="board-header">
+              <div>
+                <p class="board-eyebrow">WOO TODO</p>
+                <h2>今日</h2>
+              </div>
+              <div class="board-date">
+                <span>7月16日</span>
+                <span>周四</span>
+              </div>
+            </header>
+
+            <div class="board-progress">
+              <span>今日进度</span>
+              <strong data-progress>2 / 5</strong>
+            </div>
+
+            <div class="task-groups">
+              <section class="task-group" aria-labelledby="mainline-title">
+                <h3 id="mainline-title"><span class="level-mark level-main"></span>主线</h3>
+                <label class="task-row is-initially-complete">
+                  <input type="checkbox" data-task-checkbox checked>
+                  <span class="task-check" aria-hidden="true"></span>
+                  <span class="task-name">整理今日开发计划</span>
+                  <span class="task-period">每日</span>
+                </label>
+                <label class="task-row">
+                  <input type="checkbox" data-task-checkbox>
+                  <span class="task-check" aria-hidden="true"></span>
+                  <span class="task-name">完成同步服务部署</span>
+                  <span class="task-period">每日</span>
+                </label>
+              </section>
+
+              <section class="task-group" aria-labelledby="sideline-title">
+                <h3 id="sideline-title"><span class="level-mark level-side"></span>支线</h3>
+                <label class="task-row is-initially-complete">
+                  <input type="checkbox" data-task-checkbox checked>
+                  <span class="task-check" aria-hidden="true"></span>
+                  <span class="task-name">回复开源仓库反馈</span>
+                  <span class="task-period">每日</span>
+                </label>
+                <label class="task-row">
+                  <input type="checkbox" data-task-checkbox>
+                  <span class="task-check" aria-hidden="true"></span>
+                  <span class="task-name">安排本周设备验收</span>
+                  <span class="task-period">每周</span>
+                </label>
+              </section>
+
+              <section class="task-group task-group-extra" aria-labelledby="extra-title">
+                <h3 id="extra-title"><span class="level-mark level-extra"></span>外传</h3>
+                <label class="task-row">
+                  <input type="checkbox" data-task-checkbox>
+                  <span class="task-check" aria-hidden="true"></span>
+                  <span class="task-name">整理桌面文件</span>
+                  <span class="task-period">闲时</span>
+                </label>
+              </section>
+            </div>
+
+            <footer class="board-controls" aria-label="悬浮面板状态">
+              <span><i class="status-dot status-green"></i>置顶</span>
+              <span><i class="status-dot status-purple"></i>毛玻璃</span>
+              <span><i class="status-dot"></i>可交互</span>
+              <kbd>⌃⌥Space</kbd>
+            </footer>
+          </section>
+
+          <aside class="android-widget" aria-label="Android 今日桌面 Widget">
+            <div class="widget-topline">
+              <span class="widget-platform">ANDROID WIDGET</span>
+              <span class="widget-add" aria-hidden="true">+</span>
+            </div>
+            <div class="widget-title-row">
+              <strong>今天</strong>
+              <span>2 / 5</span>
+            </div>
+            <div class="widget-task is-done"><span></span>整理今日开发计划</div>
+            <div class="widget-task"><span></span>完成同步服务部署</div>
+            <div class="widget-task"><span></span>安排设备验收</div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="workflow section" id="workflow" aria-labelledby="workflow-title">
+      <div class="workflow-signal" aria-label="无我待办工作流">
+        <div>
+          <span>23:10 睡前规划</span>
+          <b aria-hidden="true">→</b>
+          <span>次日今日清单</span>
+          <b aria-hidden="true">→</b>
+          <span>周期结束复盘</span>
+        </div>
+      </div>
+      <div class="section-inner">
+        <p class="section-kicker">一个自然的工作节奏</p>
+        <h2 id="workflow-title">从睡前，到开工</h2>
+        <div class="workflow-grid">
+          <article class="workflow-step">
+            <span class="step-number">01</span>
+            <p class="step-time">23:10 · Android</p>
+            <h3>把明天交代清楚</h3>
+            <p>手机提醒你列好明日任务。只有一句话，分清主线、支线、外传，不把计划做成另一份工作。</p>
+          </article>
+          <article class="workflow-step">
+            <span class="step-number">02</span>
+            <p class="step-time">次日 · macOS</p>
+            <h3>打开电脑直接开始</h3>
+            <p>原生悬浮任务板恢复今日清单，可置顶、毛玻璃、鼠标穿透，安静地待在桌面上。</p>
+          </article>
+          <article class="workflow-step">
+            <span class="step-number">03</span>
+            <p class="step-time">周期结束 · 本地</p>
+            <h3>完成，或者诚实 Pass</h3>
+            <p>完成项保留划线，逾期项自动记为 Pass。历史与履约率留下真实结果，不滚成明天的负担。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="features section" id="features" aria-labelledby="features-title">
+      <div class="section-inner feature-layout">
+        <div class="feature-heading">
+          <p class="section-kicker">克制，但不缺关键能力</p>
+          <h2 id="features-title">为每天重复使用而设计</h2>
+          <p>不引入笔记、附件和复杂项目管理。把资源留给任务本身，也把系统资源还给电脑和手机。</p>
+        </div>
+        <div class="feature-list">
+          <article class="feature-row">
+            <span class="feature-index">A</span>
+            <div>
+              <h3>双端原生，轻量常驻</h3>
+              <p>macOS 使用 AppKit + SwiftUI，Android 使用 Kotlin + RemoteViews。没有 Electron、Flutter，也没有前台常驻服务。</p>
+            </div>
+            <span class="feature-tag">原生</span>
+          </article>
+          <article class="feature-row">
+            <span class="feature-index">B</span>
+            <div>
+              <h3>本地优先，网络不挡路</h3>
+              <p>新增、修改、完成和排序先写本地 SQLite。同步是低频异步过程，断网时照常工作。</p>
+            </div>
+            <span class="feature-tag">离线可用</span>
+          </article>
+          <article class="feature-row">
+            <span class="feature-index">C</span>
+            <div>
+              <h3>日、周、月与闲时</h3>
+              <p>时间维度与主线、支线、外传交叉使用；重复任务、历史、Pass 和履约趋势都包含在首版中。</p>
+            </div>
+            <span class="feature-tag">清晰分层</span>
+          </article>
+          <article class="feature-row">
+            <span class="feature-index">D</span>
+            <div>
+              <h3>无账号配对，加密备份</h3>
+              <p>二维码绑定两台设备，任务正文端到端加密。`.wootodo` 备份可手动保存到你自己的网盘。</p>
+            </div>
+            <span class="feature-tag">自己掌控</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="platforms section" aria-labelledby="platforms-title">
+      <div class="section-inner">
+        <div class="platform-title-row">
+          <div>
+            <p class="section-kicker">双端各司其职</p>
+            <h2 id="platforms-title">同一份清单，两种合适的形态</h2>
+          </div>
+          <p>Android 负责睡前规划和桌面速览；Mac 负责工作时持续呈现。完整详情、历史和统计在两端 App 内查看。</p>
+        </div>
+        <div class="platform-table" role="table" aria-label="macOS 与 Android 能力对照">
+          <div class="platform-row platform-head" role="row">
+            <span role="columnheader">场景</span>
+            <strong role="columnheader">macOS</strong>
+            <strong role="columnheader">Android</strong>
+          </div>
+          <div class="platform-row" role="row">
+            <span role="cell">桌面呈现</span>
+            <strong role="cell">原生透明悬浮面板</strong>
+            <strong role="cell">今日桌面 Widget</strong>
+          </div>
+          <div class="platform-row" role="row">
+            <span role="cell">快捷操作</span>
+            <strong role="cell">新增、编辑、完成、排序</strong>
+            <strong role="cell">查看、勾选；编辑打开 App</strong>
+          </div>
+          <div class="platform-row" role="row">
+            <span role="cell">系统特性</span>
+            <strong role="cell">置顶、毛玻璃、穿透、快捷键</strong>
+            <strong role="cell">23:10 提醒、重启后恢复调度</strong>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="security section" aria-labelledby="security-title">
+      <div class="section-inner security-layout">
+        <div class="security-copy">
+          <p class="section-kicker">同步服务只看得到密文</p>
+          <h2 id="security-title">任务留在你的设备里</h2>
+          <p>两端通过二维码配对，不使用用户名和密码。同步正文使用 AES-256-GCM 加密，Cloudflare Workers + D1 只负责转发密文和增量游标。</p>
+          <a href="https://github.com/stophemo/woo-todo/blob/main/docs/SYNC_AND_SECURITY.md" target="_blank" rel="noreferrer">查看同步与安全设计</a>
+        </div>
+        <div class="sync-flow" aria-label="端到端加密同步流程">
+          <div class="sync-node node-android">
+            <span>01</span>
+            <strong>Android 本地库</strong>
+            <small>任务明文</small>
+          </div>
+          <div class="sync-link">
+            <span aria-hidden="true">→</span>
+            <small>AES-256-GCM</small>
+          </div>
+          <div class="sync-node node-cloud">
+            <span>02</span>
+            <strong>Cloudflare D1</strong>
+            <small>仅保存密文</small>
+          </div>
+          <div class="sync-link">
+            <span aria-hidden="true">→</span>
+            <small>低频增量</small>
+          </div>
+          <div class="sync-node node-macos">
+            <span>03</span>
+            <strong>macOS 本地库</strong>
+            <small>本机解密</small>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="download section" id="download" aria-labelledby="download-title">
+      <div class="section-inner">
+        <div class="download-heading">
+          <div>
+            <p class="section-kicker">v0.1.0 · 2026-07-16</p>
+            <h2 id="download-title">现在就装上</h2>
+          </div>
+          <p>不经过应用商店，直接从 GitHub Release 下载。安装前可使用同页提供的 SHA-256 文件校验产物。</p>
+        </div>
+        <div class="download-grid">
+          <article class="download-card download-android">
+            <div class="download-card-top">
+              <span class="platform-badge">ANDROID</span>
+              <span>Android 13+</span>
+            </div>
+            <h3>手机端与今日 Widget</h3>
+            <p>适用于 Galaxy S23 Ultra 等 Android 设备。Release APK 使用项目长期升级密钥签名。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/Woo-Todo-v0.1.0-android.apk">下载 APK</a>
+          </article>
+          <article class="download-card download-macos">
+            <div class="download-card-top">
+              <span class="platform-badge">MACOS</span>
+              <span>Apple Silicon</span>
+            </div>
+            <h3>悬浮任务板与完整管理页</h3>
+            <p>适用于 M 系列 Mac。当前为 ad-hoc 签名且未经过 Apple 公证，首次启动可能需要手动允许。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/Woo-Todo-v0.1.0-macos-arm64.zip">下载 macOS ZIP</a>
+          </article>
+        </div>
+        <div class="release-links">
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.0">发布说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/SHA256SUMS.txt">SHA-256 校验</a>
+          <a href="https://github.com/stophemo/woo-todo/blob/main/docs/INSTALLATION.md">安装指南</a>
+        </div>
+        <aside class="deployment-note">
+          <strong>关于跨端同步</strong>
+          <p>当前没有公共同步服务器。双端可以独立离线使用；跨端同步需要按文档自行部署 Cloudflare Workers + D1。</p>
+          <a href="https://github.com/stophemo/woo-todo/tree/main/backend">查看部署步骤</a>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <img src="/assets/app-icon.svg" width="30" height="30" alt="">
+        <div>
+          <strong>无我待办</strong>
+          <span>今晚规划，明早开干。</span>
+        </div>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/stophemo/woo-todo">源代码</a>
+        <a href="https://github.com/stophemo/woo-todo/blob/main/LICENSE">MIT License</a>
+        <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
+      </div>
+      <p>© <span data-current-year>2026</span> Woo Todo</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -2,6 +2,8 @@
 
 一个为“今晚规划，明早开干”设计的轻量跨端待办应用，首要支持 macOS 与 Android。
 
+项目主页：[woo-todo.vercel.app](https://woo-todo.vercel.app)
+
 ## 产品原则
 
 - **不打扰，但始终可见**：macOS 使用可置顶、可毛玻璃、可鼠标穿透的原生悬浮任务板。
@@ -28,6 +30,7 @@
 | `macos/` | Swift + AppKit/SwiftUI 原生客户端 |
 | `android/` | Kotlin + Android Views/RemoteViews 原生客户端 |
 | `backend/` | Cloudflare Workers + D1 增量同步服务 |
+| `web/` | Vercel 静态产品主页 |
 | `shared/` | JSON Schema、跨端契约与测试样例 |
 | `docs/` | 产品规格、架构、执行计划与 ADR |
 

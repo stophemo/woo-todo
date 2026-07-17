@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">无我待办</title>
+  <rect x="4" y="4" width="40" height="40" rx="8" fill="#6b56c8"/>
+  <path d="M14 24l6 6 14-14 3 3-17 17-9-9z" fill="#fff"/>
+</svg>

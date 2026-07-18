@@ -54,12 +54,16 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
         self.session = session
     }
 
-    public func createVault(_ request: CreateVaultRequest) async throws -> CreateVaultData {
+    public func createVault(
+        _ request: CreateVaultRequest,
+        inviteCode: String
+    ) async throws -> CreateVaultData {
         try await send(
             method: "POST",
             path: ["v1", "vaults"],
             body: encode(request),
-            deviceToken: nil
+            deviceToken: nil,
+            vaultCreationInviteCode: inviteCode
         )
     }
 
@@ -166,7 +170,8 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
         method: String,
         path: [String],
         body: Data?,
-        deviceToken: String?
+        deviceToken: String?,
+        vaultCreationInviteCode: String? = nil
     ) async throws -> Value {
         var url = endpoint
         for component in path {
@@ -181,6 +186,12 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
         }
         if let deviceToken {
             request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "Authorization")
+        }
+        if let vaultCreationInviteCode {
+            request.setValue(
+                vaultCreationInviteCode,
+                forHTTPHeaderField: "X-Woo-Todo-Invite-Code"
+            )
         }
 
         let data: Data

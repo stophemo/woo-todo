@@ -2,6 +2,7 @@ package com.wootodo.sync
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -84,6 +85,29 @@ class PairingCoordinatorTest {
 
         assertSame(PairingException.AlreadyPaired, error)
         assertNull(fixture.transport.claimRequest)
+    }
+
+    @Test
+    fun `手机拒绝连接只属于当前设备的回环地址`() = runBlocking {
+        var transportCreated = false
+        val localLink = PairingDeepLink(
+            endpoint = "http://127.0.0.1:8787",
+            pairingId = "pair-local",
+            pairingSecret = Base64Url.encode(ByteArray(32) { 1 }),
+            initiatorPublicKey = Base64Url.encode(ByteArray(32) { 2 }),
+        )
+        val coordinator = PairingCoordinator(
+            transportFactory = {
+                transportCreated = true
+                error("不应创建网络客户端")
+            },
+            credentialsStore = MemoryCredentialsStore(),
+        )
+
+        val error = runCatching { coordinator.pair(localLink, "Galaxy") }.exceptionOrNull()
+
+        assertSame(PairingException.CurrentDeviceOnlyEndpoint, error)
+        assertFalse(transportCreated)
     }
 }
 

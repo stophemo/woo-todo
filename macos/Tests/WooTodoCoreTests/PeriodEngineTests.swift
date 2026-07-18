@@ -52,6 +52,56 @@ struct PeriodEngineTests {
         #expect(secondResult.generatedTaskIDs.isEmpty)
     }
 
+    @Test("重复实例改到其他周期后不会被旧规则按确定性 ID 覆盖")
+    func editedOccurrenceIsNotOverwrittenByOldRule() throws {
+        let engine = PeriodEngine(timeZone: timeZone)
+        let firstPeriod = try #require(
+            engine.period(containing: date("2026-07-13T22:00:00+08:00"), for: .daily)
+        )
+        let seriesID = UUID()
+        let first = try TodoTask(
+            seriesID: seriesID,
+            title: "原每日任务",
+            timeScope: .daily,
+            tier: .mainline,
+            recurrence: .repeating(RepeatRule(frequency: .daily)),
+            period: firstPeriod,
+            createdAt: firstPeriod.start
+        )
+        let nextDailyPeriod = try #require(
+            engine.period(containing: date("2026-07-14T12:00:00+08:00"), for: .daily)
+        )
+        let reusedID = OccurrenceIDGenerator.makeID(
+            seriesID: seriesID,
+            scope: .daily,
+            periodStart: nextDailyPeriod.start,
+            timeZone: timeZone
+        )
+        let edited = try TodoTask(
+            id: reusedID,
+            seriesID: seriesID,
+            title: "已改成周任务",
+            timeScope: .weekly,
+            tier: .side,
+            recurrence: .once,
+            period: engine.period(
+                containing: date("2026-07-14T12:00:00+08:00"),
+                for: .weekly
+            ),
+            createdAt: date("2026-07-14T12:00:00+08:00")
+        )
+
+        let result = engine.settle(
+            [first, edited],
+            at: date("2026-07-14T13:00:00+08:00")
+        )
+
+        let preserved = try #require(result.tasks.first { $0.id == reusedID })
+        #expect(preserved.title == "已改成周任务")
+        #expect(preserved.timeScope == .weekly)
+        #expect(result.generatedTaskIDs.isEmpty)
+    }
+
     @Test("v1 拒绝无法跨端表达的多周期重复间隔")
     func unsupportedRepeatingIntervalIsRejected() {
         let engine = PeriodEngine(timeZone: timeZone)

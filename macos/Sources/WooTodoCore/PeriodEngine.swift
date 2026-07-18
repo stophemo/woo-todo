@@ -58,7 +58,11 @@ public struct PeriodEngine: Sendable {
     }
 
     /// 惰性结算所有已过期实例，并为重复规则补齐遗漏实例直到当前周期。
-    public func settle(_ input: [TodoTask], at now: Date) -> SettlementResult {
+    public func settle(
+        _ input: [TodoTask],
+        at now: Date,
+        reservedTaskIDs: Set<UUID> = []
+    ) -> SettlementResult {
         var tasksByID = Dictionary(uniqueKeysWithValues: input.map { ($0.id, $0) })
         var occurrenceKeys = Set(input.compactMap(Self.occurrenceKey))
         var queue = input.sorted { ($0.period?.start ?? .distantFuture) < ($1.period?.start ?? .distantFuture) }
@@ -100,6 +104,10 @@ public struct PeriodEngine: Sendable {
                     periodStart: nextPeriod.start,
                     timeZone: calendar.timeZone
                 )
+                // 实例被改到其他周期后仍会保留原 ID。此时旧重复规则再次推导出
+                // 相同确定性 ID，必须保留用户编辑后的任务，不能静默覆盖。
+                guard tasksByID[occurrenceID] == nil,
+                      !reservedTaskIDs.contains(occurrenceID) else { continue }
                 nextTask = try TodoTask(
                     id: occurrenceID,
                     seriesID: task.seriesID,

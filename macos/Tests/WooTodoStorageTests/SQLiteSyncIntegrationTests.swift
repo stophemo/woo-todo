@@ -95,6 +95,383 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.pendingOperations(limit: 50) == baseline)
     }
 
+    @Test("备份不能恢复到仅任务表为空但仍有删除历史的任务库")
+    func backupRestoreRejectsResidualDeletionHistory() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let deleted = try makeTask(
+            title: "删除后任务表为空",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        try repository.save(deleted)
+        try repository.delete(id: deleted.id)
+        #expect(try repository.fetchAll().isEmpty)
+
+        let incoming = try makeTask(
+            title: "另一份备份中的任务",
+            createdAt: date("2026-07-16T08:00:00+08:00")
+        )
+        let source = try SQLiteTaskRepository(path: ":memory:")
+        try source.save(incoming)
+        let payload = try #require(source.makeBackupPayloads().first)
+
+        do {
+            try repository.restoreBackupPayloads([payload])
+            Issue.record("残留删除历史时不应允许导入另一份备份")
+        } catch SQLiteRepositoryError.backupDestinationNotEmpty {
+            // 预期拒绝，避免把两份本地历史隐式合并。
+        }
+    }
+
+    @Test("同步密钥暂不可用时本地变更会在恢复后补入 outbox")
+    func deferredMutationsRecoverAfterCredentialsReturn() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-deferred-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("tasks.sqlite").path
+        let configuration = syncConfiguration()
+        let start = date("2026-07-15T08:00:00+08:00")
+        var edited = try makeTask(title: "等待修改", createdAt: start)
+        let deleted = try makeTask(
+            title: "等待删除",
+            createdAt: start.addingTimeInterval(1)
+        )
+
+        do {
+            let repository = try SQLiteTaskRepository(
+                path: path,
+                syncConfiguration: configuration
+            )
+            try repository.save([edited, deleted])
+            let baseline = try await repository.pendingOperations(limit: 50)
+            try await repository.acknowledgeOperations(opIds: baseline.map(\.opId))
+        }
+
+        let localOnly = try SQLiteTaskRepository(path: path)
+        edited.title = "密钥恢复前已修改"
+        edited.updatedAt = start.addingTimeInterval(60)
+        try localOnly.save(edited)
+        try localOnly.delete(id: deleted.id)
+        #expect(try localOnly.fetchAll().map(\.id) == [edited.id])
+        #expect(try await localOnly.pendingOperations(limit: 50).isEmpty)
+
+        try localOnly.configureSync(configuration)
+        let recovered = try await localOnly.pendingOperations(limit: 50)
+        #expect(recovered.map(\.kind) == [.upsert, .delete])
+        guard case .task(let task) = try open(recovered[0], configuration: configuration) else {
+            Issue.record("恢复后的首条操作应为最新任务快照")
+            return
+        }
+        #expect(task.title == "密钥恢复前已修改")
+        guard case .tombstone(let tombstone) = try open(
+            recovered[1],
+            configuration: configuration
+        ) else {
+            Issue.record("恢复后的删除应补为 tombstone")
+            return
+        }
+        #expect(tombstone.id == deleted.id.uuidString.lowercased())
+
+        try localOnly.configureSync(configuration)
+        #expect(try await localOnly.pendingOperations(limit: 50) == recovered)
+    }
+
+    @Test("恢复同步密钥时只补录实际离线修改的实体")
+    func deferredJournalDoesNotSnapshotUntouchedTasks() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-deferred-dirty-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("tasks.sqlite").path
+        let configuration = syncConfiguration()
+        let start = date("2026-07-15T08:00:00+08:00")
+        var modified = try makeTask(title: "任务 A", createdAt: start)
+        let untouched = try makeTask(
+            title: "任务 B",
+            createdAt: start.addingTimeInterval(1),
+            sortIndex: 1
+        )
+
+        do {
+            let repository = try SQLiteTaskRepository(
+                path: path,
+                syncConfiguration: configuration
+            )
+            try repository.save([modified, untouched])
+            let baseline = try await repository.pendingOperations(limit: 50)
+            try await repository.acknowledgeOperations(opIds: baseline.map(\.opId))
+        }
+
+        let localOnly = try SQLiteTaskRepository(path: path)
+        modified.title = "仅修改任务 A"
+        modified.updatedAt = start.addingTimeInterval(60)
+        try localOnly.save(modified)
+        try localOnly.configureSync(configuration)
+
+        let recovered = try await localOnly.pendingOperations(limit: 50)
+        #expect(recovered.count == 1)
+        #expect(recovered.first?.entityId == modified.id.uuidString.lowercased())
+        #expect(!recovered.map(\.entityId).contains(untouched.id.uuidString.lowercased()))
+        guard let operation = recovered.first,
+              case .task(let payload) = try open(operation, configuration: configuration) else {
+            Issue.record("恢复操作应只包含任务 A 的最新快照")
+            return
+        }
+        #expect(payload.title == "仅修改任务 A")
+    }
+
+    @Test("同步身份不匹配后本地仓储仍可编辑并等待正确身份恢复")
+    func identityMismatchKeepsLocalRepositoryUsable() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-identity-mismatch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("tasks.sqlite").path
+        let configuration = syncConfiguration()
+        let start = date("2026-07-15T08:00:00+08:00")
+        var task = try makeTask(title: "原任务", createdAt: start)
+
+        do {
+            let repository = try SQLiteTaskRepository(
+                path: path,
+                syncConfiguration: configuration
+            )
+            try repository.save(task)
+            let baseline = try await repository.pendingOperations(limit: 50)
+            try await repository.acknowledgeOperations(opIds: baseline.map(\.opId))
+        }
+
+        let localOnly = try SQLiteTaskRepository(path: path)
+        let mismatched = SQLiteSyncConfiguration(
+            vaultId: "vault-other",
+            deviceId: "device-other",
+            vaultKey: configuration.vaultKey,
+            timeZone: configuration.timeZone
+        )
+        do {
+            try localOnly.configureSync(mismatched)
+            Issue.record("不匹配的同步身份应被拒绝")
+        } catch SQLiteRepositoryError.syncIdentityMismatch {
+            // 预期只禁用同步，不关闭本地仓储。
+        }
+
+        task.title = "身份不匹配后仍可编辑"
+        task.updatedAt = start.addingTimeInterval(60)
+        try localOnly.save(task)
+        #expect(try localOnly.fetchAll().first?.title == "身份不匹配后仍可编辑")
+        #expect(try await localOnly.pendingOperations(limit: 50).isEmpty)
+
+        try localOnly.configureSync(configuration)
+        let recovered = try await localOnly.pendingOperations(limit: 50)
+        #expect(recovered.count == 1)
+        #expect(recovered.first?.entityId == task.id.uuidString.lowercased())
+    }
+
+    @Test("离线删除重复实例跨重启不复活且恢复后只产生 tombstone")
+    func deferredRecurringDeletionSurvivesRestart() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-deferred-repeat-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("tasks.sqlite").path
+        let configuration = syncConfiguration()
+        let timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let engine = PeriodEngine(timeZone: timeZone)
+        let seriesID = UUID()
+        let firstDate = date("2026-07-15T08:00:00+08:00")
+        let reloadDate = date("2026-07-16T12:00:00+08:00")
+        let firstPeriod = try #require(engine.period(containing: firstDate, for: .daily))
+        let repeated = try TodoTask(
+            seriesID: seriesID,
+            title: "每日重复任务",
+            timeScope: .daily,
+            tier: .mainline,
+            recurrence: .repeating(RepeatRule(frequency: .daily)),
+            period: firstPeriod,
+            createdAt: firstDate
+        )
+        let nextPeriod = try #require(engine.period(containing: reloadDate, for: .daily))
+        let occurrenceID = OccurrenceIDGenerator.makeID(
+            seriesID: seriesID,
+            scope: .daily,
+            periodStart: nextPeriod.start,
+            timeZone: timeZone
+        )
+
+        do {
+            let repository = try SQLiteTaskRepository(
+                path: path,
+                syncConfiguration: configuration
+            )
+            try repository.save(repeated)
+            try LazySettlementService(repository: repository, engine: engine).settle(at: reloadDate)
+            #expect(try repository.fetchAll().contains { $0.id == occurrenceID })
+            let baseline = try await repository.pendingOperations(limit: 50)
+            try await repository.acknowledgeOperations(opIds: baseline.map(\.opId))
+        }
+
+        do {
+            let localOnly = try SQLiteTaskRepository(path: path)
+            try localOnly.delete(id: occurrenceID)
+            try LazySettlementService(repository: localOnly, engine: engine).settle(at: reloadDate)
+            #expect(try !localOnly.fetchAll().contains { $0.id == occurrenceID })
+            #expect(try await localOnly.pendingOperations(limit: 50).isEmpty)
+        }
+
+        let restarted = try SQLiteTaskRepository(path: path)
+        try LazySettlementService(repository: restarted, engine: engine).settle(at: reloadDate)
+        #expect(try !restarted.fetchAll().contains { $0.id == occurrenceID })
+
+        try restarted.configureSync(configuration)
+        let recovered = try await restarted.pendingOperations(limit: 50)
+        #expect(recovered.count == 1)
+        #expect(recovered.first?.entityId == occurrenceID.uuidString.lowercased())
+        #expect(recovered.first?.kind == .delete)
+        guard let operation = recovered.first,
+              case .tombstone(let tombstone) = try open(
+                operation,
+                configuration: configuration
+              ) else {
+            Issue.record("恢复密钥后应只补录被删重复实例的 tombstone")
+            return
+        }
+        #expect(tombstone.id == occurrenceID.uuidString.lowercased())
+    }
+
+    @Test("从未配对时删除重复实例也会跨重启保留并在首次绑定补发 tombstone")
+    func localOnlyRecurringDeletionSurvivesRestartAndFirstBinding() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-local-repeat-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("tasks.sqlite").path
+        let timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let engine = PeriodEngine(timeZone: timeZone)
+        let seriesID = UUID()
+        let firstDate = date("2026-07-15T08:00:00+08:00")
+        let reloadDate = date("2026-07-16T12:00:00+08:00")
+        let firstPeriod = try #require(engine.period(containing: firstDate, for: .daily))
+        let repeated = try TodoTask(
+            seriesID: seriesID,
+            title: "尚未配对的每日任务",
+            timeScope: .daily,
+            tier: .mainline,
+            recurrence: .repeating(RepeatRule(frequency: .daily)),
+            period: firstPeriod,
+            createdAt: firstDate
+        )
+        let nextPeriod = try #require(engine.period(containing: reloadDate, for: .daily))
+        let occurrenceID = OccurrenceIDGenerator.makeID(
+            seriesID: seriesID,
+            scope: .daily,
+            periodStart: nextPeriod.start,
+            timeZone: timeZone
+        )
+
+        do {
+            let repository = try SQLiteTaskRepository(path: path)
+            try repository.save(repeated)
+            try LazySettlementService(repository: repository, engine: engine).settle(at: reloadDate)
+            #expect(try repository.fetchAll().contains { $0.id == occurrenceID })
+            try repository.delete(id: occurrenceID)
+            try LazySettlementService(repository: repository, engine: engine).settle(at: reloadDate)
+            #expect(try !repository.fetchAll().contains { $0.id == occurrenceID })
+            #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+        }
+
+        let restarted = try SQLiteTaskRepository(path: path)
+        try LazySettlementService(repository: restarted, engine: engine).settle(at: reloadDate)
+        #expect(try !restarted.fetchAll().contains { $0.id == occurrenceID })
+
+        let configuration = syncConfiguration()
+        try restarted.configureSync(configuration)
+        let recovered = try await restarted.pendingOperations(limit: 50)
+        let deletion = try #require(
+            recovered.first { $0.entityId == occurrenceID.uuidString.lowercased() }
+        )
+        #expect(deletion.kind == .delete)
+        guard case .tombstone(let tombstone) = try open(
+            deletion,
+            configuration: configuration
+        ) else {
+            Issue.record("首次绑定应补发本地删除记录")
+            return
+        }
+        #expect(tombstone.id == occurrenceID.uuidString.lowercased())
+    }
+
+    @Test("备份往返保留纯本地删除屏障且重复实例跨重启不复活")
+    func backupRoundTripPreservesLocalDeletionBarrier() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-backup-tombstone-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let restoredPath = directory.appendingPathComponent("restored.sqlite").path
+        let timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let engine = PeriodEngine(timeZone: timeZone)
+        let seriesID = UUID()
+        let firstDate = date("2026-07-15T08:00:00+08:00")
+        let reloadDate = date("2026-07-16T12:00:00+08:00")
+        let firstPeriod = try #require(engine.period(containing: firstDate, for: .daily))
+        let repeated = try TodoTask(
+            seriesID: seriesID,
+            title: "备份中的每日任务",
+            timeScope: .daily,
+            tier: .mainline,
+            recurrence: .repeating(RepeatRule(frequency: .daily)),
+            period: firstPeriod,
+            createdAt: firstDate
+        )
+        let nextPeriod = try #require(engine.period(containing: reloadDate, for: .daily))
+        let occurrenceID = OccurrenceIDGenerator.makeID(
+            seriesID: seriesID,
+            scope: .daily,
+            periodStart: nextPeriod.start,
+            timeZone: timeZone
+        )
+
+        let source = try SQLiteTaskRepository(path: ":memory:")
+        try source.save(repeated)
+        try LazySettlementService(repository: source, engine: engine).settle(at: reloadDate)
+        try source.delete(id: occurrenceID)
+        let backup = try source.makeBackupContents(timeZone: timeZone)
+        #expect(backup.tombstones.map(\.id) == [occurrenceID.uuidString.lowercased()])
+
+        do {
+            let restored = try SQLiteTaskRepository(path: restoredPath)
+            try restored.restoreBackupPayloads(
+                backup.tasks,
+                tombstones: backup.tombstones
+            )
+            try LazySettlementService(repository: restored, engine: engine).settle(at: reloadDate)
+            #expect(try !restored.fetchAll().contains { $0.id == occurrenceID })
+            #expect(try restored.makeBackupTombstones() == backup.tombstones)
+        }
+
+        let restarted = try SQLiteTaskRepository(path: restoredPath)
+        try LazySettlementService(repository: restarted, engine: engine).settle(at: reloadDate)
+        #expect(try !restarted.fetchAll().contains { $0.id == occurrenceID })
+        #expect(try restarted.makeBackupTombstones() == backup.tombstones)
+    }
+
     @Test("远端 LWW 更新 cursor 且不会反向写入 outbox")
     func remoteLWWAndLamportClock() async throws {
         let configuration = syncConfiguration()

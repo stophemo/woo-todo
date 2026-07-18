@@ -44,5 +44,14 @@ test("加密备份 golden vector 可跨端派生密钥并恢复正文", () => {
   assert.equal(snapshot.protocolVersion, 1);
   assert.equal(snapshot.exportedAt, vector.createdAt);
   assert.equal(snapshot.tasks[0].title, "提交周报");
+  assert.equal(snapshot.tombstones, undefined);
   assert.equal(snapshot.syncCredentials.vaultKey.length, 43);
+});
+
+test("备份正文可选携带删除屏障且旧正文仍可读取", () => {
+  const snapshot = JSON.parse(vector.tombstonePlaintextUtf8);
+  assert.deepEqual(snapshot.tasks, []);
+  assert.equal(snapshot.tombstones.length, 1);
+  assert.equal(snapshot.tombstones[0].entityType, "tombstone");
+  assert.equal(snapshot.tombstones[0].deletedAt, 1784251800000);
 });

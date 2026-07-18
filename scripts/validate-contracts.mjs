@@ -139,6 +139,18 @@ if (
 ) {
   throw new Error("加密备份向量结构或二进制长度无效");
 }
+const legacyBackupSnapshot = JSON.parse(backup.plaintextUtf8);
+if (legacyBackupSnapshot.tombstones !== undefined) {
+  throw new Error("旧备份向量不应强制携带 tombstones");
+}
+const tombstoneBackupSnapshot = JSON.parse(backup.tombstonePlaintextUtf8);
+if (
+  !Array.isArray(tombstoneBackupSnapshot.tombstones)
+  || tombstoneBackupSnapshot.tombstones.length !== 1
+) {
+  throw new Error("备份删除屏障 fixture 不完整");
+}
+validateTaskPayload(tombstoneBackupSnapshot.tombstones[0]);
 
 console.log(`契约基础校验通过：${files.length} 个文件`);
 

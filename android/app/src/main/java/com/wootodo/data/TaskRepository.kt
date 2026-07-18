@@ -46,6 +46,9 @@ class TaskRepository(
         val id = idFactory()
         val recurrence = TaskRules.sanitizeRecurrence(draft.timeType, draft.recurrence)
         val targetDate = normalizedTarget(draft.timeType, draft.targetDate)
+        val sortOrder = draft.sortOrder ?: (
+            (store.maximumSortOrder(draft.timeType, targetDate, draft.questLine) ?: -1) + 1
+            )
         store.insert(
             TaskEntity(
                 id = id,
@@ -56,7 +59,7 @@ class TaskRepository(
                 questLine = draft.questLine,
                 status = TaskStatus.PENDING,
                 recurrence = recurrence,
-                sortOrder = draft.sortOrder,
+                sortOrder = sortOrder,
                 createdAt = now,
                 updatedAt = now,
                 settledAt = null,
@@ -72,14 +75,24 @@ class TaskRepository(
         }
         val current = store.getById(id) ?: return false
         if (current.status != TaskStatus.PENDING) return false
+        val targetDate = normalizedTarget(draft.timeType, draft.targetDate)
+        val movedToAnotherGroup = current.timeType != draft.timeType ||
+            current.targetDate != targetDate || current.questLine != draft.questLine
+        val sortOrder = when {
+            draft.sortOrder != null -> draft.sortOrder
+            movedToAnotherGroup -> (
+                (store.maximumSortOrder(draft.timeType, targetDate, draft.questLine) ?: -1) + 1
+                )
+            else -> current.sortOrder
+        }
         return store.update(
             current.copy(
                 title = draft.title.trim(),
                 timeType = draft.timeType,
-                targetDate = normalizedTarget(draft.timeType, draft.targetDate),
+                targetDate = targetDate,
                 questLine = draft.questLine,
                 recurrence = TaskRules.sanitizeRecurrence(draft.timeType, draft.recurrence),
-                sortOrder = draft.sortOrder,
+                sortOrder = sortOrder,
                 updatedAt = clock.millis(),
             ),
         )

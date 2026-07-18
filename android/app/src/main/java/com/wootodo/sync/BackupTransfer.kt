@@ -37,6 +37,7 @@ data class BackupDatabaseState(
 data class BackupTaskSnapshot(
     val state: BackupDatabaseState,
     val tasks: List<TaskInstancePayload>,
+    val tombstones: List<TombstonePayload> = emptyList(),
 )
 
 data class BackupRestoreResult(
@@ -96,6 +97,8 @@ interface BackupRestoreTransaction {
 
     fun insertTask(task: TaskInstancePayload)
 
+    fun insertTombstone(tombstone: TombstonePayload)
+
     fun bindIdentityAndCreateBaseline(credentials: SyncCredentials)
 }
 
@@ -133,6 +136,7 @@ class BackupRestoreCoordinator(
                     hasStoredCredentials = credentialsStore.load() != null,
                 )
                 snapshot.tasks.forEach(transaction::insertTask)
+                snapshot.tombstones.forEach(transaction::insertTombstone)
                 restoredCredentials?.let { credentials ->
                     credentialsWriteAttempted = true
                     if (!credentialsStore.saveIfAbsent(credentials)) {
@@ -196,6 +200,7 @@ class BackupTransferService(
                 exportedAt = clockMillis(),
                 tasks = taskSnapshot.tasks,
                 syncCredentials = backupCredentials,
+                tombstones = taskSnapshot.tombstones,
             ),
             passphrase = confirmedPassphrase,
         )

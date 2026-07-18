@@ -23,7 +23,7 @@ import org.junit.Test
 class TaskRepositoryTest {
     private val date = LocalDate.of(2026, 7, 15)
     private val store = FakeTaskStore()
-    private val ids = ArrayDeque(listOf("task-1", "task-2", "task-3"))
+    private val ids = ArrayDeque((1..10).map { "task-$it" })
     private val repository = TaskRepository(
         store = store,
         clock = Clock.fixed(Instant.parse("2026-07-15T04:00:00Z"), ZoneId.of("Asia/Shanghai")),
@@ -148,6 +148,72 @@ class TaskRepositoryTest {
             repository.observeForScope(TaskTimeType.DAY, date).first().map { it.id },
         )
     }
+
+    @Test
+    fun `新任务追加到手动排序后的组末尾`() = runBlocking {
+        val first = repository.create(TaskDraft(title = "一", targetDate = date))
+        val second = repository.create(TaskDraft(title = "二", targetDate = date))
+        val third = repository.create(TaskDraft(title = "三", targetDate = date))
+        repository.reorder(listOf(third, first, second))
+
+        val fourth = repository.create(TaskDraft(title = "四", targetDate = date))
+
+        assertEquals(
+            listOf(third, first, second, fourth),
+            repository.observeForScope(TaskTimeType.DAY, date).first().map { it.id },
+        )
+    }
+
+    @Test
+    fun `追加顺序按周期和任务线分别计算`() = runBlocking {
+        val todayMain = repository.create(TaskDraft(title = "今日主线一", targetDate = date))
+        val tomorrowMain = repository.create(
+            TaskDraft(title = "明日主线", targetDate = date.plusDays(1)),
+        )
+        val todaySide = repository.create(
+            TaskDraft(title = "今日支线", targetDate = date, questLine = QuestLine.SIDE),
+        )
+        val todayMainSecond = repository.create(TaskDraft(title = "今日主线二", targetDate = date))
+
+        assertEquals(0, repository.get(todayMain)?.sortOrder)
+        assertEquals(0, repository.get(tomorrowMain)?.sortOrder)
+        assertEquals(0, repository.get(todaySide)?.sortOrder)
+        assertEquals(1, repository.get(todayMainSecond)?.sortOrder)
+    }
+
+    @Test
+    fun `编辑任务默认保留手动排序位置`() = runBlocking {
+        val first = repository.create(TaskDraft(title = "一", targetDate = date))
+        val second = repository.create(TaskDraft(title = "二", targetDate = date))
+        repository.reorder(listOf(second, first))
+
+        assertTrue(repository.update(second, TaskDraft(title = "二（已编辑）", targetDate = date)))
+
+        assertEquals(
+            listOf(second, first),
+            repository.observeForScope(TaskTimeType.DAY, date).first().map { it.id },
+        )
+    }
+
+    @Test
+    fun `编辑任务移入其他组时追加到目标组末尾`() = runBlocking {
+        val source = repository.create(TaskDraft(title = "今日", targetDate = date))
+        val first = repository.create(TaskDraft(title = "明日一", targetDate = date.plusDays(1)))
+        val second = repository.create(TaskDraft(title = "明日二", targetDate = date.plusDays(1)))
+
+        assertTrue(
+            repository.update(
+                source,
+                TaskDraft(title = "移到明日", targetDate = date.plusDays(1)),
+            ),
+        )
+
+        assertEquals(2, repository.get(source)?.sortOrder)
+        assertEquals(
+            listOf(first, second, source),
+            repository.observeForScope(TaskTimeType.DAY, date.plusDays(1)).first().map { it.id },
+        )
+    }
 }
 
 private class FakeTaskStore : TaskStore {
@@ -190,6 +256,16 @@ private class FakeTaskStore : TaskStore {
         items.value.count { it.timeType == TaskTimeType.DAY && it.targetDate == date }
 
     override suspend fun getById(id: String): TaskEntity? = items.value.firstOrNull { it.id == id }
+
+    override suspend fun maximumSortOrder(
+        timeType: TaskTimeType,
+        targetDate: LocalDate?,
+        questLine: QuestLine,
+    ): Int? = items.value
+        .filter {
+            it.timeType == timeType && it.targetDate == targetDate && it.questLine == questLine
+        }
+        .maxOfOrNull(TaskEntity::sortOrder)
 
     override suspend fun insert(task: TaskEntity) {
         check(items.value.none { it.id == task.id })

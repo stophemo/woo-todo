@@ -63,6 +63,7 @@ class SQLiteBackupDatabaseInstrumentedTest {
         val credentials = credentials()
         val completed = taskPayload("task-restore-0001", WireTaskState.COMPLETED, 8_888)
         val passed = taskPayload("task-restore-0002", WireTaskState.PASS, 9_999)
+        val deleted = TombstonePayload(id = "task-restore-deleted", deletedAt = 10_001)
 
         val result = BackupRestoreCoordinator(
             SQLiteBackupDatabase(database),
@@ -72,18 +73,76 @@ class SQLiteBackupDatabaseInstrumentedTest {
                 exportedAt = 20_000,
                 tasks = listOf(completed, passed),
                 syncCredentials = BackupSyncCredentials.from(credentials),
+                tombstones = listOf(deleted),
             ),
         )
 
         assertEquals(2, result.restoredTaskCount)
         assertEquals(2, count("tasks"))
-        assertEquals(2, count("sync_outbox"))
-        assertEquals(2, count("sync_entity_versions"))
+        assertEquals(3, count("sync_outbox"))
+        assertEquals(3, count("sync_entity_versions"))
+        assertEquals(1, count("sync_tombstones"))
+        assertEquals(0, count("sync_deferred_deletions"))
         assertEquals(credentials.vaultId to credentials.deviceId, boundIdentity())
-        assertEquals(2L, lamport())
+        assertEquals(3L, lamport())
         assertEquals(8_888L, settledAt(completed.id))
         assertEquals(9_999L, settledAt(passed.id))
+        assertEquals(deleted.deletedAt, tombstoneDeletedAt(deleted.id))
+        assertEquals(listOf(deleted), SQLiteBackupDatabase(database).readTaskSnapshot().tombstones)
         assertEquals(credentials.deviceId, credentialsStore.load()?.deviceId)
+    }
+
+    @Test
+    fun `无身份恢复删除屏障后重启不复活且首次绑定转为正式tombstone`() = runBlocking {
+        val deleted = TombstonePayload(id = "task-restored-barrier", deletedAt = 11_234)
+        val backupDatabase = SQLiteBackupDatabase(database)
+        val credentialsStore = MemoryCredentialsStore()
+
+        BackupRestoreCoordinator(backupDatabase, credentialsStore).restore(
+            BackupSnapshot(
+                exportedAt = 20_000,
+                tasks = emptyList(),
+                syncCredentials = null,
+                tombstones = listOf(deleted),
+            ),
+        )
+
+        assertEquals(1, backupDatabase.readState().tombstoneCount)
+        assertEquals(listOf(deleted), backupDatabase.readTaskSnapshot().tombstones)
+        assertEquals(1, count("sync_deferred_deletions"))
+        assertEquals(0, count("sync_tombstones"))
+        assertThrows(BackupTransferException.ResidualSyncState::class.java) {
+            BackupRestoreCoordinator(backupDatabase, credentialsStore).requireReady()
+        }
+
+        database.close()
+        database = TaskDatabase(context)
+        database.writableDatabase
+        val reopenedTaskStore = SQLiteTaskStore(database)
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                reopenedTaskStore.insert(
+                    taskEntity(deleted.id, TaskStatus.PENDING, settledAt = null),
+                )
+            }
+        }
+        assertEquals(0, count("tasks"))
+        assertEquals(1, count("sync_deferred_deletions"))
+
+        val credentials = credentials()
+        val operation = SQLiteSyncStore(database, credentials).pendingOperations(50).single()
+
+        assertEquals(SyncOperationKind.DELETE, operation.kind)
+        assertEquals(deleted.id, operation.entityId)
+        assertEquals(deleted, outboxPayload(deleted.id))
+        assertEquals(0, count("sync_deferred_deletions"))
+        assertEquals(1, count("sync_tombstones"))
+        assertEquals(deleted.deletedAt, tombstoneDeletedAt(deleted.id))
+        assertEquals(credentials.vaultId to credentials.deviceId, boundIdentity())
+
+        SQLiteSyncStore(database, credentials)
+        assertEquals(1, count("sync_outbox"))
+        assertEquals(1, count("sync_tombstones"))
     }
 
     @Test
@@ -184,6 +243,20 @@ class SQLiteBackupDatabaseInstrumentedTest {
         it.getLong(0)
     }
 
+    private fun tombstoneDeletedAt(id: String): Long? = database.readableDatabase.rawQuery(
+        "SELECT deleted_at FROM sync_tombstones WHERE entity_id = ?",
+        arrayOf(id),
+    ).use {
+        if (it.moveToFirst()) it.getLong(0) else null
+    }
+
+    private fun outboxPayload(id: String): TaskWirePayload? = database.readableDatabase.rawQuery(
+        "SELECT payload_json FROM sync_outbox WHERE entity_id = ?",
+        arrayOf(id),
+    ).use {
+        if (it.moveToFirst()) SyncJsonCodec.decodeTaskPayload(it.getString(0)) else null
+    }
+
     private class MemoryCredentialsStore : SyncCredentialsStore {
         private var credentials: SyncCredentials? = null
 
@@ -212,6 +285,12 @@ class SQLiteBackupDatabaseInstrumentedTest {
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        val COUNTABLE_TABLES = setOf("tasks", "sync_outbox", "sync_entity_versions")
+        val COUNTABLE_TABLES = setOf(
+            "tasks",
+            "sync_outbox",
+            "sync_entity_versions",
+            "sync_tombstones",
+            "sync_deferred_deletions",
+        )
     }
 }

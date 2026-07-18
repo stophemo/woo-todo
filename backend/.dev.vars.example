@@ -1,2 +1,8 @@
 # 仅供本地开发参考；请复制为 .dev.vars，切勿提交真实值。
+APP_ENV="development"
 TOKEN_PEPPER="请替换为至少32字节的随机值"
+# 创建同步空间时由客户端通过 X-Woo-Todo-Invite-Code 请求头提交；至少 16 字符。
+VAULT_CREATION_INVITE_CODE="replace-with-random-ascii-invite-code"
+# 可选；不配置时分别使用每来源每小时 5 次、全服务每日 100 次。
+VAULT_CREATION_SOURCE_LIMIT="5"
+VAULT_CREATION_DAILY_LIMIT="100"

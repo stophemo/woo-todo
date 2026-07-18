@@ -13,6 +13,36 @@ import org.junit.Test
 
 class SyncApiClientTest {
     @Test
+    fun `创建空间邀请码只通过专用Header发送`() {
+        val deviceToken = Base64Url.encode(ByteArray(32) { 7 })
+        val connection = FakeConnection(
+            status = 201,
+            response = """
+                {"ok":true,"data":{"vaultId":"vault-1","device":{"id":"device-1",
+                "name":"测试 Android","platform":"android","token":"$deviceToken"},
+                "serverTime":123},"requestId":"req-vault"}
+            """.trimIndent(),
+        )
+        val inviteCode = "invite-secret-2026"
+        val client = SyncApiClient("https://sync.example.test/root") { url ->
+            connection.attach(url)
+        }
+
+        val result = client.createVault(
+            CreateVaultRequest(
+                device = DeviceRegistration("测试 Android", DevicePlatform.ANDROID),
+            ),
+            inviteCode,
+        )
+
+        assertEquals("vault-1", result.vaultId)
+        assertEquals(inviteCode, connection.getRequestProperty("X-Woo-Todo-Invite-Code"))
+        assertNull(connection.getRequestProperty("Authorization"))
+        assertEquals(false, connection.sentBody().contains(inviteCode))
+        assertEquals("/root/v1/vaults", connection.requestUrl.path)
+    }
+
+    @Test
     fun `同步客户端拒绝远程明文HTTP`() {
         assertThrows(SyncApiException.InvalidEndpoint::class.java) {
             SyncApiClient("http://sync.example.test")

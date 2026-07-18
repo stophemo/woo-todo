@@ -4,6 +4,59 @@ import Testing
 
 @Suite("同步 API 客户端", .serialized)
 struct SyncAPIClientTests {
+    @Test("创建空间只通过专用请求头发送邀请码")
+    func test创建空间只通过专用请求头发送邀请码() async throws {
+        defer { MockURLProtocol.handler = nil }
+        let inviteCode = "invite-secret-2026"
+        MockURLProtocol.handler = { request in
+            let body = MockURLProtocol.bodyData(for: request)
+            let bodyText = body.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            guard request.url?.path == "/root/v1/vaults",
+                  request.httpMethod == "POST",
+                  request.value(forHTTPHeaderField: "Authorization") == nil,
+                  request.value(forHTTPHeaderField: "X-Woo-Todo-Invite-Code") == inviteCode,
+                  !bodyText.contains(inviteCode),
+                  let body,
+                  let object = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  let device = object["device"] as? [String: Any],
+                  device["name"] as? String == "测试 Mac",
+                  device["platform"] as? String == "macos" else {
+                throw MockError.requestMismatch("创建空间请求未按协议携带邀请码")
+            }
+            return MockURLProtocol.response(
+                for: request,
+                status: 200,
+                json: """
+                {
+                  "ok": true,
+                  "data": {
+                    "vaultId": "vault-test",
+                    "device": {
+                      "id": "device-mac",
+                      "name": "测试 Mac",
+                      "platform": "macos",
+                      "token": "device-token"
+                    },
+                    "serverTime": 1000
+                  },
+                  "requestId": "req-create-vault"
+                }
+                """
+            )
+        }
+
+        let result = try await makeClient().createVault(
+            CreateVaultRequest(device: DeviceRegistration(
+                name: "测试 Mac",
+                platform: .macos
+            )),
+            inviteCode: inviteCode
+        )
+
+        #expect(result.vaultId == "vault-test")
+        #expect(result.device.id == "device-mac")
+    }
+
     @Test("sync 发送 Bearer 与精确 JSON 并解析响应")
     func testSync发送Bearer与精确JSON并解析响应() async throws {
         defer { MockURLProtocol.handler = nil }

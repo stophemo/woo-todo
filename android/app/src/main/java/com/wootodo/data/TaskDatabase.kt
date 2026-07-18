@@ -2,6 +2,7 @@ package com.wootodo.data
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteException
 import android.database.sqlite.SQLiteOpenHelper
 
 class TaskDatabase(context: Context) :
@@ -15,11 +16,15 @@ class TaskDatabase(context: Context) :
         if (oldVersion < 3) {
             migrateToVersionThree(database)
         }
+        if (oldVersion < 4) {
+            createDeferredDeletionSchema(database)
+        }
     }
 
     override fun onDowngrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        dropSchema(database)
-        createSchema(database)
+        throw SQLiteException(
+            "拒绝将任务数据库从版本 $oldVersion 降级到 $newVersion，以免清空本地数据",
+        )
     }
 
     private fun migrateToVersionThree(database: SQLiteDatabase) {
@@ -172,15 +177,18 @@ class TaskDatabase(context: Context) :
             )
             """.trimIndent(),
         )
+        createDeferredDeletionSchema(database)
     }
 
-    private fun dropSchema(database: SQLiteDatabase) {
-        database.execSQL("DROP TABLE IF EXISTS sync_applied_operations")
-        database.execSQL("DROP TABLE IF EXISTS sync_tombstones")
-        database.execSQL("DROP TABLE IF EXISTS sync_entity_versions")
-        database.execSQL("DROP TABLE IF EXISTS sync_outbox")
-        database.execSQL("DROP TABLE IF EXISTS sync_state")
-        database.execSQL("DROP TABLE IF EXISTS tasks")
+    private fun createDeferredDeletionSchema(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS sync_deferred_deletions (
+                entity_id TEXT NOT NULL PRIMARY KEY,
+                deleted_at INTEGER NOT NULL CHECK(deleted_at >= 0)
+            )
+            """.trimIndent(),
+        )
     }
 
     private fun tableExists(database: SQLiteDatabase, tableName: String): Boolean =
@@ -191,6 +199,6 @@ class TaskDatabase(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 3
+        const val DATABASE_VERSION = 4
     }
 }

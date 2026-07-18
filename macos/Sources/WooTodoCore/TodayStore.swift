@@ -110,8 +110,10 @@ public final class TodayStore: ObservableObject {
     /// 仅允许在同一级别内排序，跨级别调整应走编辑入口。
     public func move(tier: QuestTier, fromOffsets: IndexSet, toOffset: Int) {
         if perform({
-            var group = tasks.filter { $0.tier == tier }.sorted(by: TodoTask.displayOrder)
-            guard group.allSatisfy({ $0.status == .pending }) else { return }
+            // 已结算任务是只读记录，不应阻止同组剩余待办继续排序。
+            var group = tasks
+                .filter { $0.tier == tier && $0.status == .pending }
+                .sorted(by: TodoTask.displayOrder)
             let validOffsets = fromOffsets.filter { group.indices.contains($0) }.sorted()
             guard !validOffsets.isEmpty else { return }
 

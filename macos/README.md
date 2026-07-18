@@ -1,6 +1,6 @@
 # Woo Todo macOS 原生客户端
 
-这是面向 macOS Tahoe 26 的轻量原生骨架，使用 AppKit、SwiftUI 和系统 SQLite，未引入第三方运行时。Package 最低兼容 macOS 15，当前目标设备为 Apple M4 MacBook Air。
+这是面向 macOS Tahoe 26 的轻量原生客户端，使用 AppKit、SwiftUI 和系统 SQLite，未引入第三方运行时。Package 最低兼容 macOS 15，当前目标设备为 Apple M4 MacBook Air。
 
 ## 当前能力
 
@@ -41,4 +41,4 @@ swift run woo-todo-mac
 - `WooTodoMacApp`：AppKit 生命周期、悬浮面板、按需管理窗口、菜单栏、全局快捷键、同步运行时和 SwiftUI 界面。
 - 三组测试覆盖周期边界、重复补齐、确定性 ID、统计、持久化、加密协议、同步分页与配对状态机。
 
-应用不会自动部署或托管同步服务；首次使用前需按仓库文档部署 Cloudflare Workers + D1，并在“同步”页填写 HTTPS 根地址。当前阶段仍不含发布签名，macOS 端也不承担手机睡前提醒。
+应用不会自动部署或托管同步服务；首次使用前需按仓库文档部署 Cloudflare Workers + D1，并在“同步”页填写 HTTPS 根地址和部署者提供的创建空间邀请码。GitHub Release 产物使用 ad-hoc 签名且没有 Apple 公证；macOS 端也不承担手机睡前提醒。

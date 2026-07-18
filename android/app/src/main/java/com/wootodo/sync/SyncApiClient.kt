@@ -37,12 +37,13 @@ class SyncApiClient(
 ) : SyncTransport, PairingTransport {
     private val endpoint: URI = validateEndpoint(endpoint)
 
-    fun createVault(request: CreateVaultRequest): CreateVaultData = send(
+    fun createVault(request: CreateVaultRequest, inviteCode: String): CreateVaultData = send(
         method = "POST",
         path = listOf("v1", "vaults"),
         body = SyncJsonCodec.encode(request),
         credential = null,
         decoder = SyncJsonCodec::decodeCreateVaultData,
+        vaultCreationInviteCode = inviteCode,
     )
 
     fun createPairing(
@@ -131,6 +132,7 @@ class SyncApiClient(
         body: String?,
         credential: BearerCredential?,
         decoder: (String) -> T,
+        vaultCreationInviteCode: String? = null,
     ): T {
         val connection = try {
             connectionFactory(buildUrl(path)).apply {
@@ -141,6 +143,9 @@ class SyncApiClient(
                 setRequestProperty("Accept", "application/json")
                 credential?.let {
                     setRequestProperty("Authorization", "Bearer ${it.deviceToken}")
+                }
+                vaultCreationInviteCode?.let {
+                    setRequestProperty("X-Woo-Todo-Invite-Code", it)
                 }
                 if (body != null) {
                     doOutput = true

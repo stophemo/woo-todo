@@ -148,7 +148,7 @@ object SQLiteLocalMutationRecorder {
                 SyncOperationKind.REORDER,
             ),
         )
-        check(!isTombstoned(database, task.id)) {
+        check(!isDeletionBarrier(database, task.id)) {
             "已删除任务不能以相同 ID 复活"
         }
         val version = nextLocalVersion(database) ?: return
@@ -166,7 +166,11 @@ object SQLiteLocalMutationRecorder {
     }
 
     fun recordDeletion(database: SQLiteDatabase, entityId: String, deletedAt: Long) {
-        val version = nextLocalVersion(database) ?: return
+        val version = nextLocalVersion(database)
+        if (version == null) {
+            recordDeferredDeletion(database, entityId, deletedAt)
+            return
+        }
         val payload = TombstonePayload(id = entityId, deletedAt = deletedAt)
         enqueue(
             database = database,
@@ -178,6 +182,21 @@ object SQLiteLocalMutationRecorder {
         )
         writeVersion(database, entityId, version, isTombstone = true)
         writeTombstone(database, payload, version)
+        database.delete(TABLE_DEFERRED_DELETIONS, "entity_id = ?", arrayOf(entityId))
+    }
+
+    fun recordDeferredDeletion(database: SQLiteDatabase, entityId: String, deletedAt: Long) {
+        require(entityId.isNotBlank() && deletedAt >= 0)
+        val values = ContentValues(2).apply {
+            put("entity_id", entityId)
+            put("deleted_at", deletedAt)
+        }
+        database.insertWithOnConflict(
+            TABLE_DEFERRED_DELETIONS,
+            null,
+            values,
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
     }
 
     private fun nextLocalVersion(database: SQLiteDatabase): EntityVersion? {
@@ -200,10 +219,21 @@ object SQLiteLocalMutationRecorder {
         }
     }
 
-    private fun isTombstoned(database: SQLiteDatabase, entityId: String): Boolean =
+    /** 删除屏障是实体 ID 的永久终态，包含正式和尚未绑定时的 deferred 记录。 */
+    internal fun isDeletionBarrier(database: SQLiteDatabase, entityId: String): Boolean =
         database.rawQuery(
-            "SELECT 1 FROM $TABLE_VERSIONS WHERE entity_id = ? AND is_tombstone = 1 LIMIT 1",
-            arrayOf(entityId),
+            """
+            SELECT 1 FROM $TABLE_VERSIONS
+            WHERE entity_id = ? AND is_tombstone = 1
+            UNION ALL
+            SELECT 1 FROM $TABLE_TOMBSTONES
+            WHERE entity_id = ?
+            UNION ALL
+            SELECT 1 FROM $TABLE_DEFERRED_DELETIONS
+            WHERE entity_id = ?
+            LIMIT 1
+            """.trimIndent(),
+            arrayOf(entityId, entityId, entityId),
         ).use(Cursor::moveToFirst)
 
     private fun enqueue(
@@ -369,12 +399,30 @@ class SQLiteSyncStore(
                         while (cursor.moveToNext()) add(cursor.toTaskEntity())
                     }
                 }
+                val deferredDeletions = sqlite.query(
+                    TABLE_DEFERRED_DELETIONS,
+                    arrayOf("entity_id", "deleted_at"),
+                    null,
+                    null,
+                    null,
+                    null,
+                    "deleted_at ASC, entity_id ASC",
+                ).use { cursor ->
+                    buildList {
+                        while (cursor.moveToNext()) {
+                            add(cursor.getString(0) to cursor.getLong(1))
+                        }
+                    }
+                }
                 existingTasks.forEach { task ->
                     SQLiteLocalMutationRecorder.recordTask(
                         sqlite,
                         task,
                         SyncOperationKind.UPSERT,
                     )
+                }
+                deferredDeletions.forEach { (entityId, deletedAt) ->
+                    SQLiteLocalMutationRecorder.recordDeletion(sqlite, entityId, deletedAt)
                 }
             }
             sqlite.setTransactionSuccessful()
@@ -475,6 +523,7 @@ class SQLiteSyncStore(
         }
         val horizon = currentVersion?.version?.let { maxOf(it, incomingVersion) } ?: incomingVersion
         val taskDeleted = sqlite.delete("tasks", "id = ?", arrayOf(payload.id)) == 1
+        sqlite.delete(TABLE_DEFERRED_DELETIONS, "entity_id = ?", arrayOf(payload.id))
         writeTombstone(sqlite, payload, horizon)
         writeVersion(sqlite, payload.id, horizon, isTombstone = true)
         return taskDeleted
@@ -733,3 +782,4 @@ private const val TABLE_OUTBOX = "sync_outbox"
 private const val TABLE_VERSIONS = "sync_entity_versions"
 private const val TABLE_TOMBSTONES = "sync_tombstones"
 private const val TABLE_APPLIED = "sync_applied_operations"
+private const val TABLE_DEFERRED_DELETIONS = "sync_deferred_deletions"

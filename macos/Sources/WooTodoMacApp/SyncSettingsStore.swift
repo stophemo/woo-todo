@@ -16,6 +16,11 @@ struct SyncConnectionSummary: Equatable {
 private enum SyncSetupError: LocalizedError {
     case credentialsAlreadyStored
     case credentialsRollbackFailed(original: String, rollback: String)
+    case invalidEndpoint
+    case missingInviteCode
+    case invalidInviteCodeFormat
+    case currentDeviceOnlyEndpoint
+    case includesAPIVersion
 
     var errorDescription: String? {
         switch self {
@@ -23,6 +28,34 @@ private enum SyncSetupError: LocalizedError {
             "Keychain 已存在同步身份，请重新启动应用后再操作"
         case .credentialsRollbackFailed(let original, let rollback):
             "同步绑定失败（\(original)），且无法恢复原 Keychain 凭据（\(rollback)）"
+        case .invalidEndpoint:
+            "请输入已部署同步服务的 HTTPS 根地址，例如 https://你的-worker.workers.dev"
+        case .missingInviteCode:
+            "请输入部署同步服务时设置的创建邀请码"
+        case .invalidInviteCodeFormat:
+            "创建邀请码须为 16–256 个字符，且只能包含无空格的可打印 ASCII 字符"
+        case .currentDeviceOnlyEndpoint:
+            "127.0.0.1/localhost 只代表当前 Mac，手机会把它理解为手机自己。请改用 Mac 与 Android 都能访问的 HTTPS Worker 地址。"
+        case .includesAPIVersion:
+            "请填写同步服务根地址，不要在末尾添加 /v1；应用会自动拼接 API 路径。"
+        }
+    }
+}
+
+private enum SyncUserAction: Equatable {
+    case createVault
+    case pairDevice
+    case loadDevices
+    case revokeDevice
+    case synchronize
+
+    var label: String {
+        switch self {
+        case .createVault: "创建同步空间"
+        case .pairDevice: "设备配对"
+        case .loadDevices: "获取设备列表"
+        case .revokeDevice: "撤销设备"
+        case .synchronize: "同步"
         }
     }
 }
@@ -58,6 +91,15 @@ final class SyncSettingsStore: ObservableObject {
     @Published private(set) var actionErrorMessage: String?
     @Published private(set) var isBackupBusy = false
     @Published private(set) var backupStatusMessage: String?
+
+    var endpointSetupAssessment: SyncEndpointSetupAssessment {
+        SyncEndpointSetupPolicy.assess(endpointText)
+    }
+
+    var canCreateVault: Bool {
+        if case .ready = endpointSetupAssessment { return true }
+        return false
+    }
 
     var onRemoteChanges: (() -> Void)?
     var onLifecycleRefresh: (() -> Void)?
@@ -183,13 +225,14 @@ final class SyncSettingsStore: ObservableObject {
         }
     }
 
-    func createVault() async {
+    func createVault(inviteCode rawInviteCode: String) async {
         guard !isCreatingVault, connection == nil else { return }
         actionErrorMessage = nil
         isCreatingVault = true
         defer { isCreatingVault = false }
 
         do {
+            let inviteCode = try validatedInviteCode(rawInviteCode)
             let previousCredentials = try credentialsStore.load()
             guard previousCredentials == nil else {
                 throw SyncSetupError.credentialsAlreadyStored
@@ -197,12 +240,13 @@ final class SyncSettingsStore: ObservableObject {
             let endpoint = try validatedEndpoint()
             let client = try SyncAPIClient(endpoint: endpoint)
             let vaultKey = try SecureRandom.bytes(count: AES256GCM.keyByteCount)
-            let created = try await client.createVault(CreateVaultRequest(
-                device: DeviceRegistration(
+            let created = try await client.createVault(
+                CreateVaultRequest(device: DeviceRegistration(
                     name: Self.localDeviceName,
                     platform: .macos
-                )
-            ))
+                )),
+                inviteCode: inviteCode
+            )
             let newCredentials = SyncCredentials(
                 endpoint: endpoint,
                 vaultId: created.vaultId,
@@ -237,12 +281,17 @@ final class SyncSettingsStore: ObservableObject {
             requestSync(.localChange)
             await refreshDevices()
         } catch {
-            actionErrorMessage = error.localizedDescription
-            logger.error("创建同步空间失败：\(error.localizedDescription, privacy: .public)")
+            actionErrorMessage = userFacingMessage(for: error, action: .createVault)
+            // 邀请码只存在于本次调用参数中，失败日志也不记录请求或服务端原文。
+            logger.error("创建同步空间失败，界面已显示可操作提示")
         }
     }
 
-    func exportBackup(passphrase: String, confirmation: String) async {
+    func exportBackup(
+        passphrase: String,
+        confirmation: String,
+        includeSyncIdentity: Bool
+    ) async {
         guard !isBackupBusy else { return }
         guard passphrase == confirmation else {
             actionErrorMessage = BackupUIError.passphraseMismatch.localizedDescription
@@ -262,19 +311,23 @@ final class SyncSettingsStore: ObservableObject {
         backupStatusMessage = nil
         defer { isBackupBusy = false }
         do {
-            let payloads = try repository.makeBackupPayloads()
-            let storedCredentials = try credentialsStore.load()
+            let backup = try repository.makeBackupContents()
+            let storedCredentials = includeSyncIdentity
+                ? try credentialsStore.load()
+                : nil
             let exportedAt = Int64((Date().timeIntervalSince1970 * 1_000).rounded())
             let snapshot = try BackupSnapshot(
                 exportedAt: exportedAt,
-                tasks: payloads,
+                tasks: backup.tasks,
+                tombstones: backup.tombstones,
                 syncCredentials: storedCredentials.map(BackupSyncCredentials.init)
             )
             let data = try await Task.detached(priority: .userInitiated) {
                 try BackupPackageCodec.seal(snapshot, passphrase: passphrase)
             }.value
             try data.write(to: destination, options: .atomic)
-            backupStatusMessage = "已导出 \(payloads.count) 条任务。请把文件保存到夸克网盘，并单独保管口令。"
+            let identitySummary = storedCredentials == nil ? "不含同步身份" : "包含同步身份"
+            backupStatusMessage = "已导出 \(backup.tasks.count) 条任务和 \(backup.tombstones.count) 条删除记录（\(identitySummary)）。请把文件保存到夸克网盘，并单独保管口令。"
         } catch {
             actionErrorMessage = error.localizedDescription
             logger.error("导出加密备份失败：\(error.localizedDescription, privacy: .public)")
@@ -313,7 +366,10 @@ final class SyncSettingsStore: ObservableObject {
                 let data = try Data(contentsOf: source, options: .mappedIfSafe)
                 return try BackupPackageCodec.open(data, passphrase: passphrase)
             }.value
-            try repository.restoreBackupPayloads(snapshot.tasks)
+            try repository.restoreBackupPayloads(
+                snapshot.tasks,
+                tombstones: snapshot.tombstones
+            )
 
             if let recovery = snapshot.syncCredentials {
                 let restoredCredentials = try recovery.credentials()
@@ -338,7 +394,7 @@ final class SyncSettingsStore: ObservableObject {
             }
 
             onRemoteChanges?()
-            backupStatusMessage = "已恢复 \(snapshot.tasks.count) 条任务"
+            backupStatusMessage = "已恢复 \(snapshot.tasks.count) 条任务和 \(snapshot.tombstones.count) 条删除记录"
             if snapshot.syncCredentials != nil {
                 requestSync(.localChange)
                 await refreshDevices()
@@ -391,7 +447,7 @@ final class SyncSettingsStore: ObservableObject {
             publishPairingState()
             startPairingPolling()
         } catch {
-            pairingMachine.fail(error.localizedDescription)
+            pairingMachine.fail(userFacingMessage(for: error, action: .pairDevice))
             pairingContext = nil
             pairingQRCodePayload = nil
             publishPairingState()
@@ -442,7 +498,7 @@ final class SyncSettingsStore: ObservableObject {
             } else {
                 try? pairingMachine.cancelConfirmation()
             }
-            actionErrorMessage = error.localizedDescription
+            actionErrorMessage = userFacingMessage(for: error, action: .pairDevice)
             publishPairingState()
             logger.error("确认配对失败：\(error.localizedDescription, privacy: .public)")
         }
@@ -471,7 +527,7 @@ final class SyncSettingsStore: ObservableObject {
                 deviceToken: credentials.deviceToken
             ).devices
         } catch {
-            actionErrorMessage = error.localizedDescription
+            actionErrorMessage = userFacingMessage(for: error, action: .loadDevices)
             logger.error("获取设备列表失败：\(error.localizedDescription, privacy: .public)")
         }
     }
@@ -489,7 +545,7 @@ final class SyncSettingsStore: ObservableObject {
             )
             await refreshDevices()
         } catch {
-            actionErrorMessage = error.localizedDescription
+            actionErrorMessage = userFacingMessage(for: error, action: .revokeDevice)
             logger.error("撤销设备失败：\(error.localizedDescription, privacy: .public)")
         }
     }
@@ -539,7 +595,9 @@ final class SyncSettingsStore: ObservableObject {
                 publishRuntimeState()
                 break
             } catch {
-                trigger = runtimeMachine.fail(message: error.localizedDescription)
+                trigger = runtimeMachine.fail(
+                    message: userFacingMessage(for: error, action: .synchronize)
+                )
                 publishRuntimeState()
                 logger.notice("后台同步暂时失败：\(error.localizedDescription, privacy: .public)")
             }
@@ -636,7 +694,7 @@ final class SyncSettingsStore: ObservableObject {
             switch apiError {
             case .transport, .invalidHTTPResponse:
                 // 临时网络失败不结束 10 分钟配对窗口，下一轮继续尝试。
-                actionErrorMessage = "暂时无法查询配对状态：\(apiError.localizedDescription)"
+                actionErrorMessage = "暂时无法连接配对服务，将在二维码有效期内自动重试。请检查 Mac 网络与 Worker 状态。"
                 return
             case .server(let statusCode, _, _) where statusCode == 429 || statusCode >= 500:
                 actionErrorMessage = "配对服务暂时不可用，将自动重试"
@@ -677,11 +735,72 @@ final class SyncSettingsStore: ObservableObject {
     }
 
     private func validatedEndpoint() throws -> URL {
-        let trimmed = endpointText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let endpoint = URL(string: trimmed), SyncEndpointPolicy.isAllowed(endpoint) else {
-            throw SyncAPIError.invalidEndpoint
+        switch endpointSetupAssessment {
+        case .ready(let endpoint):
+            return endpoint
+        case .empty, .invalid:
+            throw SyncSetupError.invalidEndpoint
+        case .currentDeviceOnly:
+            throw SyncSetupError.currentDeviceOnlyEndpoint
+        case .includesAPIVersion:
+            throw SyncSetupError.includesAPIVersion
         }
-        return endpoint
+    }
+
+    private func validatedInviteCode(_ rawValue: String) throws -> String {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            throw SyncSetupError.missingInviteCode
+        }
+        guard (16...256).contains(value.unicodeScalars.count),
+              value.unicodeScalars.allSatisfy({ (0x21...0x7e).contains($0.value) }) else {
+            throw SyncSetupError.invalidInviteCodeFormat
+        }
+        return value
+    }
+
+    private func userFacingMessage(for error: Error, action: SyncUserAction) -> String {
+        guard let apiError = error as? SyncAPIError else {
+            return error.localizedDescription
+        }
+        switch apiError {
+        case .invalidEndpoint:
+            return SyncSetupError.invalidEndpoint.localizedDescription
+        case .transport:
+            return "无法连接同步服务。请确认 Worker 已部署、服务地址能在 Mac 与手机上访问，并检查网络后重试。"
+        case .invalidHTTPResponse:
+            return "已连接到该地址，但没有收到有效的 HTTP 响应。请确认它是 Woo Todo Worker 的根地址。"
+        case .decoding:
+            return "服务已响应，但返回格式与当前版本不兼容。请确认没有把 Vercel 主页或其他网页地址当作同步服务。"
+        case .encoding:
+            return "无法准备\(action.label)请求，请重新启动应用后重试。"
+        case .server(let statusCode, let payload, let requestId):
+            let requestSuffix = requestId.map { "（请求 ID：\($0)）" } ?? ""
+            if payload.code == "INVALID_INVITE_CODE" {
+                return "创建邀请码无效或已失效，请向同步服务部署者确认后重试。\(requestSuffix)"
+            }
+            if payload.code == "SERVER_MISCONFIGURED", action == .createVault {
+                return "同步服务尚未配置创建邀请码，无法创建空间。请由部署者配置 VAULT_CREATION_INVITE_CODE 后重新部署。\(requestSuffix)"
+            }
+            if payload.code == "VAULT_CAPACITY_REACHED" {
+                return "同步空间已达到存储上限，本地待发送任务仍会保留。请先导出加密备份，等待后续压缩或迁移工具。\(requestSuffix)"
+            }
+            switch statusCode {
+            case 401, 403:
+                return "当前设备的同步凭据已失效，服务拒绝\(action.label)。请检查已绑定设备状态。\(requestSuffix)"
+            case 404 where action == .createVault,
+                 405 where action == .createVault:
+                return "找不到 Woo Todo 创建空间接口。请填写 Worker 根地址，末尾不要添加 /v1。\(requestSuffix)"
+            case 410 where action == .pairDevice:
+                return "配对二维码已过期，请重新生成。\(requestSuffix)"
+            case 429:
+                return "请求过于频繁，请稍后再试。\(requestSuffix)"
+            case 500...599:
+                return "同步服务暂时异常，\(action.label)未完成；本地任务不受影响，请稍后重试。\(requestSuffix)"
+            default:
+                return "服务拒绝\(action.label)（\(payload.code)）：\(payload.message)\(requestSuffix)"
+            }
+        }
     }
 
     private static func sqliteConfiguration(

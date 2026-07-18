@@ -73,5 +73,5 @@ data class TaskDraft(
     val targetDate: LocalDate? = null,
     val questLine: QuestLine = QuestLine.MAIN,
     val recurrence: Recurrence = Recurrence.ONCE,
-    val sortOrder: Int = 0,
+    val sortOrder: Int? = null,
 )

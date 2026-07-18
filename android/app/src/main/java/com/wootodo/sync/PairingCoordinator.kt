@@ -1,5 +1,6 @@
 package com.wootodo.sync
 
+import java.net.URI
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
@@ -22,6 +23,9 @@ data class PairingCompletion(
 
 sealed class PairingException(message: String) : Exception(message) {
     data object AlreadyPaired : PairingException("本机已经完成配对")
+    data object CurrentDeviceOnlyEndpoint : PairingException(
+        "这个二维码使用了 127.0.0.1/localhost，它在手机上只代表手机自己。请在 Mac 改用两台设备都能访问的 HTTPS Worker 地址，然后重新创建同步空间。",
+    )
     data object InvalidClaim : PairingException("服务端返回了无效的配对认领结果")
     data object InvalidResult : PairingException("服务端返回了不一致的配对结果")
     data object Expired : PairingException("配对二维码已过期，请在 Mac 上重新生成")
@@ -59,6 +63,9 @@ class PairingCoordinator(
         onProgress: (PairingProgress) -> Unit = {},
     ): PairingCompletion {
         if (credentialsStore.load() != null) throw PairingException.AlreadyPaired
+        if (!SyncEndpointPolicy.isCrossDevice(URI(link.endpoint))) {
+            throw PairingException.CurrentDeviceOnlyEndpoint
+        }
         val normalizedDeviceName = normalizeDeviceName(deviceName)
         val keyPair = keyPairFactory()
         val tokenBytes = tokenFactory().also {

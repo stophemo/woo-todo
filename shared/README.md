@@ -7,7 +7,7 @@
 - `schema/task.schema.json`：解密后的任务或 tombstone 正文。
 - `schema/sync.schema.json`：`POST /v1/sync` 的裸 `data` 请求/响应结构。
 - `schema/backup.schema.json`：`.wootodo` 加密文件外层格式。
-- `schema/backup-plaintext.schema.json`：备份解密后的任务快照与恢复凭据。
+- `schema/backup-plaintext.schema.json`：备份解密后的任务、可选 tombstone 删除屏障与恢复凭据。
 - `fixtures/period-cases.json`：`Asia/Shanghai` 跨日、周、月边界。
 - `fixtures/task-payloads.json`：任务正文和历史状态样例。
 - `fixtures/task-validation-cases.json`：Wire v1 时区、数值上限与周期起点的跨端正反例。

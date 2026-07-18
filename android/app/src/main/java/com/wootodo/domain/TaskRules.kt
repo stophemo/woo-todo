@@ -44,8 +44,8 @@ object TaskRules {
 
     val ordering: Comparator<Task> =
         compareBy<Task> { questRank(it.questLine) }
-            .thenBy { it.sortOrder }
             .thenBy { statusRank(it.status) }
+            .thenBy { it.sortOrder }
             .thenBy { it.createdAt }
             .thenBy { it.id }
 

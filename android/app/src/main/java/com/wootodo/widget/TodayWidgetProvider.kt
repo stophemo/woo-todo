@@ -96,8 +96,11 @@ object TodayWidgetUpdater {
     suspend fun update(context: Context, widgetIds: IntArray) {
         if (widgetIds.isEmpty()) return
         val manager = AppWidgetManager.getInstance(context)
-        val repository = (context.applicationContext as WooTodoApplication).taskRepository
-        repository.autoPassExpired()
+        val application = context.applicationContext as WooTodoApplication
+        val repository = application.taskRepository
+        if (repository.autoPassExpired() > 0) {
+            application.notifyLocalMutation()
+        }
         val tasks = repository.tasksForToday().take(MAX_VISIBLE_TASKS)
 
         widgetIds.forEach { widgetId ->

@@ -1,4 +1,7 @@
-export type CredentialPurpose = "device-token" | "pairing-secret";
+export type CredentialPurpose =
+  | "device-token"
+  | "pairing-secret"
+  | "vault-creation-source";
 
 const encoder = new TextEncoder();
 

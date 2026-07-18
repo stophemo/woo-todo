@@ -29,7 +29,10 @@ export interface D1Database {
 export interface Env {
   DB: D1Database;
   TOKEN_PEPPER: string;
+  VAULT_CREATION_INVITE_CODE: string;
   APP_ENV?: string;
+  VAULT_CREATION_SOURCE_LIMIT?: string;
+  VAULT_CREATION_DAILY_LIMIT?: string;
 }
 
 export interface AuthenticatedDevice {
@@ -99,4 +102,9 @@ export async function authenticateDevice(
 
 export function changedRows(result: D1Result | undefined): number {
   return result?.meta?.changes ?? 0;
+}
+
+export function hasDatabaseSignal(error: unknown, signal: string): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(signal);
 }

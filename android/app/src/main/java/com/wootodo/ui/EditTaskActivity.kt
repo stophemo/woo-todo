@@ -50,6 +50,7 @@ class EditTaskActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_edit_task)
+        applySystemBarInsets(findViewById(R.id.edit_task_root))
         pageTitle = findViewById(R.id.page_title)
         titleInput = findViewById(R.id.title_input)
         questSpinner = findViewById(R.id.quest_spinner)
@@ -60,7 +61,8 @@ class EditTaskActivity : AppCompatActivity() {
         deleteButton = findViewById(R.id.delete_button)
         repository = (application as WooTodoApplication).taskRepository
 
-        intent.getStringExtra(EXTRA_TARGET_DATE)?.let { encoded ->
+        val restoredDate = savedInstanceState?.getString(STATE_SELECTED_DATE)
+        (restoredDate ?: intent.getStringExtra(EXTRA_TARGET_DATE))?.let { encoded ->
             runCatching { LocalDate.parse(encoded) }.getOrNull()?.let { selectedDate = it }
         }
         setupSpinners()
@@ -70,14 +72,31 @@ class EditTaskActivity : AppCompatActivity() {
 
         val taskId = intent.getStringExtra(EXTRA_TASK_ID)
         if (taskId == null) {
-            val initialType = intent.getStringExtra(EXTRA_TIME_TYPE)
-                ?.let { runCatching { TaskTimeType.fromRaw(it) }.getOrNull() }
-                ?: TaskTimeType.DAY
-            timeSpinner.setSelection(timeTypes.indexOf(initialType))
-            updateDateButton(initialType)
+            if (savedInstanceState != null) {
+                restoreDraftState(savedInstanceState)
+            } else {
+                val initialType = intent.getStringExtra(EXTRA_TIME_TYPE)
+                    ?.let { runCatching { TaskTimeType.fromRaw(it) }.getOrNull() }
+                    ?: TaskTimeType.DAY
+                timeSpinner.setSelection(timeTypes.indexOf(initialType))
+                updateDateButton(initialType)
+            }
         } else {
-            loadTask(taskId)
+            loadTask(taskId, savedInstanceState)
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_TITLE, titleInput.text.toString())
+        outState.putString(STATE_SELECTED_DATE, selectedDate.toString())
+        questLines.getOrNull(questSpinner.selectedItemPosition)?.let {
+            outState.putString(STATE_QUEST_LINE, it.rawValue)
+        }
+        timeTypes.getOrNull(timeSpinner.selectedItemPosition)?.let {
+            outState.putString(STATE_TIME_TYPE, it.rawValue)
+        }
+        outState.putString(STATE_RECURRENCE, selectedRecurrenceOrOnce().rawValue)
+        super.onSaveInstanceState(outState)
     }
 
     private fun setupSpinners() {
@@ -107,7 +126,7 @@ class EditTaskActivity : AppCompatActivity() {
     private fun selectedRecurrenceOrOnce(): Recurrence =
         recurrenceOptions.getOrNull(recurrenceSpinner.selectedItemPosition) ?: Recurrence.ONCE
 
-    private fun loadTask(taskId: String) {
+    private fun loadTask(taskId: String, restoredState: Bundle?) {
         isLoadingTask = true
         lifecycleScope.launch {
             val task = repository.get(taskId)
@@ -118,16 +137,45 @@ class EditTaskActivity : AppCompatActivity() {
             editingTask = task
             val pending = task.status == TaskStatus.PENDING
             pageTitle.setText(R.string.edit_task)
-            titleInput.setText(task.title)
-            questSpinner.setSelection(questLines.indexOf(task.questLine))
-            selectedDate = task.targetDate ?: TaskDateRules.today()
-            timeSpinner.setSelection(timeTypes.indexOf(task.timeType))
-            updateRecurrenceOptions(task.timeType, task.recurrence)
-            updateDateButton(task.timeType)
+            if (restoredState == null) {
+                titleInput.setText(task.title)
+                questSpinner.setSelection(questLines.indexOf(task.questLine))
+                selectedDate = task.targetDate ?: TaskDateRules.today()
+                timeSpinner.setSelection(timeTypes.indexOf(task.timeType))
+                updateRecurrenceOptions(task.timeType, task.recurrence)
+                updateDateButton(task.timeType)
+            } else {
+                // 旋转后的异步数据库读取只恢复实体身份，不能覆盖用户尚未保存的草稿。
+                restoreDraftState(restoredState, fallback = task)
+            }
             deleteButton.isVisible = pending
             saveButton.isEnabled = pending
             isLoadingTask = false
         }
+    }
+
+    private fun restoreDraftState(state: Bundle, fallback: Task? = null) {
+        titleInput.setText(state.getString(STATE_TITLE) ?: fallback?.title.orEmpty())
+        selectedDate = state.getString(STATE_SELECTED_DATE)
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: fallback?.targetDate
+            ?: selectedDate
+        val questLine = state.getString(STATE_QUEST_LINE)
+            ?.let { runCatching { QuestLine.fromRaw(it) }.getOrNull() }
+            ?: fallback?.questLine
+            ?: QuestLine.MAIN
+        val timeType = state.getString(STATE_TIME_TYPE)
+            ?.let { runCatching { TaskTimeType.fromRaw(it) }.getOrNull() }
+            ?: fallback?.timeType
+            ?: TaskTimeType.DAY
+        val recurrence = state.getString(STATE_RECURRENCE)
+            ?.let { runCatching { Recurrence.fromRaw(it) }.getOrNull() }
+            ?: fallback?.recurrence
+            ?: Recurrence.ONCE
+        questSpinner.setSelection(questLines.indexOf(questLine))
+        timeSpinner.setSelection(timeTypes.indexOf(timeType))
+        updateRecurrenceOptions(timeType, recurrence)
+        updateDateButton(timeType)
     }
 
     private fun saveTask() {
@@ -144,7 +192,6 @@ class EditTaskActivity : AppCompatActivity() {
             targetDate = if (type == TaskTimeType.LEISURE) null else selectedDate,
             questLine = questLines[questSpinner.selectedItemPosition],
             recurrence = selectedRecurrenceOrOnce(),
-            sortOrder = editingTask?.sortOrder ?: 0,
         )
         saveButton.isEnabled = false
         lifecycleScope.launch {
@@ -224,5 +271,10 @@ class EditTaskActivity : AppCompatActivity() {
         const val EXTRA_TASK_ID = "task_id"
         const val EXTRA_TIME_TYPE = "time_type"
         const val EXTRA_TARGET_DATE = "target_date"
+        private const val STATE_TITLE = "editor_title"
+        private const val STATE_SELECTED_DATE = "editor_selected_date"
+        private const val STATE_QUEST_LINE = "editor_quest_line"
+        private const val STATE_TIME_TYPE = "editor_time_type"
+        private const val STATE_RECURRENCE = "editor_recurrence"
     }
 }

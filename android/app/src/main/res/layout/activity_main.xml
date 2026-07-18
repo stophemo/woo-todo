@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
@@ -19,6 +20,7 @@
             android:orientation="horizontal">
 
             <TextView
+                android:id="@+id/screen_title"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -77,6 +79,12 @@
                     android:layout_height="wrap_content"
                     android:checked="true"
                     android:text="@string/scope_today" />
+
+                <RadioButton
+                    android:id="@+id/scope_tomorrow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/scope_tomorrow" />
 
                 <RadioButton
                     android:id="@+id/scope_week"

@@ -73,6 +73,29 @@ class SyncRuntimeTest {
         )
     }
 
+    @Test
+    fun `同步空间达到容量上限时保留本地任务且不自动重试`() = runBlocking {
+        val error = SyncApiException.Server(
+            statusCode = 507,
+            payload = ServerErrorPayload("VAULT_CAPACITY_REACHED", "同步空间已满"),
+            requestId = "request-capacity",
+        )
+        val runtime = SyncRuntime(
+            runnerFactory = { SyncRunner { throw error } },
+            clockMillis = { 456L },
+        )
+
+        assertEquals(SyncExecutionResult.Failed(retryable = false), runtime.synchronize())
+        assertEquals(
+            SyncRuntimeState.Failed(
+                message = "同步空间已达到存储上限，本地待发送任务仍会保留；请先导出加密备份",
+                retryable = false,
+                finishedAt = 456L,
+            ),
+            runtime.state.value,
+        )
+    }
+
     private fun serverError(status: Int): SyncApiException.Server = SyncApiException.Server(
         statusCode = status,
         payload = ServerErrorPayload("TEST_$status", "测试错误"),

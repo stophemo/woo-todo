@@ -68,6 +68,7 @@ class BackupTransferTest {
             state = WireTaskState.PASS,
             settledAt = 12_345,
         )
+        val deleted = TombstonePayload(id = "task-deleted-00003", deletedAt = 13_579)
         val credentials = credentials()
 
         val result = coordinator.restore(
@@ -75,6 +76,7 @@ class BackupTransferTest {
                 exportedAt = 20_000,
                 tasks = listOf(completed, passed),
                 syncCredentials = BackupSyncCredentials.from(credentials),
+                tombstones = listOf(deleted),
             ),
         )
 
@@ -82,6 +84,8 @@ class BackupTransferTest {
         assertTrue(result.syncCredentialsRestored)
         assertEquals(listOf(completed, passed), database.committedTasks)
         assertEquals(listOf(completed, passed), database.baselineTasks)
+        assertEquals(listOf(deleted), database.committedTombstones)
+        assertEquals(listOf(deleted), database.baselineTombstones)
         assertEquals(completed.id, database.committedTasks[0].id)
         assertEquals(WireTaskState.COMPLETED, database.committedTasks[0].state)
         assertEquals(9_876L, database.committedTasks[0].settledAt)
@@ -114,19 +118,50 @@ class BackupTransferTest {
         val database = FakeBackupDatabase()
         val credentialsStore = FakeCredentialsStore()
         val task = task("task-local-only-01", WireTaskState.PENDING, null)
+        val deleted = TombstonePayload(id = "task-local-deleted", deletedAt = 8_765)
 
         val result = BackupRestoreCoordinator(database, credentialsStore).restore(
             BackupSnapshot(
                 exportedAt = 20_000,
                 tasks = listOf(task),
                 syncCredentials = null,
+                tombstones = listOf(deleted),
             ),
         )
 
         assertEquals(listOf(task), database.committedTasks)
+        assertEquals(listOf(deleted), database.committedTombstones)
         assertTrue(database.baselineTasks.isEmpty())
+        assertTrue(database.baselineTombstones.isEmpty())
         assertNull(credentialsStore.stored)
         assertFalse(result.syncCredentialsRestored)
+        assertThrows(BackupTransferException.ExistingTasks::class.java) {
+            BackupRestoreCoordinator(database, credentialsStore).requireReady()
+        }
+    }
+
+    @Test
+    fun `导出服务同时封装任务与删除屏障`() {
+        val database = FakeBackupDatabase()
+        val storedTask = task("task-export-local-1", WireTaskState.PENDING, null)
+        val deleted = TombstonePayload(id = "task-export-deleted", deletedAt = 8_765)
+        database.committedTasks += storedTask
+        database.committedTombstones += deleted
+        database.state = pristineState().copy(taskCount = 1, tombstoneCount = 1)
+
+        val backup = BackupTransferService(
+            database = database,
+            credentialsStore = FakeCredentialsStore(),
+            clockMillis = { 30_000 },
+        ).createEncryptedBackup(
+            passphrase = "这是一个满足长度要求的导出口令",
+            confirmation = "这是一个满足长度要求的导出口令",
+            includeSyncCredentials = false,
+        )
+
+        val snapshot = BackupPackageCodec.open(backup, "这是一个满足长度要求的导出口令")
+        assertEquals(listOf(storedTask), snapshot.tasks)
+        assertEquals(listOf(deleted), snapshot.tombstones)
     }
 
     @Test
@@ -253,22 +288,33 @@ class BackupTransferTest {
             appliedOperationCount = 0,
         )
         val committedTasks = mutableListOf<TaskInstancePayload>()
+        val committedTombstones = mutableListOf<TombstonePayload>()
         val baselineTasks = mutableListOf<TaskInstancePayload>()
+        val baselineTombstones = mutableListOf<TombstonePayload>()
         var boundDeviceId: String? = null
 
         override fun readState(): BackupDatabaseState = state
 
         override fun readTaskSnapshot(): BackupTaskSnapshot =
-            BackupTaskSnapshot(state, committedTasks.toList())
+            BackupTaskSnapshot(
+                state = state,
+                tasks = committedTasks.toList(),
+                tombstones = committedTombstones.toList(),
+            )
 
         override fun <T> inTransaction(block: (BackupRestoreTransaction) -> T): T {
             val pendingTasks = mutableListOf<TaskInstancePayload>()
+            val pendingTombstones = mutableListOf<TombstonePayload>()
             var pendingCredentials: SyncCredentials? = null
             val transaction = object : BackupRestoreTransaction {
                 override fun readState(): BackupDatabaseState = state
 
                 override fun insertTask(task: TaskInstancePayload) {
                     pendingTasks += task
+                }
+
+                override fun insertTombstone(tombstone: TombstonePayload) {
+                    pendingTombstones += tombstone
                 }
 
                 override fun bindIdentityAndCreateBaseline(credentials: SyncCredentials) {
@@ -278,19 +324,26 @@ class BackupTransferTest {
             }
             val result = block(transaction)
             committedTasks += pendingTasks
+            committedTombstones += pendingTombstones
             pendingCredentials?.let { credentials ->
                 baselineTasks += pendingTasks
+                baselineTombstones += pendingTombstones
                 boundDeviceId = credentials.deviceId
+                val mutationCount = pendingTasks.size + pendingTombstones.size
                 state = state.copy(
                     taskCount = pendingTasks.size,
                     vaultId = credentials.vaultId,
                     deviceId = credentials.deviceId,
-                    lamport = pendingTasks.size.toLong(),
-                    outboxCount = pendingTasks.size,
-                    entityVersionCount = pendingTasks.size,
+                    lamport = mutationCount.toLong(),
+                    outboxCount = mutationCount,
+                    entityVersionCount = mutationCount,
+                    tombstoneCount = pendingTombstones.size,
                 )
             } ?: run {
-                state = state.copy(taskCount = pendingTasks.size)
+                state = state.copy(
+                    taskCount = pendingTasks.size,
+                    tombstoneCount = pendingTombstones.size,
+                )
             }
             return result
         }

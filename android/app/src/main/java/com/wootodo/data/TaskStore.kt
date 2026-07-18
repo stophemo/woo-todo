@@ -38,6 +38,12 @@ interface TaskStore {
 
     suspend fun getById(id: String): TaskEntity?
 
+    suspend fun maximumSortOrder(
+        timeType: TaskTimeType,
+        targetDate: LocalDate?,
+        questLine: QuestLine,
+    ): Int?
+
     suspend fun insert(task: TaskEntity)
 
     suspend fun update(task: TaskEntity): Boolean
@@ -140,6 +146,26 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         getById(database.readableDatabase, id)
     }
 
+    override suspend fun maximumSortOrder(
+        timeType: TaskTimeType,
+        targetDate: LocalDate?,
+        questLine: QuestLine,
+    ): Int? = withContext(Dispatchers.IO) {
+        val targetClause = if (targetDate == null) "target_date IS NULL" else "target_date = ?"
+        val arguments = buildList {
+            add(timeType.rawValue)
+            add(questLine.rawValue)
+            if (targetDate != null) add(targetDate.toString())
+        }.toTypedArray()
+        database.readableDatabase.rawQuery(
+            "SELECT MAX(sort_order) FROM tasks " +
+                "WHERE time_type = ? AND quest_line = ? AND $targetClause",
+            arguments,
+        ).use { cursor ->
+            if (!cursor.moveToFirst() || cursor.isNull(0)) null else cursor.getInt(0)
+        }
+    }
+
     override suspend fun insert(task: TaskEntity): Unit = withContext(Dispatchers.IO) {
         val sqlite = database.writableDatabase
         sqlite.beginTransaction()
@@ -233,7 +259,9 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
                             SyncOperationKind.PASS
                         },
                     )
-                    nextTask(current)?.let { next ->
+                    nextTask(current)?.takeUnless { next ->
+                        SQLiteLocalMutationRecorder.isDeletionBarrier(sqlite, next.id)
+                    }?.let { next ->
                         val inserted = sqlite.insertWithOnConflict(
                             TABLE_TASKS,
                             null,

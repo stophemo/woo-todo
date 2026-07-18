@@ -13,7 +13,11 @@ import com.wootodo.sync.SyncApiClient
 import com.wootodo.sync.SyncApiException
 import com.wootodo.sync.SyncCredentialsStore
 import com.wootodo.sync.SyncCryptoException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.CancellationException
+import javax.net.ssl.SSLException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -142,11 +146,25 @@ class PairingViewModel(
     }
 }
 
-private object PairingErrorMessage {
+internal object PairingErrorMessage {
     fun from(error: Exception): String = when (error) {
         PairingException.AlreadyPaired -> "本机已完成配对，无需再次扫码"
         is PairingException -> requireNotNull(error.message)
-        is SyncApiException.Transport -> "网络连接失败，请保持联网后重新扫码"
+        is SyncApiException.Transport -> when (error.cause) {
+            is UnknownHostException ->
+                "找不到同步服务。请确认 Mac 使用的是已部署 Worker 的 HTTPS 根地址，并重新生成二维码。"
+
+            is ConnectException ->
+                "无法连接同步服务。Worker 可能尚未部署或暂时离线，请在 Mac 检查服务地址后重新生成二维码。"
+
+            is SocketTimeoutException ->
+                "连接同步服务超时。请检查手机网络与 Worker 状态，然后重新扫码。"
+
+            is SSLException ->
+                "同步服务的 HTTPS 证书校验失败。请在 Mac 改用证书有效的 Worker 地址后重新生成二维码。"
+
+            else -> "无法连接同步服务。请检查手机网络，并确认二维码来自可公开访问的 HTTPS Worker。"
+        }
         is SyncApiException.Decoding -> "同步服务响应无法识别，请更新应用后重试"
         is SyncApiException.InvalidEndpoint -> "配对链接中的同步服务地址无效"
         is SyncApiException.Server -> when {

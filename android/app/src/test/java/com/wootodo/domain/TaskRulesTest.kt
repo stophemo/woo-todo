@@ -91,7 +91,7 @@ class TaskRulesTest {
         )
 
         assertEquals(
-            listOf("done", "first", "second", "base", "extra"),
+            listOf("first", "second", "done", "base", "extra"),
             tasks.sortedWith(TaskRules.ordering).map { it.id },
         )
     }

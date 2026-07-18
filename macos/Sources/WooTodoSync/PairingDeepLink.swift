@@ -1,16 +1,69 @@
 import Foundation
 
+public enum SyncEndpointScope: Equatable, Sendable {
+    /// 可供 Mac 与 Android 共同访问的 HTTPS 地址。
+    case crossDevice
+    /// 仅指向当前设备的回环地址，不能用于真实双机配对。
+    case currentDeviceOnly
+    case invalid
+}
+
 public enum SyncEndpointPolicy {
-    public static func isAllowed(_ endpoint: URL) -> Bool {
-        guard endpoint.host != nil,
+    public static func scope(of endpoint: URL) -> SyncEndpointScope {
+        guard let host = endpoint.host?.lowercased(),
               endpoint.user == nil,
               endpoint.password == nil,
               endpoint.query == nil,
               endpoint.fragment == nil else {
-            return false
+            return .invalid
         }
-        if endpoint.scheme?.lowercased() == "https" { return true }
-        return endpoint.scheme?.lowercased() == "http" && endpoint.host == "127.0.0.1"
+
+        let scheme = endpoint.scheme?.lowercased()
+        let isLoopback = host == "127.0.0.1" || host == "localhost" || host == "::1"
+        if isLoopback {
+            if scheme == "https" || (scheme == "http" && host == "127.0.0.1") {
+                return .currentDeviceOnly
+            }
+            return .invalid
+        }
+        return scheme == "https" ? .crossDevice : .invalid
+    }
+
+    public static func isAllowed(_ endpoint: URL) -> Bool {
+        scope(of: endpoint) != .invalid
+    }
+}
+
+public enum SyncEndpointSetupAssessment: Equatable, Sendable {
+    case empty
+    case invalid
+    case currentDeviceOnly
+    case includesAPIVersion
+    case ready(URL)
+}
+
+/// 仅用于创建真实双端同步空间；底层客户端仍保留 127.0.0.1 本机调试能力。
+public enum SyncEndpointSetupPolicy {
+    public static func assess(_ source: String) -> SyncEndpointSetupAssessment {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .empty }
+        guard let endpoint = URL(string: trimmed) else { return .invalid }
+
+        switch SyncEndpointPolicy.scope(of: endpoint) {
+        case .invalid:
+            return .invalid
+        case .currentDeviceOnly:
+            return .currentDeviceOnly
+        case .crossDevice:
+            let finalPathComponent = endpoint.path
+                .split(separator: "/", omittingEmptySubsequences: true)
+                .last?
+                .lowercased()
+            if finalPathComponent == "v1" {
+                return .includesAPIVersion
+            }
+            return .ready(endpoint)
+        }
     }
 }
 

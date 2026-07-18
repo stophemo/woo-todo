@@ -6,8 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.wootodo.data.TaskRepository
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskDateRules
+import com.wootodo.domain.TaskListDatePolicy
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
+import java.time.LocalDate
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,21 +25,41 @@ class MainViewModel(
     private val onTasksChanged: () -> Unit,
 ) : ViewModel() {
     private val selectedScopeFlow = MutableStateFlow(TaskTimeType.DAY)
-    private val referenceDate = MutableStateFlow(TaskDateRules.today())
+    private val todayFlow = MutableStateFlow(TaskDateRules.today())
+    private val showTomorrowFlow = MutableStateFlow(false)
 
     val selectedScope: StateFlow<TaskTimeType> = selectedScopeFlow
+    val selectedReferenceDate: StateFlow<LocalDate> =
+        combine(selectedScopeFlow, showTomorrowFlow, todayFlow) { scope, showTomorrow, today ->
+            TaskListDatePolicy.referenceDate(scope, showTomorrow, today)
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            todayFlow.value,
+        )
 
     val tasks: StateFlow<List<Task>> =
-        combine(selectedScopeFlow, referenceDate) { scope, date -> scope to date }
+        combine(selectedScopeFlow, selectedReferenceDate) { scope, date -> scope to date }
             .flatMapLatest { (scope, date) -> repository.observeForScope(scope, date) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun selectScope(scope: TaskTimeType) {
         selectedScopeFlow.value = scope
+        if (scope != TaskTimeType.DAY) showTomorrowFlow.value = false
+    }
+
+    fun selectToday() {
+        selectedScopeFlow.value = TaskTimeType.DAY
+        showTomorrowFlow.value = false
+    }
+
+    fun selectTomorrow() {
+        selectedScopeFlow.value = TaskTimeType.DAY
+        showTomorrowFlow.value = true
     }
 
     fun refresh() {
-        referenceDate.value = TaskDateRules.today()
+        todayFlow.value = TaskDateRules.today()
         viewModelScope.launch {
             if (repository.autoPassExpired() > 0) {
                 onTasksChanged()

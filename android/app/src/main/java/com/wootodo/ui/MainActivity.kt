@@ -62,6 +62,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var emptyView: TextView
     private lateinit var syncButton: Button
     private lateinit var syncStatus: TextView
+    private lateinit var screenTitle: TextView
+    private lateinit var scopeGroup: RadioGroup
     private var pairingDialog: AlertDialog? = null
     private var pairingTerminalDialog: AlertDialog? = null
     private var pairingMessageView: TextView? = null
@@ -70,7 +72,15 @@ class MainActivity : AppCompatActivity() {
     private var backupProgressDialog: AlertDialog? = null
 
     private val notificationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (!granted) {
+                Toast.makeText(
+                    this,
+                    R.string.notification_permission_denied,
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
 
     private val createBackupDocument = registerForActivityResult(
         ActivityResultContracts.CreateDocument(BACKUP_MIME_TYPE),
@@ -105,10 +115,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        applySystemBarInsets(findViewById(R.id.main_root))
         taskList = findViewById(R.id.task_list)
         emptyView = findViewById(R.id.empty_view)
         syncButton = findViewById(R.id.sync_button)
         syncStatus = findViewById(R.id.sync_status)
+        screenTitle = findViewById(R.id.screen_title)
 
         taskAdapter = TaskAdapter(
             onComplete = { viewModel.settle(it.id, TaskStatus.COMPLETED) },
@@ -121,14 +133,30 @@ class MainActivity : AppCompatActivity() {
         }
         attachReordering()
 
-        findViewById<RadioGroup>(R.id.scope_group).setOnCheckedChangeListener { _, checkedId ->
-            val scope = when (checkedId) {
-                R.id.scope_week -> TaskTimeType.WEEK
-                R.id.scope_month -> TaskTimeType.MONTH
-                R.id.scope_leisure -> TaskTimeType.LEISURE
-                else -> TaskTimeType.DAY
+        scopeGroup = findViewById(R.id.scope_group)
+        scopeGroup.setOnCheckedChangeListener { _, checkedId ->
+            when (checkedId) {
+                R.id.scope_tomorrow -> {
+                    screenTitle.setText(R.string.tomorrow_title)
+                    viewModel.selectTomorrow()
+                }
+                R.id.scope_week -> {
+                    screenTitle.setText(R.string.week_title)
+                    viewModel.selectScope(TaskTimeType.WEEK)
+                }
+                R.id.scope_month -> {
+                    screenTitle.setText(R.string.month_title)
+                    viewModel.selectScope(TaskTimeType.MONTH)
+                }
+                R.id.scope_leisure -> {
+                    screenTitle.setText(R.string.leisure_title)
+                    viewModel.selectScope(TaskTimeType.LEISURE)
+                }
+                else -> {
+                    screenTitle.setText(R.string.today_title)
+                    viewModel.selectToday()
+                }
             }
-            viewModel.selectScope(scope)
         }
         findViewById<FloatingActionButton>(R.id.add_task).setOnClickListener { openEditor() }
         findViewById<Button>(R.id.insights_button).setOnClickListener {
@@ -137,7 +165,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.reminder_settings_button).setOnClickListener { anchor ->
             showMoreMenu(anchor)
         }
-        syncButton.setOnClickListener { synchronizeNow() }
+        syncButton.setOnClickListener { handleSyncAction() }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -156,6 +184,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
         requestNotificationPermissionIfNeeded()
+        if (savedInstanceState == null) {
+            applyInitialView(intent)
+        } else {
+            scopeGroup.check(
+                savedInstanceState.getInt(STATE_SELECTED_SCOPE, R.id.scope_today),
+            )
+        }
         pairingIntentConsumed = savedInstanceState?.getBoolean(STATE_PAIRING_INTENT_CONSUMED)
             ?: false
         val pairingWasActive = savedInstanceState?.getBoolean(STATE_PAIRING_ACTIVE) == true
@@ -180,6 +215,7 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pairingIntentConsumed = false
+        applyInitialView(intent)
         handlePairingIntent(intent)
     }
 
@@ -191,6 +227,7 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(STATE_PAIRING_ACTIVE, pairingViewModel.isPairingActive())
         outState.putBoolean(STATE_PAIRING_INTENT_CONSUMED, pairingIntentConsumed)
+        outState.putInt(STATE_SELECTED_SCOPE, scopeGroup.checkedRadioButtonId)
         super.onSaveInstanceState(outState)
     }
 
@@ -209,8 +246,20 @@ class MainActivity : AppCompatActivity() {
                     EditTaskActivity.EXTRA_TIME_TYPE,
                     viewModel.selectedScope.value.rawValue,
                 )
+                if (viewModel.selectedScope.value == TaskTimeType.DAY) {
+                    putExtra(
+                        EditTaskActivity.EXTRA_TARGET_DATE,
+                        viewModel.selectedReferenceDate.value.toString(),
+                    )
+                }
             },
         )
+    }
+
+    private fun applyInitialView(intent: Intent) {
+        if (intent.getBooleanExtra(EXTRA_OPEN_TOMORROW, false)) {
+            scopeGroup.check(R.id.scope_tomorrow)
+        }
     }
 
     private fun requestNotificationPermissionIfNeeded() {
@@ -678,8 +727,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun handleSyncAction() {
+        if ((application as WooTodoApplication).syncRuntime.state.value == SyncRuntimeState.Unpaired) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.pairing_help_title)
+                .setMessage(R.string.pairing_help_message)
+                .setPositiveButton(R.string.confirm, null)
+                .show()
+        } else {
+            synchronizeNow()
+        }
+    }
+
     private fun renderSyncState(state: SyncRuntimeState) {
         syncButton.isEnabled = state != SyncRuntimeState.Running
+        syncButton.setText(
+            if (state == SyncRuntimeState.Unpaired) {
+                R.string.sync_pairing_help
+            } else {
+                R.string.sync_now
+            },
+        )
         syncStatus.text = when (state) {
             SyncRuntimeState.Unpaired -> getString(R.string.sync_unpaired)
             SyncRuntimeState.Idle -> getString(R.string.sync_ready)
@@ -802,11 +870,12 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private companion object {
-        const val MENU_REMINDER = 1
-        const val MENU_EXPORT_BACKUP = 2
-        const val MENU_IMPORT_BACKUP = 3
-        const val BACKUP_MIME_TYPE = "application/octet-stream"
+    companion object {
+        const val EXTRA_OPEN_TOMORROW = "open_tomorrow"
+        private const val MENU_REMINDER = 1
+        private const val MENU_EXPORT_BACKUP = 2
+        private const val MENU_IMPORT_BACKUP = 3
+        private const val BACKUP_MIME_TYPE = "application/octet-stream"
         val BACKUP_MIME_TYPES = arrayOf(
             BACKUP_MIME_TYPE,
             "application/json",
@@ -815,7 +884,8 @@ class MainActivity : AppCompatActivity() {
         val BACKUP_FILENAME_FORMAT: DateTimeFormatter = DateTimeFormatter
             .ofPattern("yyyyMMdd-HHmm")
             .withZone(ZoneId.systemDefault())
-        const val STATE_PAIRING_ACTIVE = "pairing_active"
-        const val STATE_PAIRING_INTENT_CONSUMED = "pairing_intent_consumed"
+        private const val STATE_PAIRING_ACTIVE = "pairing_active"
+        private const val STATE_PAIRING_INTENT_CONSUMED = "pairing_intent_consumed"
+        private const val STATE_SELECTED_SCOPE = "selected_scope"
     }
 }

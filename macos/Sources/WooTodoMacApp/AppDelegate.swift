@@ -18,23 +18,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
+            // 本地任务库是启动的唯一硬依赖；同步身份即使损坏或不匹配也不能阻塞本地使用。
+            let repository = try SQLiteTaskRepository(databaseURL: databaseURL())
             let credentialsStore = KeychainCredentialsStore()
-            let credentials = try credentialsStore.load()
-            let syncConfiguration = credentials.map {
-                SQLiteSyncConfiguration(
-                    vaultId: $0.vaultId,
-                    deviceId: $0.deviceId,
-                    vaultKey: $0.vaultKey
+            let activeCredentials: SyncCredentials?
+            let syncActivationError: Error?
+            do {
+                let credentials = try credentialsStore.load()
+                if let credentials {
+                    try repository.configureSync(SQLiteSyncConfiguration(
+                        vaultId: credentials.vaultId,
+                        deviceId: credentials.deviceId,
+                        vaultKey: credentials.vaultKey
+                    ))
+                }
+                activeCredentials = credentials
+                syncActivationError = nil
+            } catch let activationError {
+                activeCredentials = nil
+                syncActivationError = activationError
+                logger.error(
+                    "同步身份无法激活，本地模式继续启动：\(activationError.localizedDescription, privacy: .public)"
                 )
             }
-            let repository = try SQLiteTaskRepository(
-                databaseURL: databaseURL(),
-                syncConfiguration: syncConfiguration
-            )
             let syncSettingsStore = try SyncSettingsStore(
                 repository: repository,
                 credentialsStore: credentialsStore,
-                credentials: credentials
+                credentials: activeCredentials
             )
             let store = TodayStore(repository: repository)
             store.reload()
@@ -49,12 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) { [weak self] in
                 self?.showDashboard()
             }
-            let globalShortcut = try GlobalShortcut(
-                keyCode: UInt32(kVK_Space),
-                modifiers: UInt32(controlKey | optionKey)
-            ) { [weak panelController] in
-                panelController?.toggleInteraction()
-            }
+            let globalShortcut = registerGlobalShortcut(for: panelController)
 
             self.repository = repository
             todayStore = store
@@ -75,6 +80,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             syncSettingsStore.start()
             panelController.show()
+            if let syncActivationError {
+                showSyncCredentialsWarning(syncActivationError)
+            }
             logger.info("Woo Todo 已启动，本地任务面板准备完成")
         } catch {
             logger.error("启动失败：\(error.localizedDescription, privacy: .public)")
@@ -126,12 +134,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.show()
     }
 
+    private func registerGlobalShortcut(
+        for panelController: FloatingPanelController
+    ) -> GlobalShortcut? {
+        do {
+            return try GlobalShortcut(
+                keyCode: UInt32(kVK_Space),
+                modifiers: UInt32(controlKey | optionKey)
+            ) { [weak panelController] in
+                panelController?.toggleInteraction()
+            }
+        } catch {
+            logger.error("全局快捷键不可用：\(error.localizedDescription, privacy: .public)")
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "全局快捷键暂不可用"
+            alert.informativeText = "\(error.localizedDescription)\n\nWoo Todo 会继续运行，你仍可通过菜单栏切换鼠标穿透。"
+            alert.addButton(withTitle: "继续使用")
+            alert.runModal()
+            return nil
+        }
+    }
+
     private func showStartupError(_ error: Error) {
         let alert = NSAlert()
         alert.alertStyle = .critical
         alert.messageText = "Woo Todo 无法启动"
         alert.informativeText = error.localizedDescription
         alert.addButton(withTitle: "退出")
+        alert.runModal()
+    }
+
+    private func showSyncCredentialsWarning(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        if let repositoryError = error as? SQLiteRepositoryError,
+           case .syncIdentityMismatch = repositoryError {
+            alert.messageText = "同步身份与本地数据库不匹配"
+            alert.informativeText = "Keychain 中的同步空间或设备身份与当前本地任务库不一致，因此本次启动已停用同步。\n\n本地任务仍可查看和编辑，变更会安全保存在本地待恢复队列中；应用没有覆盖 Keychain 或数据库身份。请先保留当前安装与数据，恢复匹配的同步身份后再重新启动。"
+        } else {
+            alert.messageText = "同步身份暂时不可用"
+            alert.informativeText = "\(error.localizedDescription)\n\n本地任务仍可查看和编辑；如果数据库已有同步身份，变更会安全保存在本地待恢复队列中。Keychain 恢复并重新启动后，应用会补入待同步队列。请暂时不要卸载应用或创建新的同步空间。"
+        }
+        alert.addButton(withTitle: "继续使用本地任务")
         alert.runModal()
     }
 }

@@ -4,8 +4,12 @@ compatibility_date = "2026-07-15"
 workers_dev = true
 minify = true
 
+# TOKEN_PEPPER 与 VAULT_CREATION_INVITE_CODE 必须通过 wrangler secret 配置，
+# 不得放进公开的 [vars] 或提交到仓库。
 [vars]
-APP_ENV = "development"
+APP_ENV = "production"
+VAULT_CREATION_SOURCE_LIMIT = "5"
+VAULT_CREATION_DAILY_LIMIT = "100"
 
 [[d1_databases]]
 binding = "DB"

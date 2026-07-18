@@ -71,16 +71,17 @@ struct TodayView: View {
         List {
             ForEach(QuestTier.allCases, id: \.self) { tier in
                 let group = store.tasks.filter { $0.tier == tier }
+                let pending = group.filter { $0.status == .pending }
+                let settled = group.filter { $0.status != .pending }
                 if !group.isEmpty {
                     Section(tier.displayName) {
-                        ForEach(group) { task in
+                        ForEach(pending) { task in
                             TaskRow(
                                 task: task,
                                 toggle: { store.toggleCompletion(id: task.id) },
                                 edit: { editingTask = task },
                                 delete: { store.delete(id: task.id) }
                             )
-                            .moveDisabled(group.contains { $0.status != .pending })
                         }
                         .onMove { offsets, destination in
                             store.move(
@@ -88,6 +89,15 @@ struct TodayView: View {
                                 fromOffsets: offsets,
                                 toOffset: destination
                             )
+                        }
+                        ForEach(settled) { task in
+                            TaskRow(
+                                task: task,
+                                toggle: { store.toggleCompletion(id: task.id) },
+                                edit: { editingTask = task },
+                                delete: { store.delete(id: task.id) }
+                            )
+                            .moveDisabled(true)
                         }
                     }
                 }

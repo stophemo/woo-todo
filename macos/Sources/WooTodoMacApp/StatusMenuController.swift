@@ -2,12 +2,34 @@ import AppKit
 
 @MainActor
 final class StatusMenuController: NSObject, NSMenuDelegate {
+    private enum OpacityPreset: Int, CaseIterable {
+        case twenty = 20
+        case forty = 40
+        case sixty = 60
+        case eighty = 80
+        case oneHundred = 100
+
+        var title: String {
+            switch self {
+            case .twenty: "20%（最透明）"
+            case .forty: "40%"
+            case .sixty: "60%"
+            case .eighty: "80%"
+            case .oneHundred: "100%（最清晰）"
+            }
+        }
+
+        var opacity: CGFloat { CGFloat(rawValue) / 100 }
+    }
+
     private let panelController: FloatingPanelController
     private let openDashboardAction: () -> Void
     private let statusItem: NSStatusItem
     private let clickThroughItem: NSMenuItem
     private let blurItem: NSMenuItem
     private let alwaysOnTopItem: NSMenuItem
+    private let opacityItem: NSMenuItem
+    private var opacityPresetItems: [NSMenuItem] = []
 
     init(
         panelController: FloatingPanelController,
@@ -19,6 +41,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         clickThroughItem = NSMenuItem(title: "鼠标穿透", action: nil, keyEquivalent: "")
         blurItem = NSMenuItem(title: "毛玻璃", action: nil, keyEquivalent: "")
         alwaysOnTopItem = NSMenuItem(title: "始终置顶", action: nil, keyEquivalent: "")
+        opacityItem = NSMenuItem(title: "日常不透明度", action: nil, keyEquivalent: "")
         super.init()
 
         statusItem.button?.image = NSImage(
@@ -34,6 +57,17 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         clickThroughItem.state = panelController.isClickThrough ? .on : .off
         blurItem.state = panelController.isBlurEnabled ? .on : .off
         alwaysOnTopItem.state = panelController.isAlwaysOnTop ? .on : .off
+        let percentage = Int((panelController.panelOpacity * 100).rounded())
+        opacityItem.title = panelController.isClickThrough
+            ? "日常不透明度（恢复后 \(percentage)%）"
+            : "日常不透明度（\(percentage)%）"
+        clickThroughItem.title = panelController.isClickThrough
+            ? "鼠标穿透（已自动最透明）"
+            : "鼠标穿透（自动最透明）"
+        opacityPresetItems.forEach { item in
+            guard let rawValue = item.representedObject as? Int else { return }
+            item.state = rawValue == percentage ? .on : .off
+        }
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -55,6 +89,21 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         blurItem.target = self
         blurItem.action = #selector(toggleBlur)
         menu.addItem(blurItem)
+
+        let opacityMenu = NSMenu(title: "日常不透明度")
+        OpacityPreset.allCases.forEach { preset in
+            let item = NSMenuItem(
+                title: preset.title,
+                action: #selector(setOpacity(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = preset.rawValue
+            opacityPresetItems.append(item)
+            opacityMenu.addItem(item)
+        }
+        opacityItem.submenu = opacityMenu
+        menu.addItem(opacityItem)
 
         alwaysOnTopItem.target = self
         alwaysOnTopItem.action = #selector(toggleAlwaysOnTop)
@@ -92,6 +141,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func toggleAlwaysOnTop() {
         panelController.toggleAlwaysOnTop()
+    }
+
+    @objc private func setOpacity(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? Int,
+              let preset = OpacityPreset(rawValue: rawValue) else { return }
+        panelController.setPanelOpacity(preset.opacity)
     }
 
     @objc private func quit() {

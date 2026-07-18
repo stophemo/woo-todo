@@ -1,10 +1,12 @@
 import { hashCredential, randomSecret } from "./crypto.ts";
+import { vaultCapacityReachedError } from "./capacity.ts";
 import {
   type AuthenticatedDevice,
   authenticateDevice,
   changedRows,
   type D1Result,
   type Env,
+  hasDatabaseSignal,
   requireTokenPepper,
 } from "./db.ts";
 import { ApiError, errorResponse, jsonResponse, readJsonBody } from "./http.ts";
@@ -22,8 +24,20 @@ import {
   ProtocolValidationError,
   validateIdentifier,
 } from "./protocol.ts";
+import {
+  assertVaultDeviceCapacity,
+  consumeVaultCreationQuota,
+  vaultDeviceLimitError,
+} from "./quota.ts";
+import {
+  assertPushOperationIds,
+  assertStoredOperationIds,
+  assertValidSyncCursor,
+  opIdConflictError,
+} from "./sync-guards.ts";
+import { assertVaultCreationInvite } from "./vault-creation-auth.ts";
 
-const SERVICE_VERSION = "0.1.0";
+const SERVICE_VERSION = "0.1.1";
 
 interface PairingRow {
   id: string;
@@ -117,12 +131,32 @@ async function loadInitiatedPairing(
 
 async function handleHealth(env: Env, requestId: string): Promise<Response> {
   const result = await env.DB.prepare(`
-    SELECT 1 AS healthy
+    SELECT COUNT(*) AS required_objects
     FROM sqlite_master
-    WHERE type = 'table' AND name = 'vaults'
+    WHERE (type = 'table' AND name IN (
+         'vaults', 'vault_creation_windows', 'vault_usage'
+       ))
+       OR (type = 'trigger' AND name IN (
+         'reject_change_log_op_id_conflict',
+         'enforce_vault_active_device_limit',
+         'initialize_vault_usage',
+         'require_change_log_vault_usage',
+         'enforce_change_log_vault_capacity',
+         'track_change_log_insert',
+         'track_change_log_delete'
+       ))
+  `).first<{ required_objects: number }>();
+  if (result?.required_objects !== 10) {
+    throw new ApiError(503, "DATABASE_UNAVAILABLE", "D1 健康检查未通过");
+  }
+  const missingUsage = await env.DB.prepare(`
+    SELECT 1 AS missing_usage
+    FROM vaults v
+    LEFT JOIN vault_usage u ON u.vault_id = v.id
+    WHERE u.vault_id IS NULL
     LIMIT 1
-  `).first<{ healthy: number }>();
-  if (result?.healthy !== 1) {
+  `).first<{ missing_usage: 1 }>();
+  if (missingUsage) {
     throw new ApiError(503, "DATABASE_UNAVAILABLE", "D1 健康检查未通过");
   }
   return jsonResponse({
@@ -139,18 +173,21 @@ async function handleCreateVault(
   env: Env,
   requestId: string,
 ): Promise<Response> {
+  await assertVaultCreationInvite(request, env);
   const input = parseProtocol(
     parseCreateVaultRequest,
     await readJsonBody(request),
   );
   const now = Date.now();
+  const pepper = requireTokenPepper(env);
+  await consumeVaultCreationQuota(request, env, now);
   const vaultId = crypto.randomUUID();
   const deviceId = crypto.randomUUID();
   const deviceToken = randomSecret();
   const tokenHash = await hashCredential(
     deviceToken,
     "device-token",
-    requireTokenPepper(env),
+    pepper,
   );
 
   await env.DB.batch([
@@ -295,6 +332,7 @@ async function handleClaimPairing(
   if (row.status !== "OPEN") {
     throw new ApiError(409, "PAIRING_NOT_OPEN", "配对会话已被认领或结束");
   }
+  await assertVaultDeviceCapacity(env, row.vault_id);
 
   const credentialInUse = await env.DB.prepare(`
     SELECT 1 AS found FROM devices WHERE token_hash = ?
@@ -408,53 +446,62 @@ async function handleConfirmPairing(
   if (row.status !== "CLAIMED") {
     throw new ApiError(409, "PAIRING_NOT_CLAIMED", "尚无新设备认领此配对会话");
   }
+  await assertVaultDeviceCapacity(env, row.vault_id);
 
-  const results = await env.DB.batch([
-    env.DB.prepare(`
-      INSERT OR IGNORE INTO devices(
-        id, vault_id, token_hash, name, platform, public_key,
-        created_by_device_id, created_at, last_seen_at, revoked_at
-      )
-      SELECT
-        claimed_device_id, vault_id, claimed_token_hash, claimed_device_name,
-        claimed_platform, claimed_public_key, ?, ?, NULL, NULL
-      FROM pairing_sessions
-      WHERE id = ? AND status = 'CLAIMED' AND expires_at > ?
-    `).bind(device.id, now, pairingId, now),
-    env.DB.prepare(`
-      INSERT OR IGNORE INTO device_cursors(device_id, vault_id, cursor, updated_at)
-      SELECT p.claimed_device_id, p.vault_id, 0, ?
-      FROM pairing_sessions p
-      INNER JOIN devices d
-        ON d.id = p.claimed_device_id AND d.token_hash = p.claimed_token_hash
-      WHERE p.id = ?
-    `).bind(now, pairingId),
-    env.DB.prepare(`
-      UPDATE pairing_sessions
-      SET status = 'CONFIRMED', confirmed_ciphertext = ?, confirmed_nonce = ?, confirmed_at = ?
-      WHERE id = ?
-        AND initiator_device_id = ?
-        AND status = 'CLAIMED'
-        AND expires_at > ?
-        AND EXISTS (
-          SELECT 1 FROM devices d
-          WHERE d.id = pairing_sessions.claimed_device_id
-            AND d.token_hash = pairing_sessions.claimed_token_hash
+  let results: D1Result[];
+  try {
+    results = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT OR IGNORE INTO devices(
+          id, vault_id, token_hash, name, platform, public_key,
+          created_by_device_id, created_at, last_seen_at, revoked_at
         )
-    `).bind(
-      input.vaultKeyEnvelope.ciphertext,
-      input.vaultKeyEnvelope.nonce,
-      now,
-      pairingId,
-      device.id,
-      now,
-    ),
-    env.DB.prepare(`
-      SELECT status, claimed_device_id
-      FROM pairing_sessions
-      WHERE id = ?
-    `).bind(pairingId),
-  ]);
+        SELECT
+          claimed_device_id, vault_id, claimed_token_hash, claimed_device_name,
+          claimed_platform, claimed_public_key, ?, ?, NULL, NULL
+        FROM pairing_sessions
+        WHERE id = ? AND status = 'CLAIMED' AND expires_at > ?
+      `).bind(device.id, now, pairingId, now),
+      env.DB.prepare(`
+        INSERT OR IGNORE INTO device_cursors(device_id, vault_id, cursor, updated_at)
+        SELECT p.claimed_device_id, p.vault_id, 0, ?
+        FROM pairing_sessions p
+        INNER JOIN devices d
+          ON d.id = p.claimed_device_id AND d.token_hash = p.claimed_token_hash
+        WHERE p.id = ?
+      `).bind(now, pairingId),
+      env.DB.prepare(`
+        UPDATE pairing_sessions
+        SET status = 'CONFIRMED', confirmed_ciphertext = ?, confirmed_nonce = ?, confirmed_at = ?
+        WHERE id = ?
+          AND initiator_device_id = ?
+          AND status = 'CLAIMED'
+          AND expires_at > ?
+          AND EXISTS (
+            SELECT 1 FROM devices d
+            WHERE d.id = pairing_sessions.claimed_device_id
+              AND d.token_hash = pairing_sessions.claimed_token_hash
+          )
+      `).bind(
+        input.vaultKeyEnvelope.ciphertext,
+        input.vaultKeyEnvelope.nonce,
+        now,
+        pairingId,
+        device.id,
+        now,
+      ),
+      env.DB.prepare(`
+        SELECT status, claimed_device_id
+        FROM pairing_sessions
+        WHERE id = ?
+      `).bind(pairingId),
+    ]);
+  } catch (error) {
+    if (hasDatabaseSignal(error, "VAULT_DEVICE_LIMIT")) {
+      throw vaultDeviceLimitError();
+    }
+    throw error;
+  }
   const finalResult = results[3] as D1Result<{
     status: PairingStatus;
     claimed_device_id: string | null;
@@ -544,6 +591,9 @@ async function handleSync(
   device: AuthenticatedDevice,
 ): Promise<Response> {
   const input = parseProtocol(parseSyncRequest, await readJsonBody(request));
+  assertPushOperationIds(input.push);
+  await assertValidSyncCursor(env, device.vaultId, input.cursor);
+  await assertStoredOperationIds(env, device.vaultId, input.push);
   const now = Date.now();
   const statements = input.push.map((operation) =>
     env.DB.prepare(`
@@ -585,7 +635,25 @@ async function handleSync(
     `).bind(device.vaultId, input.cursor, input.pullLimit + 1),
   );
 
-  const results = await env.DB.batch(statements);
+  let results: D1Result[];
+  try {
+    results = await env.DB.batch(statements);
+  } catch (error) {
+    if (hasDatabaseSignal(error, "OP_ID_CONFLICT")) {
+      throw opIdConflictError();
+    }
+    if (hasDatabaseSignal(error, "VAULT_CAPACITY_REACHED")) {
+      throw vaultCapacityReachedError();
+    }
+    if (hasDatabaseSignal(error, "VAULT_USAGE_MISSING")) {
+      throw new ApiError(
+        503,
+        "VAULT_USAGE_UNAVAILABLE",
+        "同步空间容量账本缺失，请联系服务维护者修复迁移",
+      );
+    }
+    throw error;
+  }
   const inserted = results
     .slice(0, input.push.length)
     .reduce((total, result) => total + changedRows(result), 0);

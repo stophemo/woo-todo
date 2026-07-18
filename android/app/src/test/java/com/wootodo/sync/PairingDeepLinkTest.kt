@@ -1,5 +1,6 @@
 package com.wootodo.sync
 
+import java.net.URI
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -48,6 +49,26 @@ class PairingDeepLinkTest {
             PairingDeepLink.parse(
                 "wootodo://pair?endpoint=http%3A%2F%2F127.0.0.1%3A8787$suffix",
             ).endpoint,
+        )
+    }
+
+    @Test
+    fun `端点策略区分双端地址与当前设备回环地址`() {
+        assertEquals(
+            SyncEndpointScope.CROSS_DEVICE,
+            SyncEndpointPolicy.scope(URI("https://sync.example.test")),
+        )
+        assertEquals(
+            SyncEndpointScope.CURRENT_DEVICE_ONLY,
+            SyncEndpointPolicy.scope(URI("https://localhost:8787")),
+        )
+        assertEquals(
+            SyncEndpointScope.CURRENT_DEVICE_ONLY,
+            SyncEndpointPolicy.scope(URI("http://127.0.0.1:8787")),
+        )
+        assertEquals(
+            SyncEndpointScope.INVALID,
+            SyncEndpointPolicy.scope(URI("http://192.168.1.10:8787")),
         )
     }
 }

@@ -26,7 +26,7 @@ class PlanningReminderReceiver : BroadcastReceiver() {
                 val repository = (appContext as WooTodoApplication).taskRepository
                 val tomorrow = TaskDateRules.today().plusDays(1)
                 if (repository.countTasksForDay(tomorrow) == 0) {
-                    NotificationHelper.showPlanningReminder(appContext, tomorrow)
+                    NotificationHelper.showPlanningReminder(appContext)
                 }
             } finally {
                 ReminderPreferences.markHandled(appContext, handledDate)

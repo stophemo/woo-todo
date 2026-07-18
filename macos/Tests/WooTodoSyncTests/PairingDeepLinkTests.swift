@@ -43,4 +43,23 @@ struct PairingDeepLinkTests {
         )
         #expect(local.endpoint.host == "127.0.0.1")
     }
+
+    @Test("创建双端空间时拒绝回环地址与 API 子路径")
+    func crossDeviceSetupPolicy() {
+        #expect(SyncEndpointSetupPolicy.assess("   ") == .empty)
+        #expect(SyncEndpointSetupPolicy.assess("sync.example.test") == .invalid)
+        #expect(
+            SyncEndpointSetupPolicy.assess("http://127.0.0.1:8787") == .currentDeviceOnly
+        )
+        #expect(
+            SyncEndpointSetupPolicy.assess("https://localhost:8787") == .currentDeviceOnly
+        )
+        #expect(
+            SyncEndpointSetupPolicy.assess("https://sync.example.test/v1") == .includesAPIVersion
+        )
+        #expect(
+            SyncEndpointSetupPolicy.assess(" https://sync.example.test/root ")
+                == .ready(URL(string: "https://sync.example.test/root")!)
+        )
+    }
 }

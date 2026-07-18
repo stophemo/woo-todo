@@ -5,15 +5,41 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
+enum class SyncEndpointScope {
+    CROSS_DEVICE,
+    CURRENT_DEVICE_ONLY,
+    INVALID,
+}
+
 object SyncEndpointPolicy {
-    fun isAllowed(endpoint: URI): Boolean {
-        val isHttps = endpoint.scheme?.lowercase() == "https"
-        val isLocalHttp = endpoint.scheme?.lowercase() == "http" &&
-            endpoint.host == "127.0.0.1"
-        return (isHttps || isLocalHttp) && endpoint.host != null &&
-            endpoint.rawUserInfo == null && endpoint.rawQuery == null &&
-            endpoint.rawFragment == null
+    fun scope(endpoint: URI): SyncEndpointScope {
+        val host = endpoint.host?.lowercase() ?: return SyncEndpointScope.INVALID
+        if (endpoint.rawUserInfo != null || endpoint.rawQuery != null ||
+            endpoint.rawFragment != null
+        ) {
+            return SyncEndpointScope.INVALID
+        }
+
+        val scheme = endpoint.scheme?.lowercase()
+        val isLoopback = host == "127.0.0.1" || host == "localhost" ||
+            host == "::1" || host == "[::1]"
+        if (isLoopback) {
+            return if (scheme == "https" || (scheme == "http" && host == "127.0.0.1")) {
+                SyncEndpointScope.CURRENT_DEVICE_ONLY
+            } else {
+                SyncEndpointScope.INVALID
+            }
+        }
+        return if (scheme == "https") {
+            SyncEndpointScope.CROSS_DEVICE
+        } else {
+            SyncEndpointScope.INVALID
+        }
     }
+
+    fun isAllowed(endpoint: URI): Boolean = scope(endpoint) != SyncEndpointScope.INVALID
+
+    fun isCrossDevice(endpoint: URI): Boolean = scope(endpoint) == SyncEndpointScope.CROSS_DEVICE
 }
 
 data class PairingDeepLink(

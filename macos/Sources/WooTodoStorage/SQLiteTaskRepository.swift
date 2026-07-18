@@ -172,10 +172,33 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
+    public func deletedTaskIDs() throws -> Set<UUID> {
+        try withLock {
+            let statement = try prepare(
+                """
+                SELECT entity_id FROM sync_entity_versions WHERE is_deleted = 1
+                UNION
+                SELECT entity_id FROM sync_deferred_deletions
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            var values = Set<UUID>()
+            var result = sqlite3_step(statement)
+            while result == SQLITE_ROW {
+                guard let id = UUID(uuidString: text(at: 0, from: statement)) else {
+                    throw SQLiteRepositoryError.invalidRecord("删除记录包含无效任务 ID")
+                }
+                values.insert(id)
+                result = sqlite3_step(statement)
+            }
+            guard result == SQLITE_DONE else { throw statementError() }
+            return values
+        }
+    }
+
     public func save(_ tasks: [TodoTask]) throws {
         guard !tasks.isEmpty else { return }
         try withLock {
-            try ensureSyncCredentialsForMutation()
             try execute("BEGIN IMMEDIATE TRANSACTION")
             do {
                 let sql = """
@@ -210,7 +233,9 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                     if let existing, existing.status != .pending {
                         throw SQLiteRepositoryError.settledTaskImmutable
                     }
-                    if try entityVersion(for: canonicalEntityID(task.id.uuidString))?.isDeleted == true {
+                    let entityID = canonicalEntityID(task.id.uuidString)
+                    if try entityVersion(for: entityID)?.isDeleted == true ||
+                        (try isDeferredDeletion(entityID: entityID)) {
                         throw SQLiteRepositoryError.invalidRecord("已删除任务不能以相同 ID 复活")
                     }
 
@@ -246,6 +271,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                             kind: operationKind(previous: existing, current: task),
                             configuration: configuration
                         )
+                    } else if hasPersistedSyncIdentity {
+                        try recordDeferredUpsert(entityID: entityID)
                     }
                 }
                 try execute("COMMIT")
@@ -258,12 +285,12 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
 
     public func delete(id: UUID) throws {
         try withLock {
-            try ensureSyncCredentialsForMutation()
             let entityID = canonicalEntityID(id.uuidString)
             let existing = try storedTask(id: id)
             let version = try entityVersion(for: entityID)
             guard existing != nil || version != nil else { return }
-            guard version?.isDeleted != true else { return }
+            guard version?.isDeleted != true,
+                  !(try isDeferredDeletion(entityID: entityID)) else { return }
             if let existing, existing.status != .pending {
                 throw SQLiteRepositoryError.settledTaskImmutable
             }
@@ -271,12 +298,16 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             try execute("BEGIN IMMEDIATE TRANSACTION")
             do {
                 try deleteTaskRow(entityID: entityID)
+                let deletedAt = Date()
                 if let configuration = syncConfiguration {
                     try enqueueLocalTombstone(
                         entityID: entityID,
-                        deletedAt: Date(),
+                        deletedAt: deletedAt,
                         configuration: configuration
                     )
+                } else {
+                    try removeDeferredUpsert(entityID: entityID)
+                    try recordDeferredDeletion(entityID: entityID, deletedAt: deletedAt)
                 }
                 try execute("COMMIT")
             } catch {
@@ -399,7 +430,22 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             )
             """
         )
-        try execute("PRAGMA user_version = 3")
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS sync_deferred_upserts (
+                entity_id TEXT PRIMARY KEY NOT NULL
+            )
+            """
+        )
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS sync_deferred_deletions (
+                entity_id TEXT PRIMARY KEY NOT NULL,
+                deleted_at INTEGER NOT NULL CHECK (deleted_at >= 0)
+            )
+            """
+        )
+        try execute("PRAGMA user_version = 4")
     }
 
     /// 只读预检安全存储中的候选身份，不修改数据库或生成 outbox。
@@ -416,22 +462,68 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
-    public func makeBackupPayloads(
+    public func makeBackupContents(
         timeZone: TimeZone = TimeZone(identifier: "Asia/Shanghai")!
-    ) throws -> [WireTaskPayload] {
+    ) throws -> (tasks: [WireTaskPayload], tombstones: [WireTombstonePayload]) {
         try withLock {
-            try fetchAll().map { try wirePayload(for: $0, timeZone: timeZone) }
+            let tasks = try fetchAll().map { try wirePayload(for: $0, timeZone: timeZone) }
+            return (tasks, try backupTombstones())
         }
     }
 
-    /// 备份恢复只允许空任务库；调用方负责在成功后恢复 Keychain 同步身份。
-    public func restoreBackupPayloads(_ payloads: [WireTaskPayload]) throws {
+    public func makeBackupPayloads(
+        timeZone: TimeZone = TimeZone(identifier: "Asia/Shanghai")!
+    ) throws -> [WireTaskPayload] {
+        try makeBackupContents(timeZone: timeZone).tasks
+    }
+
+    public func makeBackupTombstones() throws -> [WireTombstonePayload] {
+        try withLock { try backupTombstones() }
+    }
+
+    /// 备份恢复只允许没有任务、删除记录或同步历史的全新任务库。
+    /// 调用方负责在成功后恢复 Keychain 同步身份。
+    public func restoreBackupPayloads(
+        _ payloads: [WireTaskPayload],
+        tombstones: [WireTombstonePayload] = []
+    ) throws {
         try withLock {
-            guard try fetchAll().isEmpty else {
+            guard try isPristineBackupDestination() else {
                 throw SQLiteRepositoryError.backupDestinationNotEmpty
             }
             let tasks = try payloads.map(task(from:))
-            try save(tasks)
+            let taskIDs = Set(tasks.map { canonicalEntityID($0.id.uuidString) })
+            guard taskIDs.count == tasks.count else {
+                throw SQLiteRepositoryError.invalidRecord("备份包含重复的任务 ID")
+            }
+            let deletions = try tombstones.map { tombstone -> (String, Int64) in
+                let entityID = canonicalEntityID(tombstone.id)
+                guard UUID(uuidString: entityID) != nil,
+                      !taskIDs.contains(entityID) else {
+                    throw SQLiteRepositoryError.invalidRecord("备份删除记录的任务 ID 无效或重复")
+                }
+                return (entityID, tombstone.deletedAt)
+            }
+            guard Set(deletions.map { $0.0 }).count == deletions.count else {
+                throw SQLiteRepositoryError.invalidRecord("备份包含重复的删除记录")
+            }
+
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                for task in tasks {
+                    try upsertTaskRow(task)
+                }
+                for (entityID, deletedAt) in deletions {
+                    try recordDeferredDeletion(
+                        entityID: entityID,
+                        deletedAtMilliseconds: deletedAt
+                    )
+                }
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
         }
     }
 
@@ -444,6 +536,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                       identity.deviceId == configuration.deviceId else {
                     throw SQLiteRepositoryError.syncIdentityMismatch
                 }
+                try recoverDeferredChanges(using: configuration)
                 syncConfiguration = configuration
                 hasPersistedSyncIdentity = true
                 return
@@ -472,6 +565,16 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 ) {
                     try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
                 }
+                for deletion in try deferredDeletions() {
+                    try deleteTaskRow(entityID: deletion.entityID)
+                    try enqueueLocalTombstone(
+                        entityID: deletion.entityID,
+                        deletedAtMilliseconds: deletion.deletedAtMilliseconds,
+                        configuration: configuration
+                    )
+                }
+                try execute("DELETE FROM sync_deferred_upserts")
+                try execute("DELETE FROM sync_deferred_deletions")
                 try execute("COMMIT")
                 syncConfiguration = configuration
                 hasPersistedSyncIdentity = true
@@ -609,10 +712,194 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
-    private func ensureSyncCredentialsForMutation() throws {
-        if hasPersistedSyncIdentity && syncConfiguration == nil {
-            throw SQLiteRepositoryError.syncCredentialsUnavailable
+    private func recordDeferredUpsert(entityID: String) throws {
+        let statement = try prepare(
+            "INSERT OR IGNORE INTO sync_deferred_upserts(entity_id) VALUES (?)"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([.text(entityID)], to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    private func removeDeferredUpsert(entityID: String) throws {
+        let statement = try prepare(
+            "DELETE FROM sync_deferred_upserts WHERE entity_id = ?"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([.text(entityID)], to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    private func isDeferredDeletion(entityID: String) throws -> Bool {
+        let statement = try prepare(
+            "SELECT 1 FROM sync_deferred_deletions WHERE entity_id = ? LIMIT 1"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([.text(entityID)], to: statement)
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW:
+            return true
+        case SQLITE_DONE:
+            return false
+        default:
+            throw statementError()
         }
+    }
+
+    private func recordDeferredDeletion(entityID: String, deletedAt: Date) throws {
+        try recordDeferredDeletion(
+            entityID: entityID,
+            deletedAtMilliseconds: milliseconds(since1970: deletedAt)
+        )
+    }
+
+    private func recordDeferredDeletion(
+        entityID: String,
+        deletedAtMilliseconds: Int64
+    ) throws {
+        let statement = try prepare(
+            """
+            INSERT INTO sync_deferred_deletions(entity_id, deleted_at)
+            VALUES (?, ?)
+            ON CONFLICT(entity_id) DO UPDATE SET deleted_at = excluded.deleted_at
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([
+            .text(entityID),
+            .integer(deletedAtMilliseconds),
+        ], to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    private func recoverDeferredChanges(
+        using configuration: SQLiteSyncConfiguration
+    ) throws {
+        guard try hasDeferredChanges() else { return }
+
+        try execute("BEGIN IMMEDIATE TRANSACTION")
+        do {
+            for task in try query(
+                """
+                SELECT tasks.id, tasks.series_id, tasks.title, tasks.time_scope,
+                       tasks.tier, tasks.status, tasks.recurrence_json,
+                       tasks.period_start, tasks.period_end, tasks.sort_index,
+                       tasks.created_at, tasks.updated_at, tasks.completed_at
+                FROM tasks
+                INNER JOIN sync_deferred_upserts
+                    ON sync_deferred_upserts.entity_id = lower(tasks.id)
+                ORDER BY tasks.created_at, tasks.id
+                """
+            ) {
+                try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
+            }
+
+            for deletion in try deferredDeletions() {
+                try deleteTaskRow(entityID: deletion.entityID)
+                try enqueueLocalTombstone(
+                    entityID: deletion.entityID,
+                    deletedAtMilliseconds: deletion.deletedAtMilliseconds,
+                    configuration: configuration
+                )
+            }
+            try execute("DELETE FROM sync_deferred_upserts")
+            try execute("DELETE FROM sync_deferred_deletions")
+            try execute("COMMIT")
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+    }
+
+    private func hasDeferredChanges() throws -> Bool {
+        let statement = try prepare(
+            """
+            SELECT EXISTS(SELECT 1 FROM sync_deferred_upserts)
+                OR EXISTS(SELECT 1 FROM sync_deferred_deletions)
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw statementError() }
+        return sqlite3_column_int(statement, 0) != 0
+    }
+
+    private func isPristineBackupDestination() throws -> Bool {
+        let statement = try prepare(
+            """
+            SELECT
+                NOT EXISTS(SELECT 1 FROM tasks)
+                AND NOT EXISTS(SELECT 1 FROM sync_outbox)
+                AND NOT EXISTS(SELECT 1 FROM sync_entity_versions)
+                AND NOT EXISTS(SELECT 1 FROM sync_applied_operations)
+                AND NOT EXISTS(SELECT 1 FROM sync_deferred_upserts)
+                AND NOT EXISTS(SELECT 1 FROM sync_deferred_deletions)
+                AND vault_id IS NULL
+                AND device_id IS NULL
+                AND cursor = 0
+                AND lamport = 0
+            FROM sync_state
+            WHERE singleton = 1
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw statementError() }
+        return sqlite3_column_int(statement, 0) != 0
+    }
+
+    private func deferredDeletions() throws -> [(
+        entityID: String,
+        deletedAtMilliseconds: Int64
+    )] {
+        let statement = try prepare(
+            "SELECT entity_id, deleted_at FROM sync_deferred_deletions ORDER BY entity_id"
+        )
+        defer { sqlite3_finalize(statement) }
+        var values: [(entityID: String, deletedAtMilliseconds: Int64)] = []
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            values.append((
+                entityID: text(at: 0, from: statement),
+                deletedAtMilliseconds: sqlite3_column_int64(statement, 1)
+            ))
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else { throw statementError() }
+        return values
+    }
+
+    private func backupTombstones() throws -> [WireTombstonePayload] {
+        let statement = try prepare(
+            """
+            SELECT entity_id, MAX(deleted_at)
+            FROM (
+                SELECT entity_id, deleted_at
+                FROM sync_entity_versions
+                WHERE is_deleted = 1
+                UNION ALL
+                SELECT entity_id, deleted_at
+                FROM sync_deferred_deletions
+            )
+            GROUP BY entity_id
+            ORDER BY entity_id
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        var values: [WireTombstonePayload] = []
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            let entityID = canonicalEntityID(text(at: 0, from: statement))
+            guard UUID(uuidString: entityID) != nil,
+                  sqlite3_column_type(statement, 1) != SQLITE_NULL else {
+                throw SQLiteRepositoryError.invalidRecord("删除记录包含无效任务 ID 或时间")
+            }
+            values.append(try WireTombstonePayload(
+                id: entityID,
+                deletedAt: sqlite3_column_int64(statement, 1)
+            ))
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else { throw statementError() }
+        return values
     }
 
     private func persistedSyncIdentity() throws -> SyncIdentity? {
@@ -700,9 +987,20 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         deletedAt: Date,
         configuration: SQLiteSyncConfiguration
     ) throws {
+        try enqueueLocalTombstone(
+            entityID: entityID,
+            deletedAtMilliseconds: milliseconds(since1970: deletedAt),
+            configuration: configuration
+        )
+    }
+
+    private func enqueueLocalTombstone(
+        entityID: String,
+        deletedAtMilliseconds: Int64,
+        configuration: SQLiteSyncConfiguration
+    ) throws {
         let lamport = try nextLamport()
         let operationID = UUID().uuidString.lowercased()
-        let deletedAtMilliseconds = milliseconds(since1970: deletedAt)
         let payload = try WireTaskEntity.tombstone(WireTombstonePayload(
             id: entityID,
             deletedAt: deletedAtMilliseconds

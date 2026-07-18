@@ -1,7 +1,12 @@
 <resources>
     <string name="app_name">Woo Todo</string>
     <string name="today_title">今日任务</string>
+    <string name="tomorrow_title">明日任务</string>
+    <string name="week_title">本周任务</string>
+    <string name="month_title">本月任务</string>
+    <string name="leisure_title">闲时任务</string>
     <string name="scope_today">今日</string>
+    <string name="scope_tomorrow">明日</string>
     <string name="scope_week">本周</string>
     <string name="scope_month">本月</string>
     <string name="scope_leisure">闲时</string>
@@ -56,6 +61,7 @@
     <string name="reminder_settings">更多</string>
     <string name="reminder_channel_name">睡前规划提醒</string>
     <string name="reminder_channel_description">在设定的睡前时间后提醒安排明日任务</string>
+    <string name="notification_permission_denied">未授予通知权限，23:10 睡前提醒不会显示；可稍后在系统设置中开启。</string>
     <string name="reminder_title">明天准备做什么？</string>
     <string name="reminder_text">还没有明日任务，花一分钟列出来吧。</string>
     <string name="reminder_settings_title">睡前提醒</string>
@@ -73,7 +79,10 @@
     <string name="pairing_interrupted_message">Android 进程在配对期间被重建，临时密钥已丢弃。请在 Mac 上重新生成二维码后再扫描。</string>
     <string name="android_device_name">Android 设备</string>
     <string name="sync_now">同步</string>
-    <string name="sync_unpaired">尚未连接 Mac · 扫描 Mac 生成的配对二维码</string>
+    <string name="sync_unpaired">尚未连接 · 请先在 Mac 生成二维码，再用手机系统扫码器扫描</string>
+    <string name="sync_pairing_help">配对</string>
+    <string name="pairing_help_title">如何连接 Mac</string>
+    <string name="pairing_help_message">1. 在 Mac 菜单栏打开 Woo Todo → 任务详情与统计 → 同步。\n\n2. 填写双方都能访问的 HTTPS Worker 地址，创建同步空间。127.0.0.1 不能用于双机同步。\n\n3. 在 Mac 生成配对二维码。\n\n4. 用三星相机或快捷面板“扫描二维码”扫描，并点按“打开 Woo Todo”。\n\n5. 核对两端六位码完全一致，再回到 Mac 确认绑定。</string>
     <string name="sync_ready">已连接 · 等待同步</string>
     <string name="sync_running">正在同步…</string>
     <string name="sync_succeeded">同步完成 · 上传 %1$d，下载 %2$d</string>

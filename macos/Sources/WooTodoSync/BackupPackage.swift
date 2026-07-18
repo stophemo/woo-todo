@@ -18,7 +18,7 @@ public enum BackupPackageError: Error, Equatable, LocalizedError {
         case .invalidPassphrase: "备份口令规范化后须为 10～256 个字符"
         case .authenticationFailed: "备份口令错误或文件已损坏"
         case .snapshotTooLarge: "备份文件超过 32 MiB 限制"
-        case .tooManyTasks: "备份中的任务数量超过 50000 条"
+        case .tooManyTasks: "备份中的任务与删除记录总数超过 50000 条"
         case .duplicateTaskID(let id): "备份中存在重复任务 ID：\(id)"
         case .timestampMismatch: "备份外层与加密正文的导出时间不一致"
         }
@@ -186,35 +186,43 @@ public struct BackupSnapshot: Codable, Equatable, Sendable {
         case protocolVersion
         case exportedAt
         case tasks
+        case tombstones
         case syncCredentials
     }
 
     public let protocolVersion: Int
     public let exportedAt: Int64
     public let tasks: [WireTaskPayload]
+    public let tombstones: [WireTombstonePayload]
     public let syncCredentials: BackupSyncCredentials?
 
     public init(
         exportedAt: Int64,
         tasks: [WireTaskPayload],
+        tombstones: [WireTombstonePayload] = [],
         syncCredentials: BackupSyncCredentials?
     ) throws {
         self.protocolVersion = BackupPackageCodec.protocolVersion
         self.exportedAt = exportedAt
         self.tasks = tasks
+        self.tombstones = tombstones
         self.syncCredentials = syncCredentials
         try validate()
     }
 
     public init(from decoder: Decoder) throws {
-        try requireExactKeys(
+        try requireKeys(
             decoder,
-            expected: ["protocolVersion", "exportedAt", "tasks", "syncCredentials"]
+            required: ["protocolVersion", "exportedAt", "tasks", "syncCredentials"],
+            optional: ["tombstones"]
         )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
         self.exportedAt = try container.decode(Int64.self, forKey: .exportedAt)
         self.tasks = try container.decode([WireTaskPayload].self, forKey: .tasks)
+        self.tombstones = container.contains(.tombstones)
+            ? try container.decode([WireTombstonePayload].self, forKey: .tombstones)
+            : []
         self.syncCredentials = try container.decodeIfPresent(
             BackupSyncCredentials.self,
             forKey: .syncCredentials
@@ -227,6 +235,9 @@ public struct BackupSnapshot: Codable, Equatable, Sendable {
         try container.encode(protocolVersion, forKey: .protocolVersion)
         try container.encode(exportedAt, forKey: .exportedAt)
         try container.encode(tasks, forKey: .tasks)
+        if !tombstones.isEmpty {
+            try container.encode(tombstones, forKey: .tombstones)
+        }
         if let syncCredentials {
             try container.encode(syncCredentials, forKey: .syncCredentials)
         } else {
@@ -241,7 +252,7 @@ public struct BackupSnapshot: Codable, Equatable, Sendable {
         guard (0...WireTaskPayload.maximumSafeInteger).contains(exportedAt) else {
             throw BackupPackageError.invalidFile("exportedAt")
         }
-        guard tasks.count <= BackupPackageCodec.maximumTaskCount else {
+        guard tasks.count + tombstones.count <= BackupPackageCodec.maximumTaskCount else {
             throw BackupPackageError.tooManyTasks
         }
         var identifiers = Set<String>()
@@ -250,6 +261,13 @@ public struct BackupSnapshot: Codable, Equatable, Sendable {
             let canonicalID = task.id.lowercased()
             guard identifiers.insert(canonicalID).inserted else {
                 throw BackupPackageError.duplicateTaskID(task.id)
+            }
+        }
+        for tombstone in tombstones {
+            try tombstone.validate()
+            let canonicalID = tombstone.id.lowercased()
+            guard identifiers.insert(canonicalID).inserted else {
+                throw BackupPackageError.duplicateTaskID(tombstone.id)
             }
         }
         if let syncCredentials {
@@ -500,6 +518,24 @@ private func requireExactKeys(_ decoder: Decoder, expected: Set<String>) throws 
             DecodingError.Context(
                 codingPath: decoder.codingPath,
                 debugDescription: "JSON 字段不匹配，期望 \(expected)，实际 \(actual)"
+            )
+        )
+    }
+}
+
+private func requireKeys(
+    _ decoder: Decoder,
+    required: Set<String>,
+    optional: Set<String>
+) throws {
+    let container = try decoder.container(keyedBy: AnyCodingKey.self)
+    let actual = Set(container.allKeys.map(\.stringValue))
+    guard required.isSubset(of: actual),
+          actual.isSubset(of: required.union(optional)) else {
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "JSON 字段不匹配，必需 \(required)，可选 \(optional)，实际 \(actual)"
             )
         )
     }

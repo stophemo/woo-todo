@@ -35,6 +35,7 @@ class SQLiteBackupDatabase(private val database: TaskDatabase) : BackupDatabase 
                         while (cursor.moveToNext()) add(cursor.toTaskEntity().toWirePayload())
                     }
                 },
+                tombstones = readTombstones(sqlite),
             )
             sqlite.setTransactionSuccessful()
             snapshot
@@ -62,8 +63,22 @@ class SQLiteBackupDatabase(private val database: TaskDatabase) : BackupDatabase 
         override fun readState(): BackupDatabaseState = readState(sqlite)
 
         override fun insertTask(task: TaskInstancePayload) {
+            check(!hasDeletionBarrier(sqlite, task.id)) {
+                "已删除任务不能以相同 ID 恢复"
+            }
             val entity = task.toTaskEntity()
             sqlite.insertOrThrow(TABLE_TASKS, null, entity.toContentValues())
+        }
+
+        override fun insertTombstone(tombstone: TombstonePayload) {
+            check(!hasTask(sqlite, tombstone.id)) {
+                "同一备份不能同时包含相同 ID 的任务和删除记录"
+            }
+            val values = ContentValues(2).apply {
+                put("entity_id", tombstone.id)
+                put("deleted_at", tombstone.deletedAt)
+            }
+            sqlite.insertOrThrow(TABLE_DEFERRED_DELETIONS, null, values)
         }
 
         override fun bindIdentityAndCreateBaseline(credentials: SyncCredentials) {
@@ -98,9 +113,67 @@ class SQLiteBackupDatabase(private val database: TaskDatabase) : BackupDatabase 
                     )
                 }
             }
+            val deferredDeletions = sqlite.query(
+                TABLE_DEFERRED_DELETIONS,
+                arrayOf("entity_id", "deleted_at"),
+                null,
+                null,
+                null,
+                null,
+                "deleted_at ASC, entity_id ASC",
+            ).use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        add(cursor.getString(0) to cursor.getLong(1))
+                    }
+                }
+            }
+            deferredDeletions.forEach { (entityId, deletedAt) ->
+                SQLiteLocalMutationRecorder.recordDeletion(sqlite, entityId, deletedAt)
+            }
         }
     }
 }
+
+private fun readTombstones(sqlite: SQLiteDatabase): List<TombstonePayload> = sqlite.rawQuery(
+    """
+    SELECT entity_id, MAX(deleted_at) AS deleted_at
+    FROM (
+        SELECT entity_id, deleted_at FROM sync_tombstones
+        UNION ALL
+        SELECT entity_id, deleted_at FROM sync_deferred_deletions
+    )
+    GROUP BY entity_id
+    ORDER BY deleted_at ASC, entity_id ASC
+    """.trimIndent(),
+    null,
+).use { cursor ->
+    buildList {
+        while (cursor.moveToNext()) {
+            add(TombstonePayload(id = cursor.getString(0), deletedAt = cursor.getLong(1)))
+        }
+    }
+}
+
+private fun hasTask(sqlite: SQLiteDatabase, entityId: String): Boolean = sqlite.rawQuery(
+    "SELECT 1 FROM tasks WHERE id = ? LIMIT 1",
+    arrayOf(entityId),
+).use(Cursor::moveToFirst)
+
+private fun hasDeletionBarrier(sqlite: SQLiteDatabase, entityId: String): Boolean = sqlite.rawQuery(
+    """
+    SELECT 1 FROM sync_entity_versions
+    WHERE entity_id = ? AND is_tombstone = 1
+    UNION ALL
+    SELECT 1 FROM sync_tombstones
+    WHERE entity_id = ?
+    UNION ALL
+    SELECT 1 FROM sync_deferred_deletions
+    WHERE entity_id = ?
+    LIMIT 1
+    """.trimIndent(),
+    arrayOf(entityId, entityId, entityId),
+).use(Cursor::moveToFirst)
 
 private fun readState(sqlite: SQLiteDatabase): BackupDatabaseState = sqlite.rawQuery(
     """
@@ -112,7 +185,8 @@ private fun readState(sqlite: SQLiteDatabase): BackupDatabaseState = sqlite.rawQ
         (SELECT COUNT(*) FROM tasks),
         (SELECT COUNT(*) FROM sync_outbox),
         (SELECT COUNT(*) FROM sync_entity_versions),
-        (SELECT COUNT(*) FROM sync_tombstones),
+        (SELECT COUNT(*) FROM sync_tombstones) +
+            (SELECT COUNT(*) FROM sync_deferred_deletions),
         (SELECT COUNT(*) FROM sync_applied_operations)
     FROM sync_state
     WHERE id = 1
@@ -169,3 +243,4 @@ private fun Cursor.toTaskEntity(): TaskEntity = TaskEntity(
 
 private const val TABLE_TASKS = "tasks"
 private const val TABLE_SYNC_STATE = "sync_state"
+private const val TABLE_DEFERRED_DELETIONS = "sync_deferred_deletions"

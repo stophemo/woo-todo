@@ -15,8 +15,8 @@ usage() {
 
 可选环境变量：
   BUNDLE_ID          Bundle Identifier，默认 io.github.stophemo.woo-todo
-  MARKETING_VERSION  显示版本，默认 0.1.0
-  BUILD_NUMBER       构建号，仅允许数字，默认 1
+  MARKETING_VERSION  显示版本，默认 0.1.1
+  BUILD_NUMBER       构建号，仅允许数字，默认 2
 EOF
 }
 
@@ -49,14 +49,16 @@ done
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 MACOS_DIR="$(cd -- "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd -P)"
 TEMPLATE_PLIST="$MACOS_DIR/Resources/Info.plist"
+ICON_RESOURCE="$MACOS_DIR/Resources/AppIcon.icns"
+ICON_FILE_NAME="AppIcon.icns"
 DIST_DIR="$MACOS_DIR/dist"
 APP_NAME="Woo Todo"
 EXECUTABLE_NAME="woo-todo-mac"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 
 BUNDLE_ID="${BUNDLE_ID:-io.github.stophemo.woo-todo}"
-MARKETING_VERSION="${MARKETING_VERSION:-0.1.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
+MARKETING_VERSION="${MARKETING_VERSION:-0.1.1}"
+BUILD_NUMBER="${BUILD_NUMBER:-2}"
 
 [[ "$BUNDLE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] \
     || fail "BUNDLE_ID 只能包含字母、数字、点和连字符"
@@ -68,9 +70,11 @@ BUILD_NUMBER="${BUILD_NUMBER:-1}"
 require_command swift
 require_command /usr/bin/codesign
 require_command /usr/bin/ditto
+require_command /usr/bin/iconutil
 require_command /usr/bin/plutil
 require_command /usr/libexec/PlistBuddy
 [[ -f "$TEMPLATE_PLIST" ]] || fail "找不到 Info.plist 模板：$TEMPLATE_PLIST"
+[[ -s "$ICON_RESOURCE" ]] || fail "找不到 App 图标：$ICON_RESOURCE"
 
 umask 022
 mkdir -p -- "$DIST_DIR"
@@ -95,11 +99,41 @@ CONTENTS_DIR="$STAGED_APP/Contents"
 mkdir -p -- "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources"
 /usr/bin/install -m 0755 "$BUILT_EXECUTABLE" "$CONTENTS_DIR/MacOS/$EXECUTABLE_NAME"
 /usr/bin/install -m 0644 "$TEMPLATE_PLIST" "$CONTENTS_DIR/Info.plist"
+/usr/bin/install -m 0644 "$ICON_RESOURCE" "$CONTENTS_DIR/Resources/$ICON_FILE_NAME"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS_DIR/Info.plist"
 /usr/bin/plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
+
+PLIST_ICON_FILE="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$CONTENTS_DIR/Info.plist")"
+[[ "$PLIST_ICON_FILE" == "$ICON_FILE_NAME" ]] \
+    || fail "Info.plist 的 CFBundleIconFile 必须指向 $ICON_FILE_NAME"
+
+ICONSET_CHECK_DIR="$STAGING_DIR/AppIcon.iconset"
+if ! /usr/bin/iconutil \
+    -c iconset \
+    "$CONTENTS_DIR/Resources/$ICON_FILE_NAME" \
+    -o "$ICONSET_CHECK_DIR"; then
+    fail "$ICON_FILE_NAME 不是有效的 macOS 图标资源"
+fi
+
+EXPECTED_ICON_FILES=(
+    icon_16x16.png
+    icon_16x16@2x.png
+    icon_32x32.png
+    icon_32x32@2x.png
+    icon_128x128.png
+    icon_128x128@2x.png
+    icon_256x256.png
+    icon_256x256@2x.png
+    icon_512x512.png
+    icon_512x512@2x.png
+)
+for icon_file in "${EXPECTED_ICON_FILES[@]}"; do
+    [[ -s "$ICONSET_CHECK_DIR/$icon_file" ]] \
+        || fail "$ICON_FILE_NAME 缺少标准尺寸：$icon_file"
+done
 
 printf '正在执行 ad-hoc 签名…\n'
 /usr/bin/codesign \

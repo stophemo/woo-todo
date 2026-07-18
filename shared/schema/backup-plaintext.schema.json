@@ -17,6 +17,12 @@
       "maxItems": 50000,
       "items": { "$ref": "task.schema.json#/$defs/TaskPayload" }
     },
+    "tombstones": {
+      "description": "v0.1.1 起可选；缺失时按空数组处理。任务与删除记录合计不得超过 50000 条。",
+      "type": "array",
+      "maxItems": 50000,
+      "items": { "$ref": "task.schema.json#/$defs/TombstonePayload" }
+    },
     "syncCredentials": {
       "oneOf": [
         { "type": "null" },

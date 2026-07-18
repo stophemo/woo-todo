@@ -90,6 +90,79 @@ class SQLiteSyncStoreInstrumentedTest {
     }
 
     @Test
+    fun `未绑定时删除会持久化并在首次绑定后只补录一次tombstone`() = runBlocking {
+        val entityId = "task-deleted-before-binding"
+        val taskStore = SQLiteTaskStore(database)
+        taskStore.insert(localTask(entityId, "绑定前删除"))
+
+        assertTrue(taskStore.deletePending(entityId, deletedAt = 7_654))
+        assertNull(taskTitle(entityId))
+        assertEquals(1, rowCount("sync_deferred_deletions"))
+        assertEquals(0, rowCount("sync_outbox"))
+        assertEquals(0, rowCount("sync_entity_versions"))
+
+        val syncStore = SQLiteSyncStore(database, credentials)
+        val operation = syncStore.pendingOperations(50).single()
+
+        assertEquals(SyncOperationKind.DELETE, operation.kind)
+        assertEquals(entityId, operation.entityId)
+        assertEquals(
+            TombstonePayload(id = entityId, deletedAt = 7_654),
+            decrypt(operation),
+        )
+        assertEquals(0, rowCount("sync_deferred_deletions"))
+        assertEquals(1, rowCount("sync_tombstones"))
+        assertEquals(VersionSnapshot(1, credentials.deviceId, true), version(entityId))
+
+        SQLiteSyncStore(database, credentials)
+        assertEquals(1, rowCount("sync_outbox"))
+        assertEquals(1, rowCount("sync_tombstones"))
+    }
+
+    @Test
+    fun `未绑定删除后同ID任务在重启后也不能复活`() = runBlocking {
+        val entityId = "task-terminal-before-binding"
+        val taskStore = SQLiteTaskStore(database)
+        val task = localTask(entityId, "删除后不得复活")
+        taskStore.insert(task)
+        assertTrue(taskStore.deletePending(entityId, deletedAt = 8_765))
+
+        database.close()
+        database = TaskDatabase(context)
+        database.writableDatabase
+        val reopenedTaskStore = SQLiteTaskStore(database)
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking { reopenedTaskStore.insert(task.copy(title = "不得复活")) }
+        }
+
+        assertNull(taskTitle(entityId))
+        assertEquals(1, rowCount("sync_deferred_deletions"))
+    }
+
+    @Test
+    fun `重复下一实例命中删除屏障时只结算当前任务`() = runBlocking {
+        val taskStore = SQLiteTaskStore(database)
+        val current = localTask("task-recurrence-current", "当前重复任务")
+        val deletedNext = localTask("task-recurrence-next", "已删除的下一实例")
+        taskStore.insert(deletedNext)
+        assertTrue(taskStore.deletePending(deletedNext.id, deletedAt = 8_765))
+        taskStore.insert(current)
+
+        assertTrue(
+            taskStore.settleAndSchedule(
+                id = current.id,
+                status = TaskStatus.COMPLETED,
+                settledAt = 9_876,
+                nextTask = { deletedNext },
+            ),
+        )
+
+        assertEquals(TaskStatus.COMPLETED, taskStatus(current.id))
+        assertNull(taskTitle(deletedNext.id))
+        assertEquals(1, rowCount("sync_deferred_deletions"))
+    }
+
+    @Test
     fun `任务先到时后续 tombstone 会永久压制同 ID 高版本任务`() {
         var taskChangeCount = 0
         val store = SQLiteSyncStore(database, credentials) { taskChangeCount += 1 }
@@ -415,6 +488,13 @@ class SQLiteSyncStoreInstrumentedTest {
         if (cursor.moveToFirst()) cursor.getString(0) else null
     }
 
+    private fun taskStatus(entityId: String): TaskStatus? = database.readableDatabase.rawQuery(
+        "SELECT status FROM tasks WHERE id = ?",
+        arrayOf(entityId),
+    ).use { cursor ->
+        if (cursor.moveToFirst()) TaskStatus.fromRaw(cursor.getString(0)) else null
+    }
+
     private fun version(entityId: String): VersionSnapshot? = database.readableDatabase.rawQuery(
         "SELECT lamport, device_id, is_tombstone FROM sync_entity_versions WHERE entity_id = ?",
         arrayOf(entityId),
@@ -450,6 +530,12 @@ class SQLiteSyncStoreInstrumentedTest {
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
         const val REMOTE_DEVICE_ID = "device-macos-test"
-        val ALLOWED_COUNT_TABLES = setOf("sync_outbox", "sync_applied_operations")
+        val ALLOWED_COUNT_TABLES = setOf(
+            "sync_outbox",
+            "sync_applied_operations",
+            "sync_entity_versions",
+            "sync_tombstones",
+            "sync_deferred_deletions",
+        )
     }
 }

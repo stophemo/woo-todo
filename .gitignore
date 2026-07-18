@@ -96,3 +96,6 @@ captures/
 *.apks
 *.idsig
 *.hprof
+
+# 本地发版暂存产物
+/release/

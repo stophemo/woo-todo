@@ -24,7 +24,7 @@ sealed class BackupPackageException(message: String, cause: Throwable? = null) :
 
     class SnapshotTooLarge : BackupPackageException("备份文件超过安全大小限制")
 
-    class TooManyTasks : BackupPackageException("备份中的任务数量超过 50000 条")
+    class TooManyTasks : BackupPackageException("备份中的任务与删除记录总数超过 50000 条")
 
     class DuplicateTaskId(val taskId: String) :
         BackupPackageException("备份中存在重复任务 ID：$taskId")
@@ -116,6 +116,7 @@ data class BackupSnapshot(
     val exportedAt: Long,
     val tasks: List<TaskInstancePayload>,
     val syncCredentials: BackupSyncCredentials?,
+    val tombstones: List<TombstonePayload> = emptyList(),
     val protocolVersion: Int = BackupPackageCodec.PROTOCOL_VERSION,
 )
 
@@ -369,15 +370,22 @@ object BackupPackageCodec {
         if (snapshot.exportedAt !in 0..WIRE_MAXIMUM_SAFE_INTEGER) {
             throw BackupPackageException.InvalidFile("exportedAt")
         }
-        if (snapshot.tasks.size > MAXIMUM_TASK_COUNT) {
+        if (snapshot.tasks.size + snapshot.tombstones.size > MAXIMUM_TASK_COUNT) {
             throw BackupPackageException.TooManyTasks()
         }
-        val identifiers = HashSet<String>(snapshot.tasks.size)
+        val identifiers = HashSet<String>(snapshot.tasks.size + snapshot.tombstones.size)
         snapshot.tasks.forEachIndexed { index, task ->
             validateTask(task, "tasks[$index]")
             val canonicalId = task.id.lowercase(Locale.ROOT)
             if (!identifiers.add(canonicalId)) {
                 throw BackupPackageException.DuplicateTaskId(task.id)
+            }
+        }
+        snapshot.tombstones.forEachIndexed { index, tombstone ->
+            validateTombstone(tombstone, "tombstones[$index]")
+            val canonicalId = tombstone.id.lowercase(Locale.ROOT)
+            if (!identifiers.add(canonicalId)) {
+                throw BackupPackageException.DuplicateTaskId(tombstone.id)
             }
         }
         snapshot.syncCredentials?.let(::validateCredentials)
@@ -394,6 +402,14 @@ object BackupPackageCodec {
         }
         try {
             SyncJsonCodec.encodeTaskPayload(task)
+        } catch (error: Exception) {
+            throw BackupPackageException.InvalidFile(path, error)
+        }
+    }
+
+    private fun validateTombstone(tombstone: TombstonePayload, path: String) {
+        try {
+            SyncJsonCodec.encodeTaskPayload(tombstone)
         } catch (error: Exception) {
             throw BackupPackageException.InvalidFile(path, error)
         }
@@ -453,9 +469,10 @@ object BackupPackageCodec {
     }
 
     private fun decodeSnapshot(root: StrictJsonObject): BackupSnapshot {
-        root.requireExactKeys(
-            setOf("protocolVersion", "exportedAt", "tasks", "syncCredentials"),
-            "plaintext",
+        root.requireKeys(
+            required = setOf("protocolVersion", "exportedAt", "tasks", "syncCredentials"),
+            optional = setOf("tombstones"),
+            field = "plaintext",
         )
         val version = root.long(
             "protocolVersion",
@@ -470,6 +487,13 @@ object BackupPackageCodec {
         val tasks = taskValues.mapIndexed { index, value ->
             decodeTask(value as? StrictJsonObject ?: invalidFile("tasks[$index]"), "tasks[$index]")
         }
+        val tombstones = root.optionalArray("tombstones", "tombstones")
+            .mapIndexed { index, value ->
+                decodeTombstone(
+                    value as? StrictJsonObject ?: invalidFile("tombstones[$index]"),
+                    "tombstones[$index]",
+                )
+            }
         val credentials = when (val value = root.value("syncCredentials", "syncCredentials")) {
             StrictJsonNull -> null
             is StrictJsonObject -> decodeCredentials(value)
@@ -480,6 +504,7 @@ object BackupPackageCodec {
             exportedAt = root.long("exportedAt", "exportedAt", 0..WIRE_MAXIMUM_SAFE_INTEGER),
             tasks = tasks,
             syncCredentials = credentials,
+            tombstones = tombstones,
         ).also(::validateSnapshot)
     }
 
@@ -516,6 +541,32 @@ object BackupPackageCodec {
         return task
     }
 
+    private fun decodeTombstone(root: StrictJsonObject, path: String): TombstonePayload {
+        root.requireExactKeys(TOMBSTONE_KEYS, path)
+        val tombstone = try {
+            TombstonePayload(
+                protocolVersion = root.int(
+                    "protocolVersion",
+                    "$path.protocolVersion",
+                    0..Int.MAX_VALUE,
+                ),
+                entityType = root.string("entityType", "$path.entityType"),
+                id = root.string("id", "$path.id"),
+                deletedAt = root.long(
+                    "deletedAt",
+                    "$path.deletedAt",
+                    0..WIRE_MAXIMUM_SAFE_INTEGER,
+                ),
+            )
+        } catch (error: BackupPackageException) {
+            throw error
+        } catch (error: Exception) {
+            throw BackupPackageException.InvalidFile(path, error)
+        }
+        validateTombstone(tombstone, path)
+        return tombstone
+    }
+
     private fun decodeCredentials(root: StrictJsonObject): BackupSyncCredentials {
         root.requireExactKeys(CREDENTIAL_KEYS, "syncCredentials")
         return BackupSyncCredentials(
@@ -538,7 +589,16 @@ object BackupPackageCodec {
             if (index > 0) append(',')
             appendTask(task)
         }
-        append("]}")
+        append(']')
+        if (snapshot.tombstones.isNotEmpty()) {
+            append(",\"tombstones\":[")
+            snapshot.tombstones.forEachIndexed { index, tombstone ->
+                if (index > 0) append(',')
+                appendTombstone(tombstone)
+            }
+            append(']')
+        }
+        append('}')
     }.toByteArray(StandardCharsets.UTF_8)
 
     private fun encodeFile(file: EncryptedBackupFile): ByteArray = buildString {
@@ -582,11 +642,19 @@ object BackupPackageCodec {
         append(",\"updatedAt\":").append(task.updatedAt).append('}')
     }
 
+    private fun StringBuilder.appendTombstone(tombstone: TombstonePayload) {
+        append("{\"deletedAt\":").append(tombstone.deletedAt)
+        append(",\"entityType\":").appendJsonString(tombstone.entityType)
+        append(",\"id\":").appendJsonString(tombstone.id)
+        append(",\"protocolVersion\":").append(tombstone.protocolVersion).append('}')
+    }
+
     private val TASK_KEYS = setOf(
         "protocolVersion", "entityType", "id", "seriesId", "title", "timeType",
         "periodStart", "timezone", "questLine", "state", "recurrence", "sortOrder",
         "createdAt", "updatedAt", "settledAt",
     )
+    private val TOMBSTONE_KEYS = setOf("protocolVersion", "entityType", "id", "deletedAt")
     private val CREDENTIAL_KEYS =
         setOf("endpoint", "vaultId", "deviceId", "deviceToken", "vaultKey")
 
@@ -703,6 +771,16 @@ private fun StrictJsonObject.requireExactKeys(expected: Set<String>, field: Stri
     if (values.keys != expected) invalidFile(field)
 }
 
+private fun StrictJsonObject.requireKeys(
+    required: Set<String>,
+    optional: Set<String>,
+    field: String,
+) {
+    if (!values.keys.containsAll(required) || !required.plus(optional).containsAll(values.keys)) {
+        invalidFile(field)
+    }
+}
+
 private fun StrictJsonObject.value(key: String, field: String): StrictJsonValue =
     values[key] ?: invalidFile(field)
 
@@ -721,6 +799,13 @@ private fun StrictJsonObject.objectValue(key: String, field: String): StrictJson
 
 private fun StrictJsonObject.array(key: String, field: String): List<StrictJsonValue> =
     (value(key, field) as? StrictJsonArray)?.values ?: invalidFile(field)
+
+private fun StrictJsonObject.optionalArray(key: String, field: String): List<StrictJsonValue> =
+    when (val value = values[key]) {
+        null -> emptyList()
+        is StrictJsonArray -> value.values
+        else -> invalidFile(field)
+    }
 
 private fun StrictJsonObject.long(key: String, field: String, range: LongRange): Long {
     val number = (value(key, field) as? StrictJsonNumber)?.source ?: invalidFile(field)

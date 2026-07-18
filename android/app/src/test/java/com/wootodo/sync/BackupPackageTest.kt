@@ -43,6 +43,7 @@ class BackupPackageTest {
         val snapshot = BackupPackageCodec.open(encryptedFile(vector), password)
         assertEquals(vector.getLong("createdAt"), snapshot.exportedAt)
         assertEquals(1, snapshot.tasks.size)
+        assertEquals(emptyList<TombstonePayload>(), snapshot.tombstones)
         assertEquals("提交周报", snapshot.tasks.single().title)
         assertEquals(WireTaskState.COMPLETED, snapshot.tasks.single().state)
         assertNotNull(snapshot.syncCredentials)
@@ -75,6 +76,36 @@ class BackupPackageTest {
             BackupPackageCodec.aadBytes(vector.getLong("createdAt"), kdfParameters),
         )
         assertEquals(vector.getString("plaintextUtf8"), String(plaintext, StandardCharsets.UTF_8))
+    }
+
+    @Test
+    fun `新备份保留删除屏障且旧备份缺失字段仍兼容`() {
+        val vector = fixture()
+        val tombstonePlaintext = JSONObject(vector.getString("tombstonePlaintextUtf8"))
+        val deleted = tombstonePlaintext.getJSONArray("tombstones").getJSONObject(0)
+        val snapshot = BackupSnapshot(
+            exportedAt = tombstonePlaintext.getLong("exportedAt"),
+            tasks = emptyList(),
+            syncCredentials = null,
+            tombstones = listOf(
+                TombstonePayload(
+                    id = deleted.getString("id"),
+                    deletedAt = deleted.getLong("deletedAt"),
+                ),
+            ),
+        )
+        val sealed = BackupPackageCodec.seal(
+            snapshot = snapshot,
+            passphrase = vector.getString("password"),
+            iterations = vector.getJSONObject("kdf").getInt("iterations"),
+            salt = Base64Url.decode(vector.getJSONObject("kdf").getString("salt")),
+            nonce = Base64Url.decode(vector.getJSONObject("cipher").getString("nonce")),
+        )
+
+        assertEquals(snapshot, BackupPackageCodec.open(sealed, vector.getString("password")))
+        val plaintext = decryptPlaintext(sealed, vector)
+        assertEquals(1, JSONObject(plaintext).getJSONArray("tombstones").length())
+        assertFalse(JSONObject(vector.getString("plaintextUtf8")).has("tombstones"))
     }
 
     @Test
@@ -162,6 +193,18 @@ class BackupPackageTest {
             )
         }
 
+        assertThrows(BackupPackageException.DuplicateTaskId::class.java) {
+            BackupPackageCodec.seal(
+                BackupSnapshot(
+                    exportedAt = 1,
+                    tasks = listOf(task),
+                    syncCredentials = null,
+                    tombstones = listOf(TombstonePayload(id = task.id, deletedAt = 1)),
+                ),
+                "这是一个满足长度要求的备份口令",
+            )
+        }
+
         assertThrows(BackupPackageException.TooManyTasks::class.java) {
             BackupPackageCodec.seal(
                 BackupSnapshot(
@@ -172,6 +215,28 @@ class BackupPackageTest {
                 "这是一个满足长度要求的备份口令",
             )
         }
+    }
+
+    private fun decryptPlaintext(fileBytes: ByteArray, vector: JSONObject): String {
+        val file = JSONObject(String(fileBytes, StandardCharsets.UTF_8))
+        val kdfJson = file.getJSONObject("kdf")
+        val kdf = BackupKdfParameters(
+            algorithm = kdfJson.getString("algorithm"),
+            iterations = kdfJson.getInt("iterations"),
+            salt = kdfJson.getString("salt"),
+        )
+        val key = BackupKeyDerivation.deriveKey(
+            vector.getString("password"),
+            Base64Url.decode(kdf.salt),
+            kdf.iterations,
+        )
+        val cipher = file.getJSONObject("cipher")
+        val plaintext = Aes256Gcm.open(
+            EncryptedEnvelope(cipher.getString("ciphertext"), cipher.getString("nonce")),
+            key,
+            BackupPackageCodec.aadBytes(file.getLong("createdAt"), kdf),
+        )
+        return String(plaintext, StandardCharsets.UTF_8)
     }
 
     private fun encryptedFile(vector: JSONObject): ByteArray = JSONObject()

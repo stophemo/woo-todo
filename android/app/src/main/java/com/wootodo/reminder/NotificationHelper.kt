@@ -11,9 +11,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.wootodo.R
-import com.wootodo.domain.TaskTimeType
-import com.wootodo.ui.EditTaskActivity
-import java.time.LocalDate
+import com.wootodo.ui.MainActivity
 
 object NotificationHelper {
     private const val CHANNEL_ID = "planning_reminder"
@@ -30,7 +28,7 @@ object NotificationHelper {
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    fun showPlanningReminder(context: Context, tomorrow: LocalDate) {
+    fun showPlanningReminder(context: Context) {
         if (ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.POST_NOTIFICATIONS,
@@ -38,18 +36,18 @@ object NotificationHelper {
         ) {
             return
         }
-        val editIntent = Intent(context, EditTaskActivity::class.java).apply {
-            putExtra(EditTaskActivity.EXTRA_TIME_TYPE, TaskTimeType.DAY.rawValue)
-            putExtra(EditTaskActivity.EXTRA_TARGET_DATE, tomorrow.toString())
+        val planningIntent = Intent(context, MainActivity::class.java).apply {
+            putExtra(MainActivity.EXTRA_OPEN_TOMORROW, true)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         val contentIntent = PendingIntent.getActivity(
             context,
             NOTIFICATION_ID,
-            editIntent,
+            planningIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_app)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.reminder_title))
             .setContentText(context.getString(R.string.reminder_text))
             .setContentIntent(contentIntent)

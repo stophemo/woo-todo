@@ -34,6 +34,7 @@ class InsightsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_insights)
+        applySystemBarInsets(findViewById(R.id.insights_root))
         endedRate = findViewById(R.id.ended_rate)
         mainRate = findViewById(R.id.main_rate)
         dailyTrend = findViewById(R.id.daily_trend)
@@ -45,7 +46,9 @@ class InsightsActivity : AppCompatActivity() {
 
         val repository = (application as WooTodoApplication).taskRepository
         lifecycleScope.launch {
-            repository.autoPassExpired()
+            if (repository.autoPassExpired() > 0) {
+                (application as WooTodoApplication).notifyLocalMutation()
+            }
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 repository.observeAllTasks().collect { tasks ->
                     render(StatisticsEngine.calculate(tasks, TaskDateRules.today()))

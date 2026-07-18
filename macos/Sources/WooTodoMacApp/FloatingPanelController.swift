@@ -4,30 +4,50 @@ import WooTodoCore
 
 @MainActor
 final class FloatingPanelController: NSWindowController {
+    private enum OpacityPolicy {
+        static let minimum: CGFloat = 0.2
+        static let maximum: CGFloat = 1
+        static let defaultValue: CGFloat = 1
+        static let clickThroughValue: CGFloat = 0.2
+
+        static func normalized(_ value: CGFloat) -> CGFloat {
+            guard value.isFinite else { return defaultValue }
+            return min(max(value, minimum), maximum)
+        }
+    }
+
     private enum PreferenceKey {
         static let blurEnabled = "panel.blurEnabled"
         static let clickThrough = "panel.clickThrough"
         static let alwaysOnTop = "panel.alwaysOnTop"
+        static let opacity = "panel.opacity"
     }
 
     private let defaults: UserDefaults
+    private let contentContainer = NSView()
+    private let solidBackgroundView = AppearanceAwareBackgroundView()
     private let effectView = NSVisualEffectView()
     var onStateChange: (() -> Void)?
 
     private(set) var isBlurEnabled: Bool
     private(set) var isClickThrough: Bool
     private(set) var isAlwaysOnTop: Bool
+    private(set) var panelOpacity: CGFloat
 
     init(store: TodayStore, defaults: UserDefaults = .standard) {
         self.defaults = defaults
         defaults.register(defaults: [
             PreferenceKey.blurEnabled: true,
             PreferenceKey.clickThrough: false,
-            PreferenceKey.alwaysOnTop: true
+            PreferenceKey.alwaysOnTop: true,
+            PreferenceKey.opacity: Double(OpacityPolicy.defaultValue)
         ])
         isBlurEnabled = defaults.bool(forKey: PreferenceKey.blurEnabled)
         isClickThrough = defaults.bool(forKey: PreferenceKey.clickThrough)
         isAlwaysOnTop = defaults.bool(forKey: PreferenceKey.alwaysOnTop)
+        panelOpacity = OpacityPolicy.normalized(
+            CGFloat(defaults.double(forKey: PreferenceKey.opacity))
+        )
 
         let panel = FloatingPanel(
             contentRect: NSRect(x: 0, y: 0, width: 360, height: 520)
@@ -83,6 +103,14 @@ final class FloatingPanelController: NSWindowController {
         applyVisualState()
     }
 
+    func setPanelOpacity(_ opacity: CGFloat) {
+        let normalized = OpacityPolicy.normalized(opacity)
+        guard panelOpacity != normalized else { return }
+        panelOpacity = normalized
+        defaults.set(Double(normalized), forKey: PreferenceKey.opacity)
+        applyVisualState()
+    }
+
     private func setClickThrough(_ enabled: Bool) {
         isClickThrough = enabled
         defaults.set(enabled, forKey: PreferenceKey.clickThrough)
@@ -106,44 +134,73 @@ final class FloatingPanelController: NSWindowController {
 
     private func configureContent(store: TodayStore) {
         guard let panel = window else { return }
+        contentContainer.wantsLayer = true
+        contentContainer.layer?.cornerRadius = 16
+        contentContainer.layer?.masksToBounds = true
+
+        solidBackgroundView.translatesAutoresizingMaskIntoConstraints = false
         effectView.blendingMode = .behindWindow
         effectView.material = .hudWindow
         effectView.state = .active
-        effectView.wantsLayer = true
-        effectView.layer?.cornerRadius = 16
-        effectView.layer?.masksToBounds = true
+        effectView.translatesAutoresizingMaskIntoConstraints = false
 
         let hostingView = NSHostingView(rootView: TodayView(store: store))
         hostingView.translatesAutoresizingMaskIntoConstraints = false
-        effectView.addSubview(hostingView)
+        contentContainer.addSubview(solidBackgroundView)
+        contentContainer.addSubview(effectView)
+        contentContainer.addSubview(hostingView)
         NSLayoutConstraint.activate([
-            hostingView.leadingAnchor.constraint(equalTo: effectView.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: effectView.trailingAnchor),
-            hostingView.topAnchor.constraint(equalTo: effectView.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: effectView.bottomAnchor)
+            solidBackgroundView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            solidBackgroundView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            solidBackgroundView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            solidBackgroundView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            effectView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            effectView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            effectView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            effectView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            hostingView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
         ])
-        panel.contentView = effectView
+        panel.contentView = contentContainer
     }
 
     private func applyVisualState() {
         guard let panel = window else { return }
         panel.level = isAlwaysOnTop ? .floating : .normal
         panel.ignoresMouseEvents = isClickThrough
-        panel.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(
-            isBlurEnabled ? 0.04 : 0.24
-        )
+        // 穿透时强制最大透明，退出穿透后恢复用户设置的日常不透明度。
+        panel.alphaValue = isClickThrough ? OpacityPolicy.clickThroughValue : panelOpacity
+        panel.backgroundColor = .clear
         effectView.isHidden = !isBlurEnabled
-        if !isBlurEnabled {
-            // 关闭毛玻璃时仍保留轻微透明底色，确保文字可读。
-            panel.contentView?.isHidden = false
-            effectView.isHidden = false
-            effectView.material = .contentBackground
-            effectView.state = .inactive
-        } else {
-            effectView.material = .hudWindow
-            effectView.state = .active
-        }
+        solidBackgroundView.isHidden = isBlurEnabled
+        solidBackgroundView.refreshColor()
         onStateChange?()
+    }
+}
+
+private final class AppearanceAwareBackgroundView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        refreshColor()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("不支持从归档创建动态背景")
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshColor()
+    }
+
+    func refreshColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        }
     }
 }
 

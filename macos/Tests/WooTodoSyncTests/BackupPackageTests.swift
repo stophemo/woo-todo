@@ -37,8 +37,72 @@ struct BackupPackageTests {
         let file = try JSONDecoder().decode(EncryptedBackupFile.self, from: package)
         #expect(file.cipher.ciphertext == vector.cipher.ciphertext)
         #expect(try BackupPackageCodec.open(package, passphrase: vector.password) == snapshot)
+        #expect(snapshot.tombstones.isEmpty)
         #expect(snapshot.tasks.first?.title == "提交周报")
         #expect(try snapshot.syncCredentials?.credentials().vaultId == "vault-backup-1")
+    }
+
+    @Test("旧备份缺失删除字段仍可读取，新备份保留 tombstone")
+    func test备份删除屏障兼容() throws {
+        let vector = try loadFixture()
+        let legacy = try JSONDecoder().decode(
+            BackupSnapshot.self,
+            from: Data(vector.plaintextUtf8.utf8)
+        )
+        #expect(legacy.tombstones.isEmpty)
+
+        let snapshot = try JSONDecoder().decode(
+            BackupSnapshot.self,
+            from: Data(vector.tombstonePlaintextUtf8.utf8)
+        )
+        #expect(snapshot.tasks.isEmpty)
+        #expect(snapshot.tombstones.count == 1)
+        #expect(snapshot.tombstones[0].deletedAt == 1_784_251_800_000)
+
+        let encoded = try JSONEncoder().encode(snapshot)
+        #expect(String(decoding: encoded, as: UTF8.self).contains("\"tombstones\""))
+        let legacyEncoded = try JSONEncoder().encode(legacy)
+        #expect(!String(decoding: legacyEncoded, as: UTF8.self).contains("\"tombstones\""))
+
+        var invalid = try #require(
+            JSONSerialization.jsonObject(with: Data(vector.plaintextUtf8.utf8))
+                as? [String: Any]
+        )
+        invalid["tombstones"] = NSNull()
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(
+                BackupSnapshot.self,
+                from: JSONSerialization.data(withJSONObject: invalid)
+            )
+        }
+
+        let package = try BackupPackageCodec.seal(
+            snapshot,
+            passphrase: vector.password,
+            iterations: vector.kdf.iterations,
+            salt: try Base64URL.decode(vector.kdf.salt),
+            nonce: try Base64URL.decode(vector.cipher.nonce)
+        )
+        #expect(try BackupPackageCodec.open(package, passphrase: vector.password) == snapshot)
+    }
+
+    @Test("任务与删除记录不能使用相同实体 ID")
+    func test备份实体ID跨数组唯一() throws {
+        let vector = try loadFixture()
+        let legacy = try JSONDecoder().decode(
+            BackupSnapshot.self,
+            from: Data(vector.plaintextUtf8.utf8)
+        )
+        let task = try #require(legacy.tasks.first)
+        let tombstone = try WireTombstonePayload(id: task.id, deletedAt: vector.createdAt)
+        #expect(throws: BackupPackageError.duplicateTaskID(task.id)) {
+            try BackupSnapshot(
+                exportedAt: vector.createdAt,
+                tasks: [task],
+                tombstones: [tombstone],
+                syncCredentials: nil
+            )
+        }
     }
 
     @Test("错误口令与篡改密文均被拒绝")
@@ -142,6 +206,7 @@ private struct BackupFixture: Decodable {
     let aadUtf8: String
     let derivedKey: String
     let plaintextUtf8: String
+    let tombstonePlaintextUtf8: String
 
     struct KDF: Decodable {
         let iterations: Int

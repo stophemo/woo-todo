@@ -33,12 +33,12 @@
         <span>无我待办</span>
       </a>
       <nav class="primary-nav" aria-label="主导航">
-        <a href="#workflow">使用方式</a>
+        <a href="#quickstart">快速上手</a>
         <a href="#features">能力</a>
         <a href="#download">安装</a>
         <a href="https://github.com/stophemo/woo-todo" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
-      <a class="header-download" href="#download">下载 v0.1.0</a>
+      <a class="header-download" href="#download">下载 v0.1.1</a>
     </div>
   </header>
 
@@ -48,13 +48,13 @@
       <div class="hero-rule hero-rule-two" aria-hidden="true"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="release-line"><span>v0.1.0</span> macOS + Android</p>
+          <p class="release-line"><span>v0.1.1</span> macOS + Android</p>
           <h1 id="hero-title">无我待办</h1>
           <p class="hero-tagline">今晚规划，明早开干。</p>
           <p class="hero-support">手机睡前列好明日任务，Mac 次日直接展开今日清单。双端原生、本地优先，断网也不耽误做事。</p>
           <div class="hero-actions" aria-label="下载与项目链接">
-            <a class="button button-primary" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/Woo-Todo-v0.1.0-android.apk">下载 Android</a>
-            <a class="button button-secondary" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/Woo-Todo-v0.1.0-macos-arm64.zip">下载 macOS</a>
+            <a class="button button-primary" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.1/Woo-Todo-v0.1.1-android.apk">下载 Android</a>
+            <a class="button button-secondary" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.1/Woo-Todo-v0.1.1-macos-arm64.zip">下载 macOS</a>
           </div>
           <p class="hero-meta">MIT 开源 · 无传统账号 · 无应用商店依赖</p>
         </div>
@@ -105,8 +105,8 @@
                 <label class="task-row">
                   <input type="checkbox" data-task-checkbox>
                   <span class="task-check" aria-hidden="true"></span>
-                  <span class="task-name">安排本周设备验收</span>
-                  <span class="task-period">每周</span>
+                  <span class="task-name">确认上午设备验收</span>
+                  <span class="task-period">每日</span>
                 </label>
               </section>
 
@@ -116,7 +116,7 @@
                   <input type="checkbox" data-task-checkbox>
                   <span class="task-check" aria-hidden="true"></span>
                   <span class="task-name">整理桌面文件</span>
-                  <span class="task-period">闲时</span>
+                  <span class="task-period">每日</span>
                 </label>
               </section>
             </div>
@@ -177,6 +177,64 @@
             <p class="step-time">周期结束 · 本地</p>
             <h3>完成，或者诚实 Pass</h3>
             <p>完成项保留划线，逾期项自动记为 Pass。历史与履约率留下真实结果，不滚成明天的负担。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="quickstart section" id="quickstart" aria-labelledby="quickstart-title">
+      <div class="section-inner">
+        <p class="section-kicker">安装后第一分钟</p>
+        <h2 id="quickstart-title">按钮在哪，配对怎么做</h2>
+        <div class="quickstart-grid">
+          <article class="quickstart-card">
+            <div class="quickstart-card-heading">
+              <span>01</span>
+              <div>
+                <p>MACOS</p>
+                <h3>从菜单栏控制任务板</h3>
+              </div>
+            </div>
+            <ol>
+              <li>启动后看屏幕右上角菜单栏的清单图标；应用不会出现在 Dock。</li>
+              <li>菜单内可开关“始终置顶”“毛玻璃”，并选择日常不透明度。</li>
+              <li><kbd>⌃⌥Space</kbd> 切换鼠标穿透；穿透后自动降到 20% 不透明度，再按一次恢复并聚焦。</li>
+            </ol>
+            <p class="quickstart-note">这个快捷键控制鼠标穿透，不是置顶开关；置顶请在菜单栏设置。</p>
+          </article>
+
+          <article class="quickstart-card">
+            <div class="quickstart-card-heading">
+              <span>02</span>
+              <div>
+                <p>ANDROID</p>
+                <h3>睡前先打开“明日”</h3>
+              </div>
+            </div>
+            <ol>
+              <li>顶部选择“明日”，点右下角 <strong>+</strong> 连续写下第二天的任务。</li>
+              <li>长按三星桌面空白处，选择“组件 → Woo Todo”，添加今日任务组件。</li>
+              <li>Widget 可直接勾选完成；点任务会进入 App 编辑。</li>
+            </ol>
+            <p class="quickstart-note">默认每天 23:10 提醒规划；通知权限被关闭时，系统不会显示提醒。</p>
+          </article>
+
+          <article class="quickstart-card quickstart-sync">
+            <div class="quickstart-card-heading">
+              <span>03</span>
+              <div>
+                <p>ENCRYPTED SYNC</p>
+                <h3>Mac 创建，手机扫码确认</h3>
+              </div>
+            </div>
+            <ol>
+              <li>Mac 打开“任务详情与统计 → 同步”，填写双方都能访问的 HTTPS Worker 根地址；不要加 <code>/v1</code>。</li>
+              <li>点“创建同步空间”，成功后再点“生成配对二维码”。</li>
+              <li>用三星相机或系统二维码扫描器扫码，点按“打开 Woo Todo”。</li>
+              <li>核对手机与 Mac 的六位数字完全一致，再回到 Mac 点“核对一致，确认绑定”。</li>
+            </ol>
+            <p class="quickstart-warning"><strong>为什么 127.0.0.1 不行？</strong> 它永远只表示当前这台设备；手机上的 127.0.0.1 是手机自己，不是你的 Mac，也不是公网同步服务。</p>
+            <a href="https://github.com/stophemo/woo-todo/blob/main/docs/PAIRING.md" target="_blank" rel="noreferrer">查看完整配对与排错说明</a>
           </article>
         </div>
       </div>
@@ -300,7 +358,7 @@
       <div class="section-inner">
         <div class="download-heading">
           <div>
-            <p class="section-kicker">v0.1.0 · 2026-07-16</p>
+            <p class="section-kicker">v0.1.1 · 2026-07-18</p>
             <h2 id="download-title">现在就装上</h2>
           </div>
           <p>不经过应用商店，直接从 GitHub Release 下载。安装前可使用同页提供的 SHA-256 文件校验产物。</p>
@@ -313,7 +371,7 @@
             </div>
             <h3>手机端与今日 Widget</h3>
             <p>适用于 Galaxy S23 Ultra 等 Android 设备。Release APK 使用项目长期升级密钥签名。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/Woo-Todo-v0.1.0-android.apk">下载 APK</a>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.1/Woo-Todo-v0.1.1-android.apk">下载 APK</a>
           </article>
           <article class="download-card download-macos">
             <div class="download-card-top">
@@ -322,12 +380,12 @@
             </div>
             <h3>悬浮任务板与完整管理页</h3>
             <p>适用于 M 系列 Mac。当前为 ad-hoc 签名且未经过 Apple 公证，首次启动可能需要手动允许。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/Woo-Todo-v0.1.0-macos-arm64.zip">下载 macOS ZIP</a>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.1/Woo-Todo-v0.1.1-macos-arm64.zip">下载 macOS ZIP</a>
           </article>
         </div>
         <div class="release-links">
-          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.0">发布说明</a>
-          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.0/SHA256SUMS.txt">SHA-256 校验</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.1">发布说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.1/SHA256SUMS.txt">SHA-256 校验</a>
           <a href="https://github.com/stophemo/woo-todo/blob/main/docs/INSTALLATION.md">安装指南</a>
         </div>
         <aside class="deployment-note">

@@ -86,8 +86,8 @@
 - [x] 默认离线、可选在线同步和恢复边界文档完成
 - [x] Android 单测、Lint、Debug/Release 编译与共享协议测试通过
 - [x] macOS 在 CI 的 Swift 全量测试通过
-- [ ] macOS Release 构建通过
+- [x] macOS Release 构建通过
 - [x] 提交 `main` 并确认四个 CI Job 全绿（[Run 29732342888](https://github.com/stophemo/woo-todo/actions/runs/29732342888)）
-- [ ] 推送 `v0.1.2` tag，验证 Android APK、macOS ZIP 与 `SHA256SUMS.txt`
+- [x] 推送 `v0.1.2` tag，验证 Android APK、macOS ZIP 与 `SHA256SUMS.txt`（[Release](https://github.com/stophemo/woo-todo/releases/tag/v0.1.2)）
 - [ ] Release 产物就绪后更新 Vercel 首页的 v0.1.2 内容与下载链接
 - [ ] 在 MacBook Air M4 与 Galaxy S23 Ultra 完成覆盖升级、接力和长期资源验收

@@ -186,6 +186,7 @@ function deterministicOccurrenceId(seriesId, timeType, periodStart) {
 
 function validateTaskPayload(payload) {
   const maximumSafeInteger = Number.MAX_SAFE_INTEGER;
+  const identifierPattern = /^[A-Za-z0-9._:-]+$/;
   if (payload?.protocolVersion !== 1) {
     throw new Error("任务 payload 协议版本无效");
   }
@@ -194,6 +195,7 @@ function validateTaskPayload(payload) {
       typeof payload.id !== "string"
       || codePointLength(payload.id) < 8
       || codePointLength(payload.id) > 128
+      || !identifierPattern.test(payload.id)
       || !isBoundedInteger(payload.deletedAt, maximumSafeInteger)
     ) {
       throw new Error("tombstone payload 无效");
@@ -210,9 +212,11 @@ function validateTaskPayload(payload) {
     typeof payload.id !== "string"
     || codePointLength(payload.id) < 8
     || codePointLength(payload.id) > 128
+    || !identifierPattern.test(payload.id)
     || typeof payload.seriesId !== "string"
     || codePointLength(payload.seriesId) < 8
     || codePointLength(payload.seriesId) > 128
+    || !identifierPattern.test(payload.seriesId)
     || typeof payload.title !== "string"
     || codePointLength(payload.title) < 1
     || codePointLength(payload.title) > 120

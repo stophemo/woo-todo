@@ -15,8 +15,8 @@ usage() {
 
 可选环境变量：
   BUNDLE_ID          Bundle Identifier，默认 io.github.stophemo.woo-todo
-  MARKETING_VERSION  显示版本，默认 0.1.1
-  BUILD_NUMBER       构建号，仅允许数字，默认 2
+  MARKETING_VERSION  显示版本，默认 0.1.2
+  BUILD_NUMBER       构建号，仅允许数字，默认 3
 EOF
 }
 
@@ -57,8 +57,8 @@ EXECUTABLE_NAME="woo-todo-mac"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 
 BUNDLE_ID="${BUNDLE_ID:-io.github.stophemo.woo-todo}"
-MARKETING_VERSION="${MARKETING_VERSION:-0.1.1}"
-BUILD_NUMBER="${BUILD_NUMBER:-2}"
+MARKETING_VERSION="${MARKETING_VERSION:-0.1.2}"
+BUILD_NUMBER="${BUILD_NUMBER:-3}"
 
 [[ "$BUNDLE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] \
     || fail "BUNDLE_ID 只能包含字母、数字、点和连字符"

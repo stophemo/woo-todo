@@ -26,8 +26,18 @@
       "properties": {
         "protocolVersion": { "const": 1 },
         "entityType": { "const": "task" },
-        "id": { "type": "string", "minLength": 8, "maxLength": 128 },
-        "seriesId": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "id": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "seriesId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
         "title": { "type": "string", "minLength": 1, "maxLength": 120 },
         "timeType": { "$ref": "#/$defs/TimeType" },
         "periodStart": {
@@ -82,7 +92,12 @@
       "properties": {
         "protocolVersion": { "const": 1 },
         "entityType": { "const": "tombstone" },
-        "id": { "type": "string", "minLength": 8, "maxLength": 128 },
+        "id": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
         "deletedAt": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
       }
     }

@@ -148,49 +148,61 @@ object SQLiteLocalMutationRecorder {
                 SyncOperationKind.REORDER,
             ),
         )
-        check(!isDeletionBarrier(database, task.id)) {
+        val normalizedTask = task.copy(id = canonicalEntityId(task.id))
+        check(!isDeletionBarrier(database, normalizedTask.id)) {
             "已删除任务不能以相同 ID 复活"
         }
         val version = nextLocalVersion(database) ?: return
-        val payload = task.toWirePayload()
+        val payload = normalizedTask.toWirePayload()
         requireKindMatchesTask(kind, payload)
         enqueue(
             database = database,
-            entityId = task.id,
+            entityId = normalizedTask.id,
             kind = kind,
             version = version,
             payloadJson = SyncJsonCodec.encodeTaskPayload(payload),
-            createdAt = task.updatedAt,
+            createdAt = normalizedTask.updatedAt,
         )
-        writeVersion(database, task.id, version, isTombstone = false)
+        writeVersion(database, normalizedTask.id, version, isTombstone = false)
     }
 
     fun recordDeletion(database: SQLiteDatabase, entityId: String, deletedAt: Long) {
+        val normalizedId = canonicalEntityId(entityId)
         val version = nextLocalVersion(database)
         if (version == null) {
-            recordDeferredDeletion(database, entityId, deletedAt)
+            recordDeferredDeletion(database, normalizedId, deletedAt)
             return
         }
-        val payload = TombstonePayload(id = entityId, deletedAt = deletedAt)
+        val payload = TombstonePayload(id = normalizedId, deletedAt = deletedAt)
         enqueue(
             database = database,
-            entityId = entityId,
+            entityId = normalizedId,
             kind = SyncOperationKind.DELETE,
             version = version,
             payloadJson = SyncJsonCodec.encodeTaskPayload(payload),
             createdAt = deletedAt,
         )
-        writeVersion(database, entityId, version, isTombstone = true)
+        writeVersion(database, normalizedId, version, isTombstone = true)
         writeTombstone(database, payload, version)
-        database.delete(TABLE_DEFERRED_DELETIONS, "entity_id = ?", arrayOf(entityId))
+        database.delete(
+            TABLE_DEFERRED_DELETIONS,
+            "entity_id = ? COLLATE NOCASE",
+            arrayOf(normalizedId),
+        )
     }
 
     fun recordDeferredDeletion(database: SQLiteDatabase, entityId: String, deletedAt: Long) {
         require(entityId.isNotBlank() && deletedAt >= 0)
+        val normalizedId = canonicalEntityId(entityId)
         val values = ContentValues(2).apply {
-            put("entity_id", entityId)
+            put("entity_id", normalizedId)
             put("deleted_at", deletedAt)
         }
+        database.delete(
+            TABLE_DEFERRED_DELETIONS,
+            "entity_id = ? COLLATE NOCASE",
+            arrayOf(normalizedId),
+        )
         database.insertWithOnConflict(
             TABLE_DEFERRED_DELETIONS,
             null,
@@ -220,21 +232,23 @@ object SQLiteLocalMutationRecorder {
     }
 
     /** 删除屏障是实体 ID 的永久终态，包含正式和尚未绑定时的 deferred 记录。 */
-    internal fun isDeletionBarrier(database: SQLiteDatabase, entityId: String): Boolean =
-        database.rawQuery(
+    internal fun isDeletionBarrier(database: SQLiteDatabase, entityId: String): Boolean {
+        val normalizedId = canonicalEntityId(entityId)
+        return database.rawQuery(
             """
             SELECT 1 FROM $TABLE_VERSIONS
-            WHERE entity_id = ? AND is_tombstone = 1
+            WHERE entity_id = ? COLLATE NOCASE AND is_tombstone = 1
             UNION ALL
             SELECT 1 FROM $TABLE_TOMBSTONES
-            WHERE entity_id = ?
+            WHERE entity_id = ? COLLATE NOCASE
             UNION ALL
             SELECT 1 FROM $TABLE_DEFERRED_DELETIONS
-            WHERE entity_id = ?
+            WHERE entity_id = ? COLLATE NOCASE
             LIMIT 1
             """.trimIndent(),
-            arrayOf(entityId, entityId, entityId),
+            arrayOf(normalizedId, normalizedId, normalizedId),
         ).use(Cursor::moveToFirst)
+    }
 
     private fun enqueue(
         database: SQLiteDatabase,
@@ -477,33 +491,44 @@ class SQLiteSyncStore(
         operation: SyncPulledOperation,
         payload: TaskInstancePayload,
     ): Boolean {
-        requireKindMatchesTask(operation.kind, payload)
+        val normalizedPayload = payload.withCanonicalEntityId()
+        requireKindMatchesTask(operation.kind, normalizedPayload)
         val incomingVersion = EntityVersion(operation.lamport, operation.deviceId)
-        val currentVersion = readVersion(sqlite, payload.id)
+        val currentVersion = readVersion(sqlite, normalizedPayload.id)
         // tombstone 是实体 ID 的终态；更高 Lamport 也只能使用新 ID 创建任务。
         if (currentVersion?.isTombstone == true) {
             val horizon = maxOf(currentVersion.version, incomingVersion)
             if (horizon != currentVersion.version) {
-                writeVersion(sqlite, payload.id, horizon, isTombstone = true)
-                advanceTombstoneVersion(sqlite, payload.id, horizon)
+                writeVersion(sqlite, normalizedPayload.id, horizon, isTombstone = true)
+                advanceTombstoneVersion(sqlite, normalizedPayload.id, horizon)
             }
             return false
         }
-        val currentTask = readTask(sqlite, payload.id)?.toWirePayload()
+        val currentTask = readTask(sqlite, normalizedPayload.id)?.toWirePayload()
         val decision = TaskMergePolicy.resolve(
             currentTask,
             currentVersion?.version,
-            payload,
+            normalizedPayload,
             incomingVersion,
         )
-        val resolvedTask = decision.resolvedTask
+        val resolvedTask = decision.resolvedTask?.withCanonicalEntityId()
         val changed = resolvedTask != null && resolvedTask != currentTask
         if (changed) {
             val values = resolvedTask.toTaskEntity().toContentValues()
+            sqlite.delete(
+                "tasks",
+                "id = ? COLLATE NOCASE",
+                arrayOf(normalizedPayload.id),
+            )
             sqlite.insertWithOnConflict("tasks", null, values, SQLiteDatabase.CONFLICT_REPLACE)
         }
         if (currentVersion == null || decision.resolvedVersion != currentVersion.version) {
-            writeVersion(sqlite, payload.id, decision.resolvedVersion, isTombstone = false)
+            writeVersion(
+                sqlite,
+                normalizedPayload.id,
+                decision.resolvedVersion,
+                isTombstone = false,
+            )
         }
         return changed
     }
@@ -516,16 +541,25 @@ class SQLiteSyncStore(
         require(operation.kind == SyncOperationKind.DELETE) {
             "tombstone 只能用于 delete 操作"
         }
+        val normalizedPayload = payload.withCanonicalEntityId()
         val incomingVersion = EntityVersion(operation.lamport, operation.deviceId)
-        val currentVersion = readVersion(sqlite, payload.id)
+        val currentVersion = readVersion(sqlite, normalizedPayload.id)
         if (currentVersion?.isTombstone == true && incomingVersion <= currentVersion.version) {
             return false
         }
         val horizon = currentVersion?.version?.let { maxOf(it, incomingVersion) } ?: incomingVersion
-        val taskDeleted = sqlite.delete("tasks", "id = ?", arrayOf(payload.id)) == 1
-        sqlite.delete(TABLE_DEFERRED_DELETIONS, "entity_id = ?", arrayOf(payload.id))
-        writeTombstone(sqlite, payload, horizon)
-        writeVersion(sqlite, payload.id, horizon, isTombstone = true)
+        val taskDeleted = sqlite.delete(
+            "tasks",
+            "id = ? COLLATE NOCASE",
+            arrayOf(normalizedPayload.id),
+        ) > 0
+        sqlite.delete(
+            TABLE_DEFERRED_DELETIONS,
+            "entity_id = ? COLLATE NOCASE",
+            arrayOf(normalizedPayload.id),
+        )
+        writeTombstone(sqlite, normalizedPayload, horizon)
+        writeVersion(sqlite, normalizedPayload.id, horizon, isTombstone = true)
         return taskDeleted
     }
 
@@ -581,8 +615,9 @@ private data class StoredVersion(
 
 private fun readVersion(database: SQLiteDatabase, entityId: String): StoredVersion? =
     database.rawQuery(
-        "SELECT lamport, device_id, is_tombstone FROM $TABLE_VERSIONS WHERE entity_id = ?",
-        arrayOf(entityId),
+        "SELECT lamport, device_id, is_tombstone FROM $TABLE_VERSIONS " +
+            "WHERE entity_id = ? COLLATE NOCASE",
+        arrayOf(canonicalEntityId(entityId)),
     ).use { cursor ->
         if (!cursor.moveToFirst()) null else StoredVersion(
             EntityVersion(cursor.getLong(0), cursor.getString(1)),
@@ -596,12 +631,18 @@ private fun writeVersion(
     version: EntityVersion,
     isTombstone: Boolean,
 ) {
+    val normalizedId = canonicalEntityId(entityId)
     val values = ContentValues(4).apply {
-        put("entity_id", entityId)
+        put("entity_id", normalizedId)
         put("lamport", version.lamport)
         put("device_id", version.deviceId)
         put("is_tombstone", if (isTombstone) 1 else 0)
     }
+    database.delete(
+        TABLE_VERSIONS,
+        "entity_id = ? COLLATE NOCASE",
+        arrayOf(normalizedId),
+    )
     database.insertWithOnConflict(TABLE_VERSIONS, null, values, SQLiteDatabase.CONFLICT_REPLACE)
 }
 
@@ -610,12 +651,18 @@ private fun writeTombstone(
     payload: TombstonePayload,
     version: EntityVersion,
 ) {
+    val normalizedPayload = payload.withCanonicalEntityId()
     val values = ContentValues(4).apply {
-        put("entity_id", payload.id)
-        put("deleted_at", payload.deletedAt)
+        put("entity_id", normalizedPayload.id)
+        put("deleted_at", normalizedPayload.deletedAt)
         put("lamport", version.lamport)
         put("device_id", version.deviceId)
     }
+    database.delete(
+        TABLE_TOMBSTONES,
+        "entity_id = ? COLLATE NOCASE",
+        arrayOf(normalizedPayload.id),
+    )
     database.insertWithOnConflict(TABLE_TOMBSTONES, null, values, SQLiteDatabase.CONFLICT_REPLACE)
 }
 
@@ -624,11 +671,19 @@ private fun advanceTombstoneVersion(
     entityId: String,
     version: EntityVersion,
 ) {
+    val normalizedId = canonicalEntityId(entityId)
     val values = ContentValues(2).apply {
         put("lamport", version.lamport)
         put("device_id", version.deviceId)
     }
-    check(database.update(TABLE_TOMBSTONES, values, "entity_id = ?", arrayOf(entityId)) == 1) {
+    check(
+        database.update(
+            TABLE_TOMBSTONES,
+            values,
+            "entity_id = ? COLLATE NOCASE",
+            arrayOf(normalizedId),
+        ) == 1,
+    ) {
         "tombstone 版本记录缺失"
     }
 }
@@ -644,8 +699,8 @@ private fun currentCursor(database: SQLiteDatabase): Long = database.rawQuery(
 private fun readTask(database: SQLiteDatabase, id: String): TaskEntity? = database.query(
     "tasks",
     null,
-    "id = ?",
-    arrayOf(id),
+    "id = ? COLLATE NOCASE",
+    arrayOf(canonicalEntityId(id)),
     null,
     null,
     null,

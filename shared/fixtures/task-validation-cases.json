@@ -103,6 +103,55 @@
   ],
   "invalid": [
     {
+      "name": "拒绝包含非 ASCII 字符的任务 ID",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "任务标识符-00000001",
+        "seriesId": "00000000-0000-4000-8000-000000000031",
+        "title": "错误任务 ID",
+        "timeType": "day",
+        "periodStart": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝包含非 ASCII 字符的重复序列 ID",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000032",
+        "seriesId": "重复序列-00000001",
+        "title": "错误序列 ID",
+        "timeType": "day",
+        "periodStart": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝包含非 ASCII 字符的 tombstone ID",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "tombstone",
+        "id": "删除标识符-00000001",
+        "deletedAt": 1
+      }
+    },
+    {
       "name": "拒绝非固定时区",
       "payload": {
         "protocolVersion": 1,

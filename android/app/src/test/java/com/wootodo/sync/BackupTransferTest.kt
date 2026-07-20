@@ -165,6 +165,53 @@ class BackupTransferTest {
     }
 
     @Test
+    fun `离线接力可合并现有任务且重复导入幂等`() {
+        val database = FakeBackupDatabase()
+        val local = task("task-relay-service", WireTaskState.PENDING, null)
+        database.committedTasks += local
+        database.state = pristineState().copy(taskCount = 1)
+        val incoming = local.copy(title = "来自手机的新标题", updatedAt = 3_000)
+        val passphrase = "这是一个满足长度要求的接力口令"
+        val encrypted = BackupPackageCodec.seal(
+            BackupSnapshot(
+                exportedAt = 30_000,
+                tasks = listOf(incoming),
+                syncCredentials = null,
+            ),
+            passphrase,
+        )
+        val service = BackupTransferService(database, FakeCredentialsStore())
+
+        val first = service.mergeEncryptedOfflineRelay(encrypted, passphrase)
+        val second = service.mergeEncryptedOfflineRelay(encrypted, passphrase)
+
+        assertEquals(1, first.mergedTaskCount)
+        assertEquals(0, second.mergedTaskCount)
+        assertEquals(1, second.unchangedCount)
+        assertEquals("来自手机的新标题", database.committedTasks.single().title)
+    }
+
+    @Test
+    fun `离线接力拒绝携带同步身份的恢复备份`() {
+        val passphrase = "这是一个满足长度要求的接力口令"
+        val encrypted = BackupPackageCodec.seal(
+            BackupSnapshot(
+                exportedAt = 30_000,
+                tasks = emptyList(),
+                syncCredentials = BackupSyncCredentials.from(credentials()),
+            ),
+            passphrase,
+        )
+
+        assertThrows(BackupTransferException.RelayContainsSyncIdentity::class.java) {
+            BackupTransferService(
+                FakeBackupDatabase(),
+                FakeCredentialsStore(),
+            ).mergeEncryptedOfflineRelay(encrypted, passphrase)
+        }
+    }
+
+    @Test
     fun `baseline失败会回滚任务并删除本轮新写入的凭据`() {
         val database = FakeBackupDatabase(failWhileBinding = true)
         val credentialsStore = FakeCredentialsStore()
@@ -301,6 +348,28 @@ class BackupTransferTest {
                 tasks = committedTasks.toList(),
                 tombstones = committedTombstones.toList(),
             )
+
+        override fun mergeOfflineRelay(snapshot: BackupSnapshot): OfflineRelayMergeResult {
+            val plan = OfflineRelayMergePolicy.plan(readTaskSnapshot(), snapshot)
+            plan.tasksToUpsert.forEach { incoming ->
+                committedTasks.removeAll { it.id.equals(incoming.id, ignoreCase = true) }
+                committedTasks += incoming
+            }
+            plan.tombstonesToApply.forEach { incoming ->
+                committedTasks.removeAll { it.id.equals(incoming.id, ignoreCase = true) }
+                committedTombstones.removeAll { it.id.equals(incoming.id, ignoreCase = true) }
+                committedTombstones += incoming
+            }
+            state = state.copy(
+                taskCount = committedTasks.size,
+                tombstoneCount = committedTombstones.size,
+            )
+            return OfflineRelayMergeResult(
+                mergedTaskCount = plan.tasksToUpsert.size,
+                mergedTombstoneCount = plan.tombstonesToApply.size,
+                unchangedCount = plan.unchangedCount,
+            )
+        }
 
         override fun <T> inTransaction(block: (BackupRestoreTransaction) -> T): T {
             val pendingTasks = mutableListOf<TaskInstancePayload>()

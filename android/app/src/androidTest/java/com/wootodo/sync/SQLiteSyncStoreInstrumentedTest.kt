@@ -250,6 +250,57 @@ class SQLiteSyncStoreInstrumentedTest {
     }
 
     @Test
+    fun `远端大小写变体ID只保留一个任务且tombstone可以删除`() {
+        val store = SQLiteSyncStore(database, credentials)
+        val entityId = "task-remote-case-id"
+
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 1,
+                    opId = "op-case-task-upper",
+                    lamport = 1,
+                    payload = remoteTask(entityId.uppercase(), "大写 ID 版本"),
+                ),
+            ),
+            advancingCursorTo = 1,
+        )
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 2,
+                    opId = "op-case-task-lower",
+                    lamport = 2,
+                    payload = remoteTask(entityId, "小写 ID 更新"),
+                ),
+            ),
+            advancingCursorTo = 2,
+        )
+
+        assertEquals(1, rowCount("tasks"))
+        assertEquals("小写 ID 更新", taskTitle(entityId))
+
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 3,
+                    opId = "op-case-delete-upper",
+                    lamport = 3,
+                    payload = TombstonePayload(
+                        id = entityId.uppercase(),
+                        deletedAt = 3_000,
+                    ),
+                ),
+            ),
+            advancingCursorTo = 3,
+        )
+
+        assertEquals(0, rowCount("tasks"))
+        assertEquals(VersionSnapshot(3, REMOTE_DEVICE_ID, true), version(entityId))
+        assertEquals(1, rowCount("sync_tombstones"))
+    }
+
+    @Test
     fun `重复 op 只应用一次并可在不解密重复正文时推进 cursor`() {
         var taskChangeCount = 0
         val store = SQLiteSyncStore(database, credentials) { taskChangeCount += 1 }
@@ -531,6 +582,7 @@ class SQLiteSyncStoreInstrumentedTest {
         const val DATABASE_NAME = "woo-todo.db"
         const val REMOTE_DEVICE_ID = "device-macos-test"
         val ALLOWED_COUNT_TABLES = setOf(
+            "tasks",
             "sync_outbox",
             "sync_applied_operations",
             "sync_entity_versions",

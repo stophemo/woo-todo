@@ -168,6 +168,80 @@ class SQLiteBackupDatabaseInstrumentedTest {
         assertEquals(0L, lamport())
     }
 
+    @Test
+    fun `离线接力合并现有库会写入outbox且重复导入不重复入队`() = runBlocking {
+        val firstId = "task-relay-sqlite-01"
+        val deletedId = "task-relay-sqlite-02"
+        val taskStore = SQLiteTaskStore(database)
+        taskStore.insert(taskEntity(firstId, TaskStatus.PENDING, null))
+        taskStore.insert(taskEntity(deletedId, TaskStatus.PENDING, null))
+        SQLiteSyncStore(database, credentials())
+        assertEquals(2, count("sync_outbox"))
+
+        val snapshot = BackupSnapshot(
+            exportedAt = 30_000,
+            tasks = listOf(
+                taskPayload(firstId, WireTaskState.PENDING, null).copy(
+                    title = "手机端更新",
+                    updatedAt = 3_000,
+                ),
+            ),
+            tombstones = listOf(TombstonePayload(id = deletedId, deletedAt = 4_000)),
+            syncCredentials = null,
+        )
+        val backupDatabase = SQLiteBackupDatabase(database)
+
+        val first = backupDatabase.mergeOfflineRelay(snapshot)
+        val second = backupDatabase.mergeOfflineRelay(snapshot)
+
+        assertEquals(1, first.mergedTaskCount)
+        assertEquals(1, first.mergedTombstoneCount)
+        assertEquals(0, second.mergedTaskCount)
+        assertEquals(0, second.mergedTombstoneCount)
+        assertEquals(2, second.unchangedCount)
+        assertEquals(1, count("tasks"))
+        assertEquals(4, count("sync_outbox"))
+        assertEquals(1, count("sync_tombstones"))
+        assertEquals("手机端更新", backupDatabase.readTaskSnapshot().tasks.single().title)
+    }
+
+    @Test
+    fun `离线接力按大小写无关ID覆盖和删除且重复导入幂等`() = runBlocking {
+        val updatedId = "task-relay-case-update"
+        val deletedId = "task-relay-case-delete"
+        val taskStore = SQLiteTaskStore(database)
+        taskStore.insert(taskEntity(updatedId, TaskStatus.PENDING, null))
+        taskStore.insert(taskEntity(deletedId, TaskStatus.PENDING, null))
+        val snapshot = BackupSnapshot(
+            exportedAt = 30_000,
+            tasks = listOf(
+                taskPayload(updatedId.uppercase(), WireTaskState.PENDING, null).copy(
+                    title = "大小写变体更新",
+                    updatedAt = 3_000,
+                ),
+            ),
+            tombstones = listOf(
+                TombstonePayload(id = deletedId.uppercase(), deletedAt = 4_000),
+            ),
+            syncCredentials = null,
+        )
+        val backupDatabase = SQLiteBackupDatabase(database)
+
+        val first = backupDatabase.mergeOfflineRelay(snapshot)
+        val second = backupDatabase.mergeOfflineRelay(snapshot)
+        val mergedSnapshot = backupDatabase.readTaskSnapshot()
+
+        assertEquals(1, first.mergedTaskCount)
+        assertEquals(1, first.mergedTombstoneCount)
+        assertEquals(0, second.mergedTaskCount)
+        assertEquals(0, second.mergedTombstoneCount)
+        assertEquals(listOf(updatedId), mergedSnapshot.tasks.map { it.id })
+        assertEquals("大小写变体更新", mergedSnapshot.tasks.single().title)
+        assertEquals(listOf(deletedId), mergedSnapshot.tombstones.map { it.id })
+        assertEquals(1, count("tasks"))
+        assertEquals(1, count("sync_deferred_deletions"))
+    }
+
     private fun taskEntity(id: String, status: TaskStatus, settledAt: Long?): TaskEntity =
         TaskEntity(
             id = id,

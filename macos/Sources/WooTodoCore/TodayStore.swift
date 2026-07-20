@@ -33,14 +33,18 @@ public final class TodayStore: ObservableObject {
         }
     }
 
+    /// 返回任务是否已写入本地仓储；写入后的列表刷新失败不会反转已完成的写入。
+    @discardableResult
     public func add(
         title: String,
         tier: QuestTier,
         repeatsDaily: Bool
-    ) {
-        if perform({
+    ) -> Bool {
+        let didAdd = perform {
             let date = now()
-            let maxIndex = tasks
+            let period = engine.period(containing: date, for: .daily)
+            let maxIndex = try repository
+                .fetchTasks(scope: .daily, in: period)
                 .filter { $0.tier == tier }
                 .map(\.sortIndex)
                 .max() ?? -1
@@ -51,15 +55,17 @@ public final class TodayStore: ObservableObject {
                 recurrence: repeatsDaily
                     ? .repeating(RepeatRule(frequency: .daily))
                     : .once,
-                period: engine.period(containing: date, for: .daily),
+                period: period,
                 sortIndex: maxIndex + 1,
                 createdAt: date
             )
             try repository.save(task)
+        }
+        if didAdd {
             reload()
-        }) {
             onTasksChanged?()
         }
+        return didAdd
     }
 
     public func edit(

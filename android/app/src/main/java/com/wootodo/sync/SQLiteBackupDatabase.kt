@@ -20,25 +20,64 @@ class SQLiteBackupDatabase(private val database: TaskDatabase) : BackupDatabase 
         val sqlite = database.readableDatabase
         sqlite.beginTransaction()
         return try {
-            val snapshot = BackupTaskSnapshot(
-                state = readState(sqlite),
-                tasks = sqlite.query(
-                    TABLE_TASKS,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    "created_at ASC, id ASC",
-                ).use { cursor ->
-                    buildList {
-                        while (cursor.moveToNext()) add(cursor.toTaskEntity().toWirePayload())
-                    }
-                },
-                tombstones = readTombstones(sqlite),
-            )
+            val snapshot = readTaskSnapshot(sqlite)
             sqlite.setTransactionSuccessful()
             snapshot
+        } finally {
+            sqlite.endTransaction()
+        }
+    }
+
+    @Synchronized
+    override fun mergeOfflineRelay(snapshot: BackupSnapshot): OfflineRelayMergeResult {
+        val sqlite = database.writableDatabase
+        sqlite.beginTransaction()
+        return try {
+            val plan = OfflineRelayMergePolicy.plan(
+                local = readTaskSnapshot(sqlite),
+                incoming = snapshot,
+            )
+            plan.tasksToUpsert.forEach { task ->
+                val entity = task.withCanonicalEntityId().toTaskEntity()
+                sqlite.delete(
+                    TABLE_TASKS,
+                    "id = ? COLLATE NOCASE",
+                    arrayOf(entity.id),
+                )
+                check(
+                    sqlite.insertWithOnConflict(
+                        TABLE_TASKS,
+                        null,
+                        entity.toContentValues(),
+                        SQLiteDatabase.CONFLICT_REPLACE,
+                    ) != -1L,
+                ) { "离线接力任务写入失败" }
+                SQLiteLocalMutationRecorder.recordTask(
+                    sqlite,
+                    entity,
+                    SyncOperationKind.UPSERT,
+                )
+            }
+            plan.tombstonesToApply.forEach { tombstone ->
+                val normalized = tombstone.withCanonicalEntityId()
+                sqlite.delete(
+                    TABLE_TASKS,
+                    "id = ? COLLATE NOCASE",
+                    arrayOf(normalized.id),
+                )
+                SQLiteLocalMutationRecorder.recordDeletion(
+                    sqlite,
+                    normalized.id,
+                    normalized.deletedAt,
+                )
+            }
+            val result = OfflineRelayMergeResult(
+                mergedTaskCount = plan.tasksToUpsert.size,
+                mergedTombstoneCount = plan.tombstonesToApply.size,
+                unchangedCount = plan.unchangedCount,
+            )
+            sqlite.setTransactionSuccessful()
+            result
         } finally {
             sqlite.endTransaction()
         }
@@ -63,20 +102,22 @@ class SQLiteBackupDatabase(private val database: TaskDatabase) : BackupDatabase 
         override fun readState(): BackupDatabaseState = readState(sqlite)
 
         override fun insertTask(task: TaskInstancePayload) {
-            check(!hasDeletionBarrier(sqlite, task.id)) {
+            val normalized = task.withCanonicalEntityId()
+            check(!hasDeletionBarrier(sqlite, normalized.id)) {
                 "已删除任务不能以相同 ID 恢复"
             }
-            val entity = task.toTaskEntity()
+            val entity = normalized.toTaskEntity()
             sqlite.insertOrThrow(TABLE_TASKS, null, entity.toContentValues())
         }
 
         override fun insertTombstone(tombstone: TombstonePayload) {
-            check(!hasTask(sqlite, tombstone.id)) {
+            val normalized = tombstone.withCanonicalEntityId()
+            check(!hasTask(sqlite, normalized.id)) {
                 "同一备份不能同时包含相同 ID 的任务和删除记录"
             }
             val values = ContentValues(2).apply {
-                put("entity_id", tombstone.id)
-                put("deleted_at", tombstone.deletedAt)
+                put("entity_id", normalized.id)
+                put("deleted_at", normalized.deletedAt)
             }
             sqlite.insertOrThrow(TABLE_DEFERRED_DELETIONS, null, values)
         }
@@ -135,15 +176,33 @@ class SQLiteBackupDatabase(private val database: TaskDatabase) : BackupDatabase 
     }
 }
 
+private fun readTaskSnapshot(sqlite: SQLiteDatabase): BackupTaskSnapshot = BackupTaskSnapshot(
+    state = readState(sqlite),
+    tasks = sqlite.query(
+        TABLE_TASKS,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "created_at ASC, id ASC",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(cursor.toTaskEntity().toWirePayload())
+        }
+    },
+    tombstones = readTombstones(sqlite),
+)
+
 private fun readTombstones(sqlite: SQLiteDatabase): List<TombstonePayload> = sqlite.rawQuery(
     """
-    SELECT entity_id, MAX(deleted_at) AS deleted_at
+    SELECT LOWER(entity_id) AS entity_id, MAX(deleted_at) AS deleted_at
     FROM (
         SELECT entity_id, deleted_at FROM sync_tombstones
         UNION ALL
         SELECT entity_id, deleted_at FROM sync_deferred_deletions
     )
-    GROUP BY entity_id
+    GROUP BY LOWER(entity_id)
     ORDER BY deleted_at ASC, entity_id ASC
     """.trimIndent(),
     null,
@@ -156,23 +215,23 @@ private fun readTombstones(sqlite: SQLiteDatabase): List<TombstonePayload> = sql
 }
 
 private fun hasTask(sqlite: SQLiteDatabase, entityId: String): Boolean = sqlite.rawQuery(
-    "SELECT 1 FROM tasks WHERE id = ? LIMIT 1",
-    arrayOf(entityId),
+    "SELECT 1 FROM tasks WHERE id = ? COLLATE NOCASE LIMIT 1",
+    arrayOf(canonicalEntityId(entityId)),
 ).use(Cursor::moveToFirst)
 
 private fun hasDeletionBarrier(sqlite: SQLiteDatabase, entityId: String): Boolean = sqlite.rawQuery(
     """
     SELECT 1 FROM sync_entity_versions
-    WHERE entity_id = ? AND is_tombstone = 1
+    WHERE entity_id = ? COLLATE NOCASE AND is_tombstone = 1
     UNION ALL
     SELECT 1 FROM sync_tombstones
-    WHERE entity_id = ?
+    WHERE entity_id = ? COLLATE NOCASE
     UNION ALL
     SELECT 1 FROM sync_deferred_deletions
-    WHERE entity_id = ?
+    WHERE entity_id = ? COLLATE NOCASE
     LIMIT 1
     """.trimIndent(),
-    arrayOf(entityId, entityId, entityId),
+    canonicalEntityId(entityId).let { arrayOf(it, it, it) },
 ).use(Cursor::moveToFirst)
 
 private fun readState(sqlite: SQLiteDatabase): BackupDatabaseState = sqlite.rawQuery(

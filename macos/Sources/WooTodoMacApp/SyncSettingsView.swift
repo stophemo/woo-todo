@@ -438,21 +438,44 @@ struct SyncSettingsView: View {
     }
 
     private var backupCard: some View {
-        SettingsCard(title: "加密备份与恢复", systemImage: "externaldrive.badge.lock") {
-            Text("备份始终包含全部任务，使用 PBKDF2 与 AES-256-GCM 加密。忘记口令后无法解密。")
+        SettingsCard(title: "离线接力与加密备份", systemImage: "externaldrive.badge.lock") {
+            Text("文件始终端到端加密；忘记口令后无法解密。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             SecureField("备份口令（至少 10 个字符）", text: $backupPassphrase)
                 .textFieldStyle(.roundedBorder)
             SecureField("导出时再次输入口令", text: $backupConfirmation)
                 .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Button("导出离线接力包") {
+                    Task {
+                        await store.exportOfflineRelay(
+                            passphrase: backupPassphrase,
+                            confirmation: backupConfirmation
+                        )
+                    }
+                }
+                .disabled(store.isBackupBusy || backupPassphrase.isEmpty)
+
+                Button("合并离线接力包") {
+                    Task { await store.mergeOfflineRelay(passphrase: backupPassphrase) }
+                }
+                .disabled(store.isBackupBusy || backupPassphrase.isEmpty)
+            }
+            Text("接力包可导入已有任务库，只合并任务和删除记录，不复制同步身份。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Divider()
+
             Toggle("包含当前同步身份（仅用于替换丢失的本机）", isOn: $includeSyncIdentity)
                 .disabled(store.connection == nil)
             Text("默认关闭。开启后备份会包含设备令牌与 vault key；旧安装仍在运行时，不要把它恢复成第二份并存设备，新增设备请使用二维码配对。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
-                Button("导出 .wootodo") {
+                Button("导出恢复备份") {
                     Task {
                         await store.exportBackup(
                             passphrase: backupPassphrase,
@@ -463,7 +486,7 @@ struct SyncSettingsView: View {
                 }
                 .disabled(store.isBackupBusy || backupPassphrase.isEmpty)
 
-                Button("从 .wootodo 恢复") {
+                Button("全新安装恢复") {
                     Task { await store.importBackup(passphrase: backupPassphrase) }
                 }
                 .disabled(store.isBackupBusy || backupPassphrase.isEmpty || store.connection != nil)
@@ -473,7 +496,7 @@ struct SyncSettingsView: View {
                         .controlSize(.small)
                 }
             }
-            Text("恢复仅允许空白安装；新增设备请使用二维码配对。可将导出文件手动上传到夸克网盘。")
+            Text("恢复备份仅允许空白安装；日常跨设备传递请使用离线接力包。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let message = store.backupStatusMessage {

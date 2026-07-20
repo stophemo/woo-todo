@@ -392,6 +392,7 @@ object SyncJsonCodec {
         require(tombstone.protocolVersion == 1 && tombstone.entityType == "tombstone")
         require(
             tombstone.id.hasWireCodePointLength(8..128) &&
+                IDENTIFIER.matches(tombstone.id) &&
                 tombstone.deletedAt in 0..WIRE_MAXIMUM_SAFE_INTEGER,
         )
         return JSONObject()
@@ -415,7 +416,9 @@ object SyncJsonCodec {
         require(task.protocolVersion == 1 && task.entityType == "task")
         require(
             task.id.hasWireCodePointLength(8..128) &&
-                task.seriesId.hasWireCodePointLength(8..128),
+                IDENTIFIER.matches(task.id) &&
+                task.seriesId.hasWireCodePointLength(8..128) &&
+                IDENTIFIER.matches(task.seriesId),
         )
         require(task.title.hasWireCodePointLength(1..120) && task.timezone == WIRE_FIXED_TIMEZONE)
         require(task.sortOrder in 0..WIRE_MAXIMUM_SORT_ORDER)

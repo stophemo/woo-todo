@@ -2,6 +2,7 @@ package com.wootodo.ui
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -24,6 +25,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -43,12 +45,14 @@ import com.wootodo.reminder.ReminderSettings
 import com.wootodo.sync.BackupPackageCodec
 import com.wootodo.sync.BackupPackageException
 import com.wootodo.sync.BackupTransferException
+import com.wootodo.sync.OfflineRelayShareFiles
 import com.wootodo.sync.PairingDeepLink
 import com.wootodo.sync.PairingPollPolicy
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRuntimeState
 import com.wootodo.widget.TodayWidgetUpdater
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -95,7 +99,11 @@ class MainActivity : AppCompatActivity() {
     private val openBackupDocument = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
-        uri?.let(::readBackupForImport)
+        if (uri == null) {
+            backupFileViewModel.clearImport()
+        } else {
+            readBackupForImport(uri)
+        }
     }
 
     private val viewModel: MainViewModel by viewModels {
@@ -360,11 +368,18 @@ class MainActivity : AppCompatActivity() {
     private fun showMoreMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
             menu.add(0, MENU_REMINDER, 0, R.string.reminder_settings_title)
-            menu.add(0, MENU_EXPORT_BACKUP, 1, R.string.backup_export)
-            menu.add(0, MENU_IMPORT_BACKUP, 2, R.string.backup_import)
+            menu.add(0, MENU_EXPORT_RELAY, 1, R.string.offline_relay_export)
+            menu.add(0, MENU_IMPORT_RELAY, 2, R.string.offline_relay_import)
+            menu.add(0, MENU_EXPORT_BACKUP, 3, R.string.backup_export)
+            menu.add(0, MENU_IMPORT_BACKUP, 4, R.string.backup_import)
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     MENU_REMINDER -> showReminderSettings()
+                    MENU_EXPORT_RELAY -> showBackupExportDialog(
+                        hasSyncCredentials = false,
+                        purpose = BackupExportPurpose.OFFLINE_RELAY,
+                    )
+                    MENU_IMPORT_RELAY -> prepareOfflineRelayImport()
                     MENU_EXPORT_BACKUP -> prepareBackupExport()
                     MENU_IMPORT_BACKUP -> prepareBackupImport()
                     else -> return@setOnMenuItemClickListener false
@@ -381,20 +396,34 @@ class MainActivity : AppCompatActivity() {
                 (application as WooTodoApplication).hasBackupSyncCredentials()
             }
             result.fold(
-                onSuccess = ::showBackupExportDialog,
+                onSuccess = { hasSyncCredentials ->
+                    showBackupExportDialog(
+                        hasSyncCredentials = hasSyncCredentials,
+                        purpose = BackupExportPurpose.RECOVERY,
+                    )
+                },
                 onFailure = { showBackupError(it) },
             )
         }
     }
 
-    private fun showBackupExportDialog(hasSyncCredentials: Boolean) {
+    private fun showBackupExportDialog(
+        hasSyncCredentials: Boolean,
+        purpose: BackupExportPurpose,
+    ) {
         val padding = (20 * resources.displayMetrics.density).toInt()
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, 0, padding, 0)
         }
         val explanation = TextView(this).apply {
-            setText(R.string.backup_export_message)
+            setText(
+                if (purpose == BackupExportPurpose.OFFLINE_RELAY) {
+                    R.string.offline_relay_export_message
+                } else {
+                    R.string.backup_export_message
+                },
+            )
             setPadding(0, 0, 0, padding / 2)
         }
         val passphrase = passwordInput(R.string.backup_passphrase_hint)
@@ -417,19 +446,32 @@ class MainActivity : AppCompatActivity() {
         container.addView(explanation)
         container.addView(passphrase)
         container.addView(confirmation)
-        container.addView(includeIdentity)
-        container.addView(identityNote)
+        if (purpose == BackupExportPurpose.RECOVERY) {
+            container.addView(includeIdentity)
+            container.addView(identityNote)
+        }
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.backup_export_title)
+        val builder = AlertDialog.Builder(this)
+            .setTitle(
+                if (purpose == BackupExportPurpose.OFFLINE_RELAY) {
+                    R.string.offline_relay_export_title
+                } else {
+                    R.string.backup_export_title
+                },
+            )
             .setView(container)
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.backup_choose_location, null)
-            .create()
+        if (purpose == BackupExportPurpose.OFFLINE_RELAY) {
+            builder.setNeutralButton(R.string.offline_relay_share, null)
+        }
+        val dialog = builder.create()
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            fun beginExport(shareAfterEncryption: Boolean) {
                 val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                val neutral = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
                 positive.isEnabled = false
+                neutral?.isEnabled = false
                 passphrase.error = null
                 confirmation.error = null
                 lifecycleScope.launch {
@@ -438,7 +480,8 @@ class MainActivity : AppCompatActivity() {
                         (application as WooTodoApplication).createEncryptedBackup(
                             passphrase = passphrase.text.toString(),
                             confirmation = confirmation.text.toString(),
-                            includeSyncCredentials = includeIdentity.isChecked,
+                            includeSyncCredentials = purpose == BackupExportPurpose.RECOVERY &&
+                                includeIdentity.isChecked,
                         )
                     }
                     dismissBackupProgress()
@@ -446,12 +489,19 @@ class MainActivity : AppCompatActivity() {
                         onSuccess = { data ->
                             passphrase.setText("")
                             confirmation.setText("")
-                            backupFileViewModel.holdExport(data)
                             dialog.dismiss()
-                            createBackupDocument.launch(backupFileName())
+                            if (shareAfterEncryption) {
+                                val shareResult = runCatching { shareOfflineRelay(data) }
+                                data.fill(0)
+                                shareResult.exceptionOrNull()?.let(::showBackupError)
+                            } else {
+                                backupFileViewModel.holdExport(data, purpose)
+                                createBackupDocument.launch(backupFileName(purpose))
+                            }
                         },
                         onFailure = { error ->
                             positive.isEnabled = true
+                            neutral?.isEnabled = true
                             when (error) {
                                 is BackupTransferException.PassphraseMismatch ->
                                     confirmation.error = error.message
@@ -465,12 +515,19 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
             }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                beginExport(shareAfterEncryption = false)
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+                beginExport(shareAfterEncryption = true)
+            }
         }
         dialog.show()
     }
 
     private fun writePendingBackup(uri: Uri) {
         val data = backupFileViewModel.exportData()
+        val purpose = backupFileViewModel.exportPurpose()
         if (data == null) {
             showBackupError(IllegalStateException(getString(R.string.backup_export_interrupted)))
             return
@@ -498,13 +555,36 @@ class MainActivity : AppCompatActivity() {
                 onSuccess = {
                     Toast.makeText(
                         this@MainActivity,
-                        R.string.backup_export_succeeded,
+                        if (purpose == BackupExportPurpose.OFFLINE_RELAY) {
+                            R.string.offline_relay_export_succeeded
+                        } else {
+                            R.string.backup_export_succeeded
+                        },
                         Toast.LENGTH_LONG,
                     ).show()
                 },
                 onFailure = { showBackupError(it) },
             )
         }
+    }
+
+    private suspend fun shareOfflineRelay(data: ByteArray) {
+        val uri = withContext(Dispatchers.IO) {
+            val directory = File(cacheDir, OFFLINE_RELAY_CACHE_DIRECTORY)
+            val file = OfflineRelayShareFiles.write(directory, data)
+            FileProvider.getUriForFile(
+                this@MainActivity,
+                "${applicationContext.packageName}.files",
+                file,
+            )
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = BACKUP_MIME_TYPE
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newUri(contentResolver, getString(R.string.offline_relay_export), uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, getString(R.string.offline_relay_share_title)))
     }
 
     private fun prepareBackupImport() {
@@ -514,11 +594,17 @@ class MainActivity : AppCompatActivity() {
             }
             result.fold(
                 onSuccess = {
+                    backupFileViewModel.beginImport(BackupImportMode.RESTORE)
                     openBackupDocument.launch(BACKUP_MIME_TYPES)
                 },
                 onFailure = { showBackupError(it, R.string.backup_import_unavailable_title) },
             )
         }
+    }
+
+    private fun prepareOfflineRelayImport() {
+        backupFileViewModel.beginImport(BackupImportMode.OFFLINE_RELAY)
+        openBackupDocument.launch(BACKUP_MIME_TYPES)
     }
 
     private fun readBackupForImport(uri: Uri) {
@@ -533,20 +619,30 @@ class MainActivity : AppCompatActivity() {
                     backupFileViewModel.holdImport(data)
                     showBackupImportDialog()
                 },
-                onFailure = { showBackupError(it) },
+                onFailure = {
+                    backupFileViewModel.clearImport()
+                    showBackupError(it)
+                },
             )
         }
     }
 
     private fun showBackupImportDialog() {
         if (backupFileViewModel.importData() == null) return
+        val mode = backupFileViewModel.importMode() ?: return
         val padding = (20 * resources.displayMetrics.density).toInt()
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, 0, padding, 0)
         }
         val explanation = TextView(this).apply {
-            setText(R.string.backup_import_message)
+            setText(
+                if (mode == BackupImportMode.OFFLINE_RELAY) {
+                    R.string.offline_relay_import_message
+                } else {
+                    R.string.backup_import_message
+                },
+            )
             setPadding(0, 0, 0, padding / 2)
         }
         val passphrase = passwordInput(R.string.backup_passphrase_hint)
@@ -554,12 +650,25 @@ class MainActivity : AppCompatActivity() {
         container.addView(passphrase)
 
         val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.backup_import_title)
+            .setTitle(
+                if (mode == BackupImportMode.OFFLINE_RELAY) {
+                    R.string.offline_relay_import_title
+                } else {
+                    R.string.backup_import_title
+                },
+            )
             .setView(container)
             .setNegativeButton(R.string.cancel) { _, _ ->
                 backupFileViewModel.clearImport()
             }
-            .setPositiveButton(R.string.backup_restore, null)
+            .setPositiveButton(
+                if (mode == BackupImportMode.OFFLINE_RELAY) {
+                    R.string.offline_relay_merge
+                } else {
+                    R.string.backup_restore
+                },
+                null,
+            )
             .setOnCancelListener { backupFileViewModel.clearImport() }
             .create()
         dialog.setOnShowListener {
@@ -569,30 +678,51 @@ class MainActivity : AppCompatActivity() {
                 positive.isEnabled = false
                 passphrase.error = null
                 lifecycleScope.launch {
-                    showBackupProgress(R.string.backup_restoring)
+                    showBackupProgress(
+                        if (mode == BackupImportMode.OFFLINE_RELAY) {
+                            R.string.offline_relay_merging
+                        } else {
+                            R.string.backup_restoring
+                        },
+                    )
                     val result = runCatching {
-                        (application as WooTodoApplication).restoreEncryptedBackup(
-                            data = data,
-                            passphrase = passphrase.text.toString(),
-                        )
+                        val app = application as WooTodoApplication
+                        if (mode == BackupImportMode.OFFLINE_RELAY) {
+                            val merged = app.mergeEncryptedOfflineRelay(
+                                data = data,
+                                passphrase = passphrase.text.toString(),
+                            )
+                            getString(
+                                R.string.offline_relay_import_succeeded,
+                                merged.mergedTaskCount,
+                                merged.mergedTombstoneCount,
+                                merged.unchangedCount,
+                            )
+                        } else {
+                            val restored = app.restoreEncryptedBackup(
+                                data = data,
+                                passphrase = passphrase.text.toString(),
+                            )
+                            getString(
+                                if (restored.syncCredentialsRestored) {
+                                    R.string.backup_import_succeeded_with_sync
+                                } else {
+                                    R.string.backup_import_succeeded
+                                },
+                                restored.restoredTaskCount,
+                            )
+                        }
                     }
                     dismissBackupProgress()
                     result.fold(
-                        onSuccess = { restored ->
+                        onSuccess = { successMessage ->
                             passphrase.setText("")
                             backupFileViewModel.clearImport()
                             dialog.dismiss()
                             viewModel.refresh()
                             Toast.makeText(
                                 this@MainActivity,
-                                getString(
-                                    if (restored.syncCredentialsRestored) {
-                                        R.string.backup_import_succeeded_with_sync
-                                    } else {
-                                        R.string.backup_import_succeeded
-                                    },
-                                    restored.restoredTaskCount,
-                                ),
+                                successMessage,
                                 Toast.LENGTH_LONG,
                             ).show()
                         },
@@ -672,9 +802,14 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun backupFileName(): String {
+    private fun backupFileName(purpose: BackupExportPurpose): String {
         val timestamp = BACKUP_FILENAME_FORMAT.format(Instant.now())
-        return "woo-todo-$timestamp.wootodo"
+        val prefix = if (purpose == BackupExportPurpose.OFFLINE_RELAY) {
+            "woo-todo-relay"
+        } else {
+            "woo-todo"
+        }
+        return "$prefix-$timestamp.wootodo"
     }
 
     private fun handlePairingIntent(intent: Intent) {
@@ -873,8 +1008,11 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_OPEN_TOMORROW = "open_tomorrow"
         private const val MENU_REMINDER = 1
-        private const val MENU_EXPORT_BACKUP = 2
-        private const val MENU_IMPORT_BACKUP = 3
+        private const val MENU_EXPORT_RELAY = 2
+        private const val MENU_IMPORT_RELAY = 3
+        private const val MENU_EXPORT_BACKUP = 4
+        private const val MENU_IMPORT_BACKUP = 5
+        private const val OFFLINE_RELAY_CACHE_DIRECTORY = "offline-relay"
         private const val BACKUP_MIME_TYPE = "application/octet-stream"
         val BACKUP_MIME_TYPES = arrayOf(
             BACKUP_MIME_TYPE,

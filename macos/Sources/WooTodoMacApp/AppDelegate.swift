@@ -12,9 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var todayStore: TodayStore?
     private var syncSettingsStore: SyncSettingsStore?
     private var panelController: FloatingPanelController?
+    private var quickAddPanelController: QuickAddPanelController?
     private var dashboardWindowController: DashboardWindowController?
     private var statusMenuController: StatusMenuController?
-    private var globalShortcut: GlobalShortcut?
+    private var interactionShortcut: GlobalShortcut?
+    private var quickAddShortcut: GlobalShortcut?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -54,19 +56,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             let panelController = FloatingPanelController(store: store)
+            let quickAddPanelController = QuickAddPanelController(store: store)
             let statusMenuController = StatusMenuController(
-                panelController: panelController
-            ) { [weak self] in
-                self?.showDashboard()
+                panelController: panelController,
+                quickAdd: { [weak quickAddPanelController] in
+                    quickAddPanelController?.show()
+                },
+                openDashboard: { [weak self] in
+                    self?.showDashboard()
+                }
+            )
+            let interactionShortcut = registerGlobalShortcut(
+                name: "恢复可交互",
+                shortcut: "⌃⌥Space",
+                keyCode: UInt32(kVK_Space),
+                fallback: "你仍可通过菜单栏恢复任务板交互。"
+            ) { [weak panelController] in
+                panelController?.toggleInteraction()
             }
-            let globalShortcut = registerGlobalShortcut(for: panelController)
+            let quickAddShortcut = registerGlobalShortcut(
+                name: "快速新增任务",
+                shortcut: "⌃⌥N",
+                keyCode: UInt32(kVK_ANSI_N),
+                fallback: "你仍可通过菜单栏快速新增任务。"
+            ) { [weak quickAddPanelController] in
+                quickAddPanelController?.show()
+            }
 
             self.repository = repository
             todayStore = store
             self.syncSettingsStore = syncSettingsStore
             self.panelController = panelController
+            self.quickAddPanelController = quickAddPanelController
             self.statusMenuController = statusMenuController
-            self.globalShortcut = globalShortcut
+            self.interactionShortcut = interactionShortcut
+            self.quickAddShortcut = quickAddShortcut
             panelController.onStateChange = { [weak statusMenuController] in
                 statusMenuController?.refreshState()
             }
@@ -135,21 +159,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func registerGlobalShortcut(
-        for panelController: FloatingPanelController
+        name: String,
+        shortcut: String,
+        keyCode: UInt32,
+        fallback: String,
+        action: @escaping () -> Void
     ) -> GlobalShortcut? {
         do {
             return try GlobalShortcut(
-                keyCode: UInt32(kVK_Space),
+                keyCode: keyCode,
                 modifiers: UInt32(controlKey | optionKey)
-            ) { [weak panelController] in
-                panelController?.toggleInteraction()
+            ) {
+                action()
             }
         } catch {
-            logger.error("全局快捷键不可用：\(error.localizedDescription, privacy: .public)")
+            logger.error("\(name, privacy: .public)快捷键不可用：\(error.localizedDescription, privacy: .public)")
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = "全局快捷键暂不可用"
-            alert.informativeText = "\(error.localizedDescription)\n\nWoo Todo 会继续运行，你仍可通过菜单栏切换鼠标穿透。"
+            alert.messageText = "\(name)快捷键暂不可用"
+            alert.informativeText = "\(shortcut) 注册失败：\(error.localizedDescription)\n\nWoo Todo 会继续运行，\(fallback)"
             alert.addButton(withTitle: "继续使用")
             alert.runModal()
             return nil

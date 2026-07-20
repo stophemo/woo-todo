@@ -113,4 +113,17 @@
     <string name="backup_import_unavailable_title">当前不能导入</string>
     <string name="backup_failed_title">备份操作未完成</string>
     <string name="backup_failed_message">操作未完成，本地任务与同步身份未被覆盖。</string>
+    <string name="offline_relay_export">导出离线接力包</string>
+    <string name="offline_relay_import">导入离线接力包</string>
+    <string name="offline_relay_export_title">导出离线接力包</string>
+    <string name="offline_relay_export_message">接力包包含全部任务和删除记录，不包含同步身份。它使用 AES-256-GCM 加密，可通过 U 盘、局域网文件传输或系统分享交给 Mac。</string>
+    <string name="offline_relay_share">系统分享</string>
+    <string name="offline_relay_share_title">发送 Woo Todo 离线接力包</string>
+    <string name="offline_relay_cache_failed">无法准备加密接力文件</string>
+    <string name="offline_relay_export_succeeded">离线接力包已保存，可在另一台设备中合并</string>
+    <string name="offline_relay_import_title">合并离线接力包</string>
+    <string name="offline_relay_import_message">合并不会清空本机任务，也不会复制同步身份。删除记录永久优先，重复导入不会产生重复任务。</string>
+    <string name="offline_relay_merge">合并</string>
+    <string name="offline_relay_merging">正在合并离线接力包…</string>
+    <string name="offline_relay_import_succeeded">离线接力完成：更新 %1$d 条任务、%2$d 条删除记录，%3$d 条无需变更</string>
 </resources>

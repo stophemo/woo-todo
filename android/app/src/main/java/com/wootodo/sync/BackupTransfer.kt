@@ -62,6 +62,9 @@ sealed class BackupTransferException(message: String, cause: Throwable? = null) 
 
     class CredentialsDoNotMatchDatabase :
         BackupTransferException("Keystore 同步身份与本地任务库不一致，已停止导出")
+
+    class RelayContainsSyncIdentity :
+        BackupTransferException("离线接力包不能包含同步身份，请重新导出且不要勾选“包含同步身份”")
 }
 
 object BackupPassphraseConfirmation {
@@ -106,6 +109,8 @@ interface BackupDatabase {
     fun readState(): BackupDatabaseState
 
     fun readTaskSnapshot(): BackupTaskSnapshot
+
+    fun mergeOfflineRelay(snapshot: BackupSnapshot): OfflineRelayMergeResult
 
     fun <T> inTransaction(block: (BackupRestoreTransaction) -> T): T
 }
@@ -211,5 +216,16 @@ class BackupTransferService(
         restoreCoordinator.requireReady()
         val snapshot = BackupPackageCodec.open(data, passphrase)
         return restoreCoordinator.restore(snapshot)
+    }
+
+    fun mergeEncryptedOfflineRelay(
+        data: ByteArray,
+        passphrase: String,
+    ): OfflineRelayMergeResult {
+        val snapshot = BackupPackageCodec.open(data, passphrase)
+        if (snapshot.syncCredentials != null) {
+            throw BackupTransferException.RelayContainsSyncIdentity()
+        }
+        return database.mergeOfflineRelay(snapshot)
     }
 }

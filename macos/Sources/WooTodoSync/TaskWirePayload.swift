@@ -184,10 +184,10 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         guard entityType == "task" else {
             throw TaskPayloadValidationError.invalidEntityType(entityType)
         }
-        guard (8...128).contains(id.unicodeScalars.count) else {
+        guard isValidTaskIdentifier(id) else {
             throw TaskPayloadValidationError.invalidField("id")
         }
-        guard (8...128).contains(seriesId.unicodeScalars.count) else {
+        guard isValidTaskIdentifier(seriesId) else {
             throw TaskPayloadValidationError.invalidField("seriesId")
         }
         guard (1...120).contains(title.unicodeScalars.count) else {
@@ -300,11 +300,19 @@ public struct WireTombstonePayload: Codable, Equatable, Sendable {
         guard entityType == "tombstone" else {
             throw TaskPayloadValidationError.invalidEntityType(entityType)
         }
-        guard (8...128).contains(id.unicodeScalars.count),
+        guard isValidTaskIdentifier(id),
               (0...WireTaskPayload.maximumSafeInteger).contains(deletedAt) else {
             throw TaskPayloadValidationError.invalidField("tombstone")
         }
     }
+}
+
+private func isValidTaskIdentifier(_ value: String) -> Bool {
+    (8...128).contains(value.unicodeScalars.count)
+        && value.range(
+            of: #"^[A-Za-z0-9._:-]+$"#,
+            options: .regularExpression
+        ) != nil
 }
 
 private struct TaskPayloadAnyCodingKey: CodingKey {

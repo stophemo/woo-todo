@@ -23,6 +23,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private let panelController: FloatingPanelController
+    private let quickAddAction: () -> Void
     private let openDashboardAction: () -> Void
     private let statusItem: NSStatusItem
     private let clickThroughItem: NSMenuItem
@@ -33,9 +34,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     init(
         panelController: FloatingPanelController,
+        quickAdd: @escaping () -> Void,
         openDashboard: @escaping () -> Void
     ) {
         self.panelController = panelController
+        quickAddAction = quickAdd
         openDashboardAction = openDashboard
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         clickThroughItem = NSMenuItem(title: "鼠标穿透", action: nil, keyEquivalent: "")
@@ -77,6 +80,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu(title: "Woo Todo")
         menu.delegate = self
+        let quickAddItem = item("快速新增任务", action: #selector(quickAdd))
+        quickAddItem.keyEquivalent = "n"
+        quickAddItem.keyEquivalentModifierMask = [.control, .option]
+        menu.addItem(quickAddItem)
         menu.addItem(item("显示任务板", action: #selector(showPanel)))
         menu.addItem(item("任务详情与统计", action: #selector(openDashboard)))
         menu.addItem(item("恢复可交互（⌃⌥Space）", action: #selector(makeInteractive)))
@@ -121,6 +128,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func showPanel() {
         panelController.show()
+    }
+
+    @objc private func quickAdd() {
+        quickAddAction()
     }
 
     @objc private func openDashboard() {

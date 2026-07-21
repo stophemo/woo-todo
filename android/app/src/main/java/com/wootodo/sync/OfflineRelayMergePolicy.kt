@@ -170,6 +170,7 @@ object OfflineRelayMergePolicy {
             data.writeLong(task.sortOrder)
             data.writeLong(task.createdAt)
             data.writeLong(task.updatedAt)
+            data.writeOptionalString(task.reminderTime)
             data.writeOptionalLong(task.settledAt)
         }
         return output.toByteArray()

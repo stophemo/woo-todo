@@ -109,6 +109,26 @@ class BackupPackageTest {
     }
 
     @Test
+    fun `备份往返保留任务提醒时间`() {
+        val vector = fixture()
+        val snapshot = BackupSnapshot(
+            exportedAt = 1_784_259_000_000,
+            tasks = listOf(fixtureTask().copy(reminderTime = "08:30")),
+            syncCredentials = null,
+        )
+        val sealed = BackupPackageCodec.seal(
+            snapshot = snapshot,
+            passphrase = vector.getString("password"),
+            iterations = vector.getJSONObject("kdf").getInt("iterations"),
+            salt = Base64Url.decode(vector.getJSONObject("kdf").getString("salt")),
+            nonce = Base64Url.decode(vector.getJSONObject("cipher").getString("nonce")),
+        )
+
+        assertEquals("08:30", BackupPackageCodec.open(sealed, vector.getString("password"))
+            .tasks.single().reminderTime)
+    }
+
+    @Test
     fun `错误口令和密文篡改均被认证层拒绝`() {
         val vector = fixture()
         assertThrows(BackupPackageException.AuthenticationFailed::class.java) {

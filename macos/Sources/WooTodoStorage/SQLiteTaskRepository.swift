@@ -50,7 +50,8 @@ public struct SQLiteSyncConfiguration: Sendable {
 }
 
 /// 小数据量本地优先仓储；串行锁确保面板刷新与后台同步不会并发访问同一连接。
-public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalApplying, @unchecked Sendable {
+public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalApplying,
+    WebDavLocalApplying, @unchecked Sendable {
     private var database: OpaquePointer?
     private let lock = NSRecursiveLock()
     private let encoder = JSONEncoder()
@@ -116,7 +117,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 """
                 SELECT id, series_id, title, time_scope, tier, status,
                        recurrence_json, period_start, period_end, sort_index,
-                       created_at, updated_at, completed_at
+                       created_at, updated_at, completed_at, reminder_time
                 FROM tasks
                 ORDER BY CASE tier
                     WHEN 'main' THEN 0
@@ -135,7 +136,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                     """
                     SELECT id, series_id, title, time_scope, tier, status,
                            recurrence_json, period_start, period_end, sort_index,
-                           created_at, updated_at, completed_at
+                           created_at, updated_at, completed_at, reminder_time
                     FROM tasks
                     WHERE time_scope = ?
                       AND period_start < ?
@@ -158,7 +159,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 """
                 SELECT id, series_id, title, time_scope, tier, status,
                        recurrence_json, period_start, period_end, sort_index,
-                       created_at, updated_at, completed_at
+                       created_at, updated_at, completed_at, reminder_time
                 FROM tasks
                 WHERE time_scope = ?
                 ORDER BY CASE tier
@@ -205,8 +206,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                     INSERT INTO tasks (
                         id, series_id, title, time_scope, tier, status,
                         recurrence_json, period_start, period_end, sort_index,
-                        created_at, updated_at, completed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        created_at, updated_at, completed_at, reminder_time
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         series_id = excluded.series_id,
                         title = excluded.title,
@@ -218,7 +219,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                         period_end = excluded.period_end,
                         sort_index = excluded.sort_index,
                         updated_at = excluded.updated_at,
-                        completed_at = excluded.completed_at
+                        completed_at = excluded.completed_at,
+                        reminder_time = excluded.reminder_time
                     """
                 let statement = try prepare(sql)
                 defer { sqlite3_finalize(statement) }
@@ -259,7 +261,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                         .integer(Int64(task.sortIndex)),
                         .double(task.createdAt.timeIntervalSince1970),
                         .double(task.updatedAt.timeIntervalSince1970),
-                        task.completedAt.map { .double($0.timeIntervalSince1970) } ?? .null
+                        task.completedAt.map { .double($0.timeIntervalSince1970) } ?? .null,
+                        task.reminderTime.map { .text($0.wireValue) } ?? .null
                     ]
                     try bind(values, to: statement)
                     guard sqlite3_step(statement) == SQLITE_DONE else {
@@ -333,10 +336,14 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 sort_index INTEGER NOT NULL,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
-                completed_at REAL
+                completed_at REAL,
+                reminder_time TEXT
             )
             """
         )
+        if try !taskTableHasColumn("reminder_time") {
+            try execute("ALTER TABLE tasks ADD COLUMN reminder_time TEXT")
+        }
         try execute(
             "CREATE INDEX IF NOT EXISTS idx_tasks_period ON tasks(time_scope, period_start, period_end)"
         )
@@ -432,6 +439,14 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         )
         try execute(
             """
+            CREATE TABLE IF NOT EXISTS sync_webdav_applied_operations (
+                op_id TEXT PRIMARY KEY NOT NULL,
+                applied_at INTEGER NOT NULL
+            )
+            """
+        )
+        try execute(
+            """
             CREATE TABLE IF NOT EXISTS sync_deferred_upserts (
                 entity_id TEXT PRIMARY KEY NOT NULL
             )
@@ -445,7 +460,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             )
             """
         )
-        try execute("PRAGMA user_version = 4")
+        try execute("PRAGMA user_version = 5")
     }
 
     /// 只读预检安全存储中的候选身份，不修改数据库或生成 outbox。
@@ -622,7 +637,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                     """
                     SELECT id, series_id, title, time_scope, tier, status,
                            recurrence_json, period_start, period_end, sort_index,
-                           created_at, updated_at, completed_at
+                           created_at, updated_at, completed_at, reminder_time
                     FROM tasks
                     ORDER BY created_at, id
                     """
@@ -666,6 +681,10 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         advancingCursorTo cursor: Int64
     ) async throws {
         try applyRemoteOperationsSynchronously(operations, advancingCursorTo: cursor)
+    }
+
+    public func applyWebDavOperations(_ operations: [WebDavOperation]) async throws {
+        try applyWebDavOperationsSynchronously(operations)
     }
 
     private func pendingOperationsSynchronously(limit: Int) throws -> [SyncPushOperation] {
@@ -766,6 +785,47 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
+    private func applyWebDavOperationsSynchronously(
+        _ operations: [WebDavOperation]
+    ) throws {
+        try withLock {
+            guard let configuration = syncConfiguration else {
+                throw SQLiteRepositoryError.syncCredentialsUnavailable
+            }
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                for operation in operations {
+                    guard operation.vaultId == configuration.vaultId else {
+                        throw SQLiteRepositoryError.invalidRemotePage("WebDAV 同步空间不匹配")
+                    }
+                    if try isWebDavOperationApplied(operation.opId) { continue }
+                    if try !isOperationApplied(operation.opId) {
+                        try applyRemoteOperation(
+                            SyncPulledOperation(
+                                serverSeq: 1,
+                                opId: operation.opId,
+                                deviceId: operation.deviceId,
+                                entityId: operation.entityId,
+                                kind: operation.kind,
+                                lamport: operation.lamport,
+                                ciphertext: operation.ciphertext,
+                                nonce: operation.nonce,
+                                createdAt: milliseconds(since1970: Date())
+                            ),
+                            configuration: configuration
+                        )
+                        try advanceLamportClock(toAtLeast: operation.lamport)
+                    }
+                    try recordWebDavOperation(operation.opId)
+                }
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
     private func validate(_ configuration: SQLiteSyncConfiguration) throws {
         guard !configuration.vaultId.isEmpty,
               !configuration.deviceId.isEmpty,
@@ -848,7 +908,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 SELECT tasks.id, tasks.series_id, tasks.title, tasks.time_scope,
                        tasks.tier, tasks.status, tasks.recurrence_json,
                        tasks.period_start, tasks.period_end, tasks.sort_index,
-                       tasks.created_at, tasks.updated_at, tasks.completed_at
+                       tasks.created_at, tasks.updated_at, tasks.completed_at,
+                       tasks.reminder_time
                 FROM tasks
                 INNER JOIN sync_deferred_upserts
                     ON sync_deferred_upserts.entity_id = lower(tasks.id)
@@ -895,6 +956,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 AND NOT EXISTS(SELECT 1 FROM sync_outbox)
                 AND NOT EXISTS(SELECT 1 FROM sync_entity_versions)
                 AND NOT EXISTS(SELECT 1 FROM sync_applied_operations)
+                AND NOT EXISTS(SELECT 1 FROM sync_webdav_applied_operations)
                 AND NOT EXISTS(SELECT 1 FROM sync_deferred_upserts)
                 AND NOT EXISTS(SELECT 1 FROM sync_deferred_deletions)
                 AND vault_id IS NULL
@@ -1143,6 +1205,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             sortOrder: Int64(task.sortIndex),
             createdAt: milliseconds(since1970: task.createdAt),
             updatedAt: milliseconds(since1970: task.updatedAt),
+            reminderTime: task.reminderTime?.wireValue,
             settledAt: settledAt
         )
     }
@@ -1494,6 +1557,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             sortIndex: sortIndex,
             createdAt: date(fromMilliseconds: payload.createdAt),
             updatedAt: date(fromMilliseconds: payload.updatedAt),
+            reminderTime: payload.reminderTime.flatMap(TaskReminderTime.init(wireValue:)),
             completedAt: status == .pending ? nil : settledDate
         )
     }
@@ -1508,8 +1572,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             INSERT INTO tasks (
                 id, series_id, title, time_scope, tier, status,
                 recurrence_json, period_start, period_end, sort_index,
-                created_at, updated_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, completed_at, reminder_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 series_id = excluded.series_id,
                 title = excluded.title,
@@ -1521,7 +1585,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 period_end = excluded.period_end,
                 sort_index = excluded.sort_index,
                 updated_at = excluded.updated_at,
-                completed_at = excluded.completed_at
+                completed_at = excluded.completed_at,
+                reminder_time = excluded.reminder_time
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -1539,6 +1604,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             .double(task.createdAt.timeIntervalSince1970),
             .double(task.updatedAt.timeIntervalSince1970),
             task.completedAt.map { .double($0.timeIntervalSince1970) } ?? .null,
+            task.reminderTime.map { .text($0.wireValue) } ?? .null,
         ], to: statement)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
     }
@@ -1555,7 +1621,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             """
             SELECT id, series_id, title, time_scope, tier, status,
                    recurrence_json, period_start, period_end, sort_index,
-                   created_at, updated_at, completed_at
+                   created_at, updated_at, completed_at, reminder_time
             FROM tasks WHERE id = ? LIMIT 1
             """,
             bindings: [.text(id.uuidString)]
@@ -1637,6 +1703,31 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         try bind([
             .text(operation.opId),
             .integer(operation.serverSeq),
+            .integer(milliseconds(since1970: Date())),
+        ], to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    private func isWebDavOperationApplied(_ operationID: String) throws -> Bool {
+        let statement = try prepare(
+            "SELECT 1 FROM sync_webdav_applied_operations WHERE op_id = ? LIMIT 1"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([.text(operationID)], to: statement)
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW: return true
+        case SQLITE_DONE: return false
+        default: throw statementError()
+        }
+    }
+
+    private func recordWebDavOperation(_ operationID: String) throws {
+        let statement = try prepare(
+            "INSERT INTO sync_webdav_applied_operations(op_id, applied_at) VALUES (?, ?)"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([
+            .text(operationID),
             .integer(milliseconds(since1970: Date())),
         ], to: statement)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
@@ -1818,6 +1909,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             sortIndex: Int(sqlite3_column_int64(statement, 9)),
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 10)),
             updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 11)),
+            reminderTime: try reminderTime(at: 13, from: statement),
             completedAt: optionalDate(at: 12, from: statement)
         )
     }
@@ -1830,6 +1922,29 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     private func optionalDate(at index: Int32, from statement: OpaquePointer) -> Date? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return Date(timeIntervalSince1970: sqlite3_column_double(statement, index))
+    }
+
+    private func reminderTime(
+        at index: Int32,
+        from statement: OpaquePointer
+    ) throws -> TaskReminderTime? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        guard let value = TaskReminderTime(wireValue: text(at: index, from: statement)) else {
+            throw SQLiteRepositoryError.invalidRecord("任务提醒时间无法解析")
+        }
+        return value
+    }
+
+    private func taskTableHasColumn(_ columnName: String) throws -> Bool {
+        let statement = try prepare("PRAGMA table_info(tasks)")
+        defer { sqlite3_finalize(statement) }
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            if text(at: 1, from: statement) == columnName { return true }
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else { throw statementError() }
+        return false
     }
 
     private func statementError() -> SQLiteRepositoryError {

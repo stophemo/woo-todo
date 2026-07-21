@@ -6,6 +6,7 @@ import com.wootodo.domain.Task
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
+import java.time.LocalTime
 
 data class TaskEntity(
     val id: String,
@@ -20,6 +21,7 @@ data class TaskEntity(
     val createdAt: Long,
     val updatedAt: Long,
     val settledAt: Long?,
+    val reminderTime: LocalTime? = null,
 )
 
 fun TaskEntity.toDomain(): Task =
@@ -36,4 +38,5 @@ fun TaskEntity.toDomain(): Task =
         createdAt = createdAt,
         updatedAt = updatedAt,
         settledAt = settledAt,
+        reminderTime = reminderTime,
     )

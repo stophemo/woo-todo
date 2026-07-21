@@ -5,10 +5,12 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
-import android.graphics.Paint
+import android.net.Uri
+import android.view.View
 import android.widget.RemoteViews
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
+import com.wootodo.display.DayCounterPreferences
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskTimeType
@@ -78,8 +80,6 @@ class TodayWidgetProvider : AppWidgetProvider() {
 }
 
 object TodayWidgetUpdater {
-    private const val MAX_VISIBLE_TASKS = 30
-
     fun updateAllAsync(context: Context) {
         val appContext = context.applicationContext
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
@@ -96,12 +96,6 @@ object TodayWidgetUpdater {
     suspend fun update(context: Context, widgetIds: IntArray) {
         if (widgetIds.isEmpty()) return
         val manager = AppWidgetManager.getInstance(context)
-        val application = context.applicationContext as WooTodoApplication
-        val repository = application.taskRepository
-        if (repository.autoPassExpired() > 0) {
-            application.notifyLocalMutation()
-        }
-        val tasks = repository.tasksForToday().take(MAX_VISIBLE_TASKS)
 
         widgetIds.forEach { widgetId ->
             val remoteViews = RemoteViews(context.packageName, R.layout.widget_today)
@@ -113,57 +107,28 @@ object TodayWidgetUpdater {
                 R.id.widget_add,
                 addTaskPendingIntent(context, widgetId),
             )
+            val counterText = DayCounterPreferences.displayText(context)
+            remoteViews.setTextViewText(R.id.widget_counter, counterText.orEmpty())
+            remoteViews.setViewVisibility(
+                R.id.widget_counter,
+                if (counterText == null) View.GONE else View.VISIBLE,
+            )
             remoteViews.setPendingIntentTemplate(
                 R.id.widget_list,
                 collectionPendingIntent(context, widgetId),
             )
             remoteViews.setRemoteAdapter(
                 R.id.widget_list,
-                RemoteViews.RemoteCollectionItems.Builder()
-                    .setHasStableIds(true)
-                    .setViewTypeCount(1)
-                    .apply {
-                        tasks.forEach { task ->
-                            val item = RemoteViews(context.packageName, R.layout.item_widget_task)
-                            val completed = task.status == TaskStatus.COMPLETED
-                            item.setTextViewText(R.id.widget_task_title, task.title)
-                            item.setTextViewText(
-                                R.id.widget_task_line,
-                                context.getString(task.questLine.labelRes()),
-                            )
-                            item.setBoolean(R.id.widget_task_check, "setChecked", completed)
-                            item.setBoolean(R.id.widget_task_check, "setEnabled", !completed)
-                            item.setInt(
-                                R.id.widget_task_title,
-                                "setPaintFlags",
-                                Paint.ANTI_ALIAS_FLAG or
-                                    (if (completed) Paint.STRIKE_THRU_TEXT_FLAG else 0),
-                            )
-                            if (!completed) {
-                                item.setOnClickFillInIntent(
-                                    R.id.widget_task_check,
-                                    itemIntent(TodayWidgetProvider.COMMAND_COMPLETE, task.id),
-                                )
-                                item.setOnClickFillInIntent(
-                                    R.id.widget_task_row,
-                                    itemIntent(TodayWidgetProvider.COMMAND_EDIT, task.id),
-                                )
-                            }
-                            addItem(task.id.hashCode().toLong(), item)
-                        }
-                    }
-                    .build(),
+                Intent(context, TodayWidgetService::class.java).apply {
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                    data = Uri.parse(toUri(Intent.URI_INTENT_SCHEME))
+                },
             )
             remoteViews.setEmptyView(R.id.widget_list, R.id.widget_empty)
             manager.updateAppWidget(widgetId, remoteViews)
+            manager.notifyAppWidgetViewDataChanged(widgetId, R.id.widget_list)
         }
     }
-
-    private fun itemIntent(command: String, taskId: String): Intent =
-        Intent().apply {
-            putExtra(TodayWidgetProvider.EXTRA_COMMAND, command)
-            putExtra(TodayWidgetProvider.EXTRA_TASK_ID, taskId)
-        }
 
     private fun collectionPendingIntent(context: Context, widgetId: Int): PendingIntent =
         PendingIntent.getBroadcast(

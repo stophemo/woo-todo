@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 import OSLog
 import WooTodoCore
 import WooTodoStorage
@@ -11,12 +10,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var repository: SQLiteTaskRepository?
     private var todayStore: TodayStore?
     private var syncSettingsStore: SyncSettingsStore?
+    private var webDavSettingsStore: WebDavSettingsStore?
+    private var dayCounterStore: DayCounterStore?
+    private var shortcutSettingsStore: ShortcutSettingsStore?
+    private var taskNotificationScheduler: TaskNotificationScheduler?
     private var panelController: FloatingPanelController?
     private var quickAddPanelController: QuickAddPanelController?
     private var dashboardWindowController: DashboardWindowController?
     private var statusMenuController: StatusMenuController?
-    private var interactionShortcut: GlobalShortcut?
-    private var quickAddShortcut: GlobalShortcut?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -48,17 +49,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 credentialsStore: credentialsStore,
                 credentials: activeCredentials
             )
+            let webDavSettingsStore = WebDavSettingsStore(
+                repository: repository,
+                workerSyncConfigured: activeCredentials != nil
+            )
             let store = TodayStore(repository: repository)
+            let dayCounterStore = DayCounterStore()
+            let taskNotificationScheduler = TaskNotificationScheduler()
             store.reload()
             store.onTasksChanged = { [weak self] in
                 self?.dashboardWindowController?.reload()
                 self?.syncSettingsStore?.requestSync(.localChange)
+                self?.webDavSettingsStore?.requestSync(.localChange)
+                self?.refreshTaskNotifications()
             }
 
-            let panelController = FloatingPanelController(store: store)
+            let panelController = FloatingPanelController(
+                store: store,
+                dayCounterStore: dayCounterStore
+            )
             let quickAddPanelController = QuickAddPanelController(store: store)
+            let shortcutSettingsStore = ShortcutSettingsStore(actions: [
+                .quickAdd: { [weak quickAddPanelController] in
+                    quickAddPanelController?.show()
+                },
+                .toggleTaskPanel: { [weak panelController] in
+                    panelController?.toggleVisibility()
+                },
+                .toggleAlwaysOnTop: { [weak panelController] in
+                    panelController?.toggleAlwaysOnTop()
+                },
+                .toggleClickThrough: { [weak panelController] in
+                    panelController?.toggleClickThrough()
+                },
+            ])
             let statusMenuController = StatusMenuController(
                 panelController: panelController,
+                shortcutSettingsStore: shortcutSettingsStore,
                 quickAdd: { [weak quickAddPanelController] in
                     quickAddPanelController?.show()
                 },
@@ -66,44 +93,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.showDashboard()
                 }
             )
-            let interactionShortcut = registerGlobalShortcut(
-                name: "恢复可交互",
-                shortcut: "⌃⌥Space",
-                keyCode: UInt32(kVK_Space),
-                fallback: "你仍可通过菜单栏恢复任务板交互。"
-            ) { [weak panelController] in
-                panelController?.toggleInteraction()
-            }
-            let quickAddShortcut = registerGlobalShortcut(
-                name: "快速新增任务",
-                shortcut: "⌃⌥N",
-                keyCode: UInt32(kVK_ANSI_N),
-                fallback: "你仍可通过菜单栏快速新增任务。"
-            ) { [weak quickAddPanelController] in
-                quickAddPanelController?.show()
-            }
 
             self.repository = repository
             todayStore = store
             self.syncSettingsStore = syncSettingsStore
+            self.webDavSettingsStore = webDavSettingsStore
+            self.dayCounterStore = dayCounterStore
+            self.shortcutSettingsStore = shortcutSettingsStore
+            self.taskNotificationScheduler = taskNotificationScheduler
             self.panelController = panelController
             self.quickAddPanelController = quickAddPanelController
             self.statusMenuController = statusMenuController
-            self.interactionShortcut = interactionShortcut
-            self.quickAddShortcut = quickAddShortcut
             panelController.onStateChange = { [weak statusMenuController] in
                 statusMenuController?.refreshState()
             }
+            shortcutSettingsStore.onBindingsChanged = { [weak statusMenuController] in
+                statusMenuController?.refreshState()
+            }
+            shortcutSettingsStore.start()
             syncSettingsStore.onRemoteChanges = { [weak self] in
                 self?.todayStore?.reload()
                 self?.dashboardWindowController?.reload()
+                self?.refreshTaskNotifications()
             }
             syncSettingsStore.onLifecycleRefresh = { [weak self] in
                 self?.todayStore?.reload()
                 self?.dashboardWindowController?.reload()
+                self?.refreshTaskNotifications()
+            }
+            webDavSettingsStore.onRemoteChanges = { [weak self] in
+                self?.todayStore?.reload()
+                self?.dashboardWindowController?.reload()
+                self?.refreshTaskNotifications()
             }
             syncSettingsStore.start()
+            webDavSettingsStore.start()
             panelController.show()
+            refreshTaskNotifications()
             if let syncActivationError {
                 showSyncCredentialsWarning(syncActivationError)
             }
@@ -121,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         syncSettingsStore?.stop()
+        webDavSettingsStore?.stop()
     }
 
     private func databaseURL() throws -> URL {
@@ -140,16 +167,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dashboardWindowController.show()
             return
         }
-        guard let repository, let todayStore, let syncSettingsStore else { return }
+        guard let repository,
+              let todayStore,
+              let syncSettingsStore,
+              let webDavSettingsStore,
+              let dayCounterStore,
+              let shortcutSettingsStore else { return }
 
         let dashboardStore = DashboardStore(repository: repository)
-        dashboardStore.onTasksChanged = { [weak todayStore, weak syncSettingsStore] in
+        dashboardStore.onTasksChanged = { [weak self, weak todayStore, weak syncSettingsStore] in
             todayStore?.reload()
             syncSettingsStore?.requestSync(.localChange)
+            self?.webDavSettingsStore?.requestSync(.localChange)
+            self?.refreshTaskNotifications()
         }
         let controller = DashboardWindowController(
             store: dashboardStore,
-            syncSettingsStore: syncSettingsStore
+            syncSettingsStore: syncSettingsStore,
+            webDavSettingsStore: webDavSettingsStore,
+            dayCounterStore: dayCounterStore,
+            shortcutSettingsStore: shortcutSettingsStore
         )
         controller.onClose = { [weak self] in
             self?.dashboardWindowController = nil
@@ -158,29 +195,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.show()
     }
 
-    private func registerGlobalShortcut(
-        name: String,
-        shortcut: String,
-        keyCode: UInt32,
-        fallback: String,
-        action: @escaping () -> Void
-    ) -> GlobalShortcut? {
+    private func refreshTaskNotifications() {
+        guard let repository, let taskNotificationScheduler else { return }
         do {
-            return try GlobalShortcut(
-                keyCode: keyCode,
-                modifiers: UInt32(controlKey | optionKey)
-            ) {
-                action()
-            }
+            taskNotificationScheduler.synchronize(try repository.fetchAll())
         } catch {
-            logger.error("\(name, privacy: .public)快捷键不可用：\(error.localizedDescription, privacy: .public)")
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = "\(name)快捷键暂不可用"
-            alert.informativeText = "\(shortcut) 注册失败：\(error.localizedDescription)\n\nWoo Todo 会继续运行，\(fallback)"
-            alert.addButton(withTitle: "继续使用")
-            alert.runModal()
-            return nil
+            logger.error(
+                "刷新任务提醒失败：\(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 

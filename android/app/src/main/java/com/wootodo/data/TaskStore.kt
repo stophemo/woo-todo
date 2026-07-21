@@ -10,17 +10,21 @@ import com.wootodo.domain.TaskTimeType
 import com.wootodo.sync.SQLiteLocalMutationRecorder
 import com.wootodo.sync.SyncOperationKind
 import java.time.LocalDate
+import java.time.LocalTime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 
 interface TaskStore {
     fun observeAll(): Flow<List<TaskEntity>>
+
+    suspend fun getAll(): List<TaskEntity> = observeAll().first()
 
     fun observeForPeriod(timeType: TaskTimeType, targetDate: LocalDate): Flow<List<TaskEntity>>
 
@@ -67,6 +71,10 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         .map { queryTasks(selection = "1", selectionArgs = emptyArray()) }
         .flowOn(Dispatchers.IO)
         .distinctUntilChanged()
+
+    override suspend fun getAll(): List<TaskEntity> = withContext(Dispatchers.IO) {
+        queryTasks(selection = "1", selectionArgs = emptyArray())
+    }
 
     override fun observeForPeriod(
         timeType: TaskTimeType,
@@ -358,7 +366,7 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
 
     internal fun invalidateFromSync() = invalidate()
 
-    private fun TaskEntity.toContentValues(): ContentValues = ContentValues(13).apply {
+    private fun TaskEntity.toContentValues(): ContentValues = ContentValues(14).apply {
         put("id", id)
         put("series_id", seriesId)
         put("title", title)
@@ -371,6 +379,7 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         put("created_at", createdAt)
         put("updated_at", updatedAt)
         if (settledAt == null) putNull("settled_at") else put("settled_at", settledAt)
+        if (reminderTime == null) putNull("reminder_time") else put("reminder_time", reminderTime.toString())
     }
 
     private fun Cursor.toTaskList(): List<TaskEntity> = buildList {
@@ -393,6 +402,9 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         updatedAt = getLong(getColumnIndexOrThrow("updated_at")),
         settledAt = getColumnIndexOrThrow("settled_at").let { index ->
             if (isNull(index)) null else getLong(index)
+        },
+        reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
+            if (isNull(index)) null else LocalTime.parse(getString(index))
         },
     )
 

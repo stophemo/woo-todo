@@ -509,7 +509,7 @@ object BackupPackageCodec {
     }
 
     private fun decodeTask(root: StrictJsonObject, path: String): TaskInstancePayload {
-        root.requireExactKeys(TASK_KEYS, path)
+        root.requireKeys(TASK_KEYS, setOf("reminderTime"), path)
         val task = try {
             TaskInstancePayload(
                 protocolVersion = root.int("protocolVersion", "$path.protocolVersion", 0..Int.MAX_VALUE),
@@ -526,6 +526,7 @@ object BackupPackageCodec {
                 sortOrder = root.long("sortOrder", "$path.sortOrder", 0..WIRE_MAXIMUM_SORT_ORDER),
                 createdAt = root.long("createdAt", "$path.createdAt", 0..WIRE_MAXIMUM_SAFE_INTEGER),
                 updatedAt = root.long("updatedAt", "$path.updatedAt", 0..WIRE_MAXIMUM_SAFE_INTEGER),
+                reminderTime = root.optionalNullableString("reminderTime", "$path.reminderTime"),
                 settledAt = root.nullableLong(
                     "settledAt",
                     "$path.settledAt",
@@ -633,6 +634,9 @@ object BackupPackageCodec {
         append(",\"questLine\":").appendJsonString(task.questLine.value)
         append(",\"recurrence\":").appendJsonString(task.recurrence.value)
         append(",\"seriesId\":").appendJsonString(task.seriesId)
+        if (task.reminderTime != null) {
+            append(",\"reminderTime\":").appendJsonString(task.reminderTime)
+        }
         append(",\"settledAt\":").append(task.settledAt ?: "null")
         append(",\"sortOrder\":").append(task.sortOrder)
         append(",\"state\":").appendJsonString(task.state.value)
@@ -793,6 +797,9 @@ private fun StrictJsonObject.nullableString(key: String, field: String): String?
         is StrictJsonString -> value.value
         else -> invalidFile(field)
     }
+
+private fun StrictJsonObject.optionalNullableString(key: String, field: String): String? =
+    if (values.containsKey(key)) nullableString(key, field) else null
 
 private fun StrictJsonObject.objectValue(key: String, field: String): StrictJsonObject =
     value(key, field) as? StrictJsonObject ?: invalidFile(field)

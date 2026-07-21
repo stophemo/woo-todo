@@ -571,6 +571,95 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.currentCursor() == 1)
     }
 
+    @Test("WebDAV 重复操作幂等且不推进 Worker cursor")
+    func webDavDuplicateIsIdempotent() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let task = try makeTask(
+            title: "坚果云只应用一次",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        let pulled = try remoteTaskOperation(
+            task,
+            kind: .upsert,
+            lamport: 7,
+            serverSequence: 1,
+            deviceID: "device-webdav",
+            configuration: configuration
+        )
+        let operation = try webDavOperation(from: pulled, configuration: configuration)
+        try await repository.applyWebDavOperations([operation])
+
+        let corrupted = try WebDavOperation(
+            vaultId: configuration.vaultId,
+            deviceId: pulled.deviceId,
+            operation: SyncPushOperation(
+                opId: pulled.opId,
+                entityId: pulled.entityId,
+                kind: pulled.kind,
+                lamport: pulled.lamport,
+                ciphertext: Base64URL.encode(Data(repeating: 9, count: 16)),
+                nonce: pulled.nonce
+            )
+        )
+        try await repository.applyWebDavOperations([corrupted])
+
+        #expect(try repository.fetchAll().first?.title == "坚果云只应用一次")
+        #expect(try await repository.currentCursor() == 0)
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+    }
+
+    @Test("WebDAV 批次坏密文会回滚此前任务并可重试")
+    func webDavBatchIsAtomicAndRetryable() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let task = try makeTask(
+            title: "必须整批回滚",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        let valid = try webDavOperation(
+            from: remoteTaskOperation(
+                task,
+                kind: .upsert,
+                lamport: 1,
+                serverSequence: 1,
+                deviceID: "device-webdav",
+                configuration: configuration
+            ),
+            configuration: configuration
+        )
+        let broken = try WebDavOperation(
+            vaultId: configuration.vaultId,
+            deviceId: "device-webdav",
+            operation: SyncPushOperation(
+                opId: "operation-webdav-broken",
+                entityId: task.id.uuidString.lowercased(),
+                kind: .upsert,
+                lamport: 2,
+                ciphertext: Base64URL.encode(Data(repeating: 2, count: 16)),
+                nonce: Base64URL.encode(Data(repeating: 3, count: 12))
+            )
+        )
+
+        do {
+            try await repository.applyWebDavOperations([valid, broken])
+            Issue.record("损坏密文应使 WebDAV 批次失败")
+        } catch {
+            // 预期解密失败，事务应回滚。
+        }
+        #expect(try repository.fetchAll().isEmpty)
+        #expect(try await repository.currentCursor() == 0)
+
+        try await repository.applyWebDavOperations([valid])
+        #expect(try repository.fetchAll().first?.title == "必须整批回滚")
+    }
+
     @Test("tombstone 是最高优先级终态且与 task 到达顺序无关")
     func tombstonePreventsResurrection() async throws {
         let configuration = syncConfiguration()
@@ -1075,6 +1164,24 @@ private func remoteTombstoneOperation(
         ciphertext: envelope.ciphertext,
         nonce: envelope.nonce,
         createdAt: payload.deletedAt
+    )
+}
+
+private func webDavOperation(
+    from operation: SyncPulledOperation,
+    configuration: SQLiteSyncConfiguration
+) throws -> WebDavOperation {
+    try WebDavOperation(
+        vaultId: configuration.vaultId,
+        deviceId: operation.deviceId,
+        operation: SyncPushOperation(
+            opId: operation.opId,
+            entityId: operation.entityId,
+            kind: operation.kind,
+            lamport: operation.lamport,
+            ciphertext: operation.ciphertext,
+            nonce: operation.nonce
+        )
     )
 }
 

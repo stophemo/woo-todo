@@ -64,7 +64,8 @@ public final class DashboardStore: ObservableObject {
         scope: TimeScope,
         targetDate: Date,
         tier: QuestTier,
-        repeats: Bool
+        repeats: Bool,
+        reminderTime: TaskReminderTime? = nil
     ) {
         mutate {
             let date = now()
@@ -76,7 +77,8 @@ public final class DashboardStore: ObservableObject {
                 recurrence: recurrence(scope: scope, repeats: repeats),
                 period: period,
                 sortIndex: nextSortIndex(scope: scope, tier: tier, period: period),
-                createdAt: date
+                createdAt: date,
+                reminderTime: reminderTime
             )
             try repository.save(task)
         }
@@ -88,7 +90,8 @@ public final class DashboardStore: ObservableObject {
         scope: TimeScope,
         targetDate: Date,
         tier: QuestTier,
-        repeats: Bool
+        repeats: Bool,
+        reminderTime: TaskReminderTime? = nil
     ) {
         guard allTasks.first(where: { $0.id == id })?.status == .pending else { return }
         mutate {
@@ -112,6 +115,7 @@ public final class DashboardStore: ObservableObject {
                     : existing.sortIndex,
                 createdAt: existing.createdAt,
                 updatedAt: date,
+                reminderTime: reminderTime,
                 completedAt: existing.completedAt
             )
             try repository.save(replacement)

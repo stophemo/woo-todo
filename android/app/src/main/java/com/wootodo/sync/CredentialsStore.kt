@@ -108,9 +108,12 @@ class WrappedSyncCredentialsStore(
     }
 }
 
-class SharedPreferencesCredentialBlobStore(context: Context) : CredentialBlobStore {
+class SharedPreferencesCredentialBlobStore(
+    context: Context,
+    fileName: String = "sync_credentials_encrypted",
+) : CredentialBlobStore {
     private val preferences = context.applicationContext.getSharedPreferences(
-        "sync_credentials_encrypted",
+        fileName,
         Context.MODE_PRIVATE,
     )
 

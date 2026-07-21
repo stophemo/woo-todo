@@ -1,6 +1,7 @@
 package com.wootodo.domain
 
 import java.time.LocalDate
+import java.time.LocalTime
 
 enum class TaskTimeType(val rawValue: String) {
     DAY("day"),
@@ -65,6 +66,7 @@ data class Task(
     val createdAt: Long,
     val updatedAt: Long,
     val settledAt: Long?,
+    val reminderTime: LocalTime? = null,
 )
 
 data class TaskDraft(
@@ -74,4 +76,5 @@ data class TaskDraft(
     val questLine: QuestLine = QuestLine.MAIN,
     val recurrence: Recurrence = Recurrence.ONCE,
     val sortOrder: Int? = null,
+    val reminderTime: LocalTime? = null,
 )

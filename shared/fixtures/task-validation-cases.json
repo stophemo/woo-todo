@@ -17,6 +17,7 @@
         "sortOrder": 2147483647,
         "createdAt": 9007199254740991,
         "updatedAt": 9007199254740991,
+        "reminderTime": "08:30",
         "settledAt": null
       }
     },
@@ -357,6 +358,48 @@
         "sortOrder": 0,
         "createdAt": 1,
         "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝非法提醒时间",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000022",
+        "seriesId": "00000000-0000-4000-8000-000000000022",
+        "title": "错误提醒时间",
+        "timeType": "day",
+        "periodStart": "2026-07-16",
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "reminderTime": "24:00",
+        "settledAt": null
+      }
+    },
+    {
+      "name": "闲时任务不能设置提醒时间",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000023",
+        "seriesId": "00000000-0000-4000-8000-000000000023",
+        "title": "闲时错误提醒",
+        "timeType": "someday",
+        "periodStart": null,
+        "timezone": "Asia/Shanghai",
+        "questLine": "main",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "reminderTime": "08:30",
         "settledAt": null
       }
     }

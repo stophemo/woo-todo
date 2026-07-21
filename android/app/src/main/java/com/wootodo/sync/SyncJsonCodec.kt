@@ -359,6 +359,7 @@ object SyncJsonCodec {
             .put("createdAt", task.createdAt)
             .put("updatedAt", task.updatedAt)
             .put("settledAt", task.settledAt ?: JSONObject.NULL)
+            .apply { task.reminderTime?.let { put("reminderTime", it) } }
     }
 
     private fun decodeTask(value: JSONObject): TaskInstancePayload {
@@ -368,6 +369,7 @@ object SyncJsonCodec {
                 "periodStart", "timezone", "questLine", "state", "recurrence", "sortOrder",
                 "createdAt", "updatedAt", "settledAt",
             ),
+            setOf("reminderTime"),
         )
         return TaskInstancePayload(
             protocolVersion = value.nonNegativeInt("protocolVersion"),
@@ -385,6 +387,7 @@ object SyncJsonCodec {
             createdAt = value.nonNegativeLong("createdAt"),
             updatedAt = value.nonNegativeLong("updatedAt"),
             settledAt = value.nullableNonNegativeLong("settledAt"),
+            reminderTime = value.nullableString("reminderTime"),
         ).also(::validateTask)
     }
 
@@ -425,8 +428,13 @@ object SyncJsonCodec {
         require(task.createdAt in 0..WIRE_MAXIMUM_SAFE_INTEGER)
         require(task.updatedAt in 0..WIRE_MAXIMUM_SAFE_INTEGER)
         task.settledAt?.let { require(it in 0..WIRE_MAXIMUM_SAFE_INTEGER) }
+        task.reminderTime?.let { require(REMINDER_TIME.matches(it)) }
         if (task.timeType == WireTimeType.SOMEDAY) {
-            require(task.periodStart == null && task.recurrence == WireRecurrence.ONCE)
+            require(
+                task.periodStart == null &&
+                    task.recurrence == WireRecurrence.ONCE &&
+                    task.reminderTime == null,
+            )
         } else {
             val periodStart = requireNotNull(task.periodStart)
             require(DATE_KEY.matches(periodStart))
@@ -478,6 +486,7 @@ object SyncJsonCodec {
 
     private val IDENTIFIER = Regex("^[A-Za-z0-9._:-]+$")
     private val DATE_KEY = Regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+    private val REMINDER_TIME = Regex("^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
 }
 
 private fun String.hasWireCodePointLength(range: IntRange): Boolean {

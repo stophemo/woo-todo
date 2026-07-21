@@ -12,10 +12,12 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.DatePicker
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.TimePicker
 import android.widget.Toast
 import android.widget.TextView
@@ -36,6 +38,10 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
+import com.wootodo.display.DayCounterPreferences
+import com.wootodo.display.DayCounterSettings
+import com.wootodo.display.DayCounterText
+import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
 import com.wootodo.domain.QuestLine
@@ -45,11 +51,16 @@ import com.wootodo.reminder.ReminderSettings
 import com.wootodo.sync.BackupPackageCodec
 import com.wootodo.sync.BackupPackageException
 import com.wootodo.sync.BackupTransferException
+import com.wootodo.sync.Base64Url
 import com.wootodo.sync.OfflineRelayShareFiles
 import com.wootodo.sync.PairingDeepLink
 import com.wootodo.sync.PairingPollPolicy
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRuntimeState
+import com.wootodo.sync.SecureBytes
+import com.wootodo.sync.WebDavCredentials
+import com.wootodo.sync.WebDavEndpointPolicy
+import com.wootodo.sync.newWebDavIdentity
 import com.wootodo.widget.TodayWidgetUpdater
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -67,6 +78,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var syncButton: Button
     private lateinit var syncStatus: TextView
     private lateinit var screenTitle: TextView
+    private lateinit var dayCounterText: TextView
     private lateinit var scopeGroup: RadioGroup
     private var pairingDialog: AlertDialog? = null
     private var pairingTerminalDialog: AlertDialog? = null
@@ -129,6 +141,7 @@ class MainActivity : AppCompatActivity() {
         syncButton = findViewById(R.id.sync_button)
         syncStatus = findViewById(R.id.sync_status)
         screenTitle = findViewById(R.id.screen_title)
+        dayCounterText = findViewById(R.id.day_counter_text)
 
         taskAdapter = TaskAdapter(
             onComplete = { viewModel.settle(it.id, TaskStatus.COMPLETED) },
@@ -192,6 +205,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         requestNotificationPermissionIfNeeded()
+        renderDayCounter()
         if (savedInstanceState == null) {
             applyInitialView(intent)
         } else {
@@ -230,6 +244,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refresh()
+        renderDayCounter()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -274,10 +289,12 @@ class MainActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.POST_NOTIFICATIONS,
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
+            ) == PackageManager.PERMISSION_GRANTED
+        ) return
+        val preferences = getSharedPreferences(NOTIFICATION_PERMISSION_STATE, MODE_PRIVATE)
+        if (preferences.getBoolean(KEY_NOTIFICATION_PERMISSION_REQUESTED, false)) return
+        preferences.edit().putBoolean(KEY_NOTIFICATION_PERMISSION_REQUESTED, true).apply()
+        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun attachReordering() {
@@ -367,14 +384,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMoreMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
-            menu.add(0, MENU_REMINDER, 0, R.string.reminder_settings_title)
-            menu.add(0, MENU_EXPORT_RELAY, 1, R.string.offline_relay_export)
-            menu.add(0, MENU_IMPORT_RELAY, 2, R.string.offline_relay_import)
-            menu.add(0, MENU_EXPORT_BACKUP, 3, R.string.backup_export)
-            menu.add(0, MENU_IMPORT_BACKUP, 4, R.string.backup_import)
+            menu.add(0, MENU_DAY_COUNTER, 0, R.string.day_counter_settings_title)
+            menu.add(0, MENU_REMINDER, 1, R.string.reminder_settings_title)
+            menu.add(0, MENU_WEBDAV, 2, R.string.webdav_settings_title)
+            menu.add(0, MENU_EXPORT_RELAY, 3, R.string.offline_relay_export)
+            menu.add(0, MENU_IMPORT_RELAY, 4, R.string.offline_relay_import)
+            menu.add(0, MENU_EXPORT_BACKUP, 5, R.string.backup_export)
+            menu.add(0, MENU_IMPORT_BACKUP, 6, R.string.backup_import)
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
+                    MENU_DAY_COUNTER -> showDayCounterSettings()
                     MENU_REMINDER -> showReminderSettings()
+                    MENU_WEBDAV -> showWebDavSettings()
                     MENU_EXPORT_RELAY -> showBackupExportDialog(
                         hasSyncCredentials = false,
                         purpose = BackupExportPurpose.OFFLINE_RELAY,
@@ -388,6 +409,162 @@ class MainActivity : AppCompatActivity() {
             }
             show()
         }
+    }
+
+    private fun showWebDavSettings() {
+        lifecycleScope.launch {
+            val app = application as WooTodoApplication
+            val existing = withContext(Dispatchers.IO) {
+                runCatching { app.webDavCredentialsStore.load() }.getOrNull()
+            }
+            val generatedIdentity = newWebDavIdentity()
+            val generatedKey = Base64Url.encode(SecureBytes.generate(32))
+            val padding = (20 * resources.displayMetrics.density).toInt()
+            val container = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(padding, 0, padding, 0)
+            }
+            fun field(hintRes: Int, value: String, password: Boolean = false): EditText =
+                EditText(this@MainActivity).apply {
+                    hint = getString(hintRes)
+                    setText(value)
+                    isSingleLine = true
+                    inputType = if (password) {
+                        InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    } else {
+                        InputType.TYPE_CLASS_TEXT
+                    }
+                    setSelectAllOnFocus(true)
+                }
+            val endpoint = TextView(this@MainActivity).apply {
+                text = WebDavEndpointPolicy.ENDPOINT
+                setPadding(0, padding / 2, 0, padding / 2)
+            }
+            val username = field(R.string.webdav_username_hint, existing?.username.orEmpty())
+            val appPassword = field(
+                R.string.webdav_app_password_hint,
+                existing?.appPassword.orEmpty(),
+                password = true,
+            )
+            val vaultId = field(
+                R.string.webdav_vault_id_hint,
+                existing?.vaultId ?: generatedIdentity.first,
+            )
+            val vaultKey = field(
+                R.string.webdav_vault_key_hint,
+                existing?.let { Base64Url.encode(it.vaultKey) } ?: generatedKey,
+            )
+            container.addView(endpoint)
+            container.addView(username)
+            container.addView(appPassword)
+            container.addView(vaultId)
+            container.addView(vaultKey)
+            val scrollView = ScrollView(this@MainActivity).apply {
+                isFillViewport = true
+                addView(container)
+            }
+
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle(R.string.webdav_settings_title)
+                .setMessage(R.string.webdav_settings_message)
+                .setView(scrollView)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.save) { _, _ ->
+                    lifecycleScope.launch {
+                        val result = runCatching {
+                            val credentials = WebDavCredentials(
+                                username = username.text.toString().trim(),
+                                appPassword = appPassword.text.toString(),
+                                vaultId = vaultId.text.toString().trim(),
+                                deviceId = existing?.deviceId ?: generatedIdentity.second,
+                                vaultKey = Base64Url.decode(vaultKey.text.toString().trim()),
+                            )
+                            credentials.validate()
+                            app.configureWebDav(credentials)
+                            app.synchronizeManually()
+                        }
+                        Toast.makeText(
+                            this@MainActivity,
+                            result.fold(
+                                onSuccess = { getString(R.string.webdav_saved) },
+                                onFailure = { it.localizedMessage ?: getString(R.string.webdav_invalid) },
+                            ),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+                .show()
+        }
+    }
+
+    private fun showDayCounterSettings() {
+        val settings = DayCounterPreferences.load(this)
+        val padding = (20 * resources.displayMetrics.density).toInt()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padding, 0, padding, 0)
+        }
+        val enabledSwitch = SwitchCompat(this).apply {
+            setText(R.string.day_counter_enabled)
+            isChecked = settings.enabled
+        }
+        val titleInput = EditText(this).apply {
+            hint = getString(R.string.day_counter_title_hint)
+            setText(settings.title)
+            isSingleLine = true
+        }
+        val dateLabel = TextView(this).apply {
+            setText(R.string.day_counter_start_date)
+            setPadding(0, padding / 2, 0, 0)
+        }
+        val datePicker = DatePicker(this).apply {
+            updateDate(
+                settings.startDate.year,
+                settings.startDate.monthValue - 1,
+                settings.startDate.dayOfMonth,
+            )
+        }
+        fun updateEnabled(enabled: Boolean) {
+            titleInput.isEnabled = enabled
+            datePicker.isEnabled = enabled
+        }
+        enabledSwitch.setOnCheckedChangeListener { _, enabled -> updateEnabled(enabled) }
+        updateEnabled(settings.enabled)
+        container.addView(enabledSwitch)
+        container.addView(titleInput)
+        container.addView(dateLabel)
+        container.addView(datePicker)
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.day_counter_settings_title)
+            .setView(container)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                DayCounterPreferences.save(
+                    this,
+                    DayCounterSettings(
+                        enabled = enabledSwitch.isChecked,
+                        title = titleInput.text.toString(),
+                        startDate = java.time.LocalDate.of(
+                            datePicker.year,
+                            datePicker.month + 1,
+                            datePicker.dayOfMonth,
+                        ),
+                    ),
+                )
+                renderDayCounter()
+                TodayWidgetUpdater.updateAllAsync(applicationContext)
+            }
+            .show()
+    }
+
+    private fun renderDayCounter() {
+        val text = DayCounterText.format(
+            DayCounterPreferences.load(this),
+            TaskDateRules.today(),
+        )
+        dayCounterText.text = text.orEmpty()
+        dayCounterText.isVisible = text != null
     }
 
     private fun prepareBackupExport() {
@@ -1012,6 +1189,8 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_IMPORT_RELAY = 3
         private const val MENU_EXPORT_BACKUP = 4
         private const val MENU_IMPORT_BACKUP = 5
+        private const val MENU_DAY_COUNTER = 6
+        private const val MENU_WEBDAV = 7
         private const val OFFLINE_RELAY_CACHE_DIRECTORY = "offline-relay"
         private const val BACKUP_MIME_TYPE = "application/octet-stream"
         val BACKUP_MIME_TYPES = arrayOf(
@@ -1025,5 +1204,7 @@ class MainActivity : AppCompatActivity() {
         private const val STATE_PAIRING_ACTIVE = "pairing_active"
         private const val STATE_PAIRING_INTENT_CONSUMED = "pairing_intent_consumed"
         private const val STATE_SELECTED_SCOPE = "selected_scope"
+        private const val NOTIFICATION_PERMISSION_STATE = "notification_permission_state"
+        private const val KEY_NOTIFICATION_PERMISSION_REQUESTED = "requested"
     }
 }

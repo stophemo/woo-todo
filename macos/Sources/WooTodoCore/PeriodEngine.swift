@@ -117,7 +117,8 @@ public struct PeriodEngine: Sendable {
                     recurrence: task.recurrence,
                     period: nextPeriod,
                     sortIndex: task.sortIndex,
-                    createdAt: now
+                    createdAt: now,
+                    reminderTime: task.reminderTime
                 )
             } catch {
                 assertionFailure("生成重复任务失败：\(error.localizedDescription)")

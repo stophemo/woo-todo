@@ -20,8 +20,8 @@ object SyncJobScheduler {
     private const val IMMEDIATE_JOB_ID = 0x574F01
     private const val PERIODIC_JOB_ID = 0x574F02
     private const val BACKOFF_MILLIS = 30_000L
-    private const val PERIOD_MILLIS = 6L * 60L * 60L * 1_000L
-    private const val FLEX_MILLIS = 60L * 60L * 1_000L
+    private const val PERIOD_MILLIS = 15L * 60L * 1_000L
+    private const val FLEX_MILLIS = 5L * 60L * 1_000L
 
     fun enqueueImmediate(context: Context): Boolean {
         val scheduler = context.getSystemService(JobScheduler::class.java)

@@ -9,6 +9,8 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
     case history
     case statistics
     case sync
+    case display
+    case shortcuts
 
     var id: Self { self }
 
@@ -21,6 +23,8 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
         case .history: "历史"
         case .statistics: "统计"
         case .sync: "同步"
+        case .display: "显示"
+        case .shortcuts: "快捷键"
         }
     }
 
@@ -33,6 +37,8 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
         case .history: "clock.arrow.circlepath"
         case .statistics: "chart.bar"
         case .sync: "arrow.triangle.2.circlepath"
+        case .display: "textformat"
+        case .shortcuts: "command"
         }
     }
 
@@ -42,7 +48,7 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
         case .week: .weekly
         case .month: .monthly
         case .someday: .anytime
-        case .history, .statistics, .sync: nil
+        case .history, .statistics, .sync, .display, .shortcuts: nil
         }
     }
 }
@@ -55,6 +61,9 @@ private struct TaskEditorRequest: Identifiable {
 struct DashboardView: View {
     @ObservedObject var store: DashboardStore
     @ObservedObject var syncSettingsStore: SyncSettingsStore
+    @ObservedObject var webDavSettingsStore: WebDavSettingsStore
+    @ObservedObject var dayCounterStore: DayCounterStore
+    @ObservedObject var shortcutSettingsStore: ShortcutSettingsStore
     @State private var selection: DashboardSection = .today
     @State private var editorRequest: TaskEditorRequest?
 
@@ -75,14 +84,15 @@ struct DashboardView: View {
                 Button {
                     if selection == .sync {
                         syncSettingsStore.requestSync(.manual)
+                        webDavSettingsStore.requestSync(.manual)
                         Task { await syncSettingsStore.refreshDevices() }
-                    } else {
+                    } else if selection != .display && selection != .shortcuts {
                         store.reload()
                     }
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
-                if selection != .sync {
+                if selection != .sync && selection != .display && selection != .shortcuts {
                     Button {
                         editorRequest = TaskEditorRequest(
                             mode: .create(
@@ -163,7 +173,11 @@ struct DashboardView: View {
         case .statistics:
             StatisticsView(snapshot: store.statistics)
         case .sync:
-            SyncSettingsView(store: syncSettingsStore)
+            SyncSettingsView(store: syncSettingsStore, webDavStore: webDavSettingsStore)
+        case .display:
+            DayCounterSettingsView(store: dayCounterStore)
+        case .shortcuts:
+            ShortcutSettingsView(store: shortcutSettingsStore)
         }
     }
 
@@ -179,7 +193,8 @@ struct DashboardView: View {
                 scope: input.scope,
                 targetDate: input.targetDate,
                 tier: input.tier,
-                repeats: input.repeats
+                repeats: input.repeats,
+                reminderTime: input.reminderTime
             )
         case let .edit(task):
             store.edit(
@@ -188,7 +203,8 @@ struct DashboardView: View {
                 scope: input.scope,
                 targetDate: input.targetDate,
                 tier: input.tier,
-                repeats: input.repeats
+                repeats: input.repeats,
+                reminderTime: input.reminderTime
             )
         }
     }

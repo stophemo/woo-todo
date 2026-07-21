@@ -38,7 +38,8 @@ public final class TodayStore: ObservableObject {
     public func add(
         title: String,
         tier: QuestTier,
-        repeatsDaily: Bool
+        repeatsDaily: Bool,
+        reminderTime: TaskReminderTime? = nil
     ) -> Bool {
         let didAdd = perform {
             let date = now()
@@ -57,7 +58,8 @@ public final class TodayStore: ObservableObject {
                     : .once,
                 period: period,
                 sortIndex: maxIndex + 1,
-                createdAt: date
+                createdAt: date,
+                reminderTime: reminderTime
             )
             try repository.save(task)
         }
@@ -72,7 +74,8 @@ public final class TodayStore: ObservableObject {
         id: UUID,
         title: String,
         tier: QuestTier,
-        repeatsDaily: Bool
+        repeatsDaily: Bool,
+        reminderTime: TaskReminderTime? = nil
     ) {
         guard tasks.first(where: { $0.id == id })?.status == .pending else { return }
         if perform({
@@ -90,6 +93,7 @@ public final class TodayStore: ObservableObject {
             task.recurrence = repeatsDaily
                 ? .repeating(RepeatRule(frequency: .daily))
                 : .once
+            task.reminderTime = reminderTime
             task.updatedAt = now()
             try repository.save(task)
             reload()

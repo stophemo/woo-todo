@@ -53,8 +53,17 @@
                 android:resource="@xml/today_widget_info" />
         </receiver>
 
+        <service
+            android:name=".widget.TodayWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+
         <receiver
             android:name=".reminder.PlanningReminderReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".reminder.TaskReminderReceiver"
             android:exported="false" />
 
         <receiver

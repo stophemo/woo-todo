@@ -77,6 +77,8 @@ jobs:
 
       - name: 清理签名密钥
         if: always()
+        env:
+          ANDROID_SIGNING_STORE_FILE: ${{ runner.temp }}/woo-todo-release.jks
         run: rm -f "$ANDROID_SIGNING_STORE_FILE"
 
   macos:

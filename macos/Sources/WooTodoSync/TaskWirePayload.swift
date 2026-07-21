@@ -60,6 +60,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         case sortOrder
         case createdAt
         case updatedAt
+        case reminderTime
         case settledAt
     }
 
@@ -77,6 +78,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
     public let sortOrder: Int64
     public let createdAt: Int64
     public let updatedAt: Int64
+    public let reminderTime: String?
     public let settledAt: Int64?
 
     public init(
@@ -92,6 +94,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         sortOrder: Int64,
         createdAt: Int64,
         updatedAt: Int64,
+        reminderTime: String? = nil,
         settledAt: Int64?
     ) throws {
         self.protocolVersion = 1
@@ -108,18 +111,20 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         self.sortOrder = sortOrder
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.reminderTime = reminderTime
         self.settledAt = settledAt
         try validate()
     }
 
     public init(from decoder: Decoder) throws {
-        try requireExactTaskPayloadKeys(
+        try requireTaskPayloadKeys(
             decoder,
-            expected: [
+            required: [
                 "protocolVersion", "entityType", "id", "seriesId", "title",
                 "timeType", "periodStart", "timezone", "questLine", "state",
                 "recurrence", "sortOrder", "createdAt", "updatedAt", "settledAt",
-            ]
+            ],
+            optional: ["reminderTime"]
         )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         guard container.contains(.periodStart), container.contains(.settledAt) else {
@@ -146,6 +151,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         self.sortOrder = try container.decode(Int64.self, forKey: .sortOrder)
         self.createdAt = try container.decode(Int64.self, forKey: .createdAt)
         self.updatedAt = try container.decode(Int64.self, forKey: .updatedAt)
+        self.reminderTime = try container.decodeIfPresent(String.self, forKey: .reminderTime)
         self.settledAt = try container.decodeIfPresent(Int64.self, forKey: .settledAt)
         try validate()
     }
@@ -170,6 +176,9 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         try container.encode(sortOrder, forKey: .sortOrder)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
+        if let reminderTime {
+            try container.encode(reminderTime, forKey: .reminderTime)
+        }
         if let settledAt {
             try container.encode(settledAt, forKey: .settledAt)
         } else {
@@ -197,12 +206,13 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
               (0...Self.maximumSortOrder).contains(sortOrder),
               (0...Self.maximumSafeInteger).contains(createdAt),
               (0...Self.maximumSafeInteger).contains(updatedAt),
+              reminderTime.map(Self.isValidReminderTime) ?? true,
               settledAt.map({ (0...Self.maximumSafeInteger).contains($0) }) ?? true else {
             throw TaskPayloadValidationError.invalidField("range")
         }
 
         if timeType == .someday {
-            guard periodStart == nil, recurrence == .once else {
+            guard periodStart == nil, recurrence == .once, reminderTime == nil else {
                 throw TaskPayloadValidationError.invalidStateCombination
             }
         } else {
@@ -263,6 +273,13 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         case .someday:
             return false
         }
+    }
+
+    private static func isValidReminderTime(_ value: String) -> Bool {
+        value.range(
+            of: #"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"#,
+            options: .regularExpression
+        ) != nil
     }
 }
 
@@ -337,6 +354,23 @@ private func requireExactTaskPayloadKeys(
     let container = try decoder.container(keyedBy: TaskPayloadAnyCodingKey.self)
     let actual = Set(container.allKeys.map(\.stringValue))
     guard actual == expected else {
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "任务正文 JSON 字段不匹配"
+            )
+        )
+    }
+}
+
+private func requireTaskPayloadKeys(
+    _ decoder: Decoder,
+    required: Set<String>,
+    optional: Set<String>
+) throws {
+    let container = try decoder.container(keyedBy: TaskPayloadAnyCodingKey.self)
+    let actual = Set(container.allKeys.map(\.stringValue))
+    guard required.isSubset(of: actual), actual.subtracting(required).isSubset(of: optional) else {
         throw DecodingError.dataCorrupted(
             DecodingError.Context(
                 codingPath: decoder.codingPath,

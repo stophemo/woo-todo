@@ -10,6 +10,7 @@ import com.wootodo.domain.Recurrence
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
+import java.time.LocalTime
 
 class SQLiteBackupDatabase(private val database: TaskDatabase) : BackupDatabase {
     @Synchronized
@@ -266,7 +267,7 @@ private fun readState(sqlite: SQLiteDatabase): BackupDatabaseState = sqlite.rawQ
     )
 }
 
-private fun TaskEntity.toContentValues(): ContentValues = ContentValues(12).apply {
+private fun TaskEntity.toContentValues(): ContentValues = ContentValues(13).apply {
     put("id", id)
     put("series_id", seriesId)
     put("title", title)
@@ -279,6 +280,7 @@ private fun TaskEntity.toContentValues(): ContentValues = ContentValues(12).appl
     put("created_at", createdAt)
     put("updated_at", updatedAt)
     if (settledAt == null) putNull("settled_at") else put("settled_at", settledAt)
+    if (reminderTime == null) putNull("reminder_time") else put("reminder_time", reminderTime.toString())
 }
 
 private fun Cursor.toTaskEntity(): TaskEntity = TaskEntity(
@@ -297,6 +299,9 @@ private fun Cursor.toTaskEntity(): TaskEntity = TaskEntity(
     updatedAt = getLong(getColumnIndexOrThrow("updated_at")),
     settledAt = getColumnIndexOrThrow("settled_at").let { index ->
         if (isNull(index)) null else getLong(index)
+    },
+    reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
+        if (isNull(index)) null else LocalTime.parse(getString(index))
     },
 )
 

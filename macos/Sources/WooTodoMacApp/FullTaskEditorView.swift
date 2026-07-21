@@ -7,6 +7,7 @@ struct FullTaskInput {
     let targetDate: Date
     let tier: QuestTier
     let repeats: Bool
+    let reminderTime: TaskReminderTime?
 }
 
 enum FullTaskEditorMode {
@@ -21,6 +22,8 @@ struct FullTaskEditorView: View {
     @State private var targetDate: Date
     @State private var tier: QuestTier
     @State private var repeats: Bool
+    @State private var reminderEnabled: Bool
+    @State private var reminderDate: Date
 
     let mode: FullTaskEditorMode
     let save: (FullTaskInput) -> Void
@@ -35,11 +38,15 @@ struct FullTaskEditorView: View {
             _targetDate = State(initialValue: targetDate)
             _tier = State(initialValue: .mainline)
             _repeats = State(initialValue: false)
+            _reminderEnabled = State(initialValue: false)
+            _reminderDate = State(initialValue: Self.defaultReminderDate)
         case let .edit(task):
             _title = State(initialValue: task.title)
             _scope = State(initialValue: task.timeScope)
             _targetDate = State(initialValue: task.period?.start ?? task.createdAt)
             _tier = State(initialValue: task.tier)
+            _reminderEnabled = State(initialValue: task.reminderTime != nil)
+            _reminderDate = State(initialValue: Self.date(for: task.reminderTime))
             if case .repeating = task.recurrence {
                 _repeats = State(initialValue: true)
             } else {
@@ -82,6 +89,14 @@ struct FullTaskEditorView: View {
                         .foregroundStyle(.secondary)
                 }
                 Toggle(repeatLabel, isOn: $repeats)
+                Toggle("在指定时间提醒", isOn: $reminderEnabled)
+                if reminderEnabled {
+                    DatePicker(
+                        "提醒时间",
+                        selection: $reminderDate,
+                        displayedComponents: .hourAndMinute
+                    )
+                }
             } else {
                 Text("闲时任务没有截止周期，也不会自动 Pass。")
                     .font(.caption)
@@ -113,7 +128,10 @@ struct FullTaskEditorView: View {
         .padding(22)
         .frame(width: 430)
         .onChange(of: scope) { _, newScope in
-            if newScope == .anytime { repeats = false }
+            if newScope == .anytime {
+                repeats = false
+                reminderEnabled = false
+            }
         }
     }
 
@@ -158,9 +176,32 @@ struct FullTaskEditorView: View {
             scope: scope,
             targetDate: targetDate,
             tier: tier,
-            repeats: repeats && scope != .anytime
+            repeats: repeats && scope != .anytime,
+            reminderTime: reminderEnabled && scope != .anytime ? selectedReminderTime : nil
         ))
         dismiss()
+    }
+
+    private var selectedReminderTime: TaskReminderTime? {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: reminderDate)
+        return try? TaskReminderTime(
+            hour: components.hour ?? 0,
+            minute: components.minute ?? 0
+        )
+    }
+
+    private static var defaultReminderDate: Date {
+        Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
+    }
+
+    private static func date(for reminderTime: TaskReminderTime?) -> Date {
+        guard let reminderTime else { return defaultReminderDate }
+        return Calendar.current.date(
+            bySettingHour: reminderTime.hour,
+            minute: reminderTime.minute,
+            second: 0,
+            of: Date()
+        ) ?? defaultReminderDate
     }
 }
 

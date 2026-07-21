@@ -33,8 +33,13 @@ final class FloatingPanelController: NSWindowController {
     private(set) var isClickThrough: Bool
     private(set) var isAlwaysOnTop: Bool
     private(set) var panelOpacity: CGFloat
+    var isVisible: Bool { window?.isVisible == true }
 
-    init(store: TodayStore, defaults: UserDefaults = .standard) {
+    init(
+        store: TodayStore,
+        dayCounterStore: DayCounterStore,
+        defaults: UserDefaults = .standard
+    ) {
         self.defaults = defaults
         defaults.register(defaults: [
             PreferenceKey.blurEnabled: true,
@@ -55,7 +60,7 @@ final class FloatingPanelController: NSWindowController {
         super.init(window: panel)
 
         configurePanel(panel)
-        configureContent(store: store)
+        configureContent(store: store, dayCounterStore: dayCounterStore)
         applyVisualState()
     }
 
@@ -70,6 +75,16 @@ final class FloatingPanelController: NSWindowController {
             window.center()
         }
         window.orderFrontRegardless()
+        onStateChange?()
+    }
+
+    func hide() {
+        window?.orderOut(nil)
+        onStateChange?()
+    }
+
+    func toggleVisibility() {
+        isVisible ? hide() : show()
     }
 
     func makeInteractive() {
@@ -132,7 +147,7 @@ final class FloatingPanelController: NSWindowController {
         panel.minSize = NSSize(width: 300, height: 360)
     }
 
-    private func configureContent(store: TodayStore) {
+    private func configureContent(store: TodayStore, dayCounterStore: DayCounterStore) {
         guard let panel = window else { return }
         contentContainer.wantsLayer = true
         contentContainer.layer?.cornerRadius = 16
@@ -144,7 +159,9 @@ final class FloatingPanelController: NSWindowController {
         effectView.state = .active
         effectView.translatesAutoresizingMaskIntoConstraints = false
 
-        let hostingView = NSHostingView(rootView: TodayView(store: store))
+        let hostingView = NSHostingView(
+            rootView: TodayView(store: store, dayCounterStore: dayCounterStore)
+        )
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.addSubview(solidBackgroundView)
         contentContainer.addSubview(effectView)

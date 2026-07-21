@@ -19,6 +19,12 @@ class TaskDatabase(context: Context) :
         if (oldVersion < 4) {
             createDeferredDeletionSchema(database)
         }
+        if (oldVersion < 5 && !columnExists(database, "tasks", "reminder_time")) {
+            database.execSQL("ALTER TABLE tasks ADD COLUMN reminder_time TEXT")
+        }
+        if (oldVersion < 6) {
+            createWebDavAppliedSchema(database)
+        }
     }
 
     override fun onDowngrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -94,7 +100,8 @@ class TaskDatabase(context: Context) :
                 sort_order INTEGER NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
-                settled_at INTEGER
+                settled_at INTEGER,
+                reminder_time TEXT
             )
             """.trimIndent(),
         )
@@ -177,7 +184,19 @@ class TaskDatabase(context: Context) :
             )
             """.trimIndent(),
         )
+        createWebDavAppliedSchema(database)
         createDeferredDeletionSchema(database)
+    }
+
+    private fun createWebDavAppliedSchema(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS sync_webdav_applied_operations (
+                op_id TEXT NOT NULL PRIMARY KEY,
+                applied_at INTEGER NOT NULL CHECK(applied_at >= 0)
+            )
+            """.trimIndent(),
+        )
     }
 
     private fun createDeferredDeletionSchema(database: SQLiteDatabase) {
@@ -197,8 +216,15 @@ class TaskDatabase(context: Context) :
             arrayOf(tableName),
         ).use { it.moveToFirst() }
 
+    private fun columnExists(database: SQLiteDatabase, tableName: String, columnName: String): Boolean =
+        database.rawQuery("PRAGMA table_info($tableName)", null).use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            generateSequence { if (cursor.moveToNext()) cursor.getString(nameIndex) else null }
+                .any { it == columnName }
+        }
+
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 4
+        const val DATABASE_VERSION = 6
     }
 }

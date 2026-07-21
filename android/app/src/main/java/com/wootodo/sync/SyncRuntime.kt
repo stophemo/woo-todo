@@ -44,6 +44,19 @@ data class SyncFailureDescription(
 
 object SyncFailurePolicy {
     fun describe(error: Exception): SyncFailureDescription = when (error) {
+        is WebDavException.Transport -> SyncFailureDescription("坚果云暂时不可达，联网后会自动重试", true)
+        is WebDavException.Http -> {
+            val retryable = error.statusCode in setOf(408, 425, 429) || error.statusCode in 500..599
+            val message = if (error.statusCode == 401 || error.statusCode == 403) {
+                "坚果云账号或应用密码无效"
+            } else if (retryable) {
+                "坚果云暂时不可用，稍后会自动重试"
+            } else {
+                "坚果云拒绝了同步请求（HTTP ${error.statusCode}）"
+            }
+            SyncFailureDescription(message, retryable)
+        }
+        is WebDavException -> SyncFailureDescription(error.message ?: "坚果云同步数据校验失败", false)
         is SyncApiException.Transport -> SyncFailureDescription("网络不可用，联网后会自动重试", true)
         is SyncApiException.Server -> {
             val capacityReached = error.payload.code == "VAULT_CAPACITY_REACHED"

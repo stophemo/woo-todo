@@ -54,6 +54,16 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/day_counter_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/sync_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

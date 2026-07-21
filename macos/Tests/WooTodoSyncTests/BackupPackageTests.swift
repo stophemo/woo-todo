@@ -86,6 +86,44 @@ struct BackupPackageTests {
         #expect(try BackupPackageCodec.open(package, passphrase: vector.password) == snapshot)
     }
 
+    @Test("备份往返保留任务提醒时间")
+    func test备份提醒时间往返() throws {
+        let vector = try loadFixture()
+        let task = try WireTaskPayload(
+            id: "550e8400-e29b-41d4-a716-446655440000",
+            seriesId: "550e8400-e29b-41d4-a716-446655440000",
+            title: "带提醒任务",
+            timeType: .day,
+            periodStart: "2026-07-21",
+            timezone: "Asia/Shanghai",
+            questLine: .main,
+            state: .pending,
+            recurrence: .once,
+            sortOrder: 0,
+            createdAt: 1,
+            updatedAt: 1,
+            reminderTime: "08:30",
+            settledAt: nil
+        )
+        let snapshot = try BackupSnapshot(
+            exportedAt: vector.createdAt,
+            tasks: [task],
+            syncCredentials: nil
+        )
+        let package = try BackupPackageCodec.seal(
+            snapshot,
+            passphrase: vector.password,
+            iterations: vector.kdf.iterations,
+            salt: try Base64URL.decode(vector.kdf.salt),
+            nonce: try Base64URL.decode(vector.cipher.nonce)
+        )
+
+        #expect(
+            try BackupPackageCodec.open(package, passphrase: vector.password)
+                .tasks.first?.reminderTime == "08:30"
+        )
+    }
+
     @Test("任务与删除记录不能使用相同实体 ID")
     func test备份实体ID跨数组唯一() throws {
         let vector = try loadFixture()

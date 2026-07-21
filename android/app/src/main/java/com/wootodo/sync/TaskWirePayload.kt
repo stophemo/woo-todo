@@ -62,6 +62,7 @@ data class TaskInstancePayload(
     val createdAt: Long,
     val updatedAt: Long,
     val settledAt: Long?,
+    val reminderTime: String? = null,
 ) : TaskWirePayload
 
 data class TombstonePayload(

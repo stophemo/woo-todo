@@ -8,6 +8,7 @@ class SystemScheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action !in SUPPORTED_ACTIONS) return
         ReminderScheduler.schedule(context)
+        TaskReminderScheduler.scheduleAllAsync(context)
     }
 
     private companion object {

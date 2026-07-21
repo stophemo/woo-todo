@@ -2,6 +2,7 @@ package com.wootodo.ui
 
 import android.app.DatePickerDialog
 import android.app.AlertDialog
+import android.app.TimePickerDialog
 import android.os.Bundle
 import android.view.View
 import android.widget.AdapterView
@@ -12,6 +13,7 @@ import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import com.wootodo.R
@@ -28,6 +30,7 @@ import com.wootodo.domain.TaskTimeType
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.widget.TodayWidgetUpdater
 import java.time.LocalDate
+import java.time.LocalTime
 import kotlinx.coroutines.launch
 
 class EditTaskActivity : AppCompatActivity() {
@@ -38,12 +41,15 @@ class EditTaskActivity : AppCompatActivity() {
     private lateinit var timeSpinner: Spinner
     private lateinit var dateButton: Button
     private lateinit var recurrenceSpinner: Spinner
+    private lateinit var reminderSwitch: SwitchCompat
+    private lateinit var reminderTimeButton: Button
     private lateinit var saveButton: Button
     private lateinit var deleteButton: Button
     private val questLines = QuestLine.entries
     private val timeTypes = TaskTimeType.entries
     private var recurrenceOptions: List<Recurrence> = Recurrence.entries
     private var selectedDate: LocalDate = TaskDateRules.today()
+    private var reminderTime: LocalTime = LocalTime.of(9, 0)
     private var editingTask: Task? = null
     private var isLoadingTask = false
 
@@ -57,6 +63,8 @@ class EditTaskActivity : AppCompatActivity() {
         timeSpinner = findViewById(R.id.time_spinner)
         dateButton = findViewById(R.id.date_button)
         recurrenceSpinner = findViewById(R.id.recurrence_spinner)
+        reminderSwitch = findViewById(R.id.reminder_switch)
+        reminderTimeButton = findViewById(R.id.reminder_time_button)
         saveButton = findViewById(R.id.save_button)
         deleteButton = findViewById(R.id.delete_button)
         repository = (application as WooTodoApplication).taskRepository
@@ -67,6 +75,8 @@ class EditTaskActivity : AppCompatActivity() {
         }
         setupSpinners()
         dateButton.setOnClickListener { showDatePicker() }
+        reminderSwitch.setOnCheckedChangeListener { _, _ -> updateReminderControls() }
+        reminderTimeButton.setOnClickListener { showReminderTimePicker() }
         saveButton.setOnClickListener { saveTask() }
         deleteButton.setOnClickListener { confirmDelete() }
 
@@ -96,6 +106,8 @@ class EditTaskActivity : AppCompatActivity() {
             outState.putString(STATE_TIME_TYPE, it.rawValue)
         }
         outState.putString(STATE_RECURRENCE, selectedRecurrenceOrOnce().rawValue)
+        outState.putBoolean(STATE_REMINDER_ENABLED, reminderSwitch.isChecked)
+        outState.putString(STATE_REMINDER_TIME, reminderTime.toString())
         super.onSaveInstanceState(outState)
     }
 
@@ -107,6 +119,7 @@ class EditTaskActivity : AppCompatActivity() {
                 val type = timeTypes[position]
                 updateRecurrenceOptions(type, selectedRecurrenceOrOnce())
                 updateDateButton(type)
+                updateReminderControls()
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -144,6 +157,9 @@ class EditTaskActivity : AppCompatActivity() {
                 timeSpinner.setSelection(timeTypes.indexOf(task.timeType))
                 updateRecurrenceOptions(task.timeType, task.recurrence)
                 updateDateButton(task.timeType)
+                reminderTime = task.reminderTime ?: reminderTime
+                reminderSwitch.isChecked = task.reminderTime != null
+                updateReminderControls()
             } else {
                 // 旋转后的异步数据库读取只恢复实体身份，不能覆盖用户尚未保存的草稿。
                 restoreDraftState(restoredState, fallback = task)
@@ -172,10 +188,19 @@ class EditTaskActivity : AppCompatActivity() {
             ?.let { runCatching { Recurrence.fromRaw(it) }.getOrNull() }
             ?: fallback?.recurrence
             ?: Recurrence.ONCE
+        reminderTime = state.getString(STATE_REMINDER_TIME)
+            ?.let { runCatching { LocalTime.parse(it) }.getOrNull() }
+            ?: fallback?.reminderTime
+            ?: reminderTime
+        reminderSwitch.isChecked = state.getBoolean(
+            STATE_REMINDER_ENABLED,
+            fallback?.reminderTime != null,
+        )
         questSpinner.setSelection(questLines.indexOf(questLine))
         timeSpinner.setSelection(timeTypes.indexOf(timeType))
         updateRecurrenceOptions(timeType, recurrence)
         updateDateButton(timeType)
+        updateReminderControls()
     }
 
     private fun saveTask() {
@@ -192,6 +217,9 @@ class EditTaskActivity : AppCompatActivity() {
             targetDate = if (type == TaskTimeType.LEISURE) null else selectedDate,
             questLine = questLines[questSpinner.selectedItemPosition],
             recurrence = selectedRecurrenceOrOnce(),
+            reminderTime = reminderTime.takeIf {
+                reminderSwitch.isChecked && type != TaskTimeType.LEISURE
+            },
         )
         saveButton.isEnabled = false
         lifecycleScope.launch {
@@ -224,6 +252,33 @@ class EditTaskActivity : AppCompatActivity() {
             selectedDate.monthValue - 1,
             selectedDate.dayOfMonth,
         ).show()
+    }
+
+    private fun showReminderTimePicker() {
+        TimePickerDialog(
+            this,
+            { _, hour, minute ->
+                reminderTime = LocalTime.of(hour, minute)
+                reminderSwitch.isChecked = true
+                updateReminderControls()
+            },
+            reminderTime.hour,
+            reminderTime.minute,
+            true,
+        ).show()
+    }
+
+    private fun updateReminderControls() {
+        val type = timeTypes.getOrNull(timeSpinner.selectedItemPosition) ?: TaskTimeType.DAY
+        val available = type != TaskTimeType.LEISURE
+        reminderSwitch.isEnabled = available
+        if (!available) reminderSwitch.isChecked = false
+        reminderTimeButton.isEnabled = available && reminderSwitch.isChecked
+        reminderTimeButton.text = if (reminderSwitch.isChecked && available) {
+            getString(R.string.task_reminder_time, reminderTime.toString())
+        } else {
+            getString(R.string.task_reminder_not_set)
+        }
     }
 
     private fun confirmDelete() {
@@ -276,5 +331,7 @@ class EditTaskActivity : AppCompatActivity() {
         private const val STATE_QUEST_LINE = "editor_quest_line"
         private const val STATE_TIME_TYPE = "editor_time_type"
         private const val STATE_RECURRENCE = "editor_recurrence"
+        private const val STATE_REMINDER_ENABLED = "editor_reminder_enabled"
+        private const val STATE_REMINDER_TIME = "editor_reminder_time"
     }
 }

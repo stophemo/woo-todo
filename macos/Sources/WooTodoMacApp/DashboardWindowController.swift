@@ -7,7 +7,13 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
     private let store: DashboardStore
     var onClose: (() -> Void)?
 
-    init(store: DashboardStore, syncSettingsStore: SyncSettingsStore) {
+    init(
+        store: DashboardStore,
+        syncSettingsStore: SyncSettingsStore,
+        webDavSettingsStore: WebDavSettingsStore,
+        dayCounterStore: DayCounterStore,
+        shortcutSettingsStore: ShortcutSettingsStore
+    ) {
         self.store = store
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 940, height: 650),
@@ -23,7 +29,10 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         window.setFrameAutosaveName("WooTodoDashboardWindow")
         window.contentView = NSHostingView(rootView: DashboardView(
             store: store,
-            syncSettingsStore: syncSettingsStore
+            syncSettingsStore: syncSettingsStore,
+            webDavSettingsStore: webDavSettingsStore,
+            dayCounterStore: dayCounterStore,
+            shortcutSettingsStore: shortcutSettingsStore
         ))
         window.delegate = self
     }

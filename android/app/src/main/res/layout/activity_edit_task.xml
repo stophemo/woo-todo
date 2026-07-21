@@ -72,6 +72,26 @@
             android:layout_width="match_parent"
             android:layout_height="48dp" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/task_reminder"
+            android:textStyle="bold" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/reminder_switch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/task_reminder_enabled" />
+
+        <Button
+            android:id="@+id/reminder_time_button"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/task_reminder_not_set" />
+
         <Button
             android:id="@+id/save_button"
             android:layout_width="match_parent"

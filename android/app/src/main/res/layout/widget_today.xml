@@ -31,6 +31,16 @@
             android:textStyle="bold" />
     </LinearLayout>
 
+    <TextView
+        android:id="@+id/widget_counter"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/widget_text"
+        android:textSize="11sp"
+        android:visibility="gone" />
+
     <ListView
         android:id="@+id/widget_list"
         android:layout_width="match_parent"

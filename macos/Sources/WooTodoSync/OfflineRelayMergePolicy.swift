@@ -121,6 +121,7 @@ public enum OfflineRelayMergePolicy {
             sortOrder: base.sortOrder,
             createdAt: base.createdAt,
             updatedAt: max(base.updatedAt, completed.updatedAt),
+            reminderTime: base.reminderTime,
             settledAt: completed.settledAt
         )
         return isValidCompletion(merged) ? merged : nil
@@ -191,6 +192,7 @@ public enum OfflineRelayMergePolicy {
         data.appendInt64(task.sortOrder)
         data.appendInt64(task.createdAt)
         data.appendInt64(task.updatedAt)
+        data.appendOptionalString(task.reminderTime)
         data.appendOptionalInt64(task.settledAt)
         return data
     }
@@ -244,6 +246,7 @@ public enum OfflineRelayMergePolicy {
             sortOrder: task.sortOrder,
             createdAt: task.createdAt,
             updatedAt: task.updatedAt,
+            reminderTime: task.reminderTime,
             settledAt: task.settledAt
         )
     }

@@ -4,10 +4,12 @@ import { createHash } from "node:crypto";
 const files = [
   "shared/schema/task.schema.json",
   "shared/schema/sync.schema.json",
+  "shared/schema/webdav-operation.schema.json",
   "shared/schema/backup.schema.json",
   "shared/schema/backup-plaintext.schema.json",
   "shared/fixtures/period-cases.json",
   "shared/fixtures/sync-request.json",
+  "shared/fixtures/webdav-operation.json",
   "shared/fixtures/crypto-vectors.json",
   "shared/fixtures/task-payloads.json",
   "shared/fixtures/task-validation-cases.json",
@@ -61,6 +63,26 @@ for (const testCase of periodCases.cases) {
 const syncRequest = documents.get("shared/fixtures/sync-request.json");
 if (!Number.isSafeInteger(syncRequest.cursor) || !Array.isArray(syncRequest.push)) {
   throw new Error("同步请求样例结构不完整");
+}
+
+const webDavOperation = documents.get("shared/fixtures/webdav-operation.json");
+if (
+  webDavOperation.format !== "woo-todo-webdav-operation"
+  || webDavOperation.protocolVersion !== 1
+  || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(webDavOperation.vaultId)
+  || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(webDavOperation.deviceId)
+  || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(webDavOperation.opId)
+  || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(webDavOperation.entityId)
+  || !Number.isSafeInteger(webDavOperation.lamport)
+  || webDavOperation.lamport < 1
+) {
+  throw new Error("WebDAV 操作对象元数据无效");
+}
+if (Buffer.from(webDavOperation.nonce, "base64url").byteLength !== 12) {
+  throw new Error("WebDAV 操作对象 nonce 不是 12 字节");
+}
+if (Buffer.from(webDavOperation.ciphertext, "base64url").byteLength < 16) {
+  throw new Error("WebDAV 操作对象密文缺少认证标签");
 }
 
 const opIds = new Set(syncRequest.push.map((operation) => operation.opId));
@@ -237,9 +259,20 @@ function validateTaskPayload(payload) {
   ) {
     throw new Error("任务 settledAt 越界");
   }
+  if (
+    payload.reminderTime !== undefined
+    && payload.reminderTime !== null
+    && !/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u.test(payload.reminderTime)
+  ) {
+    throw new Error("任务 reminderTime 格式无效");
+  }
   if (payload.timeType === "someday") {
-    if (payload.periodStart !== null || payload.recurrence !== "once") {
-      throw new Error("闲时任务不能携带周期或重复规则");
+    if (
+      payload.periodStart !== null
+      || payload.recurrence !== "once"
+      || (payload.reminderTime ?? null) !== null
+    ) {
+      throw new Error("闲时任务不能携带周期、重复规则或提醒时间");
     }
   } else {
     const date = parseDateKey(payload.periodStart);

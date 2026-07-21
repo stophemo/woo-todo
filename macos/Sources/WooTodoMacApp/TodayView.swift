@@ -3,6 +3,7 @@ import WooTodoCore
 
 struct TodayView: View {
     @ObservedObject var store: TodayStore
+    @ObservedObject var dayCounterStore: DayCounterStore
     @State private var showingNewTask = false
     @State private var editingTask: TodoTask?
 
@@ -27,17 +28,23 @@ struct TodayView: View {
         .frame(minWidth: 300, minHeight: 360)
         .background(Color.clear)
         .sheet(isPresented: $showingNewTask) {
-            TaskEditorView(mode: .create) { title, tier, repeatsDaily in
-                store.add(title: title, tier: tier, repeatsDaily: repeatsDaily)
+            TaskEditorView(mode: .create) { title, tier, repeatsDaily, reminderTime in
+                store.add(
+                    title: title,
+                    tier: tier,
+                    repeatsDaily: repeatsDaily,
+                    reminderTime: reminderTime
+                )
             }
         }
         .sheet(item: $editingTask) { task in
-            TaskEditorView(mode: .edit(task)) { title, tier, repeatsDaily in
+            TaskEditorView(mode: .edit(task)) { title, tier, repeatsDaily, reminderTime in
                 store.edit(
                     id: task.id,
                     title: title,
                     tier: tier,
-                    repeatsDaily: repeatsDaily
+                    repeatsDaily: repeatsDaily,
+                    reminderTime: reminderTime
                 )
             }
         }
@@ -48,9 +55,13 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("今日任务")
                     .font(.title2.weight(.semibold))
-                Text(Date.now, format: .dateTime.month().day().weekday(.wide))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let counterText = dayCounterStore.configuration.displayText() {
+                    Text(counterText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
             Spacer()
             Button {
@@ -64,7 +75,7 @@ struct TodayView: View {
             .help("新增今日任务")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        .padding(.vertical, 11)
     }
 
     private var taskList: some View {
@@ -136,26 +147,34 @@ private struct TaskRow: View {
     let delete: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button(action: toggle) {
                 Image(systemName: statusImage)
                     .foregroundStyle(statusColor)
-                    .font(.system(size: 17))
+                    .font(.system(size: 16, weight: .medium))
+                    .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
             .disabled(task.status != .pending)
             .help(task.status == .pending ? "标记完成" : "任务已结算")
 
             Text(task.title)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
                 .strikethrough(task.status == .completed)
                 .foregroundStyle(task.status == .completed ? .secondary : .primary)
-            Spacer(minLength: 4)
             if case .repeating = task.recurrence {
                 Image(systemName: "repeat")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .help("每日重复")
+            }
+            if task.reminderTime != nil {
+                Image(systemName: "bell")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .help("已设置提醒")
             }
         }
         .contentShape(Rectangle())
@@ -168,6 +187,10 @@ private struct TaskRow: View {
                 Button("删除", role: .destructive, action: delete)
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
     }
 
     private var statusImage: String {
@@ -197,12 +220,14 @@ private struct TaskEditorView: View {
     @State private var title: String
     @State private var tier: QuestTier
     @State private var repeatsDaily: Bool
+    @State private var reminderEnabled: Bool
+    @State private var reminderDate: Date
     let mode: Mode
-    let save: (String, QuestTier, Bool) -> Void
+    let save: (String, QuestTier, Bool, TaskReminderTime?) -> Void
 
     init(
         mode: Mode,
-        save: @escaping (String, QuestTier, Bool) -> Void
+        save: @escaping (String, QuestTier, Bool, TaskReminderTime?) -> Void
     ) {
         self.mode = mode
         self.save = save
@@ -211,6 +236,8 @@ private struct TaskEditorView: View {
             _title = State(initialValue: "")
             _tier = State(initialValue: .mainline)
             _repeatsDaily = State(initialValue: false)
+            _reminderEnabled = State(initialValue: false)
+            _reminderDate = State(initialValue: Self.defaultReminderDate)
         case let .edit(task):
             _title = State(initialValue: task.title)
             _tier = State(initialValue: task.tier)
@@ -219,6 +246,8 @@ private struct TaskEditorView: View {
             } else {
                 _repeatsDaily = State(initialValue: false)
             }
+            _reminderEnabled = State(initialValue: task.reminderTime != nil)
+            _reminderDate = State(initialValue: Self.date(for: task.reminderTime))
         }
     }
 
@@ -239,6 +268,14 @@ private struct TaskEditorView: View {
             .pickerStyle(.segmented)
 
             Toggle("每天重复", isOn: $repeatsDaily)
+            Toggle("在指定时间提醒", isOn: $reminderEnabled)
+            if reminderEnabled {
+                DatePicker(
+                    "提醒时间",
+                    selection: $reminderDate,
+                    displayedComponents: .hourAndMinute
+                )
+            }
 
             HStack {
                 Spacer()
@@ -264,7 +301,25 @@ private struct TaskEditorView: View {
 
     private func commit() {
         guard !normalizedTitle.isEmpty else { return }
-        save(normalizedTitle, tier, repeatsDaily)
+        let components = Calendar.current.dateComponents([.hour, .minute], from: reminderDate)
+        let reminderTime = reminderEnabled
+            ? try? TaskReminderTime(hour: components.hour ?? 0, minute: components.minute ?? 0)
+            : nil
+        save(normalizedTitle, tier, repeatsDaily, reminderTime)
         dismiss()
+    }
+
+    private static var defaultReminderDate: Date {
+        Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
+    }
+
+    private static func date(for reminderTime: TaskReminderTime?) -> Date {
+        guard let reminderTime else { return defaultReminderDate }
+        return Calendar.current.date(
+            bySettingHour: reminderTime.hour,
+            minute: reminderTime.minute,
+            second: 0,
+            of: Date()
+        ) ?? defaultReminderDate
     }
 }

@@ -14,6 +14,7 @@
     "sortOrder": 0,
     "createdAt": 1784129400000,
     "updatedAt": 1784129400000,
+    "reminderTime": "23:10",
     "settledAt": null
   },
   {
@@ -31,6 +32,7 @@
     "sortOrder": 0,
     "createdAt": 1784215800000,
     "updatedAt": 1784251800000,
+    "reminderTime": null,
     "settledAt": 1784251800000
   },
   {

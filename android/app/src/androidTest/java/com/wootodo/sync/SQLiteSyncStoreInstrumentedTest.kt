@@ -416,6 +416,63 @@ class SQLiteSyncStoreInstrumentedTest {
         assertNull(version("task-must-rollback"))
     }
 
+    @Test
+    fun `WebDAV重复操作只应用一次且不推进Worker游标`() {
+        var taskChangeCount = 0
+        val store = SQLiteSyncStore(database, credentials) { taskChangeCount += 1 }
+        val entityId = "task-webdav-idempotent"
+        val operation = operation(
+            serverSeq = 1,
+            opId = "operation-webdav-idempotent",
+            lamport = 7,
+            payload = remoteTask(entityId, "坚果云只应用一次"),
+        ).toWebDavOperation()
+
+        store.applyWebDavOperations(listOf(operation))
+        store.applyWebDavOperations(
+            listOf(
+                operation.copy(
+                    ciphertext = Base64Url.encode(ByteArray(Aes256Gcm.TAG_BYTES) { 9 }),
+                ),
+            ),
+        )
+
+        assertEquals("坚果云只应用一次", taskTitle(entityId))
+        assertEquals(1, rowCount("sync_webdav_applied_operations"))
+        assertEquals(0, rowCount("sync_applied_operations"))
+        assertEquals(0L, store.currentCursor())
+        assertEquals(1, taskChangeCount)
+    }
+
+    @Test
+    fun `WebDAV批次坏密文会回滚此前任务和幂等记录`() {
+        val store = SQLiteSyncStore(database, credentials)
+        val valid = operation(
+            serverSeq = 1,
+            opId = "operation-webdav-valid",
+            lamport = 1,
+            payload = remoteTask("task-webdav-rollback", "必须整批回滚"),
+        ).toWebDavOperation()
+        val broken = corruptedOperation(
+            serverSeq = 2,
+            opId = "operation-webdav-broken",
+            entityId = "task-webdav-broken",
+            kind = SyncOperationKind.UPSERT,
+            lamport = 2,
+        ).toWebDavOperation()
+
+        assertThrows(SyncCryptoException::class.java) {
+            store.applyWebDavOperations(listOf(valid, broken))
+        }
+        assertNull(taskTitle("task-webdav-rollback"))
+        assertEquals(0, rowCount("sync_webdav_applied_operations"))
+        assertEquals(0L, store.currentCursor())
+
+        store.applyWebDavOperations(listOf(valid))
+        assertEquals("必须整批回滚", taskTitle("task-webdav-rollback"))
+        assertEquals(1, rowCount("sync_webdav_applied_operations"))
+    }
+
     private fun localTask(id: String, title: String): TaskEntity = TaskEntity(
         id = id,
         seriesId = id,
@@ -503,6 +560,17 @@ class SQLiteSyncStoreInstrumentedTest {
         createdAt = 10_000 + serverSeq,
     )
 
+    private fun SyncPulledOperation.toWebDavOperation(): WebDavOperation = WebDavOperation(
+        vaultId = credentials.vaultId,
+        deviceId = deviceId,
+        opId = opId,
+        entityId = entityId,
+        kind = kind,
+        lamport = lamport,
+        nonce = nonce,
+        ciphertext = ciphertext,
+    )
+
     private fun decrypt(operation: SyncPushOperation): TaskWirePayload {
         val plaintext = SyncPayloadCrypto.open(
             envelope = EncryptedEnvelope(operation.ciphertext, operation.nonce),
@@ -585,6 +653,7 @@ class SQLiteSyncStoreInstrumentedTest {
             "tasks",
             "sync_outbox",
             "sync_applied_operations",
+            "sync_webdav_applied_operations",
             "sync_entity_versions",
             "sync_tombstones",
             "sync_deferred_deletions",

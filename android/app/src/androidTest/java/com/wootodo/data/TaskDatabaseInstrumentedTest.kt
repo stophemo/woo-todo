@@ -9,6 +9,7 @@ import com.wootodo.domain.Recurrence
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
+import java.time.LocalTime
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -94,6 +95,89 @@ class TaskDatabaseInstrumentedTest {
                 "SELECT COUNT(*) FROM sqlite_master " +
                     "WHERE type = 'table' AND name = 'sync_deferred_deletions'",
                 null,
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                cursor.getInt(0)
+            },
+        )
+    }
+
+    @Test
+    fun `版本四升级会保留任务并新增提醒时间`() = runBlocking {
+        database.close()
+        context.deleteDatabase(DATABASE_NAME)
+        context.openOrCreateDatabase(DATABASE_NAME, Context.MODE_PRIVATE, null).use { legacy ->
+            legacy.execSQL(
+                """
+                CREATE TABLE tasks (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    series_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    time_type TEXT NOT NULL,
+                    target_date TEXT,
+                    quest_line TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    recurrence TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    settled_at INTEGER
+                )
+                """.trimIndent(),
+            )
+            legacy.execSQL(
+                """
+                INSERT INTO tasks VALUES (
+                    'task-v4-upgrade', 'task-v4-upgrade', '升级后提醒', 'day', '2026-07-21',
+                    'main', 'pending', 'once', 0, 3000, 3000, NULL
+                )
+                """.trimIndent(),
+            )
+            legacy.version = 4
+        }
+
+        database = TaskDatabase(context)
+        database.writableDatabase
+        val store = SQLiteTaskStore(database)
+        val restored = requireNotNull(store.getById("task-v4-upgrade"))
+        assertEquals(null, restored.reminderTime)
+
+        val withReminder = restored.copy(reminderTime = LocalTime.of(8, 30))
+        assertEquals(true, store.update(withReminder))
+        assertEquals(LocalTime.of(8, 30), store.getById(withReminder.id)?.reminderTime)
+    }
+
+    @Test
+    fun `版本五升级会创建WebDAV幂等记录表`() {
+        database.close()
+        context.deleteDatabase(DATABASE_NAME)
+        context.openOrCreateDatabase(DATABASE_NAME, Context.MODE_PRIVATE, null).use { legacy ->
+            legacy.execSQL("CREATE TABLE migration_marker(id INTEGER PRIMARY KEY)")
+            legacy.version = 5
+        }
+
+        database = TaskDatabase(context)
+        val sqlite = database.writableDatabase
+        assertEquals(
+            1,
+            sqlite.rawQuery(
+                "SELECT COUNT(*) FROM sqlite_master " +
+                    "WHERE type = 'table' AND name = 'sync_webdav_applied_operations'",
+                null,
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                cursor.getInt(0)
+            },
+        )
+        sqlite.execSQL(
+            "INSERT INTO sync_webdav_applied_operations(op_id, applied_at) VALUES (?, ?)",
+            arrayOf("operation-v5-upgrade", 1_000),
+        )
+        assertEquals(
+            1,
+            sqlite.rawQuery(
+                "SELECT COUNT(*) FROM sync_webdav_applied_operations WHERE op_id = ?",
+                arrayOf("operation-v5-upgrade"),
             ).use { cursor ->
                 check(cursor.moveToFirst())
                 cursor.getInt(0)

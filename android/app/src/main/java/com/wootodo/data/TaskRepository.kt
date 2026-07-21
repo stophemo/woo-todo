@@ -23,6 +23,9 @@ class TaskRepository(
         entities.map(TaskEntity::toDomain).sortedWith(TaskRules.ordering)
     }
 
+    suspend fun allTasks(): List<Task> =
+        store.getAll().map(TaskEntity::toDomain).sortedWith(TaskRules.ordering)
+
     fun observeForScope(timeType: TaskTimeType, referenceDate: LocalDate): Flow<List<Task>> {
         val source = if (timeType == TaskTimeType.LEISURE) {
             store.observeLeisure()
@@ -63,6 +66,7 @@ class TaskRepository(
                 createdAt = now,
                 updatedAt = now,
                 settledAt = null,
+                reminderTime = if (draft.timeType == TaskTimeType.LEISURE) null else draft.reminderTime,
             ),
         )
         return id
@@ -92,6 +96,7 @@ class TaskRepository(
                 targetDate = targetDate,
                 questLine = draft.questLine,
                 recurrence = TaskRules.sanitizeRecurrence(draft.timeType, draft.recurrence),
+                reminderTime = if (draft.timeType == TaskTimeType.LEISURE) null else draft.reminderTime,
                 sortOrder = sortOrder,
                 updatedAt = clock.millis(),
             ),

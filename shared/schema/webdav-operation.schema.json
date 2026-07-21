@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woo-todo.dev/schema/webdav-operation.schema.json",
+  "title": "woo-todo 坚果云 WebDAV 密文操作对象",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format", "protocolVersion", "vaultId", "deviceId", "opId",
+    "entityId", "kind", "lamport", "nonce", "ciphertext"
+  ],
+  "properties": {
+    "format": { "const": "woo-todo-webdav-operation" },
+    "protocolVersion": { "const": 1 },
+    "vaultId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "deviceId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "opId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "entityId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["upsert", "delete", "complete", "pass", "reorder"]
+    },
+    "lamport": { "type": "integer", "minimum": 1 },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16}$"
+    },
+    "ciphertext": {
+      "type": "string",
+      "minLength": 22,
+      "maxLength": 43691,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  }
+}

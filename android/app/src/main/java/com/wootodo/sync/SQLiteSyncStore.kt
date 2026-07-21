@@ -12,6 +12,7 @@ import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.util.UUID
 
@@ -274,7 +275,7 @@ class SQLiteSyncStore(
     private val database: TaskDatabase,
     private val credentials: SyncCredentials,
     private val onTasksChanged: () -> Unit = {},
-) : OutboxStore, RemoteApplyStore {
+) : OutboxStore, RemoteApplyStore, WebDavLocalApplying {
     init {
         credentials.validate()
         bindDeviceIdentity()
@@ -369,6 +370,57 @@ class SQLiteSyncStore(
                 "UPDATE sync_state SET cursor = ? WHERE id = 1",
                 arrayOf(advancingCursorTo),
             )
+            sqlite.setTransactionSuccessful()
+        } finally {
+            sqlite.endTransaction()
+        }
+        if (tasksChanged) onTasksChanged()
+    }
+
+    @Synchronized
+    override fun applyWebDavOperations(operations: List<WebDavOperation>) {
+        val sqlite = database.writableDatabase
+        var tasksChanged = false
+        sqlite.beginTransaction()
+        try {
+            operations.forEach { operation ->
+                operation.validate()
+                require(operation.vaultId == credentials.vaultId) {
+                    "WebDAV 同步空间不匹配"
+                }
+                if (isWebDavOperationApplied(sqlite, operation.opId)) return@forEach
+                if (!isAlreadyApplied(sqlite, operation.opId)) {
+                    val plaintext = SyncPayloadCrypto.open(
+                        envelope = EncryptedEnvelope(operation.ciphertext, operation.nonce),
+                        vaultKey = credentials.vaultKey,
+                        vaultId = credentials.vaultId,
+                        metadata = operation.metadata(),
+                    )
+                    val payload = SyncJsonCodec.decodeTaskPayload(
+                        String(plaintext, StandardCharsets.UTF_8),
+                    )
+                    require(payload.id == operation.entityId) {
+                        "密文实体与外层 entityId 不一致"
+                    }
+                    val synthetic = SyncPulledOperation(
+                        serverSeq = 1,
+                        opId = operation.opId,
+                        deviceId = operation.deviceId,
+                        entityId = operation.entityId,
+                        kind = operation.kind,
+                        lamport = operation.lamport,
+                        ciphertext = operation.ciphertext,
+                        nonce = operation.nonce,
+                        createdAt = System.currentTimeMillis(),
+                    )
+                    tasksChanged = applyPayload(sqlite, synthetic, payload) || tasksChanged
+                    sqlite.execSQL(
+                        "UPDATE sync_state SET lamport = MAX(lamport, ?) WHERE id = 1",
+                        arrayOf(operation.lamport),
+                    )
+                }
+                rememberWebDavOperation(sqlite, operation.opId)
+            }
             sqlite.setTransactionSuccessful()
         } finally {
             sqlite.endTransaction()
@@ -577,6 +629,20 @@ class SQLiteSyncStore(
             arrayOf(opId),
         ).use(Cursor::moveToFirst)
 
+    private fun isWebDavOperationApplied(sqlite: SQLiteDatabase, opId: String): Boolean =
+        sqlite.rawQuery(
+            "SELECT 1 FROM $TABLE_WEBDAV_APPLIED WHERE op_id = ? LIMIT 1",
+            arrayOf(opId),
+        ).use(Cursor::moveToFirst)
+
+    private fun rememberWebDavOperation(sqlite: SQLiteDatabase, opId: String) {
+        val values = ContentValues(2).apply {
+            put("op_id", opId)
+            put("applied_at", System.currentTimeMillis())
+        }
+        sqlite.insertOrThrow(TABLE_WEBDAV_APPLIED, null, values)
+    }
+
     private data class PendingRow(
         val opId: String,
         val entityId: String,
@@ -726,9 +792,12 @@ private fun Cursor.toTaskEntity(): TaskEntity = TaskEntity(
     settledAt = getColumnIndexOrThrow("settled_at").let { index ->
         if (isNull(index)) null else getLong(index)
     },
+    reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
+        if (isNull(index)) null else LocalTime.parse(getString(index))
+    },
 )
 
-private fun TaskEntity.toContentValues(): ContentValues = ContentValues(12).apply {
+private fun TaskEntity.toContentValues(): ContentValues = ContentValues(13).apply {
     put("id", id)
     put("series_id", seriesId)
     put("title", title)
@@ -741,6 +810,7 @@ private fun TaskEntity.toContentValues(): ContentValues = ContentValues(12).appl
     put("created_at", createdAt)
     put("updated_at", updatedAt)
     if (settledAt == null) putNull("settled_at") else put("settled_at", settledAt)
+    if (reminderTime == null) putNull("reminder_time") else put("reminder_time", reminderTime.toString())
 }
 
 fun TaskEntity.toWirePayload(): TaskInstancePayload = TaskInstancePayload(
@@ -757,6 +827,7 @@ fun TaskEntity.toWirePayload(): TaskInstancePayload = TaskInstancePayload(
     createdAt = createdAt,
     updatedAt = updatedAt,
     settledAt = settledAt,
+    reminderTime = reminderTime?.toString(),
 )
 
 fun TaskInstancePayload.toTaskEntity(): TaskEntity {
@@ -783,6 +854,7 @@ fun TaskInstancePayload.toTaskEntity(): TaskEntity {
         createdAt = createdAt,
         updatedAt = updatedAt,
         settledAt = settledAt,
+        reminderTime = reminderTime?.let(LocalTime::parse),
     )
 }
 
@@ -837,4 +909,5 @@ private const val TABLE_OUTBOX = "sync_outbox"
 private const val TABLE_VERSIONS = "sync_entity_versions"
 private const val TABLE_TOMBSTONES = "sync_tombstones"
 private const val TABLE_APPLIED = "sync_applied_operations"
+private const val TABLE_WEBDAV_APPLIED = "sync_webdav_applied_operations"
 private const val TABLE_DEFERRED_DELETIONS = "sync_deferred_deletions"

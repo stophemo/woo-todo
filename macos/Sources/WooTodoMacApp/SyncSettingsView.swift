@@ -5,6 +5,7 @@ import WooTodoSync
 
 struct SyncSettingsView: View {
     @ObservedObject var store: SyncSettingsStore
+    @ObservedObject var webDavStore: WebDavSettingsStore
     @State private var devicePendingRevocation: DeviceInfo?
     @State private var backupPassphrase = ""
     @State private var backupConfirmation = ""
@@ -51,11 +52,13 @@ struct SyncSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("建立私有同步空间")
+                    Text("在线同步")
                         .font(.title2.weight(.semibold))
-                    Text("任务始终先写入本地数据库。同步服务只保存端到端加密后的变更，不需要传统账号。")
+                    Text("任务始终先写入本地数据库。可直接使用坚果云，或继续使用自建 Worker。")
                         .foregroundStyle(.secondary)
                 }
+
+                webDavCard
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("同步服务地址")
@@ -121,6 +124,7 @@ struct SyncSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 connectionCard(connection)
+                webDavCard
                 runtimeCard
                 pairingCard
                 devicesCard
@@ -131,6 +135,98 @@ struct SyncSettingsView: View {
             .padding(24)
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var webDavCard: some View {
+        SettingsCard(title: "坚果云自动同步", systemImage: "externaldrive.connected.to.line.below") {
+            LabeledContent("WebDAV 地址", value: WebDavEndpointPolicy.endpoint.absoluteString)
+            if webDavStore.workerSyncConfigured {
+                Label(
+                    "当前任务库已连接 Worker，不能同时启用坚果云同步。",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            } else {
+                TextField("坚果云账号邮箱", text: $webDavStore.username)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("坚果云应用密码", text: $webDavStore.appPassword)
+                    .textFieldStyle(.roundedBorder)
+
+                if let connection = webDavStore.connection {
+                    LabeledContent("同步空间", value: connection.vaultId)
+                    HStack(spacing: 8) {
+                        Text("同步密钥")
+                        Text(webDavStore.vaultKeyText)
+                            .font(.system(.caption, design: .monospaced))
+                            .lineLimit(1)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(
+                                webDavStore.vaultKeyText,
+                                forType: .string
+                            )
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .help("复制同步密钥")
+                    }
+                    HStack {
+                        if webDavStore.runtimeSnapshot.isRunning {
+                            ProgressView().controlSize(.small)
+                            Text("正在同步")
+                        } else if let error = webDavStore.runtimeSnapshot.lastErrorMessage {
+                            Label(error, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        } else {
+                            Label("坚果云已连接", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        }
+                        Spacer()
+                        Button("立即同步") { webDavStore.requestSync(.manual) }
+                            .disabled(webDavStore.runtimeSnapshot.isRunning)
+                    }
+                    Button("更新账号或应用密码") {
+                        Task { await webDavStore.configure() }
+                    }
+                    .disabled(webDavStore.isSaving || webDavStore.appPassword.isEmpty)
+                } else {
+                    TextField("同步空间名（两端完全相同）", text: $webDavStore.vaultId)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("同步密钥（两端完全相同）", text: $webDavStore.vaultKeyText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                    Button {
+                        Task { await webDavStore.configure() }
+                    } label: {
+                        if webDavStore.isSaving {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("保存并连接", systemImage: "link")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        webDavStore.isSaving
+                            || webDavStore.username.isEmpty
+                            || webDavStore.appPassword.isEmpty
+                            || webDavStore.vaultId.isEmpty
+                            || webDavStore.vaultKeyText.isEmpty
+                    )
+                }
+
+                Text("应用密码请在坚果云“账户信息 → 安全选项 → 第三方应用管理”生成；任务标题只以 AES-256-GCM 密文保存，云端仍可见同步所需元数据。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let error = webDavStore.actionErrorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
         }
     }
 

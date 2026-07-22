@@ -27,6 +27,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let shortcutSettingsStore: ShortcutSettingsStore
     private let quickAddAction: () -> Void
     private let openDashboardAction: () -> Void
+    private let checkForUpdatesAction: () -> Void
     private let statusItem: NSStatusItem
     private let quickAddItem: NSMenuItem
     private let taskPanelItem: NSMenuItem
@@ -40,12 +41,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         panelController: FloatingPanelController,
         shortcutSettingsStore: ShortcutSettingsStore,
         quickAdd: @escaping () -> Void,
-        openDashboard: @escaping () -> Void
+        openDashboard: @escaping () -> Void,
+        checkForUpdates: @escaping () -> Void
     ) {
         self.panelController = panelController
         self.shortcutSettingsStore = shortcutSettingsStore
         quickAddAction = quickAdd
         openDashboardAction = openDashboard
+        checkForUpdatesAction = checkForUpdates
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         quickAddItem = NSMenuItem(title: "快速新增任务", action: nil, keyEquivalent: "")
         taskPanelItem = NSMenuItem(title: "显示任务板", action: nil, keyEquivalent: "")
@@ -130,6 +133,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         alwaysOnTopItem.action = #selector(toggleAlwaysOnTop)
         menu.addItem(alwaysOnTopItem)
         menu.addItem(.separator())
+        menu.addItem(item("检查更新…", action: #selector(checkForUpdates)))
         menu.addItem(item("退出 Woo Todo", action: #selector(quit)))
         return menu
     }
@@ -170,6 +174,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func toggleAlwaysOnTop() {
         panelController.toggleAlwaysOnTop()
+    }
+
+    @objc private func checkForUpdates() {
+        checkForUpdatesAction()
     }
 
     @objc private func setOpacity(_ sender: NSMenuItem) {

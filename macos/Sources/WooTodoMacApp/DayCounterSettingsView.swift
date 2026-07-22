@@ -1,53 +1,203 @@
 import SwiftUI
+import WooTodoCore
 
 struct DayCounterSettingsView: View {
     @ObservedObject var store: DayCounterStore
-    @State private var isEnabled: Bool
-    @State private var title: String
+    @State private var headerTemplate: String
+    @State private var subtitleTemplate: String
     @State private var startDate: Date
+    @State private var deadlineDate: Date
+    @State private var headerSelection: TextSelection?
+    @State private var subtitleSelection: TextSelection?
 
     init(store: DayCounterStore) {
         self.store = store
-        _isEnabled = State(initialValue: store.configuration.isEnabled)
-        _title = State(initialValue: store.configuration.title)
+        _headerTemplate = State(initialValue: store.configuration.headerTemplate)
+        _subtitleTemplate = State(initialValue: store.configuration.subtitleTemplate)
         _startDate = State(initialValue: store.configuration.startDate)
+        _deadlineDate = State(initialValue: store.configuration.deadlineDate)
     }
 
     var body: some View {
         Form {
-            Section("顶部副标题") {
-                Toggle("显示纪念日计数", isOn: $isEnabled)
-                TextField("例如：来到西安 remake", text: $title)
-                    .disabled(!isEnabled)
-                DatePicker(
-                    "起始日期",
-                    selection: $startDate,
-                    displayedComponents: .date
+            Section("标题模板") {
+                templateField(
+                    placeholder: "今日任务",
+                    value: $headerTemplate,
+                    selection: $headerSelection,
+                    limit: 80
                 )
-                .disabled(!isEnabled)
-                Text("示例：来到西安 remake · 第 100 天")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            }
+
+            Section("副标题模板") {
+                templateField(
+                    placeholder: "留空则隐藏副标题",
+                    value: $subtitleTemplate,
+                    selection: $subtitleSelection,
+                    limit: 160
+                )
+            }
+
+            Section("变量日期") {
+                DatePicker("起始日期", selection: $startDate, displayedComponents: .date)
+                DatePicker("截止日期", selection: $deadlineDate, displayedComponents: .date)
+            }
+
+            Section("实时预览") {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let header = preview.headerText(on: store.renderDate) {
+                        Text(header)
+                            .font(.title3.weight(.semibold))
+                    }
+                    if let subtitle = preview.subtitleText(on: store.renderDate) {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if preview.headerText(on: store.renderDate) == nil &&
+                        preview.subtitleText(on: store.renderDate) == nil {
+                        Text("顶部文字已隐藏")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .lineLimit(2)
             }
 
             Section {
-                Button("保存") {
-                    store.update(isEnabled: isEnabled, title: title, startDate: startDate)
-                    isEnabled = store.configuration.isEnabled
-                    title = store.configuration.title
+                Button {
+                    store.update(
+                        headerTemplate: headerTemplate,
+                        subtitleTemplate: subtitleTemplate,
+                        startDate: startDate,
+                        deadlineDate: deadlineDate
+                    )
+                    load(store.configuration)
+                } label: {
+                    Label("保存显示设置", systemImage: "checkmark")
                 }
-                Button("隐藏副标题") {
-                    store.disable()
-                    isEnabled = false
+                Button {
+                    store.restoreDefaults()
+                    load(store.configuration)
+                } label: {
+                    Label("恢复默认", systemImage: "arrow.counterclockwise")
                 }
             }
         }
         .formStyle(.grouped)
         .padding(16)
         .onChange(of: store.configuration) { _, value in
-            isEnabled = value.isEnabled
-            title = value.title
-            startDate = value.startDate
+            load(value)
         }
+    }
+
+    private var preview: DayCounterConfiguration {
+        DayCounterConfiguration(
+            headerTemplate: headerTemplate,
+            subtitleTemplate: subtitleTemplate,
+            startDate: startDate,
+            deadlineDate: deadlineDate
+        )
+    }
+
+    @ViewBuilder
+    private func templateField(
+        placeholder: String,
+        value: Binding<String>,
+        selection: Binding<TextSelection?>,
+        limit: Int
+    ) -> some View {
+        HStack(spacing: 10) {
+            TextField(placeholder, text: value, selection: selection)
+                .onChange(of: value.wrappedValue) { _, updated in
+                    guard updated.count > limit else { return }
+                    value.wrappedValue = String(updated.prefix(limit))
+                    selection.wrappedValue = TextSelection(
+                        insertionPoint: value.wrappedValue.endIndex
+                    )
+                }
+            Text("\(value.wrappedValue.count)/\(limit)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Menu {
+                variableButton(
+                    "星期几",
+                    token: DayCounterConfiguration.weekdayToken,
+                    value: value,
+                    selection: selection,
+                    limit: limit
+                )
+                variableButton(
+                    "耗时天数",
+                    token: DayCounterConfiguration.elapsedDaysToken,
+                    value: value,
+                    selection: selection,
+                    limit: limit
+                )
+                variableButton(
+                    "截止天数",
+                    token: DayCounterConfiguration.deadlineDaysToken,
+                    value: value,
+                    selection: selection,
+                    limit: limit
+                )
+            } label: {
+                Image(systemName: "plus.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .help("插入动态变量")
+        }
+    }
+
+    private func variableButton(
+        _ title: String,
+        token: String,
+        value: Binding<String>,
+        selection: Binding<TextSelection?>,
+        limit: Int
+    ) -> some View {
+        Button("\(title)  \(token)") {
+            insert(token, into: value, selection: selection, limit: limit)
+        }
+    }
+
+    private func insert(
+        _ token: String,
+        into value: Binding<String>,
+        selection: Binding<TextSelection?>,
+        limit: Int
+    ) {
+        let source = value.wrappedValue
+        let range: Range<String.Index>
+        if let textSelection = selection.wrappedValue {
+            switch textSelection.indices {
+            case .selection(let selectedRange):
+                range = selectedRange
+            case .multiSelection:
+                range = source.endIndex..<source.endIndex
+            @unknown default:
+                range = source.endIndex..<source.endIndex
+            }
+        } else {
+            range = source.endIndex..<source.endIndex
+        }
+        let insertionOffset = source.distance(from: source.startIndex, to: range.lowerBound)
+        var updated = source
+        updated.replaceSubrange(range, with: token)
+        guard updated.count <= limit else { return }
+        value.wrappedValue = updated
+        let insertionPoint = updated.index(
+            updated.startIndex,
+            offsetBy: insertionOffset + token.count
+        )
+        selection.wrappedValue = TextSelection(insertionPoint: insertionPoint)
+    }
+
+    private func load(_ configuration: DayCounterConfiguration) {
+        headerTemplate = configuration.headerTemplate
+        subtitleTemplate = configuration.subtitleTemplate
+        startDate = configuration.startDate
+        deadlineDate = configuration.deadlineDate
+        headerSelection = nil
+        subtitleSelection = nil
     }
 }

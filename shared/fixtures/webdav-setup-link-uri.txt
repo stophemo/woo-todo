@@ -1,0 +1,1 @@
+wootodo://webdav?v=1&username=person+tag@example.com&appPassword=space%20and%20%26%20equals%3D%20+%20slash/&vaultId=personal-vault&vaultKey=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc

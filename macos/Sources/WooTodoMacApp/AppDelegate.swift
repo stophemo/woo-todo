@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quickAddPanelController: QuickAddPanelController?
     private var dashboardWindowController: DashboardWindowController?
     private var statusMenuController: StatusMenuController?
+    private var appUpdateController: AppUpdateController?
+    private var wakeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
@@ -70,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 dayCounterStore: dayCounterStore
             )
             let quickAddPanelController = QuickAddPanelController(store: store)
+            let appUpdateController = AppUpdateController()
             let shortcutSettingsStore = ShortcutSettingsStore(actions: [
                 .quickAdd: { [weak quickAddPanelController] in
                     quickAddPanelController?.show()
@@ -92,6 +95,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 openDashboard: { [weak self] in
                     self?.showDashboard()
+                },
+                checkForUpdates: { [weak appUpdateController] in
+                    appUpdateController?.checkManually()
                 }
             )
 
@@ -105,6 +111,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.panelController = panelController
             self.quickAddPanelController = quickAddPanelController
             self.statusMenuController = statusMenuController
+            self.appUpdateController = appUpdateController
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.dayCounterStore?.refreshDate()
+                    self?.appUpdateController?.checkAutomatically()
+                }
+            }
             panelController.onStateChange = { [weak statusMenuController] in
                 statusMenuController?.refreshState()
             }
@@ -134,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let syncActivationError {
                 showSyncCredentialsWarning(syncActivationError)
             }
+            appUpdateController.checkAutomatically()
             logger.info("Woo Todo 已启动，本地任务面板准备完成")
         } catch {
             logger.error("启动失败：\(error.localizedDescription, privacy: .public)")
@@ -146,9 +164,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        appUpdateController?.checkAutomatically()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+            self.wakeObserver = nil
+        }
         syncSettingsStore?.stop()
         webDavSettingsStore?.stop()
+        appUpdateController?.stop()
     }
 
     private func configureMainMenu() {

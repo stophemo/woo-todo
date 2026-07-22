@@ -2,6 +2,8 @@
 
 woo-todo 不依赖应用商店，也不要求先部署服务器。可从 [GitHub Releases](https://github.com/stophemo/woo-todo/releases) 下载双端安装包；以下文件和链接对应 `v0.1.4`。正式长期使用前仍应完成目标真机验收，并定期导出加密恢复备份。
 
+仓库 `main` 已进入 `v0.1.5` 开发状态，但尚未发布。下文标注的 Android App 内扫码和自动更新提醒属于下一版；当前 `v0.1.4` 安装包仍需使用系统扫码器打开 Mac 配置链接。
+
 ## 1. 安装 macOS 客户端
 
 下载 [Woo-Todo-v0.1.4-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.4/Woo-Todo-v0.1.4-macos-arm64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.4/SHA256SUMS.txt) 校验后解压，把 `Woo Todo.app` 拖到“应用程序”。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
@@ -56,7 +58,7 @@ cd android
 
 ## 3. 坚果云自动同步（推荐）
 
-不想部署 Worker 时，先安装并登录坚果云官方客户端，再按 [坚果云自动同步与通知](JIANGUOYUN_SYNC.md) 在网页安全设置中生成应用密码。推荐先在 Mac 的“任务详情与统计 → 同步 → 坚果云自动同步”填写账号与应用密码并保存；连接成功后二维码默认隐藏，需要配置手机时显式点击“显示 Android 配置二维码”。用 Android 系统扫码器扫描并选择“用 Woo Todo 打开”，确认预填配置后保存。二维码严格包含 `username`、`appPassword`、`vaultId` 和 `vaultKey`，不包含固定端点或 `deviceId`；Android 会自行生成不同于 Mac 的 `deviceId`。二维码等同完整同步凭据，只能近旁展示，用完立即隐藏，不上传 Woo Todo 服务、公开位置或日志。Woo Todo 内置 WebDAV 客户端直接连接坚果云；任务先本地保存，网络只传输加密操作对象，这条路径不要求额外服务器费用。
+不想部署 Worker 时，先安装并登录坚果云官方客户端，再按 [坚果云自动同步与通知](JIANGUOYUN_SYNC.md) 在网页安全设置中生成应用密码。推荐先在 Mac 的“任务详情与统计 → 同步 → 坚果云自动同步”填写账号与应用密码并保存；连接成功后点击“显示 Android 配置二维码”。在 Android Woo Todo 选择“更多 → 扫描 Mac 配置二维码”，确认自动预填的四项配置后保存；手机会生成独立 `deviceId` 并立即同步。二维码等同完整同步凭据，只能近旁展示，用完立即隐藏，不上传 Woo Todo 服务、公开位置或日志。Woo Todo 内置 WebDAV 客户端直接连接坚果云；任务先本地保存，网络只传输加密操作对象，这条路径不要求额外服务器费用。
 
 ## 4. 加密备份与恢复
 
@@ -90,7 +92,7 @@ npx wrangler deploy
 
 `TOKEN_PEPPER` 使用密码管理器生成的至少 32 个字符随机值并长期保持不变；`VAULT_CREATION_INVITE_CODE` 使用 16～256 个无空格可打印 ASCII 字符，是创建同步空间的部署级门禁，不会保存在客户端，也不是两端核对的六位配对码。两个值都不要提交 Git。更完整的安全边界、额度和轮换说明见 [后端免费部署指南](../backend/README.md)。
 
-4. `wrangler deploy` 输出的 `workers.dev` URL 就是 Worker 根地址。把实际域名替换进 `https://woo-todo-sync.example.workers.dev/health` 并确认返回 `"ok": true`，再在 Mac 的“同步”页填写根地址和邀请码创建空间，用三星系统二维码扫描器让 Android 加入并核对六位码。`127.0.0.1` 只表示当前设备，不能作为双机地址。完整步骤与排错见 [可选在线配对同步](PAIRING.md)。
+4. `wrangler deploy` 输出的 `workers.dev` URL 就是 Worker 根地址。把实际域名替换进 `https://woo-todo-sync.example.workers.dev/health` 并确认返回 `"ok": true`，再在 Mac 的“同步”页填写根地址和邀请码创建空间，用 Android Woo Todo 的内置扫码入口加入并核对六位码。`127.0.0.1` 只表示当前设备，不能作为双机地址。完整步骤与排错见 [可选在线配对同步](PAIRING.md)。
 
 ## 6. 必做验收
 

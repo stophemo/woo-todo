@@ -9,8 +9,20 @@ permissions:
   contents: read
 
 jobs:
+  validate-tag:
+    name: 校验正式版本标签
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: 只接受规范稳定版本
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+
   android:
     name: 构建 Android 正式安装包
+    needs: validate-tag
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -83,6 +95,7 @@ jobs:
 
   macos:
     name: 构建 macOS Apple Silicon 安装包
+    needs: validate-tag
     runs-on: macos-15
     timeout-minutes: 30
     steps:

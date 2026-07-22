@@ -107,11 +107,16 @@ object TodayWidgetUpdater {
                 R.id.widget_add,
                 addTaskPendingIntent(context, widgetId),
             )
-            val counterText = DayCounterPreferences.displayText(context)
-            remoteViews.setTextViewText(R.id.widget_counter, counterText.orEmpty())
+            val display = DayCounterPreferences.render(context)
+            remoteViews.setTextViewText(R.id.widget_title, display.header.orEmpty())
+            remoteViews.setViewVisibility(
+                R.id.widget_title,
+                if (display.header == null) View.GONE else View.VISIBLE,
+            )
+            remoteViews.setTextViewText(R.id.widget_counter, display.subtitle.orEmpty())
             remoteViews.setViewVisibility(
                 R.id.widget_counter,
-                if (counterText == null) View.GONE else View.VISIBLE,
+                if (display.subtitle == null) View.GONE else View.VISIBLE,
             )
             remoteViews.setPendingIntentTemplate(
                 R.id.widget_list,

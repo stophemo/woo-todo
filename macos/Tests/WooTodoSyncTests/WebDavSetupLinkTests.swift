@@ -26,6 +26,22 @@ struct WebDavSetupLinkTests {
         #expect(try WebDavSetupLink(url: value.url()) == value)
     }
 
+    @Test("共享跨端 URI 与 macOS URLComponents 编码一致")
+    func sharedURIEncoding() throws {
+        let source = try String(contentsOf: fixtureURL(named: "webdav-setup-link-uri.txt"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = try WebDavSetupLink(
+            username: "person+tag@example.com",
+            appPassword: "space and & equals= + slash/",
+            vaultId: "personal-vault",
+            vaultKey: Base64URL.encode(Data(repeating: 7, count: AES256GCM.keyByteCount))
+        )
+
+        #expect(try WebDavSetupLink(url: URL(string: source)!) == value)
+        #expect(try value.url().absoluteString == source)
+        #expect(try WebDavSetupLink(url: value.url()) == value)
+    }
+
     @Test("严格往返且不泄露同步密钥")
     func roundTripAndRedaction() throws {
         let value = try WebDavSetupLink(
@@ -146,7 +162,7 @@ struct WebDavSetupLinkTests {
         }
     }
 
-    private func fixtureURL() -> URL {
+    private func fixtureURL(named name: String = "webdav-setup-link.json") -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -154,7 +170,7 @@ struct WebDavSetupLinkTests {
             .deletingLastPathComponent()
             .appendingPathComponent("shared")
             .appendingPathComponent("fixtures")
-            .appendingPathComponent("webdav-setup-link.json")
+            .appendingPathComponent(name)
     }
 }
 

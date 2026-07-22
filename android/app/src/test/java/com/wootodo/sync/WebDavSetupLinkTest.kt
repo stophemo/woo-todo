@@ -35,6 +35,20 @@ class WebDavSetupLinkTest {
     }
 
     @Test
+    fun `解析Mac URLComponents生成的跨端配置URI`() {
+        val source = requireNotNull(
+            javaClass.classLoader?.getResourceAsStream("webdav-setup-link-uri.txt"),
+        ).bufferedReader().use { it.readText().trim() }
+
+        val parsed = WebDavSetupLink.parse(source)
+
+        assertEquals("person+tag@example.com", parsed.username)
+        assertEquals("space and & equals= + slash/", parsed.appPassword)
+        assertEquals("personal-vault", parsed.vaultId)
+        assertArrayEquals(ByteArray(Aes256Gcm.KEY_BYTES) { 7 }, parsed.vaultKey)
+    }
+
+    @Test
     fun `严格解析五字段并支持规范往返`() {
         val parsed = WebDavSetupLink.parse(link.toUri())
 

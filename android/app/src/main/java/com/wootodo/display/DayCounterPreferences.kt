@@ -5,48 +5,137 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 data class DayCounterSettings(
-    val enabled: Boolean = false,
-    val title: String = "",
+    val headerTemplate: String = DayCounterText.DEFAULT_HEADER_TEMPLATE,
+    val subtitleTemplate: String = "",
     val startDate: LocalDate = LocalDate.now(),
+    val deadlineDate: LocalDate = LocalDate.now(),
+) {
+    constructor(enabled: Boolean, title: String, startDate: LocalDate) : this(
+        subtitleTemplate = title.trim().takeIf { enabled && it.isNotEmpty() }
+            ?.let { "$it · 第 ${DayCounterText.ELAPSED_DAYS_TOKEN} 天" }
+            .orEmpty(),
+        startDate = startDate,
+    )
+}
+
+data class DayCounterRenderResult(
+    val header: String?,
+    val subtitle: String?,
 )
 
 object DayCounterText {
-    fun format(settings: DayCounterSettings, today: LocalDate = LocalDate.now()): String? {
-        val title = settings.title.trim()
-        if (!settings.enabled || title.isEmpty() || today.isBefore(settings.startDate)) return null
-        val day = ChronoUnit.DAYS.between(settings.startDate, today) + 1
-        return "$title · 第 $day 天"
+    const val DEFAULT_HEADER_TEMPLATE = "今日任务"
+    const val WEEKDAY_TOKEN = "{weekday}"
+    const val ELAPSED_DAYS_TOKEN = "{elapsedDays}"
+    const val DEADLINE_DAYS_TOKEN = "{deadlineDays}"
+
+    fun render(
+        settings: DayCounterSettings,
+        today: LocalDate = LocalDate.now(),
+    ): DayCounterRenderResult {
+        val elapsedDays = (ChronoUnit.DAYS.between(settings.startDate, today) + 1)
+            .coerceAtLeast(0)
+        val deadlineDays = ChronoUnit.DAYS.between(today, settings.deadlineDate)
+        val weekday = WEEKDAYS[today.dayOfWeek.value - 1]
+
+        fun renderTemplate(template: String): String? = template.trim()
+            .takeIf(String::isNotEmpty)
+            ?.replace(WEEKDAY_TOKEN, weekday)
+            ?.replace(ELAPSED_DAYS_TOKEN, elapsedDays.toString())
+            ?.replace(DEADLINE_DAYS_TOKEN, deadlineDays.toString())
+
+        return DayCounterRenderResult(
+            header = renderTemplate(settings.headerTemplate),
+            subtitle = renderTemplate(settings.subtitleTemplate),
+        )
     }
+
+    fun format(settings: DayCounterSettings, today: LocalDate = LocalDate.now()): String? =
+        render(settings, today).subtitle
+
+    private val WEEKDAYS = listOf(
+        "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日",
+    )
 }
 
 object DayCounterPreferences {
     private const val FILE_NAME = "display_preferences"
-    private const val KEY_ENABLED = "day_counter_enabled"
-    private const val KEY_TITLE = "day_counter_title"
-    private const val KEY_START_DATE = "day_counter_start_date"
+    private const val KEY_CONFIGURATION_VERSION = "today_template_configuration_version"
+    private const val KEY_HEADER_TEMPLATE = "today_header_template"
+    private const val KEY_SUBTITLE_TEMPLATE = "today_subtitle_template"
+    private const val KEY_START_DATE = "today_template_start_date"
+    private const val KEY_DEADLINE_DATE = "today_template_deadline_date"
+
+    private const val LEGACY_KEY_ENABLED = "day_counter_enabled"
+    private const val LEGACY_KEY_TITLE = "day_counter_title"
+    private const val LEGACY_KEY_START_DATE = "day_counter_start_date"
+    private const val CURRENT_CONFIGURATION_VERSION = 1
 
     fun load(context: Context): DayCounterSettings {
         val preferences = context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
-        val startDate = preferences.getString(KEY_START_DATE, null)
-            ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
-            ?: LocalDate.now()
-        return DayCounterSettings(
-            enabled = preferences.getBoolean(KEY_ENABLED, false),
-            title = preferences.getString(KEY_TITLE, "").orEmpty(),
-            startDate = startDate,
+        val today = LocalDate.now()
+        val headerTemplate = preferences.getString(KEY_HEADER_TEMPLATE, null)
+        val subtitleTemplate = preferences.getString(KEY_SUBTITLE_TEMPLATE, null)
+        val startDate = preferences.getString(KEY_START_DATE, null)?.let(::parseDateOrNull)
+        val deadlineDate = preferences.getString(KEY_DEADLINE_DATE, null)?.let(::parseDateOrNull)
+        val complete = preferences.getInt(KEY_CONFIGURATION_VERSION, 0) ==
+            CURRENT_CONFIGURATION_VERSION && headerTemplate != null && subtitleTemplate != null &&
+            startDate != null && deadlineDate != null
+        if (complete) {
+            return DayCounterSettings(
+                headerTemplate = requireNotNull(headerTemplate),
+                subtitleTemplate = requireNotNull(subtitleTemplate),
+                startDate = requireNotNull(startDate),
+                deadlineDate = requireNotNull(deadlineDate),
+            )
+        }
+
+        val legacyStartDate = parseDate(
+            preferences.getString(LEGACY_KEY_START_DATE, null),
+            today,
         )
+        val fallback = DayCounterSettings(
+            enabled = preferences.getBoolean(LEGACY_KEY_ENABLED, false),
+            title = preferences.getString(LEGACY_KEY_TITLE, "").orEmpty(),
+            startDate = legacyStartDate,
+        )
+        return DayCounterSettings(
+            headerTemplate = headerTemplate ?: fallback.headerTemplate,
+            subtitleTemplate = subtitleTemplate ?: fallback.subtitleTemplate,
+            startDate = startDate ?: fallback.startDate,
+            deadlineDate = deadlineDate ?: startDate ?: fallback.startDate,
+        ).also { save(context, it) }
     }
 
     fun save(context: Context, settings: DayCounterSettings) {
-        val title = settings.title.trim().take(80)
         context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putBoolean(KEY_ENABLED, settings.enabled && title.isNotEmpty())
-            .putString(KEY_TITLE, title)
+            .putString(KEY_HEADER_TEMPLATE, normalize(settings.headerTemplate, 80))
+            .putString(KEY_SUBTITLE_TEMPLATE, normalize(settings.subtitleTemplate, 160))
             .putString(KEY_START_DATE, settings.startDate.toString())
+            .putString(KEY_DEADLINE_DATE, settings.deadlineDate.toString())
+            .putInt(KEY_CONFIGURATION_VERSION, CURRENT_CONFIGURATION_VERSION)
             .apply()
     }
 
+    fun render(
+        context: Context,
+        today: LocalDate = LocalDate.now(),
+    ): DayCounterRenderResult = DayCounterText.render(load(context), today)
+
     fun displayText(context: Context, today: LocalDate = LocalDate.now()): String? =
-        DayCounterText.format(load(context), today)
+        render(context, today).subtitle
+
+    private fun normalize(value: String, limit: Int): String = value
+        .replace('\r', ' ')
+        .replace('\n', ' ')
+        .trim()
+        .take(limit)
+
+    private fun parseDate(value: String?, fallback: LocalDate): LocalDate = value
+        ?.let(::parseDateOrNull)
+        ?: fallback
+
+    private fun parseDateOrNull(value: String): LocalDate? =
+        runCatching { LocalDate.parse(value) }.getOrNull()
 }

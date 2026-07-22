@@ -1,6 +1,6 @@
 {
   "name": "@woo-todo/backend",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "description": "woo-todo 的 Cloudflare Workers + D1 密文同步服务",

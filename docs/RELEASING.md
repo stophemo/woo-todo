@@ -1,6 +1,6 @@
 # 发版与签名维护
 
-GitHub Actions 在推送 `v*` tag 后构建并发布双端安装包。只有 Android 需要长期私钥；macOS 首版使用 ad-hoc 签名，不依赖证书私钥。
+GitHub Actions 在推送规范的 `vMAJOR.MINOR.PATCH` tag 后构建并发布双端安装包；其他 `v*` 标签会在构建前被拒绝。只有 Android 需要长期私钥；macOS 首版使用 ad-hoc 签名，不依赖证书私钥。
 
 ## Android 签名
 

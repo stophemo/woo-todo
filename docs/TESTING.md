@@ -9,6 +9,7 @@
 | 本地仓储测试 | SQLite 往返、迁移、事务结算、历史不可改写 |
 | 后端测试 | vault、配对、鉴权、幂等同步、分页、撤销 |
 | 客户端同步测试 | 加密、API 错误、outbox、cursor、失败重试 |
+| 配置与更新测试 | 双端二维码 URI、严格 Release 解析、版本比较、检查节流与重复提醒 |
 | Android instrumentation | 真实 SQLite 绑定、tombstone、幂等、事务回滚、cursor 与备份恢复 |
 | 平台测试 | NSPanel、全局快捷键、App Widget、通知、重启 |
 
@@ -40,6 +41,17 @@
 - 已结算快照不会被较大 Lamport 的 pending 操作改写
 - 设备撤销后令牌不能继续同步
 - 服务端清空后由客户端加密快照重建
+- Mac 坚果云二维码由 Android App 内扫码后完整预填，取消不落盘，确认后生成独立 `deviceId` 并立即同步
+- 应用密码包含空格、`+`、`/`、`&`、`=` 时，Mac `URLComponents` 输出仍可由 Android 严格解析
+- 扫到网页、普通文本、缺字段、重复字段或错误版本时拒绝配置
+
+## 更新检查场景
+
+- GitHub 正式版高于当前版本时提醒，等于或低于当前版本时手动检查显示“已是最新”
+- 草稿、预发布、非三段式 tag、错误仓库 URL 和错误 APK 路径均拒绝
+- 自动检查成功后 24 小时内不重复请求，同一新版只自动提醒一次
+- DNS、超时或 HTTP 失败不影响本地任务，并在 15 分钟后允许再次自动检查
+- Android Activity 销毁会取消底层 OkHttp Call；macOS 终止时取消 URLSession 任务
 
 ## 备份场景
 
@@ -55,7 +67,7 @@
 | 环境 | 目标 |
 |---|---|
 | GitHub Actions 托管 Pixel 6 / API 35 | 真实 SQLite 绑定、tombstone、幂等、cursor、事务回滚与备份恢复 |
-| Galaxy S23 Ultra / Android 16 / One UI 8 | Widget、后台回收、通知延迟、重启恢复、耗电 |
+| Galaxy S23 Ultra / Android 16 / One UI 8 | Widget、应用内扫码、相机拒权、后台回收、通知延迟、重启恢复、耗电 |
 
 托管模拟器的 instrumentation 通过结果不能替代 One UI Widget 验收。三星专项需要检查组件缩放、列表刷新、系统电池优化和 24 小时耗电。
 

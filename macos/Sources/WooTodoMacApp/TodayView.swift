@@ -53,10 +53,18 @@ struct TodayView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("今日任务")
-                    .font(.title2.weight(.semibold))
-                if let counterText = dayCounterStore.configuration.displayText() {
-                    Text(counterText)
+                if let title = dayCounterStore.configuration.headerText(
+                    on: dayCounterStore.renderDate
+                ) {
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if let subtitle = dayCounterStore.configuration.subtitleText(
+                    on: dayCounterStore.renderDate
+                ) {
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

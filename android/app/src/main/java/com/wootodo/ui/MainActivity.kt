@@ -2,6 +2,7 @@ package com.wootodo.ui
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -11,7 +12,6 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
-import android.widget.DatePicker
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -34,11 +34,11 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.ItemTouchHelper
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.journeyapps.barcodescanner.ScanContract
+import com.wootodo.BuildConfig
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.display.DayCounterPreferences
-import com.wootodo.display.DayCounterSettings
-import com.wootodo.display.DayCounterText
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
@@ -52,6 +52,8 @@ import com.wootodo.sync.BackupTransferException
 import com.wootodo.sync.Base64Url
 import com.wootodo.sync.PairingDeepLink
 import com.wootodo.sync.PairingPollPolicy
+import com.wootodo.sync.ScannedConfiguration
+import com.wootodo.sync.ScannedConfigurationParser
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRuntimeState
 import com.wootodo.sync.SecureBytes
@@ -59,6 +61,11 @@ import com.wootodo.sync.WebDavCredentials
 import com.wootodo.sync.WebDavEndpointPolicy
 import com.wootodo.sync.WebDavSetupLink
 import com.wootodo.sync.newWebDavIdentity
+import com.wootodo.update.AppUpdateCheckResult
+import com.wootodo.update.AppUpdateEvent
+import com.wootodo.update.AppUpdatePreferences
+import com.wootodo.update.AppUpdateViewModel
+import com.wootodo.update.GitHubRelease
 import com.wootodo.widget.TodayWidgetUpdater
 import java.io.ByteArrayOutputStream
 import java.time.Instant
@@ -83,6 +90,9 @@ class MainActivity : AppCompatActivity() {
     private var pairingCodeView: TextView? = null
     private var deepLinkIntentConsumed = false
     private var backupProgressDialog: AlertDialog? = null
+    private var updateDialog: AlertDialog? = null
+    private var pendingUpdateRelease: GitHubRelease? = null
+    private val updatePreferences by lazy { AppUpdatePreferences(this) }
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -94,6 +104,15 @@ class MainActivity : AppCompatActivity() {
                 ).show()
             }
         }
+
+    private val qrScanner = registerForActivityResult(ScanContract()) { result ->
+        val source = result.contents
+        if (source == null) {
+            Toast.makeText(this, R.string.scan_qr_cancelled, Toast.LENGTH_SHORT).show()
+        } else {
+            handleScannedConfiguration(source)
+        }
+    }
 
     private val createBackupDocument = registerForActivityResult(
         ActivityResultContracts.CreateDocument(BACKUP_MIME_TYPE),
@@ -129,6 +148,8 @@ class MainActivity : AppCompatActivity() {
 
     private val backupFileViewModel: BackupFileViewModel by viewModels()
 
+    private val appUpdateViewModel: AppUpdateViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -157,26 +178,22 @@ class MainActivity : AppCompatActivity() {
         scopeGroup.setOnCheckedChangeListener { _, checkedId ->
             when (checkedId) {
                 R.id.scope_tomorrow -> {
-                    screenTitle.setText(R.string.tomorrow_title)
                     viewModel.selectTomorrow()
                 }
                 R.id.scope_week -> {
-                    screenTitle.setText(R.string.week_title)
                     viewModel.selectScope(TaskTimeType.WEEK)
                 }
                 R.id.scope_month -> {
-                    screenTitle.setText(R.string.month_title)
                     viewModel.selectScope(TaskTimeType.MONTH)
                 }
                 R.id.scope_leisure -> {
-                    screenTitle.setText(R.string.leisure_title)
                     viewModel.selectScope(TaskTimeType.LEISURE)
                 }
                 else -> {
-                    screenTitle.setText(R.string.today_title)
                     viewModel.selectToday()
                 }
             }
+            renderDayCounter()
         }
         findViewById<FloatingActionButton>(R.id.add_task).setOnClickListener { openEditor() }
         findViewById<Button>(R.id.insights_button).setOnClickListener {
@@ -201,6 +218,11 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     pairingViewModel.state.collect(::renderPairingState)
                 }
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                appUpdateViewModel.events.collect(::renderAppUpdateEvent)
             }
         }
         requestNotificationPermissionIfNeeded()
@@ -244,6 +266,13 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         viewModel.refresh()
         renderDayCounter()
+        showPendingUpdateIfPossible()
+        checkForAppUpdate(manual = false)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) showPendingUpdateIfPossible()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -257,6 +286,7 @@ class MainActivity : AppCompatActivity() {
         pairingDialog?.dismiss()
         pairingTerminalDialog?.dismiss()
         backupProgressDialog?.dismiss()
+        updateDialog?.dismiss()
         super.onDestroy()
     }
 
@@ -385,14 +415,18 @@ class MainActivity : AppCompatActivity() {
         PopupMenu(this, anchor).apply {
             menu.add(0, MENU_DAY_COUNTER, 0, R.string.day_counter_settings_title)
             menu.add(0, MENU_REMINDER, 1, R.string.reminder_settings_title)
-            menu.add(0, MENU_WEBDAV, 2, R.string.webdav_settings_title)
-            menu.add(0, MENU_EXPORT_BACKUP, 3, R.string.backup_export)
-            menu.add(0, MENU_IMPORT_BACKUP, 4, R.string.backup_import)
+            menu.add(0, MENU_SCAN_MAC_WEBDAV, 2, R.string.scan_mac_webdav_qr)
+            menu.add(0, MENU_WEBDAV, 3, R.string.webdav_settings_title)
+            menu.add(0, MENU_CHECK_UPDATE, 4, R.string.check_for_updates)
+            menu.add(0, MENU_EXPORT_BACKUP, 5, R.string.backup_export)
+            menu.add(0, MENU_IMPORT_BACKUP, 6, R.string.backup_import)
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     MENU_DAY_COUNTER -> showDayCounterSettings()
                     MENU_REMINDER -> showReminderSettings()
+                    MENU_SCAN_MAC_WEBDAV -> scanMacWebDavConfiguration()
                     MENU_WEBDAV -> showWebDavSettings()
+                    MENU_CHECK_UPDATE -> checkForAppUpdate(manual = true)
                     MENU_EXPORT_BACKUP -> prepareBackupExport()
                     MENU_IMPORT_BACKUP -> prepareBackupImport()
                     else -> return@setOnMenuItemClickListener false
@@ -403,15 +437,37 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun scanMacWebDavConfiguration() {
+        qrScanner.launch(WooTodoScanOptions.create(this))
+    }
+
+    private fun handleScannedConfiguration(source: String) {
+        when (val configuration = runCatching {
+            ScannedConfigurationParser.parse(source)
+        }.getOrNull()) {
+            is ScannedConfiguration.WebDav -> showWebDavSettings(configuration.setupLink)
+            is ScannedConfiguration.WorkerPairing -> {
+                Toast.makeText(this, R.string.pairing_link_received, Toast.LENGTH_SHORT).show()
+                pairingViewModel.begin(configuration.pairingLink, deviceDisplayName())
+            }
+            null -> Toast.makeText(this, R.string.scan_qr_invalid, Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun showWebDavSettings(setupLink: WebDavSetupLink? = null) {
+        val importedVaultKey = setupLink?.let { link ->
+            try {
+                Base64Url.encode(link.vaultKey)
+            } finally {
+                link.vaultKey.fill(0)
+            }
+        }
         lifecycleScope.launch {
             val app = application as WooTodoApplication
             val existing = withContext(Dispatchers.IO) {
                 runCatching { app.webDavCredentialsStore.load() }.getOrNull()
             }
             val generatedIdentity = newWebDavIdentity()
-            val importedVaultKey = setupLink?.let { Base64Url.encode(it.vaultKey) }
-            setupLink?.vaultKey?.fill(0)
             val generatedKey = Base64Url.encode(SecureBytes.generate(32))
             val padding = (20 * resources.displayMetrics.density).toInt()
             val container = LinearLayout(this@MainActivity).apply {
@@ -485,12 +541,24 @@ class MainActivity : AppCompatActivity() {
                             )
                             credentials.validate()
                             app.configureWebDav(credentials)
-                            app.synchronizeManually()
+                            when (val syncResult = app.synchronizeManually()) {
+                                is SyncExecutionResult.Succeeded ->
+                                    getString(R.string.webdav_saved_and_synced)
+
+                                is SyncExecutionResult.Failed -> if (syncResult.retryable) {
+                                    getString(R.string.webdav_saved_sync_retrying)
+                                } else {
+                                    getString(R.string.webdav_saved_sync_failed)
+                                }
+
+                                SyncExecutionResult.NotConfigured ->
+                                    getString(R.string.webdav_saved_sync_pending)
+                            }
                         }
                         Toast.makeText(
                             this@MainActivity,
                             result.fold(
-                                onSuccess = { getString(R.string.webdav_saved) },
+                                onSuccess = { it },
                                 onFailure = { it.localizedMessage ?: getString(R.string.webdav_invalid) },
                             ),
                             Toast.LENGTH_LONG,
@@ -503,74 +571,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showDayCounterSettings() {
-        val settings = DayCounterPreferences.load(this)
-        val padding = (20 * resources.displayMetrics.density).toInt()
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(padding, 0, padding, 0)
+        TodayDisplaySettingsDialog.show(
+            activity = this,
+            initial = DayCounterPreferences.load(this),
+            today = TaskDateRules.today(),
+        ) { settings ->
+            DayCounterPreferences.save(this, settings)
+            renderDayCounter()
+            TodayWidgetUpdater.updateAllAsync(applicationContext)
         }
-        val enabledSwitch = SwitchCompat(this).apply {
-            setText(R.string.day_counter_enabled)
-            isChecked = settings.enabled
-        }
-        val titleInput = EditText(this).apply {
-            hint = getString(R.string.day_counter_title_hint)
-            setText(settings.title)
-            isSingleLine = true
-            enableEditableTextActions()
-        }
-        val dateLabel = TextView(this).apply {
-            setText(R.string.day_counter_start_date)
-            setPadding(0, padding / 2, 0, 0)
-        }
-        val datePicker = DatePicker(this).apply {
-            updateDate(
-                settings.startDate.year,
-                settings.startDate.monthValue - 1,
-                settings.startDate.dayOfMonth,
-            )
-        }
-        fun updateEnabled(enabled: Boolean) {
-            titleInput.isEnabled = enabled
-            datePicker.isEnabled = enabled
-        }
-        enabledSwitch.setOnCheckedChangeListener { _, enabled -> updateEnabled(enabled) }
-        updateEnabled(settings.enabled)
-        container.addView(enabledSwitch)
-        container.addView(titleInput)
-        container.addView(dateLabel)
-        container.addView(datePicker)
-
-        AlertDialog.Builder(this)
-            .setTitle(R.string.day_counter_settings_title)
-            .setView(container)
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                DayCounterPreferences.save(
-                    this,
-                    DayCounterSettings(
-                        enabled = enabledSwitch.isChecked,
-                        title = titleInput.text.toString(),
-                        startDate = java.time.LocalDate.of(
-                            datePicker.year,
-                            datePicker.month + 1,
-                            datePicker.dayOfMonth,
-                        ),
-                    ),
-                )
-                renderDayCounter()
-                TodayWidgetUpdater.updateAllAsync(applicationContext)
-            }
-            .show()
     }
 
     private fun renderDayCounter() {
-        val text = DayCounterText.format(
-            DayCounterPreferences.load(this),
-            TaskDateRules.today(),
-        )
-        dayCounterText.text = text.orEmpty()
-        dayCounterText.isVisible = text != null
+        val isToday = scopeGroup.checkedRadioButtonId == R.id.scope_today
+        if (!isToday) {
+            screenTitle.isVisible = true
+            dayCounterText.isVisible = false
+            screenTitle.setText(
+                when (scopeGroup.checkedRadioButtonId) {
+                    R.id.scope_tomorrow -> R.string.tomorrow_title
+                    R.id.scope_week -> R.string.week_title
+                    R.id.scope_month -> R.string.month_title
+                    R.id.scope_leisure -> R.string.leisure_title
+                    else -> R.string.today_title
+                },
+            )
+            return
+        }
+        val rendered = DayCounterPreferences.render(this, TaskDateRules.today())
+        screenTitle.text = rendered.header.orEmpty()
+        screenTitle.isVisible = rendered.header != null
+        dayCounterText.text = rendered.subtitle.orEmpty()
+        dayCounterText.isVisible = rendered.subtitle != null
     }
 
     private fun prepareBackupExport() {
@@ -890,6 +922,104 @@ class MainActivity : AppCompatActivity() {
         return "woo-todo-$timestamp.wootodo"
     }
 
+    private fun checkForAppUpdate(manual: Boolean) {
+        if (manual) {
+            Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show()
+        }
+        val now = System.currentTimeMillis()
+        if (!manual && !updatePreferences.shouldAutomaticallyCheck(now)) {
+            return
+        }
+        if (!manual) updatePreferences.markAttempted(now)
+        appUpdateViewModel.check(manual)
+    }
+
+    private fun renderAppUpdateEvent(event: AppUpdateEvent) {
+        if (event.result.isSuccess) {
+            updatePreferences.markCheckCompleted(event.completedAt)
+        }
+        event.result.fold(
+            onSuccess = { updateResult ->
+                when (updateResult) {
+                    AppUpdateCheckResult.Current -> if (event.reportToUser) {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.update_up_to_date, currentVersionLabel()),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    is AppUpdateCheckResult.Available -> {
+                        val release = updateResult.release
+                        if (event.reportToUser || updatePreferences.shouldPromptAutomatically(
+                                release.versionLabel,
+                            )
+                        ) {
+                            if (canShowUpdateDialog()) {
+                                showUpdateDialog(release)
+                            } else {
+                                pendingUpdateRelease = release
+                            }
+                        }
+                    }
+                }
+            },
+            onFailure = {
+                if (event.reportToUser) {
+                    Toast.makeText(this, R.string.update_check_failed, Toast.LENGTH_LONG).show()
+                }
+            }
+        )
+    }
+
+    private fun canShowUpdateDialog(): Boolean =
+        lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+            window.decorView.hasWindowFocus() &&
+            pairingDialog?.isShowing != true &&
+            pairingTerminalDialog?.isShowing != true &&
+            backupProgressDialog?.isShowing != true
+
+    private fun showPendingUpdateIfPossible() {
+        val release = pendingUpdateRelease ?: return
+        if (!canShowUpdateDialog()) return
+        pendingUpdateRelease = null
+        showUpdateDialog(release)
+    }
+
+    private fun showUpdateDialog(release: GitHubRelease) {
+        if (updateDialog?.isShowing == true) return
+        updatePreferences.markPrompted(release.versionLabel)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_available_title, release.versionLabel))
+            .setMessage(getString(R.string.update_available_message, currentVersionLabel()))
+            .setNegativeButton(R.string.update_later, null)
+            .setPositiveButton(R.string.update_download) { _, _ ->
+                openUpdateUrl(release.downloadUrl)
+            }
+            .create()
+        dialog.setOnDismissListener {
+            if (updateDialog === dialog) updateDialog = null
+        }
+        updateDialog = dialog
+        dialog.show()
+        dialog.enableMessageSelection()
+    }
+
+    private fun openUpdateUrl(url: String) {
+        try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addCategory(Intent.CATEGORY_BROWSABLE)
+                },
+            )
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, R.string.update_open_failed, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun currentVersionLabel(): String = BuildConfig.VERSION_NAME.let { version ->
+        if (version.startsWith("v", ignoreCase = true)) version else "v$version"
+    }
+
     private fun handleDeepLinkIntent(intent: Intent) {
         if (intent.action != Intent.ACTION_VIEW ||
             !intent.data?.scheme.equals("wootodo", ignoreCase = true)
@@ -1124,6 +1254,8 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_IMPORT_BACKUP = 3
         private const val MENU_DAY_COUNTER = 4
         private const val MENU_WEBDAV = 5
+        private const val MENU_CHECK_UPDATE = 6
+        private const val MENU_SCAN_MAC_WEBDAV = 7
         private const val BACKUP_MIME_TYPE = "application/octet-stream"
         val BACKUP_MIME_TYPES = arrayOf(
             BACKUP_MIME_TYPE,

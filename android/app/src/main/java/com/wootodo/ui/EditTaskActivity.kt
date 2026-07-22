@@ -59,6 +59,7 @@ class EditTaskActivity : AppCompatActivity() {
         applySystemBarInsets(findViewById(R.id.edit_task_root))
         pageTitle = findViewById(R.id.page_title)
         titleInput = findViewById(R.id.title_input)
+        titleInput.enableEditableTextActions()
         questSpinner = findViewById(R.id.quest_spinner)
         timeSpinner = findViewById(R.id.time_spinner)
         dateButton = findViewById(R.id.date_button)

@@ -11,6 +11,8 @@ struct SyncSettingsView: View {
     @State private var backupConfirmation = ""
     @State private var includeSyncIdentity = false
     @State private var pairingLinkCopied = false
+    @State private var webDavSetupLinkCopied = false
+    @State private var webDavSetupLinkRevealed = false
     @State private var vaultCreationInviteCode = ""
 
     var body: some View {
@@ -25,6 +27,10 @@ struct SyncSettingsView: View {
             if store.connection != nil {
                 await store.refreshDevices()
             }
+        }
+        .onDisappear {
+            webDavSetupLinkRevealed = false
+            webDavSetupLinkCopied = false
         }
         .confirmationDialog(
             "确认撤销这台设备？",
@@ -174,6 +180,50 @@ struct SyncSettingsView: View {
                         }
                         .help("复制同步密钥")
                     }
+                    if let setupLink = webDavStore.setupLinkURL {
+                        if webDavSetupLinkRevealed {
+                            HStack(alignment: .top, spacing: 16) {
+                                QRCodeView(
+                                    payload: setupLink.absoluteString,
+                                    accessibilityLabel: "坚果云配置二维码"
+                                )
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("在 Android 扫码加入")
+                                        .font(.headline)
+                                    Text("二维码和配置链接包含坚果云 WebDAV 应用密码与 Woo Todo 同步密钥，等同完整敏感凭据；不含设备身份。Android 打开时确认目标应用确为 Woo Todo，不要使用不可信扫码器。")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Button {
+                                        copyWebDavSetupLink(setupLink)
+                                    } label: {
+                                        Label("复制完整配置链接", systemImage: "doc.on.doc")
+                                    }
+                                    Text("复制会把完整凭据放入剪贴板；使用后请复制其他内容覆盖。")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    if webDavSetupLinkCopied {
+                                        Label("配置链接已复制，请仅通过私密渠道传递。", systemImage: "checkmark.circle")
+                                            .font(.caption)
+                                            .foregroundStyle(.green)
+                                    }
+                                    Button("隐藏二维码") {
+                                        webDavSetupLinkRevealed = false
+                                        webDavSetupLinkCopied = false
+                                    }
+                                }
+                            }
+                        } else {
+                            Button {
+                                webDavSetupLinkRevealed = true
+                                webDavSetupLinkCopied = false
+                            } label: {
+                                Label("显示 Android 配置二维码", systemImage: "qrcode")
+                            }
+                            Text("二维码含坚果云 WebDAV 应用密码和同步密钥，仅在两台设备旁临时显示。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     HStack {
                         if webDavStore.runtimeSnapshot.isRunning {
                             ProgressView().controlSize(.small)
@@ -190,6 +240,8 @@ struct SyncSettingsView: View {
                             .disabled(webDavStore.runtimeSnapshot.isRunning)
                     }
                     Button("更新账号或应用密码") {
+                        webDavSetupLinkRevealed = false
+                        webDavSetupLinkCopied = false
                         Task { await webDavStore.configure() }
                     }
                     .disabled(webDavStore.isSaving || webDavStore.appPassword.isEmpty)
@@ -218,7 +270,7 @@ struct SyncSettingsView: View {
                     )
                 }
 
-                Text("应用密码请在坚果云“账户信息 → 安全选项 → 第三方应用管理”生成；任务标题只以 AES-256-GCM 密文保存，云端仍可见同步所需元数据。")
+                Text("请先安装并登录坚果云官方客户端；网页端仅用于在“账户信息 → 安全选项 → 第三方应用管理”生成应用密码。Woo Todo 使用内置 WebDAV 客户端直连，任务标题只以 AES-256-GCM 密文保存。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let error = webDavStore.actionErrorMessage {
@@ -337,7 +389,7 @@ struct SyncSettingsView: View {
         case .awaitingClaim(let invitation):
             if let payload = store.pairingQRCodePayload {
                 HStack(alignment: .top, spacing: 22) {
-                    PairingQRCodeView(payload: payload)
+                    QRCodeView(payload: payload, accessibilityLabel: "设备配对二维码")
                     VStack(alignment: .leading, spacing: 10) {
                         Text("等待手机扫描")
                             .font(.headline)
@@ -534,7 +586,7 @@ struct SyncSettingsView: View {
     }
 
     private var backupCard: some View {
-        SettingsCard(title: "离线接力与加密备份", systemImage: "externaldrive.badge.lock") {
+        SettingsCard(title: "加密备份", systemImage: "externaldrive.badge.lock") {
             Text("文件始终端到端加密；忘记口令后无法解密。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -542,28 +594,6 @@ struct SyncSettingsView: View {
                 .textFieldStyle(.roundedBorder)
             SecureField("导出时再次输入口令", text: $backupConfirmation)
                 .textFieldStyle(.roundedBorder)
-
-            HStack {
-                Button("导出离线接力包") {
-                    Task {
-                        await store.exportOfflineRelay(
-                            passphrase: backupPassphrase,
-                            confirmation: backupConfirmation
-                        )
-                    }
-                }
-                .disabled(store.isBackupBusy || backupPassphrase.isEmpty)
-
-                Button("合并离线接力包") {
-                    Task { await store.mergeOfflineRelay(passphrase: backupPassphrase) }
-                }
-                .disabled(store.isBackupBusy || backupPassphrase.isEmpty)
-            }
-            Text("接力包可导入已有任务库，只合并任务和删除记录，不复制同步身份。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Divider()
 
             Toggle("包含当前同步身份（仅用于替换丢失的本机）", isOn: $includeSyncIdentity)
                 .disabled(store.connection == nil)
@@ -592,7 +622,7 @@ struct SyncSettingsView: View {
                         .controlSize(.small)
                 }
             }
-            Text("恢复备份仅允许空白安装；日常跨设备传递请使用离线接力包。")
+            Text("恢复备份仅允许空白安装；双端数据请使用坚果云自动同步。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let message = store.backupStatusMessage {
@@ -639,6 +669,12 @@ struct SyncSettingsView: View {
         pairingLinkCopied = pasteboard.setString(payload, forType: .string)
     }
 
+    private func copyWebDavSetupLink(_ url: URL) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        webDavSetupLinkCopied = pasteboard.setString(url.absoluteString, forType: .string)
+    }
+
 }
 
 private struct SettingsCard<Content: View>: View {
@@ -668,8 +704,9 @@ private struct SettingsCard<Content: View>: View {
     }
 }
 
-private struct PairingQRCodeView: View {
+private struct QRCodeView: View {
     let payload: String
+    let accessibilityLabel: String
 
     var body: some View {
         Group {
@@ -686,7 +723,7 @@ private struct PairingQRCodeView: View {
         .frame(width: 210, height: 210)
         .padding(10)
         .background(.white, in: RoundedRectangle(cornerRadius: 10))
-        .accessibilityLabel("设备配对二维码")
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 

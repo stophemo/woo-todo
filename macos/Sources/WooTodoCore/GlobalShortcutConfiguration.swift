@@ -96,4 +96,24 @@ public enum GlobalShortcutConfiguration {
             owners[chord] = command
         }
     }
+
+    public static func migratingUnchangedDefaults(
+        _ bindings: [GlobalShortcutCommand: GlobalShortcutBinding],
+        from legacyDefaults: [GlobalShortcutCommand: GlobalShortcutBinding],
+        to currentDefaults: [GlobalShortcutCommand: GlobalShortcutBinding]
+    ) -> [GlobalShortcutCommand: GlobalShortcutBinding] {
+        var migrated = bindings
+        for command in GlobalShortcutCommand.allCases {
+            guard bindings[command] == legacyDefaults[command],
+                  let replacement = currentDefaults[command] else {
+                continue
+            }
+            var candidate = migrated
+            candidate[command] = replacement
+            if (try? validate(candidate)) != nil {
+                migrated = candidate
+            }
+        }
+        return migrated
+    }
 }

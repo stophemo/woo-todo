@@ -30,61 +30,6 @@ class SQLiteBackupDatabase(private val database: TaskDatabase) : BackupDatabase 
     }
 
     @Synchronized
-    override fun mergeOfflineRelay(snapshot: BackupSnapshot): OfflineRelayMergeResult {
-        val sqlite = database.writableDatabase
-        sqlite.beginTransaction()
-        return try {
-            val plan = OfflineRelayMergePolicy.plan(
-                local = readTaskSnapshot(sqlite),
-                incoming = snapshot,
-            )
-            plan.tasksToUpsert.forEach { task ->
-                val entity = task.withCanonicalEntityId().toTaskEntity()
-                sqlite.delete(
-                    TABLE_TASKS,
-                    "id = ? COLLATE NOCASE",
-                    arrayOf(entity.id),
-                )
-                check(
-                    sqlite.insertWithOnConflict(
-                        TABLE_TASKS,
-                        null,
-                        entity.toContentValues(),
-                        SQLiteDatabase.CONFLICT_REPLACE,
-                    ) != -1L,
-                ) { "离线接力任务写入失败" }
-                SQLiteLocalMutationRecorder.recordTask(
-                    sqlite,
-                    entity,
-                    SyncOperationKind.UPSERT,
-                )
-            }
-            plan.tombstonesToApply.forEach { tombstone ->
-                val normalized = tombstone.withCanonicalEntityId()
-                sqlite.delete(
-                    TABLE_TASKS,
-                    "id = ? COLLATE NOCASE",
-                    arrayOf(normalized.id),
-                )
-                SQLiteLocalMutationRecorder.recordDeletion(
-                    sqlite,
-                    normalized.id,
-                    normalized.deletedAt,
-                )
-            }
-            val result = OfflineRelayMergeResult(
-                mergedTaskCount = plan.tasksToUpsert.size,
-                mergedTombstoneCount = plan.tombstonesToApply.size,
-                unchangedCount = plan.unchangedCount,
-            )
-            sqlite.setTransactionSuccessful()
-            result
-        } finally {
-            sqlite.endTransaction()
-        }
-    }
-
-    @Synchronized
     override fun <T> inTransaction(block: (BackupRestoreTransaction) -> T): T {
         val sqlite = database.writableDatabase
         sqlite.beginTransaction()

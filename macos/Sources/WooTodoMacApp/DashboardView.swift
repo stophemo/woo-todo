@@ -78,6 +78,7 @@ struct DashboardView: View {
         } detail: {
             detail
                 .navigationTitle(selection.title)
+                .textSelection(.enabled)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {

@@ -24,6 +24,16 @@ final class WebDavSettingsStore: ObservableObject {
     var onRemoteChanges: (() -> Void)?
     let workerSyncConfigured: Bool
 
+    var setupLinkURL: URL? {
+        guard let credentials else { return nil }
+        return try? WebDavSetupLink(
+            username: credentials.username,
+            appPassword: credentials.appPassword,
+            vaultId: credentials.vaultId,
+            vaultKey: Base64URL.encode(credentials.vaultKey)
+        ).url()
+    }
+
     private let logger = Logger(
         subsystem: "io.github.stophemo.woo-todo",
         category: "坚果云同步"

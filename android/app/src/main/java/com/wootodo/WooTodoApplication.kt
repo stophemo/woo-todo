@@ -14,7 +14,6 @@ import com.wootodo.sync.PairingCompletion
 import com.wootodo.sync.PairingException
 import com.wootodo.sync.BackupRestoreResult
 import com.wootodo.sync.BackupTransferService
-import com.wootodo.sync.OfflineRelayMergeResult
 import com.wootodo.sync.SQLiteBackupDatabase
 import com.wootodo.sync.SQLiteSyncStore
 import com.wootodo.sync.SyncApiClient
@@ -180,19 +179,6 @@ class WooTodoApplication : Application() {
         } else {
             SyncJobScheduler.cancel(this)
         }
-        return result
-    }
-
-    suspend fun mergeEncryptedOfflineRelay(
-        data: ByteArray,
-        passphrase: String,
-    ): OfflineRelayMergeResult {
-        val result = withContext(Dispatchers.IO) {
-            backupTransferService.mergeEncryptedOfflineRelay(data, passphrase)
-        }
-        taskStore.invalidateFromSync()
-        TodayWidgetUpdater.updateAllAsync(this)
-        notifyLocalMutation()
         return result
     }
 

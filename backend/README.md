@@ -23,24 +23,87 @@ cd backend
 node --test test/*.test.ts
 npm install
 cp .dev.vars.example .dev.vars
-npx wrangler d1 migrations apply DB --local
+npx wrangler d1 migrations apply woo-todo --local
 npx wrangler dev
 ```
 
-编辑本地 `.dev.vars`，把示例的 `TOKEN_PEPPER` 和 `VAULT_CREATION_INVITE_CODE` 换成符合下述格式的开发值；该文件已被 `.gitignore` 排除。生产部署时先登录 Cloudflare、创建远端 D1，将命令输出的数据库 ID 写入 `wrangler.toml`，再配置两个 Worker secret、执行远端迁移并部署：
+编辑本地 `.dev.vars`，把示例的 `TOKEN_PEPPER` 和 `VAULT_CREATION_INVITE_CODE` 换成符合下述格式的开发值；该文件已被 `.gitignore` 排除。生产部署请按下面的个人免费部署流程操作。
+
+## 面向个人的 Cloudflare 免费部署
+
+这是一条自托管的可选路径，坚果云用户不需要执行本节。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人双端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
+
+### 1. 准备账号和工具
+
+1. 注册或登录 Cloudflare 账号，并确认账号可以使用 Workers 和 D1。无需创建自定义域名；首次使用 `workers.dev` 时按 Wrangler 或 Dashboard 提示启用账号的 Workers 子域名。
+2. 安装 Node.js 22.18 或更高版本，进入仓库后安装部署依赖：
+
+```bash
+cd backend
+npm install
+```
+
+3. 登录并确认 Wrangler 使用的是目标 Cloudflare 账号：
 
 ```bash
 npx wrangler login
+npx wrangler whoami
+```
+
+`wrangler login` 会打开浏览器完成授权；不要把授权令牌写入仓库、日志或截图。
+
+### 2. 创建并绑定 D1
+
+在 `backend/` 目录执行：
+
+```bash
 npx wrangler d1 create woo-todo
+```
+
+命令输出一个 D1 `database_id`。只把这个 UUID 替换到 `backend/wrangler.toml` 现有 `[[d1_databases]]` 块的 `database_id`，保持 `binding = "DB"`、`database_name = "woo-todo"` 和 `migrations_dir = "migrations"` 不变。`database_id` 不是任务数据或密钥，但不要把下方 secrets 填进该文件。
+
+### 3. 配置 Worker secrets
+
+两个 secrets 必须通过交互式命令写入 Cloudflare，不要放入 `wrangler.toml`、`.dev.vars`、Git 或客户端：
+
+```bash
 npx wrangler secret put TOKEN_PEPPER
 npx wrangler secret put VAULT_CREATION_INVITE_CODE
+```
+
+在每条命令的交互提示中粘贴密码管理器生成的值。也可以先在本机用 `openssl rand -hex 32` 生成 `TOKEN_PEPPER`，用 `openssl rand -hex 24` 生成邀请码，再手动粘贴；不要把值作为命令行参数。`TOKEN_PEPPER` 至少 32 个字符且应保持长期不变；更换它会使所有已有设备令牌无法认证，除非恢复原值，否则必须创建新的同步空间。`VAULT_CREATION_INVITE_CODE` 必须是 16 至 256 个无空格可打印 ASCII 字符，是部署级可复用的“创建空间”门禁，不是传统账号或六位配对码；轮换邀请码不会影响已有 vault。
+
+`APP_ENV = "production"`、`VAULT_CREATION_SOURCE_LIMIT = "5"` 和 `VAULT_CREATION_DAILY_LIMIT = "100"` 已在 `wrangler.toml` 的公开 `[vars]` 中，无需另行创建 secret。后两个值可按自托管规模调整，但必须是 1 至 10000 的整数。计数通过 D1 原子 `UPSERT` 完成，因此同一 D1 绑定下的多个 Worker 实例共享额度。该机制能限制数据库写入成本，但无法阻止分布式来源耗尽每日额度所造成的临时拒绝服务；正式公开运营时仍应叠加 Cloudflare WAF 或边缘 Rate Limiting。
+
+### 4. 迁移并部署
+
+先在本地完成轻量检查（可选但建议），再把迁移应用到刚创建的远端 D1：
+
+```bash
+npm test
+npm run typecheck
 npx wrangler d1 migrations apply woo-todo --remote
 npx wrangler deploy
 ```
 
-`TOKEN_PEPPER` 应是密码管理器生成的至少 32 字节随机值。`VAULT_CREATION_INVITE_CODE` 必须是 16 至 256 字符、不含空格的可打印 ASCII，推荐使用密码管理器生成的高熵随机值，再通过安全渠道交给允许创建首个空间的人。两者都只能用 `wrangler secret` 配置，不得写入 `wrangler.toml`、日志或 Git。这个邀请码是部署级可复用门禁，不是一次一用户的账号；需要轮换时重新执行相同的 `secret put` 命令，轮换不会影响已有 vault。Cloudflare 与 D1 的 2026 年免费额度、备份政策及中国大陆网络可达性，需要在正式部署前按官方文档重新核验。
+迁移必须在 `wrangler.toml` 写入真实 `database_id` 后执行。不要用 `--local` 代替 `--remote`，也不要跳过仓库中的迁移文件。`wrangler deploy` 成功后会打印 Worker URL，通常形如 `https://woo-todo-sync.<你的 workers 子域>.workers.dev`；如果命令提示选择或创建 `workers.dev` 子域名，按 Cloudflare 提示完成一次启用。自定义域名不是本项目必需项。
 
-`VAULT_CREATION_SOURCE_LIMIT` 与 `VAULT_CREATION_DAILY_LIMIT` 可按自托管规模调整，必须是 1 至 10000 的整数；默认值分别为 5 和 100。计数通过 D1 原子 `UPSERT` 完成，因此同一 D1 绑定下的多个 Worker 实例共享额度。该机制能限制数据库写入成本，但无法阻止分布式来源耗尽每日额度所造成的临时拒绝服务；正式公开运营时仍应叠加 Cloudflare WAF 或边缘 Rate Limiting。
+### 5. 验证并连接双端
+
+把部署输出的根地址（不要附加 `/v1`）保存到密码管理器或私密笔记，并先检查健康接口：
+
+```bash
+curl -fsS 'https://woo-todo-sync.example.workers.dev/health'
+```
+
+把示例地址替换为部署命令输出的实际 URL；响应应包含 `"ok": true`。随后按 [macOS 与 Android 可选在线配对同步](../docs/PAIRING.md) 操作：在 Mac 的“同步”页填写 Worker 根地址和 `VAULT_CREATION_INVITE_CODE`，创建同步空间；再生成二维码，让 Android 用系统二维码扫描器加入，逐位核对六位码后确认。邀请码只随创建请求发送，客户端不会保存；二维码和配对 secret 只通过自己的私密渠道传递。
+
+### 免费层和数据边界
+
+- Cloudflare 免费计划的 Workers 请求、D1 存储/读写、日志和网络政策不是本项目能保证的固定额度；以部署时 Cloudflare Dashboard 的当前定价和用量页为准，设置用量告警，避免误升级或产生超额费用。
+- 项目自身还限制每个 vault 最多 4 台未撤销设备、100000 条操作和 32 MiB 解码后密文，并限制创建频率；这些是应用保护阈值，不等于 Cloudflare 免费额度。
+- Worker 和 D1 永远只接收 AES-256-GCM 密文及必要元数据。`TOKEN_PEPPER` 与创建邀请码只存 Cloudflare Secret；任务标题、备份口令、设备令牌明文和 `vault_key` 不得写入服务端日志、环境变量或文件。
+- 关闭或删除 Worker 不会删除客户端本地 SQLite；但服务端不可达期间会积压 outbox，重新部署同一 D1 和 secrets 后才能继续同步。
 
 ## 统一响应
 

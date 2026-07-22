@@ -3,14 +3,14 @@ import Testing
 @testable import WooTodoCore
 
 struct GlobalShortcutConfigurationTests {
-    @Test func displayValueUsesStableModifierOrder() {
+    @Test func displayValueUsesStableModifierOrderForNumberedShortcut() {
         let binding = GlobalShortcutBinding(
-            keyCode: 45,
+            keyCode: 18,
             modifiers: [.shift, .option],
-            keyLabel: "N"
+            keyLabel: "1"
         )
 
-        #expect(binding.displayValue == "⇧⌥N")
+        #expect(binding.displayValue == "⇧⌥1")
     }
 
     @Test func rejectsShortcutWithoutModifier() {
@@ -73,5 +73,64 @@ struct GlobalShortcutConfigurationTests {
         )
 
         #expect(decoded == expected)
+    }
+
+    @Test func migratesOnlyBindingsThatStillMatchLegacyDefaults() {
+        let legacy = defaults(labels: ["N", "L", "T", "Space"], keyCodes: [45, 37, 17, 49])
+        let current = defaults(labels: ["1", "2", "3", "4"], keyCodes: [18, 19, 20, 21])
+        var persisted = legacy
+        persisted[.quickAdd] = GlobalShortcutBinding(
+            keyCode: 6,
+            modifiers: [.command, .option],
+            keyLabel: "Z"
+        )
+
+        let migrated = GlobalShortcutConfiguration.migratingUnchangedDefaults(
+            persisted,
+            from: legacy,
+            to: current
+        )
+
+        #expect(migrated[.quickAdd] == persisted[.quickAdd])
+        #expect(migrated[.toggleTaskPanel] == current[.toggleTaskPanel])
+        #expect(migrated[.toggleAlwaysOnTop] == current[.toggleAlwaysOnTop])
+        #expect(migrated[.toggleClickThrough] == current[.toggleClickThrough])
+    }
+
+    @Test func keepsLegacyBindingWhenItsReplacementConflictsWithCustomization() throws {
+        let legacy = defaults(labels: ["N", "L", "T", "Space"], keyCodes: [45, 37, 17, 49])
+        let current = defaults(labels: ["1", "2", "3", "4"], keyCodes: [18, 19, 20, 21])
+        var persisted = legacy
+        persisted[.quickAdd] = current[.toggleTaskPanel]
+
+        let migrated = GlobalShortcutConfiguration.migratingUnchangedDefaults(
+            persisted,
+            from: legacy,
+            to: current
+        )
+
+        #expect(migrated[.quickAdd] == current[.toggleTaskPanel])
+        #expect(migrated[.toggleTaskPanel] == legacy[.toggleTaskPanel])
+        try GlobalShortcutConfiguration.validate(migrated)
+    }
+
+    private func defaults(
+        labels: [String],
+        keyCodes: [UInt32]
+    ) -> [GlobalShortcutCommand: GlobalShortcutBinding] {
+        let commands = GlobalShortcutCommand.allCases
+        return Dictionary(uniqueKeysWithValues: commands.indices.map { index in
+            let modifiers: GlobalShortcutModifiers = index == 3 && labels[index] == "Space"
+                ? [.control, .option]
+                : [.shift, .option]
+            return (
+                commands[index],
+                GlobalShortcutBinding(
+                    keyCode: keyCodes[index],
+                    modifiers: modifiers,
+                    keyLabel: labels[index]
+                )
+            )
+        })
     }
 }

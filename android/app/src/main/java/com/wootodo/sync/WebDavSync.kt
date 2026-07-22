@@ -35,6 +35,27 @@ object WebDavEndpointPolicy {
     }.getOrDefault(false)
 }
 
+internal object WebDavCredentialPolicy {
+    private const val MAX_USERNAME_LENGTH = 320
+    private const val MAX_APP_PASSWORD_LENGTH = 256
+    private val vaultIdPattern = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+    private val identifierPattern = Regex("^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
+
+    fun isValidUsername(value: String): Boolean =
+        value.codePointCount(0, value.length) in 1..MAX_USERNAME_LENGTH &&
+            value.none(Char::isWhitespace) && value.none(Char::isISOControl)
+
+    fun isValidAppPassword(value: String): Boolean =
+        value.codePointCount(0, value.length) in 1..MAX_APP_PASSWORD_LENGTH &&
+            value.none(Char::isISOControl)
+
+    fun isValidVaultId(value: String): Boolean = vaultIdPattern.matches(value)
+
+    fun isValidDeviceId(value: String): Boolean = identifierPattern.matches(value)
+
+    fun isValidVaultKey(value: ByteArray): Boolean = value.size == Aes256Gcm.KEY_BYTES
+}
+
 data class WebDavCredentials(
     val endpoint: String = WebDavEndpointPolicy.ENDPOINT,
     val username: String,
@@ -45,10 +66,11 @@ data class WebDavCredentials(
 ) {
     fun validate() {
         if (!WebDavEndpointPolicy.isAllowed(endpoint) ||
-            username.isEmpty() || username.any(Char::isWhitespace) || username.any(Char::isISOControl) ||
-            appPassword.isEmpty() || appPassword.any(Char::isISOControl) ||
-            !VAULT_ID.matches(vaultId) || !IDENTIFIER.matches(deviceId) ||
-            vaultKey.size != Aes256Gcm.KEY_BYTES
+            !WebDavCredentialPolicy.isValidUsername(username) ||
+            !WebDavCredentialPolicy.isValidAppPassword(appPassword) ||
+            !WebDavCredentialPolicy.isValidVaultId(vaultId) ||
+            !WebDavCredentialPolicy.isValidDeviceId(deviceId) ||
+            !WebDavCredentialPolicy.isValidVaultKey(vaultKey)
         ) {
             throw WebDavException.InvalidCredentials()
         }
@@ -75,10 +97,6 @@ data class WebDavCredentials(
         deviceId,
     ).hashCode() + vaultKey.contentHashCode()
 
-    private companion object {
-        val VAULT_ID = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-        val IDENTIFIER = Regex("^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
-    }
 }
 
 class AndroidWebDavCredentialsStore(context: Context) {

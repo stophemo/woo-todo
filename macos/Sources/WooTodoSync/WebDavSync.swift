@@ -66,8 +66,8 @@ public struct WebDavCredentials: Codable, Equatable, Sendable {
 
     public func validate() throws {
         guard WebDavEndpointPolicy.isAllowed(endpoint),
-              !username.isEmpty,
-              !appPassword.isEmpty,
+              (1...320).contains(username.unicodeScalars.count),
+              (1...256).contains(appPassword.unicodeScalars.count),
               username.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
               username.rangeOfCharacter(from: .controlCharacters) == nil,
               appPassword.rangeOfCharacter(from: .controlCharacters) == nil,

@@ -125,7 +125,7 @@
               <span><i class="status-dot status-green"></i>置顶</span>
               <span><i class="status-dot status-purple"></i>毛玻璃</span>
               <span><i class="status-dot"></i>可交互</span>
-              <kbd>⇧⌥N</kbd>
+              <kbd>⇧⌥1</kbd>
             </footer>
           </section>
 
@@ -197,9 +197,9 @@
             </div>
             <ol>
               <li>启动后看屏幕右上角菜单栏的清单图标；应用不会出现在 Dock。</li>
-              <li>在任何应用中按 <kbd>⇧⌥N</kbd> 唤起快速新增框；<kbd>Enter</kbd> 创建今日主线任务，<kbd>Esc</kbd> 取消。</li>
-              <li><kbd>⇧⌥L</kbd> 显隐任务板；<kbd>⇧⌥T</kbd> 切换置顶，菜单内也可开关“毛玻璃”并选择日常不透明度。</li>
-              <li><kbd>⌃⌥Space</kbd> 切换鼠标穿透；穿透后自动降到 20% 不透明度，再按一次恢复并聚焦。</li>
+              <li>在任何应用中按 <kbd>⇧⌥1</kbd> 唤起快速新增框；<kbd>Enter</kbd> 创建今日主线任务，<kbd>Esc</kbd> 取消。</li>
+              <li><kbd>⇧⌥2</kbd> 显隐任务板；<kbd>⇧⌥3</kbd> 切换置顶，菜单内也可开关“毛玻璃”并选择日常不透明度。</li>
+              <li><kbd>⇧⌥4</kbd> 切换鼠标穿透；穿透后自动降到 20% 不透明度，再按一次恢复并聚焦。</li>
             </ol>
             <p class="quickstart-note">四项全局快捷键都可在“任务详情与统计 → 快捷键”中自定义；发生冲突时也可从菜单栏执行对应操作。</p>
           </article>
@@ -229,12 +229,12 @@
               </div>
             </div>
             <ol>
-              <li>在坚果云网页“账户信息 → 安全选项 → 第三方应用管理”创建应用密码，不要填写网页登录密码。</li>
-              <li>Android 打开“更多 → 坚果云自动同步”；Mac 打开“任务详情与统计 → 同步 → 坚果云自动同步”。</li>
-              <li>首台设备生成同步空间名和同步密钥；另一端填写同一账号、应用密码、空间名和密钥。</li>
-              <li>保存后本地改动会自动同步；网络不可用时仍可编辑，恢复网络后自动合并。</li>
+              <li>先安装并登录坚果云官方客户端确认账号可用，再在网页“账户信息 → 安全选项 → 第三方应用管理”创建应用密码；网页端只用于安全设置。</li>
+              <li>Mac 打开“任务详情与统计 → 同步 → 坚果云自动同步”，填写账号和应用密码，保存并等待连接成功。</li>
+              <li>连接成功后二维码默认隐藏；在 Mac 显式点击“显示 Android 配置二维码”，再用 Android 系统扫码器扫描。</li>
+              <li>选择“用 Woo Todo 打开”，确认预填配置并保存；Android 会生成本机独立设备 ID。</li>
             </ol>
-            <p class="quickstart-warning"><strong>任务先写入本地，云端只保存 AES-256-GCM 密文。</strong> 坚果云不需要自建服务器或额外服务器费用；同步失败不会阻塞任务操作。</p>
+            <p class="quickstart-warning"><strong>配置二维码严格包含 <code>username</code>、<code>appPassword</code>、<code>vaultId</code> 与 <code>vaultKey</code>，等同坚果云 WebDAV 与 Woo Todo 的完整敏感凭据。</strong> 它不含固定端点或 <code>deviceId</code>，只能在两台设备近旁展示，用完立即隐藏；Woo Todo 不会上传或记录二维码和完整配置链接。任务先写入本地，坚果云只保存 AES-256-GCM 密文。</p>
             <a href="https://github.com/stophemo/woo-todo/blob/main/docs/JIANGUOYUN_SYNC.md" target="_blank" rel="noreferrer">查看坚果云同步与通知设置</a>
           </article>
         </div>
@@ -261,7 +261,7 @@
             <span class="feature-index">B</span>
             <div>
               <h3>本地优先，网络不挡路</h3>
-              <p>新增、修改、完成和排序只依赖本地 SQLite。跨端可传递加密文件，断网时照常工作。</p>
+              <p>新增、修改、完成和排序只依赖本地 SQLite。断网时照常工作，恢复联网后继续自动同步。</p>
             </div>
             <span class="feature-tag">离线可用</span>
           </article>
@@ -276,8 +276,8 @@
           <article class="feature-row">
             <span class="feature-index">D</span>
             <div>
-              <h3>无账号接力，加密备份</h3>
-              <p>默认不注册账号、不连接服务器。<code>.wootodo</code> 全程加密，可手动保存到自己的网盘或本地介质。</p>
+              <h3>无传统账号，加密备份</h3>
+              <p>默认不注册账号、不连接服务器。恢复备份使用加密的 <code>.wootodo</code>，可手动保存到自己的网盘或本地介质。</p>
             </div>
             <span class="feature-tag">自己掌控</span>
           </article>
@@ -307,7 +307,7 @@
           </div>
           <div class="platform-row" role="row">
             <span role="cell">快捷操作</span>
-            <strong role="cell">⇧⌥N 新增、编辑、完成、排序</strong>
+            <strong role="cell">⇧⌥1 快速新增、⇧⌥2 显隐</strong>
             <strong role="cell">查看、勾选；编辑打开 App</strong>
           </div>
           <div class="platform-row" role="row">
@@ -324,7 +324,7 @@
         <div class="security-copy">
           <p class="section-kicker">本地优先，坚果云密文自动同步</p>
           <h2 id="security-title">任务明文只留在设备里</h2>
-          <p>两端始终先读写本地 SQLite。启用坚果云后，每次变更会写成 AES-256-GCM 密文对象并自动同步，云端只能看到同步所需的实体标识、逻辑时钟和密文大小等元数据。完全离线时可用加密离线接力；自建 Worker + D1 也是可选在线方案。</p>
+          <p>两端始终先读写本地 SQLite。启用坚果云后，每次变更会写成 AES-256-GCM 密文对象并自动同步，云端只能看到同步所需的实体标识、逻辑时钟和密文大小等元数据。暂时断网时改动留在本地，恢复联网后继续同步；自建 Worker + D1 也是可选在线方案。</p>
           <a href="https://github.com/stophemo/woo-todo/blob/main/docs/SYNC_AND_SECURITY.md" target="_blank" rel="noreferrer">查看同步与安全设计</a>
         </div>
         <div class="sync-flow" aria-label="坚果云加密自动同步流程">
@@ -391,8 +391,11 @@
         </div>
         <aside class="deployment-note">
           <strong>关于跨端同步</strong>
-          <p>推荐使用坚果云 WebDAV 密文自动同步，不需要自建服务器、代理或额外服务器费用。完全离线时可用加密接力包；也可自行部署 Cloudflare Workers + D1 作为可选在线方案。</p>
-          <a href="https://github.com/stophemo/woo-todo/blob/main/docs/JIANGUOYUN_SYNC.md">查看坚果云同步与通知设置</a>
+          <p>推荐使用坚果云 WebDAV 密文自动同步，不需要自建服务器、代理或额外服务器费用；也可自行部署 Cloudflare Workers + D1 作为可选在线方案。自建路径无需购买域名，按当前免费计划的额度可先服务个人双端，但 Cloudflare 的额度、计费与地区网络政策会变化。断网期间两端仍可独立使用，恢复联网后再同步积压变更。</p>
+          <div class="deployment-links">
+            <a href="https://github.com/stophemo/woo-todo/blob/main/docs/JIANGUOYUN_SYNC.md">坚果云配置</a>
+            <a href="https://github.com/stophemo/woo-todo/blob/main/backend/README.md">Cloudflare 免费部署</a>
+          </div>
         </aside>
       </div>
     </section>

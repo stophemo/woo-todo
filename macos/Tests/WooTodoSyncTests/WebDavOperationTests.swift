@@ -79,6 +79,36 @@ struct WebDavOperationTests {
         }
     }
 
+    @Test("坚果云凭据统一限制账号与应用密码长度")
+    func credentialLengthLimits() throws {
+        func credentials(username: String, appPassword: String) -> WebDavCredentials {
+            WebDavCredentials(
+                username: username,
+                appPassword: appPassword,
+                vaultId: "personal-vault",
+                deviceId: "device-macos-01",
+                vaultKey: Data(repeating: 0, count: AES256GCM.keyByteCount)
+            )
+        }
+
+        try credentials(
+            username: String(repeating: "u", count: 320),
+            appPassword: String(repeating: "p", count: 256)
+        ).validate()
+        #expect(throws: WebDavError.invalidCredentials) {
+            try credentials(
+                username: String(repeating: "u", count: 321),
+                appPassword: "password"
+            ).validate()
+        }
+        #expect(throws: WebDavError.invalidCredentials) {
+            try credentials(
+                username: "user@example.com",
+                appPassword: String(repeating: "p", count: 257)
+            ).validate()
+        }
+    }
+
     @Test("PROPFIND 支持 DAV 命名空间、绝对路径与百分号编码")
     func propfindHrefParsing() throws {
         let source = """

@@ -1177,6 +1177,14 @@ strong {
   white-space: nowrap;
 }
 
+.deployment-links {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  align-items: flex-start;
+  justify-self: end;
+}
+
 .site-footer {
   padding: 43px 0;
   background: var(--ink);
@@ -1428,7 +1436,7 @@ strong {
     grid-template-columns: 145px minmax(0, 1fr);
   }
 
-  .deployment-note a {
+  .deployment-links {
     grid-column: 2;
     justify-self: start;
   }
@@ -1626,8 +1634,9 @@ strong {
     gap: 8px;
   }
 
-  .deployment-note a {
+  .deployment-links {
     grid-column: 1;
+    justify-self: start;
     margin-top: 7px;
   }
 

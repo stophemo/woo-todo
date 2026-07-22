@@ -40,6 +40,14 @@
                     android:host="pair"
                     android:scheme="wootodo" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="webdav"
+                    android:scheme="wootodo" />
+            </intent-filter>
         </activity>
 
         <receiver
@@ -55,7 +63,7 @@
 
         <service
             android:name=".widget.TodayWidgetService"
-            android:exported="false"
+            android:exported="true"
             android:permission="android.permission.BIND_REMOTEVIEWS" />
 
         <receiver
@@ -82,15 +90,6 @@
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.files"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
     </application>
 
 </manifest>

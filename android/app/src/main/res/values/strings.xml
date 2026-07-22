@@ -78,13 +78,18 @@
     <string name="day_counter_title_hint">例如：来到西安 remake</string>
     <string name="day_counter_start_date">起始日期</string>
     <string name="webdav_settings_title">坚果云自动同步</string>
-    <string name="webdav_settings_message">使用坚果云账号邮箱与“第三方应用管理”中生成的应用密码。两端的同步空间名和同步密钥必须完全相同。</string>
+    <string name="webdav_settings_message">先安装并登录坚果云官方客户端确认账号可用；坚果云网页仅用于在“第三方应用管理”生成应用密码。Woo Todo 内置 WebDAV 会直接连接坚果云，两端的同步空间名和同步密钥必须完全相同。</string>
+    <string name="webdav_setup_link_message">已从 Mac 导入坚果云账号、WebDAV 应用密码、同步空间名和同步密钥。此二维码或链接等同于坚果云 WebDAV 与 Woo Todo 的完整敏感凭据；自定义链接无法由 Android 验证应用归属，只应在两台设备近旁使用，并确认扫码结果由 Woo Todo 打开。确认来源后保存，Android 会使用本机独立的设备 ID。需要为手机单独撤销权限时，可先把应用密码替换为手机专用密码。</string>
     <string name="webdav_username_hint">坚果云账号邮箱</string>
     <string name="webdav_app_password_hint">坚果云应用密码</string>
     <string name="webdav_vault_id_hint">同步空间名（两端相同）</string>
     <string name="webdav_vault_key_hint">同步密钥（两端相同）</string>
     <string name="webdav_saved">坚果云配置已保存，正在同步</string>
     <string name="webdav_invalid">坚果云配置无效</string>
+    <string name="webdav_link_received">已识别 Mac 的坚果云配置，请确认后保存</string>
+    <string name="webdav_link_invalid_title">无法导入坚果云配置</string>
+    <string name="webdav_link_invalid_message">二维码或链接格式无效、字段不完整或密钥不符合要求。请在 Mac 上重新生成，且不要手动修改链接。</string>
+    <string name="deep_link_invalid">Woo Todo 链接类型无效</string>
     <string name="confirm">确定</string>
     <string name="pairing_link_received">已识别配对链接，正在建立安全连接</string>
     <string name="pairing_link_invalid">配对链接格式无效</string>
@@ -101,7 +106,7 @@
     <string name="sync_unpaired">尚未连接 · 可在“更多”配置坚果云，或扫描 Mac 配对二维码</string>
     <string name="sync_pairing_help">配对</string>
     <string name="pairing_help_title">如何连接 Mac</string>
-    <string name="pairing_help_message">无需自建服务时，打开“更多 → 坚果云自动同步”，填写坚果云邮箱和应用密码；两端使用相同的同步空间名与同步密钥。\n\n也可以继续使用自建 Worker：在 Mac 同步页创建空间，再用手机扫描配对二维码。</string>
+    <string name="pairing_help_message">无需自建服务时，可扫描 Mac 坚果云设置中的配置二维码并确认保存，或打开“更多 → 坚果云自动同步”手动填写。配置二维码包含坚果云 WebDAV 应用密码与 Woo Todo 同步密钥，只在两台设备近旁展示；坚果云网页仅负责生成应用密码，Woo Todo 内置 WebDAV 会直接连接坚果云。\n\n也可以继续使用自建 Worker：在 Mac 同步页创建空间，再用手机扫描配对二维码。</string>
     <string name="sync_ready">已连接 · 等待同步</string>
     <string name="sync_running">正在同步…</string>
     <string name="sync_succeeded">同步完成 · 上传 %1$d，下载 %2$d</string>
@@ -120,7 +125,7 @@
     <string name="backup_writing">正在写入备份…</string>
     <string name="backup_reading">正在读取备份…</string>
     <string name="backup_restoring">正在恢复任务…</string>
-    <string name="backup_export_succeeded">备份已保存，可手动上传到夸克网盘</string>
+    <string name="backup_export_succeeded">备份已保存</string>
     <string name="backup_export_interrupted">备份准备已中断，请重新导出</string>
     <string name="backup_open_output_failed">无法打开所选保存位置</string>
     <string name="backup_open_input_failed">无法读取所选备份文件</string>
@@ -132,17 +137,4 @@
     <string name="backup_import_unavailable_title">当前不能导入</string>
     <string name="backup_failed_title">备份操作未完成</string>
     <string name="backup_failed_message">操作未完成，本地任务与同步身份未被覆盖。</string>
-    <string name="offline_relay_export">导出离线接力包</string>
-    <string name="offline_relay_import">导入离线接力包</string>
-    <string name="offline_relay_export_title">导出离线接力包</string>
-    <string name="offline_relay_export_message">接力包包含全部任务和删除记录，不包含同步身份。它使用 AES-256-GCM 加密，可通过 U 盘、局域网文件传输或系统分享交给 Mac。</string>
-    <string name="offline_relay_share">系统分享</string>
-    <string name="offline_relay_share_title">发送 Woo Todo 离线接力包</string>
-    <string name="offline_relay_cache_failed">无法准备加密接力文件</string>
-    <string name="offline_relay_export_succeeded">离线接力包已保存，可在另一台设备中合并</string>
-    <string name="offline_relay_import_title">合并离线接力包</string>
-    <string name="offline_relay_import_message">合并不会清空本机任务，也不会复制同步身份。删除记录永久优先，重复导入不会产生重复任务。</string>
-    <string name="offline_relay_merge">合并</string>
-    <string name="offline_relay_merging">正在合并离线接力包…</string>
-    <string name="offline_relay_import_succeeded">离线接力完成：更新 %1$d 条任务、%2$d 条删除记录，%3$d 条无需变更</string>
 </resources>

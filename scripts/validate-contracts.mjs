@@ -5,11 +5,13 @@ const files = [
   "shared/schema/task.schema.json",
   "shared/schema/sync.schema.json",
   "shared/schema/webdav-operation.schema.json",
+  "shared/schema/webdav-setup-link.schema.json",
   "shared/schema/backup.schema.json",
   "shared/schema/backup-plaintext.schema.json",
   "shared/fixtures/period-cases.json",
   "shared/fixtures/sync-request.json",
   "shared/fixtures/webdav-operation.json",
+  "shared/fixtures/webdav-setup-link.json",
   "shared/fixtures/crypto-vectors.json",
   "shared/fixtures/task-payloads.json",
   "shared/fixtures/task-validation-cases.json",
@@ -77,6 +79,27 @@ if (
   || webDavOperation.lamport < 1
 ) {
   throw new Error("WebDAV 操作对象元数据无效");
+}
+
+const webDavSetupLink = documents.get("shared/fixtures/webdav-setup-link.json");
+const setupKeys = Object.keys(webDavSetupLink).sort().join(",");
+if (
+  setupKeys !== "appPassword,username,v,vaultId,vaultKey"
+  || webDavSetupLink.v !== "1"
+  || typeof webDavSetupLink.username !== "string"
+  || webDavSetupLink.username.length < 1
+  || webDavSetupLink.username.length > 320
+  || /[\s\u0000-\u001f\u007f-\u009f]/u.test(webDavSetupLink.username)
+  || typeof webDavSetupLink.appPassword !== "string"
+  || webDavSetupLink.appPassword.length < 1
+  || webDavSetupLink.appPassword.length > 256
+  || /[\u0000-\u001f\u007f-\u009f]/u.test(webDavSetupLink.appPassword)
+  || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(webDavSetupLink.vaultId)
+  || !/^[A-Za-z0-9_-]{43}$/u.test(webDavSetupLink.vaultKey)
+  || Object.hasOwn(webDavSetupLink, "deviceId")
+  || Object.hasOwn(webDavSetupLink, "endpoint")
+) {
+  throw new Error("坚果云配置深链 fixture 无效");
 }
 if (Buffer.from(webDavOperation.nonce, "base64url").byteLength !== 12) {
   throw new Error("WebDAV 操作对象 nonce 不是 12 字节");

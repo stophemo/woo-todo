@@ -43,6 +43,15 @@ class InsightsActivity : AppCompatActivity() {
         timeTypeCounts = findViewById(R.id.time_type_counts)
         questLineCounts = findViewById(R.id.quest_line_counts)
         recentHistoryList = findViewById(R.id.recent_history_list)
+        listOf(
+            endedRate,
+            mainRate,
+            dailyTrend,
+            weeklyTrend,
+            monthlyTrend,
+            timeTypeCounts,
+            questLineCounts,
+        ).forEach { it.enableReadOnlyTextSelection() }
 
         val repository = (application as WooTodoApplication).taskRepository
         lifecycleScope.launch {
@@ -136,6 +145,7 @@ class InsightsActivity : AppCompatActivity() {
         text = value
         textSize = 16f
         setPadding(0, 14, 0, 14)
+        enableReadOnlyTextSelection()
     }
 
     private companion object {

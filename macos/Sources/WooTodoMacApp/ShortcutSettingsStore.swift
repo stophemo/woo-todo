@@ -9,6 +9,29 @@ final class ShortcutSettingsStore: ObservableObject {
 
     static let defaultBindings: [GlobalShortcutCommand: GlobalShortcutBinding] = [
         .quickAdd: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_1),
+            modifiers: [.shift, .option],
+            keyLabel: "1"
+        ),
+        .toggleTaskPanel: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_2),
+            modifiers: [.shift, .option],
+            keyLabel: "2"
+        ),
+        .toggleAlwaysOnTop: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_3),
+            modifiers: [.shift, .option],
+            keyLabel: "3"
+        ),
+        .toggleClickThrough: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_4),
+            modifiers: [.shift, .option],
+            keyLabel: "4"
+        ),
+    ]
+
+    private static let legacyDefaultBindings: [GlobalShortcutCommand: GlobalShortcutBinding] = [
+        .quickAdd: GlobalShortcutBinding(
             keyCode: UInt32(kVK_ANSI_N),
             modifiers: [.shift, .option],
             keyLabel: "N"
@@ -140,7 +163,16 @@ final class ShortcutSettingsStore: ObservableObject {
               (try? GlobalShortcutConfiguration.validate(decoded)) != nil else {
             return defaultBindings
         }
-        return decoded
+        // 逐项迁移仍为旧默认值的组合，用户自定义过的组合保持不变。
+        let migrated = GlobalShortcutConfiguration.migratingUnchangedDefaults(
+            decoded,
+            from: legacyDefaultBindings,
+            to: defaultBindings
+        )
+        if migrated != decoded, let migratedData = try? JSONEncoder().encode(migrated) {
+            defaults.set(migratedData, forKey: defaultsKey)
+        }
+        return migrated
     }
 }
 

@@ -974,61 +974,6 @@ struct SQLiteSyncIntegrationTests {
         #expect(restored.updatedAt != restored.completedAt)
     }
 
-    @Test("离线接力合并现有库会写入 outbox 且重复导入不重复入队")
-    func offlineRelayMergeIsAtomicAndIdempotent() async throws {
-        let configuration = syncConfiguration()
-        let repository = try SQLiteTaskRepository(
-            path: ":memory:",
-            syncConfiguration: configuration
-        )
-        let createdAt = date("2026-07-20T08:00:00+08:00")
-        let taskID = UUID()
-        let deletedID = UUID()
-        let local = try makeTask(
-            id: taskID,
-            title: "Mac 旧标题",
-            createdAt: createdAt
-        )
-        let toDelete = try makeTask(
-            id: deletedID,
-            title: "接力后删除",
-            createdAt: createdAt.addingTimeInterval(1),
-            sortIndex: 1
-        )
-        try repository.save([local, toDelete])
-        let baseline = try await repository.pendingOperations(limit: 50)
-        try await repository.acknowledgeOperations(opIds: baseline.map(\.opId))
-
-        let source = try SQLiteTaskRepository(path: ":memory:")
-        let incoming = try makeTask(
-            id: taskID,
-            title: "手机端更新",
-            createdAt: createdAt,
-            updatedAt: createdAt.addingTimeInterval(60)
-        )
-        try source.save([incoming, toDelete])
-        try source.delete(id: deletedID)
-        let relay = try source.makeBackupContents()
-
-        let first = try repository.mergeOfflineRelayPayloads(
-            relay.tasks,
-            tombstones: relay.tombstones
-        )
-        let operationsAfterFirstMerge = try await repository.pendingOperations(limit: 50)
-        let second = try repository.mergeOfflineRelayPayloads(
-            relay.tasks,
-            tombstones: relay.tombstones
-        )
-
-        #expect(first.mergedTaskCount == 1)
-        #expect(first.mergedTombstoneCount == 1)
-        #expect(second.mergedTaskCount == 0)
-        #expect(second.mergedTombstoneCount == 0)
-        #expect(second.unchangedCount == 2)
-        #expect(try repository.fetchAll().map(\.title) == ["手机端更新"])
-        #expect(operationsAfterFirstMerge.map(\.kind) == [.upsert, .delete])
-        #expect(try await repository.pendingOperations(limit: 50) == operationsAfterFirstMerge)
-    }
 }
 
 private func syncConfiguration() -> SQLiteSyncConfiguration {

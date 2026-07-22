@@ -65,7 +65,6 @@ private enum BackupUIError: LocalizedError {
     case destinationNotEmpty
     case credentialsAlreadyStored
     case syncRecoveryFailed(String)
-    case relayContainsSyncIdentity
 
     var errorDescription: String? {
         switch self {
@@ -74,15 +73,8 @@ private enum BackupUIError: LocalizedError {
         case .credentialsAlreadyStored: "Keychain 已有同步身份，不能覆盖导入"
         case .syncRecoveryFailed(let message):
             "任务已恢复到本地，但同步身份恢复失败：\(message)"
-        case .relayContainsSyncIdentity:
-            "离线接力包不能包含同步身份，请重新导出且不要勾选“包含同步身份”"
         }
     }
-}
-
-private enum BackupExportPurpose {
-    case offlineRelay
-    case recovery(includeSyncIdentity: Bool)
 }
 
 @MainActor
@@ -300,49 +292,14 @@ final class SyncSettingsStore: ObservableObject {
         confirmation: String,
         includeSyncIdentity: Bool
     ) async {
-        await exportPackage(
-            passphrase: passphrase,
-            confirmation: confirmation,
-            purpose: .recovery(includeSyncIdentity: includeSyncIdentity)
-        )
-    }
-
-    func exportOfflineRelay(
-        passphrase: String,
-        confirmation: String
-    ) async {
-        await exportPackage(
-            passphrase: passphrase,
-            confirmation: confirmation,
-            purpose: .offlineRelay
-        )
-    }
-
-    private func exportPackage(
-        passphrase: String,
-        confirmation: String,
-        purpose: BackupExportPurpose
-    ) async {
         guard !isBackupBusy else { return }
         guard passphrase == confirmation else {
             actionErrorMessage = BackupUIError.passphraseMismatch.localizedDescription
             return
         }
-        let includeSyncIdentity: Bool
-        let isOfflineRelay: Bool
-        switch purpose {
-        case .offlineRelay:
-            includeSyncIdentity = false
-            isOfflineRelay = true
-        case .recovery(let shouldIncludeIdentity):
-            includeSyncIdentity = shouldIncludeIdentity
-            isOfflineRelay = false
-        }
         let panel = NSSavePanel()
-        panel.title = isOfflineRelay ? "导出 Woo Todo 离线接力包" : "导出 Woo Todo 加密备份"
-        panel.nameFieldStringValue = isOfflineRelay
-            ? "WooTodo-Relay-\(Self.backupDateKey()).wootodo"
-            : "WooTodo-\(Self.backupDateKey()).wootodo"
+        panel.title = "导出 Woo Todo 加密备份"
+        panel.nameFieldStringValue = "WooTodo-\(Self.backupDateKey()).wootodo"
         panel.canCreateDirectories = true
         if let type = UTType(filenameExtension: "wootodo") {
             panel.allowedContentTypes = [type]
@@ -369,53 +326,11 @@ final class SyncSettingsStore: ObservableObject {
                 try BackupPackageCodec.seal(snapshot, passphrase: passphrase)
             }.value
             try data.write(to: destination, options: .atomic)
-            if isOfflineRelay {
-                backupStatusMessage = "离线接力包已导出：\(backup.tasks.count) 条任务、\(backup.tombstones.count) 条删除记录。可通过 U 盘、局域网文件传输或系统分享交给另一台设备。"
-            } else {
-                let identitySummary = storedCredentials == nil ? "不含同步身份" : "包含同步身份"
-                backupStatusMessage = "已导出 \(backup.tasks.count) 条任务和 \(backup.tombstones.count) 条删除记录（\(identitySummary)）。请单独保管文件与口令。"
-            }
+            let identitySummary = storedCredentials == nil ? "不含同步身份" : "包含同步身份"
+            backupStatusMessage = "已导出 \(backup.tasks.count) 条任务和 \(backup.tombstones.count) 条删除记录（\(identitySummary)）。请单独保管文件与口令。"
         } catch {
             actionErrorMessage = error.localizedDescription
             logger.error("导出加密备份失败：\(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    func mergeOfflineRelay(passphrase: String) async {
-        guard !isBackupBusy else { return }
-        let panel = NSOpenPanel()
-        panel.title = "合并 Woo Todo 离线接力包"
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        if let type = UTType(filenameExtension: "wootodo") {
-            panel.allowedContentTypes = [type]
-        }
-        guard panel.runModal() == .OK, let source = panel.url else { return }
-
-        isBackupBusy = true
-        actionErrorMessage = nil
-        backupStatusMessage = nil
-        defer { isBackupBusy = false }
-        do {
-            let snapshot = try await Task.detached(priority: .userInitiated) {
-                let data = try Data(contentsOf: source, options: .mappedIfSafe)
-                return try BackupPackageCodec.open(data, passphrase: passphrase)
-            }.value
-            guard snapshot.syncCredentials == nil else {
-                throw BackupUIError.relayContainsSyncIdentity
-            }
-            let result = try repository.mergeOfflineRelayPayloads(
-                snapshot.tasks,
-                tombstones: snapshot.tombstones
-            )
-            onRemoteChanges?()
-            backupStatusMessage = "离线接力完成：合并 \(result.mergedTaskCount) 条任务、\(result.mergedTombstoneCount) 条删除记录，\(result.unchangedCount) 条无需变更。"
-            if connection != nil {
-                requestSync(.localChange)
-            }
-        } catch {
-            actionErrorMessage = error.localizedDescription
-            logger.error("合并离线接力包失败：\(error.localizedDescription, privacy: .public)")
         }
     }
 

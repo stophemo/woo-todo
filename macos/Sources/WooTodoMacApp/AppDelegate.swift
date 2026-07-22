@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenuController: StatusMenuController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        configureMainMenu()
         do {
             // 本地任务库是启动的唯一硬依赖；同步身份即使损坏或不匹配也不能阻塞本地使用。
             let repository = try SQLiteTaskRepository(databaseURL: databaseURL())
@@ -148,6 +149,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         syncSettingsStore?.stop()
         webDavSettingsStore?.stop()
+    }
+
+    private func configureMainMenu() {
+        let mainMenu = NSMenu(title: "Woo Todo")
+
+        let applicationMenuItem = NSMenuItem(
+            title: "Woo Todo",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let applicationMenu = NSMenu(title: "Woo Todo")
+        let aboutItem = NSMenuItem(
+            title: "关于 Woo Todo",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: ""
+        )
+        aboutItem.target = NSApp
+        applicationMenu.addItem(aboutItem)
+        applicationMenu.addItem(.separator())
+        let quitItem = NSMenuItem(
+            title: "退出 Woo Todo",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        quitItem.target = NSApp
+        applicationMenu.addItem(quitItem)
+        applicationMenuItem.submenu = applicationMenu
+        mainMenu.addItem(applicationMenuItem)
+
+        let editMenuItem = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(editCommand("撤销", action: Selector(("undo:")), key: "z"))
+        editMenu.addItem(editCommand(
+            "重做",
+            action: Selector(("redo:")),
+            key: "z",
+            modifiers: [.command, .shift]
+        ))
+        editMenu.addItem(.separator())
+        editMenu.addItem(editCommand("剪切", action: #selector(NSText.cut(_:)), key: "x"))
+        editMenu.addItem(editCommand("复制", action: #selector(NSText.copy(_:)), key: "c"))
+        editMenu.addItem(editCommand("粘贴", action: #selector(NSText.paste(_:)), key: "v"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(editCommand("全选", action: #selector(NSText.selectAll(_:)), key: "a"))
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    private func editCommand(
+        _ title: String,
+        action: Selector,
+        key: String,
+        modifiers: NSEvent.ModifierFlags = .command
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.keyEquivalentModifierMask = modifiers
+        item.target = nil
+        return item
     }
 
     private func databaseURL() throws -> URL {

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woo-todo.dev/schema/webdav-setup-link.schema.json",
+  "title": "woo-todo 坚果云配置深链参数",
+  "description": "wootodo://webdav 深链的解码后查询参数；包含 WebDAV 应用密码与同步密钥，仅由客户端近旁传递，不提交到 Worker。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "username", "appPassword", "vaultId", "vaultKey"],
+  "properties": {
+    "v": { "const": "1" },
+    "username": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 320,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F\\s]+$"
+    },
+    "appPassword": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "vaultId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "vaultKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    }
+  }
+}

@@ -25,6 +25,8 @@ class TaskDatabase(context: Context) :
         if (oldVersion < 6) {
             createWebDavAppliedSchema(database)
         }
+        // 兼容曾经中断或裁剪过的旧升级：同步表均使用 IF NOT EXISTS，可安全幂等补齐。
+        createSyncSchema(database)
     }
 
     override fun onDowngrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {

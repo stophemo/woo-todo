@@ -106,7 +106,7 @@
 - [x] 双端自动检查 GitHub 最新正式版并提供手动检查入口
 - [x] 开发版本统一为 `0.1.5`、Android/macOS 构建号统一为 `6`
 - [x] Android JVM 单测、Lint、Debug APK 与 androidTest APK 全部通过
-- [ ] GitHub `main` CI 全绿
+- [x] GitHub `main` CI 全绿
 - [ ] Galaxy S23 Ultra 真机扫码、Widget、通知与更新提醒验收
 - [ ] MacBook Air M4 真机唤醒、模板编辑与更新提醒验收
 - [ ] 用户明确确认后再创建并推送 `v0.1.5` 标签

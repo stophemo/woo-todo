@@ -63,7 +63,7 @@
 
 ## 当前阶段
 
-当前已发布版本为 `v0.1.3`，版本 tag 推送后由 GitHub Actions 自动生成双端安装包。当前发布包已包含本地任务、坚果云自动同步、自建 Worker、双端任务通知和恢复备份主链路；进度见 [执行计划](docs/EXECUTION_PLAN.md)。
+当前已发布版本为 `v0.1.4`，版本 tag 推送后由 GitHub Actions 自动生成双端安装包。当前发布包已包含本地任务、坚果云自动同步、自建 Worker、双端任务通知、修复后的 Android 今日 Widget 和恢复备份主链路；进度见 [执行计划](docs/EXECUTION_PLAN.md)。
 
 详细文档：
 

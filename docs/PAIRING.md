@@ -2,7 +2,7 @@
 
 本页只适用于自行部署 Worker 后启用的在线增强。日常跨端同步推荐使用不需要自建服务的 [坚果云自动同步](JIANGUOYUN_SYNC.md)；无论选择哪种在线路径，两端都先写本地 SQLite，暂时断网不影响编辑。Cloudflare Workers + D1 的个人免费部署命令、secret 格式、迁移和免费层边界见 [后端免费部署指南](../backend/README.md)。
 
-Android App 内扫码入口位于开发中的 `v0.1.5`，尚未发布；当前 `v0.1.4` 安装包仍需使用系统相机/扫码器唤起 Woo Todo。
+从 `v0.1.5` 起，Android 可在 Woo Todo 内直接扫描 Worker 配对二维码；系统相机/扫码器唤起 Woo Todo 仍作为备用入口。
 
 Woo Todo 没有传统账号。启用在线同步时，Mac 先创建一个加密同步空间，再通过 10 分钟有效的二维码把 Android 安全加入同一空间。两端始终先写本地 SQLite；同步服务只保存端到端加密后的数据。
 

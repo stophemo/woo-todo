@@ -99,7 +99,7 @@
 - [x] Release 产物就绪后更新 Vercel 首页的 v0.1.2 内容与下载链接（[生产页](https://woo-todo.vercel.app/)）
 - [ ] 在 MacBook Air M4 与 Galaxy S23 Ultra 完成覆盖升级、接力和长期资源验收
 
-## v0.1.5 开发门禁（暂不发版）
+## v0.1.5 发布门禁
 
 - [x] Android App 内直接扫描 Mac 坚果云配置二维码，确认后保存并首次同步
 - [x] 双端顶部模板支持自由文字、星期、耗时和截止天数
@@ -109,4 +109,5 @@
 - [x] GitHub `main` CI 全绿
 - [ ] Galaxy S23 Ultra 真机扫码、Widget、通知与更新提醒验收
 - [ ] MacBook Air M4 真机唤醒、模板编辑与更新提醒验收
-- [ ] 用户明确确认后再创建并推送 `v0.1.5` 标签
+- [x] 用户明确确认后创建并推送 `v0.1.5` 标签
+- [x] 正式发布工作流完成，Android APK、macOS ZIP 与 `SHA256SUMS.txt` 已上传（[Release](https://github.com/stophemo/woo-todo/releases/tag/v0.1.5)）

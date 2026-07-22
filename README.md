@@ -65,7 +65,7 @@
 
 ## 当前阶段
 
-当前已发布版本为 `v0.1.4`；`main` 正在开发 `v0.1.5`，包含应用内扫码配对、可扩展顶部模板和更新提醒，尚未创建标签或 Release。版本 tag 推送后由 GitHub Actions 自动生成双端安装包；进度见 [执行计划](docs/EXECUTION_PLAN.md)。
+当前已发布版本为 [`v0.1.5`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.5)，包含 Android App 内扫码配对、可扩展顶部模板和双端更新提醒。版本 tag 推送后由 GitHub Actions 自动生成并验证双端安装包；进度见 [执行计划](docs/EXECUTION_PLAN.md)。
 
 详细文档：
 

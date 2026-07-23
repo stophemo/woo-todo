@@ -1,10 +1,10 @@
 # 个人安装与首次使用
 
-woo-todo 不依赖应用商店，也不要求先部署服务器。可从 [GitHub Releases](https://github.com/stophemo/woo-todo/releases) 下载双端安装包；以下文件和链接对应 `v0.1.5`。正式长期使用前仍应完成目标真机验收，并定期导出加密恢复备份。
+woo-todo 不依赖应用商店，也不要求先部署服务器。可从 [GitHub Releases](https://github.com/stophemo/woo-todo/releases) 下载双端安装包；以下文件和链接对应 `v0.1.7`。正式长期使用前仍应完成目标真机验收，并定期导出加密恢复备份。
 
 ## 1. 安装 macOS 客户端
 
-下载 [Woo-Todo-v0.1.5-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.5/Woo-Todo-v0.1.5-macos-arm64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.5/SHA256SUMS.txt) 校验后解压，把 `Woo Todo.app` 拖到“应用程序”。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
+下载 [Woo-Todo-v0.1.7-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.7/Woo-Todo-v0.1.7-macos-arm64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.7/SHA256SUMS.txt) 校验后解压，把 `Woo Todo.app` 拖到“应用程序”。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
 
 需要自行构建时，要求完整 Xcode 与当前 macOS SDK/Swift 编译器匹配。仅有版本不匹配的 Command Line Tools 时不能作为 Release 构建环境：
 
@@ -26,10 +26,10 @@ cd macos
 
 ## 2. 安装 Android 客户端
 
-下载 [Woo-Todo-v0.1.5-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.5/Woo-Todo-v0.1.5-android.apk)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.5/SHA256SUMS.txt) 校验后从三星“我的文件”打开，并允许本次来源安装。连接 ADB 时也可执行：
+下载 [Woo-Todo-v0.1.7-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.7/Woo-Todo-v0.1.7-android.apk)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.7/SHA256SUMS.txt) 校验后从三星“我的文件”打开，并允许本次来源安装。连接 ADB 时也可执行：
 
 ```bash
-adb install -r Woo-Todo-v0.1.5-android.apk
+adb install -r Woo-Todo-v0.1.7-android.apk
 ```
 
 正式 APK 使用项目专用 Release 密钥签名，后续 GitHub Release 可直接覆盖升级。Debug 包与正式包签名不同，不能相互覆盖；切换前先导出加密恢复备份，再卸载旧包。

@@ -90,8 +90,7 @@ class MainActivity : AppCompatActivity() {
     private var pairingCodeView: TextView? = null
     private var deepLinkIntentConsumed = false
     private var backupProgressDialog: AlertDialog? = null
-    private var updateDialog: AlertDialog? = null
-    private var pendingUpdateRelease: GitHubRelease? = null
+    private var availableUpdateRelease: GitHubRelease? = null
     private val updatePreferences by lazy { AppUpdatePreferences(this) }
 
     private val notificationPermission =
@@ -154,6 +153,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         applySystemBarInsets(findViewById(R.id.main_root))
+        availableUpdateRelease = updatePreferences.loadAvailableRelease(currentVersionLabel())
         taskList = findViewById(R.id.task_list)
         emptyView = findViewById(R.id.empty_view)
         syncButton = findViewById(R.id.sync_button)
@@ -266,13 +266,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         viewModel.refresh()
         renderDayCounter()
-        showPendingUpdateIfPossible()
         checkForAppUpdate(manual = false)
-    }
-
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) showPendingUpdateIfPossible()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -286,7 +280,6 @@ class MainActivity : AppCompatActivity() {
         pairingDialog?.dismiss()
         pairingTerminalDialog?.dismiss()
         backupProgressDialog?.dismiss()
-        updateDialog?.dismiss()
         super.onDestroy()
     }
 
@@ -413,15 +406,28 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMoreMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
-            menu.add(0, MENU_DAY_COUNTER, 0, R.string.day_counter_settings_title)
-            menu.add(0, MENU_REMINDER, 1, R.string.reminder_settings_title)
-            menu.add(0, MENU_SCAN_MAC_WEBDAV, 2, R.string.scan_mac_webdav_qr)
-            menu.add(0, MENU_WEBDAV, 3, R.string.webdav_settings_title)
-            menu.add(0, MENU_CHECK_UPDATE, 4, R.string.check_for_updates)
-            menu.add(0, MENU_EXPORT_BACKUP, 5, R.string.backup_export)
-            menu.add(0, MENU_IMPORT_BACKUP, 6, R.string.backup_import)
+            var order = 0
+            val release = appUpdateViewModel.availableRelease.value ?: availableUpdateRelease
+            release?.let {
+                menu.add(
+                    0,
+                    MENU_AVAILABLE_UPDATE,
+                    order++,
+                    getString(R.string.update_available_menu, it.versionLabel),
+                )
+            }
+            menu.add(0, MENU_DAY_COUNTER, order++, R.string.day_counter_settings_title)
+            menu.add(0, MENU_REMINDER, order++, R.string.reminder_settings_title)
+            menu.add(0, MENU_SCAN_MAC_WEBDAV, order++, R.string.scan_mac_webdav_qr)
+            menu.add(0, MENU_WEBDAV, order++, R.string.webdav_settings_title)
+            menu.add(0, MENU_CHECK_UPDATE, order++, R.string.check_for_updates)
+            menu.add(0, MENU_EXPORT_BACKUP, order++, R.string.backup_export)
+            menu.add(0, MENU_IMPORT_BACKUP, order, R.string.backup_import)
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
+                    MENU_AVAILABLE_UPDATE -> {
+                        release?.let { openUpdateUrl(it.downloadUrl) }
+                    }
                     MENU_DAY_COUNTER -> showDayCounterSettings()
                     MENU_REMINDER -> showReminderSettings()
                     MENU_SCAN_MAC_WEBDAV -> scanMacWebDavConfiguration()
@@ -941,25 +947,21 @@ class MainActivity : AppCompatActivity() {
         event.result.fold(
             onSuccess = { updateResult ->
                 when (updateResult) {
-                    AppUpdateCheckResult.Current -> if (event.reportToUser) {
-                        Toast.makeText(
-                            this,
-                            getString(R.string.update_up_to_date, currentVersionLabel()),
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                    AppUpdateCheckResult.Current -> {
+                        availableUpdateRelease = null
+                        updatePreferences.clearAvailableRelease()
+                        if (event.reportToUser) {
+                            Toast.makeText(
+                                this,
+                                getString(R.string.update_up_to_date, currentVersionLabel()),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                     }
                     is AppUpdateCheckResult.Available -> {
                         val release = updateResult.release
-                        if (event.reportToUser || updatePreferences.shouldPromptAutomatically(
-                                release.versionLabel,
-                            )
-                        ) {
-                            if (canShowUpdateDialog()) {
-                                showUpdateDialog(release)
-                            } else {
-                                pendingUpdateRelease = release
-                            }
-                        }
+                        availableUpdateRelease = release
+                        updatePreferences.cacheAvailableRelease(release)
                     }
                 }
             },
@@ -969,41 +971,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
-    }
-
-    private fun canShowUpdateDialog(): Boolean =
-        lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
-            window.decorView.hasWindowFocus() &&
-            pairingDialog?.isShowing != true &&
-            pairingTerminalDialog?.isShowing != true &&
-            backupProgressDialog?.isShowing != true
-
-    private fun showPendingUpdateIfPossible() {
-        val release = pendingUpdateRelease ?: return
-        if (!canShowUpdateDialog()) return
-        pendingUpdateRelease = null
-        showUpdateDialog(release)
-    }
-
-    private fun showUpdateDialog(release: GitHubRelease) {
-        if (updateDialog?.isShowing == true) return
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(getString(R.string.update_available_title, release.versionLabel))
-            .setMessage(getString(R.string.update_available_message, currentVersionLabel()))
-            .setNegativeButton(R.string.update_ignore) { _, _ ->
-                updatePreferences.markHandled(release.versionLabel)
-            }
-            .setPositiveButton(R.string.update_download) { _, _ ->
-                updatePreferences.markHandled(release.versionLabel)
-                openUpdateUrl(release.downloadUrl)
-            }
-            .create()
-        dialog.setOnDismissListener {
-            if (updateDialog === dialog) updateDialog = null
-        }
-        updateDialog = dialog
-        dialog.show()
-        dialog.enableMessageSelection()
     }
 
     private fun openUpdateUrl(url: String) {
@@ -1258,6 +1225,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_WEBDAV = 5
         private const val MENU_CHECK_UPDATE = 6
         private const val MENU_SCAN_MAC_WEBDAV = 7
+        private const val MENU_AVAILABLE_UPDATE = 8
         private const val BACKUP_MIME_TYPE = "application/octet-stream"
         val BACKUP_MIME_TYPES = arrayOf(
             BACKUP_MIME_TYPE,

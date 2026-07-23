@@ -105,6 +105,7 @@ struct GitHubReleaseClient: @unchecked Sendable {
 final class AppUpdateController {
     private static let lastAutomaticCheckKey = "updates.lastAutomaticCheckAt.v1"
     private static let lastAutomaticAttemptKey = "updates.lastAutomaticAttemptAt.v1"
+    private static let availableVersionKey = "updates.availableVersion.v1"
     private static let lastHandledVersionKey = "updates.lastHandledVersion.v1"
     private static let legacyLastNotifiedVersionKey = "updates.lastNotifiedVersion.v1"
 
@@ -112,6 +113,11 @@ final class AppUpdateController {
     private let bundle: Bundle
     private let client: GitHubReleaseClient
     private let now: () -> Date
+
+    private(set) var availableUpdate: AvailableAppUpdate?
+    var onAvailableUpdateChanged: ((AvailableAppUpdate?) -> Void)? {
+        didSet { onAvailableUpdateChanged?(availableUpdate) }
+    }
 
     private var activeCheck: Task<Void, Never>?
     private var manualFeedbackRequested = false
@@ -126,6 +132,8 @@ final class AppUpdateController {
         self.bundle = bundle
         self.client = client
         self.now = now
+        availableUpdate = nil
+        restoreCachedUpdate()
     }
 
     func checkAutomatically() {
@@ -162,6 +170,18 @@ final class AppUpdateController {
             return
         }
         beginCheck(currentVersion: currentVersion, reportAllResults: true)
+    }
+
+    func openAvailableUpdate() {
+        guard let availableUpdate else { return }
+        guard NSWorkspace.shared.open(availableUpdate.releasePageURL) else {
+            presentMessage(
+                title: "无法打开下载页",
+                message: "请稍后再次点击菜单中的新版本提示。",
+                style: .warning
+            )
+            return
+        }
     }
 
     func stop() {
@@ -206,32 +226,21 @@ final class AppUpdateController {
         currentVersion: AppVersion,
         reportAllResults: Bool
     ) {
-        let lastHandledVersion = (
-            defaults.string(forKey: Self.lastHandledVersionKey)
-                ?? defaults.string(forKey: Self.legacyLastNotifiedVersionKey)
-        )
-            .flatMap { AppVersion($0) }
-        let shouldNotify = AppUpdatePolicy.shouldNotify(
+        guard AppUpdatePolicy.shouldShowAvailableUpdate(
             currentVersion: currentVersion,
-            latestVersion: release.version,
-            lastHandledVersion: lastHandledVersion
-        )
-
-        if release.version > currentVersion, reportAllResults || shouldNotify {
-            if presentUpdate(release, currentVersion: currentVersion) {
-                defaults.set(
-                    release.version.description,
-                    forKey: Self.lastHandledVersionKey
-                )
-                defaults.removeObject(forKey: Self.legacyLastNotifiedVersionKey)
-            }
-        } else if reportAllResults {
+            latestVersion: release.version
+        ) else {
+            setAvailableUpdate(nil)
+            guard reportAllResults else { return }
             presentMessage(
                 title: "已经是最新版本",
                 message: "当前安装的是 Woo Todo v\(currentVersion)。",
                 style: .informational
             )
+            return
         }
+
+        setAvailableUpdate(release)
     }
 
     private func installedVersion() -> AppVersion? {
@@ -279,31 +288,63 @@ final class AppUpdateController {
         )
     }
 
-    private func presentUpdate(
-        _ release: AvailableAppUpdate,
-        currentVersion: AppVersion
-    ) -> Bool {
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "发现新版本 v\(release.version)"
-        alert.informativeText = "当前版本为 v\(currentVersion)。你可以选择更新或忽略此版本；更新会打开 GitHub Release 下载页。"
-        alert.addButton(withTitle: "更新")
-        alert.addButton(withTitle: "忽略此版本")
-        NSApp.activate(ignoringOtherApps: true)
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn || response == .alertSecondButtonReturn else {
-            return false
+    private func restoreCachedUpdate() {
+        let cachedVersion = (
+            defaults.string(forKey: Self.availableVersionKey)
+                ?? defaults.string(forKey: Self.lastHandledVersionKey)
+                ?? defaults.string(forKey: Self.legacyLastNotifiedVersionKey)
+        )
+            .flatMap { AppVersion($0) }
+        guard let currentVersion = installedVersion(),
+              let cachedVersion,
+              !cachedVersion.isPrerelease,
+              AppUpdatePolicy.shouldShowAvailableUpdate(
+                  currentVersion: currentVersion,
+                  latestVersion: cachedVersion
+              ),
+              let releasePageURL = Self.releasePageURL(for: cachedVersion) else {
+            clearCachedUpdate()
+            return
         }
-        guard response == .alertFirstButtonReturn else { return true }
-        guard NSWorkspace.shared.open(release.releasePageURL) else {
-            presentMessage(
-                title: "无法打开下载页",
-                message: "请稍后再次选择菜单栏中的“检查更新…”。",
-                style: .warning
-            )
-            return true
+
+        availableUpdate = AvailableAppUpdate(
+            version: cachedVersion,
+            releasePageURL: releasePageURL
+        )
+        defaults.set(cachedVersion.description, forKey: Self.availableVersionKey)
+        removeLegacyUpdateKeys()
+    }
+
+    private func setAvailableUpdate(_ update: AvailableAppUpdate?) {
+        if let update {
+            defaults.set(update.version.description, forKey: Self.availableVersionKey)
+            removeLegacyUpdateKeys()
+        } else {
+            clearCachedUpdate()
         }
-        return true
+
+        guard availableUpdate?.version != update?.version
+                || availableUpdate?.releasePageURL != update?.releasePageURL else {
+            return
+        }
+        availableUpdate = update
+        onAvailableUpdateChanged?(update)
+    }
+
+    private func clearCachedUpdate() {
+        defaults.removeObject(forKey: Self.availableVersionKey)
+        removeLegacyUpdateKeys()
+    }
+
+    private func removeLegacyUpdateKeys() {
+        defaults.removeObject(forKey: Self.lastHandledVersionKey)
+        defaults.removeObject(forKey: Self.legacyLastNotifiedVersionKey)
+    }
+
+    private static func releasePageURL(for version: AppVersion) -> URL? {
+        URL(
+            string: "https://github.com/stophemo/woo-todo/releases/tag/v\(version)"
+        )
     }
 
     private func presentMessage(

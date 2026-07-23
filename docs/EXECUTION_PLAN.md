@@ -78,7 +78,7 @@
 - [ ] MacBook Air M4 Release 悬浮面板连续运行 24 小时性能验收
 - [x] Android 签名 APK 与 macOS ad-hoc 签名个人安装包（`v0.1.0` 产物已发布验证）
 - [x] GitHub Actions、Releases 和安装文档（`v0.1.0` 已完整验证）
-- [x] 双端 GitHub 正式版自动检查、手动检查、更新/忽略选择、节流与单版本去重
+- [x] 双端 GitHub 正式版自动检查、手动检查、菜单内可用版本提示、节流与状态持久化
 - [x] Release 工作流拒绝非规范稳定版本标签
 
 验收：目标 MacBook Air M4 和 Galaxy S23 Ultra 完成端到端“晚上规划、早上开工”场景。

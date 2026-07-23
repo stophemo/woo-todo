@@ -98,8 +98,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 checkForUpdates: { [weak appUpdateController] in
                     appUpdateController?.checkManually()
+                },
+                openAvailableUpdate: { [weak appUpdateController] in
+                    appUpdateController?.openAvailableUpdate()
                 }
             )
+
+            appUpdateController.onAvailableUpdateChanged = { [weak statusMenuController] update in
+                statusMenuController?.setAvailableUpdate(update)
+            }
 
             self.repository = repository
             todayStore = store

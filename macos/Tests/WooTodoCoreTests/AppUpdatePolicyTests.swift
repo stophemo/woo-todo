@@ -84,36 +84,23 @@ struct AppUpdatePolicyTests {
         ))
     }
 
-    @Test("处理当前新版后只自动提醒后续更高版本")
-    func notifiesForVersionsHigherThanLastHandled() throws {
-        let current = try #require(AppVersion("0.1.4"))
-        let latest = try #require(AppVersion("0.1.5"))
-        let newer = try #require(AppVersion("0.2.0"))
+    @Test("菜单提示只要有更高版本就保持可见")
+    func showsAvailableUpdateForHigherVersion() throws {
+        let current = try #require(AppVersion("0.1.7"))
+        let newer = try #require(AppVersion("0.1.8"))
 
-        #expect(AppUpdatePolicy.shouldNotify(
+        #expect(AppUpdatePolicy.shouldShowAvailableUpdate(
             currentVersion: current,
-            latestVersion: latest,
-            lastHandledVersion: nil
+            latestVersion: newer
         ))
-        #expect(!AppUpdatePolicy.shouldNotify(
-            currentVersion: current,
-            latestVersion: latest,
-            lastHandledVersion: latest
+        #expect(!AppUpdatePolicy.shouldShowAvailableUpdate(
+            currentVersion: newer,
+            latestVersion: newer
         ))
-        #expect(!AppUpdatePolicy.shouldNotify(
-            currentVersion: current,
-            latestVersion: latest,
-            lastHandledVersion: newer
-        ))
-        #expect(AppUpdatePolicy.shouldNotify(
-            currentVersion: current,
-            latestVersion: newer,
-            lastHandledVersion: latest
-        ))
-        #expect(!AppUpdatePolicy.shouldNotify(
-            currentVersion: latest,
-            latestVersion: latest,
-            lastHandledVersion: nil
+        #expect(!AppUpdatePolicy.shouldShowAvailableUpdate(
+            currentVersion: newer,
+            latestVersion: current
         ))
     }
+
 }

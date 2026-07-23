@@ -82,6 +82,15 @@ internal object GitHubReleaseParser {
         return GitHubRelease(version, pageUrl, apkUrl)
     }
 
+    fun isValid(release: GitHubRelease): Boolean {
+        val tag = release.versionLabel
+        val pagePath = "$RELEASE_PAGE_PREFIX$tag"
+        val apkPath = "$RELEASE_DOWNLOAD_PREFIX$tag/Woo-Todo-$tag-android.apk"
+        return isRepositoryUrl(release.pageUrl, pagePath, exactPath = true) &&
+            (release.apkUrl == null ||
+                isRepositoryUrl(release.apkUrl, apkPath, exactPath = true))
+    }
+
     private fun requiredString(value: JSONObject, name: String): String =
         (value.opt(name) as? String)?.takeIf(String::isNotBlank)
             ?: throw IllegalArgumentException("GitHub release 缺少 $name")
@@ -192,6 +201,41 @@ internal object AppUpdateResolver {
     }
 }
 
+internal data class AppUpdateCacheEntry(
+    val versionLabel: String?,
+    val pageUrl: String?,
+    val apkUrl: String?,
+)
+
+internal object AppUpdateCache {
+    fun restore(currentVersionName: String, entry: AppUpdateCacheEntry): GitHubRelease? {
+        val version = entry.versionLabel?.let(AppVersion::parse) ?: return null
+        val pageUrl = entry.pageUrl?.takeIf(String::isNotBlank) ?: return null
+        val release = GitHubRelease(version, pageUrl, entry.apkUrl)
+        if (!GitHubReleaseParser.isValid(release)) return null
+        return release.takeIf {
+            AppUpdateResolver.resolve(currentVersionName, it) is AppUpdateCheckResult.Available
+        }
+    }
+
+    fun migrateLegacy(currentVersionName: String, versionLabel: String?): GitHubRelease? {
+        val version = versionLabel?.let(AppVersion::parse) ?: return null
+        val release = GitHubRelease(
+            version = version,
+            pageUrl = "https://github.com/stophemo/woo-todo/releases/tag/v$version",
+            apkUrl = null,
+        )
+        return restore(
+            currentVersionName = currentVersionName,
+            entry = AppUpdateCacheEntry(
+                versionLabel = release.versionLabel,
+                pageUrl = release.pageUrl,
+                apkUrl = null,
+            ),
+        )
+    }
+}
+
 internal object AppUpdatePolicy {
     const val AUTOMATIC_CHECK_INTERVAL_MILLIS = 24L * 60L * 60L * 1_000L
     const val FAILED_CHECK_RETRY_INTERVAL_MILLIS = 15L * 60L * 1_000L
@@ -202,18 +246,6 @@ internal object AppUpdatePolicy {
         now: Long,
     ): Boolean = elapsed(lastSuccessfulCheckAt, now) >= AUTOMATIC_CHECK_INTERVAL_MILLIS &&
         elapsed(lastAttemptAt, now) >= FAILED_CHECK_RETRY_INTERVAL_MILLIS
-
-    fun shouldAutomaticallyPrompt(
-        lastHandledVersion: String?,
-        candidateVersion: String,
-    ): Boolean {
-        val candidate = AppVersion.parse(candidateVersion)
-        val handled = lastHandledVersion?.let(AppVersion::parse)
-        return when {
-            candidate == null || handled == null -> lastHandledVersion != candidateVersion
-            else -> candidate > handled
-        }
-    }
 
     private fun elapsed(previous: Long, now: Long): Long = when {
         previous <= 0L || now < previous -> Long.MAX_VALUE
@@ -247,26 +279,76 @@ internal class AppUpdatePreferences(context: Context) {
     }
 
     @Synchronized
-    fun shouldPromptAutomatically(version: String): Boolean =
-        AppUpdatePolicy.shouldAutomaticallyPrompt(
-            lastHandledVersion = preferences.getString(KEY_LAST_HANDLED_VERSION, null)
-                ?: preferences.getString(LEGACY_KEY_LAST_PROMPTED_VERSION, null),
-            candidateVersion = version,
-        )
+    fun cacheAvailableRelease(release: GitHubRelease) {
+        preferences.edit()
+            .putString(KEY_AVAILABLE_VERSION, release.versionLabel)
+            .putString(KEY_AVAILABLE_PAGE_URL, release.pageUrl)
+            .putString(KEY_AVAILABLE_APK_URL, release.apkUrl)
+            .remove(KEY_LAST_HANDLED_VERSION)
+            .remove(KEY_LEGACY_LAST_PROMPTED_VERSION)
+            .apply()
+    }
 
     @Synchronized
-    fun markHandled(version: String) {
+    fun clearAvailableRelease() {
         preferences.edit()
-            .putString(KEY_LAST_HANDLED_VERSION, version)
-            .remove(LEGACY_KEY_LAST_PROMPTED_VERSION)
+            .remove(KEY_AVAILABLE_VERSION)
+            .remove(KEY_AVAILABLE_PAGE_URL)
+            .remove(KEY_AVAILABLE_APK_URL)
+            .remove(KEY_LAST_HANDLED_VERSION)
+            .remove(KEY_LEGACY_LAST_PROMPTED_VERSION)
             .apply()
+    }
+
+    @Synchronized
+    fun loadAvailableRelease(currentVersionName: String): GitHubRelease? {
+        val cached = AppUpdateCache.restore(
+            currentVersionName = currentVersionName,
+            entry = AppUpdateCacheEntry(
+                versionLabel = preferences.getString(KEY_AVAILABLE_VERSION, null),
+                pageUrl = preferences.getString(KEY_AVAILABLE_PAGE_URL, null),
+                apkUrl = preferences.getString(KEY_AVAILABLE_APK_URL, null),
+            ),
+        )
+        if (cached != null) {
+            preferences.edit()
+                .remove(KEY_LAST_HANDLED_VERSION)
+                .remove(KEY_LEGACY_LAST_PROMPTED_VERSION)
+                .apply()
+            return cached
+        }
+
+        val legacy = AppUpdateCache.migrateLegacy(
+            currentVersionName = currentVersionName,
+            versionLabel = preferences.getString(KEY_LAST_HANDLED_VERSION, null)
+                ?: preferences.getString(KEY_LEGACY_LAST_PROMPTED_VERSION, null),
+        )
+        preferences.edit()
+            .apply {
+                if (legacy == null) {
+                    remove(KEY_AVAILABLE_VERSION)
+                    remove(KEY_AVAILABLE_PAGE_URL)
+                    remove(KEY_AVAILABLE_APK_URL)
+                } else {
+                    putString(KEY_AVAILABLE_VERSION, legacy.versionLabel)
+                    putString(KEY_AVAILABLE_PAGE_URL, legacy.pageUrl)
+                    remove(KEY_AVAILABLE_APK_URL)
+                }
+                remove(KEY_LAST_HANDLED_VERSION)
+                remove(KEY_LEGACY_LAST_PROMPTED_VERSION)
+            }
+            .apply()
+        return legacy
     }
 
     private companion object {
         const val FILE_NAME = "app_update_state"
         const val KEY_LAST_CHECK_AT = "last_automatic_check_at"
         const val KEY_LAST_ATTEMPT_AT = "last_automatic_attempt_at"
+        const val KEY_AVAILABLE_VERSION = "available_version"
+        const val KEY_AVAILABLE_PAGE_URL = "available_page_url"
+        const val KEY_AVAILABLE_APK_URL = "available_apk_url"
         const val KEY_LAST_HANDLED_VERSION = "last_handled_version"
-        const val LEGACY_KEY_LAST_PROMPTED_VERSION = "last_prompted_version"
+        const val KEY_LEGACY_LAST_PROMPTED_VERSION = "last_prompted_version"
     }
 }

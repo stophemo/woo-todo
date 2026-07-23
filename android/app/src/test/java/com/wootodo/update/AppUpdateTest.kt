@@ -156,7 +156,7 @@ class AppUpdateTest {
     }
 
     @Test
-    fun `自动检查每24小时一次且处理版本后只提示更高版本`() {
+    fun `自动检查每24小时一次`() {
         val now = 200_000_000L
         assertTrue(AppUpdatePolicy.shouldAutomaticallyCheck(0L, 0L, now))
         assertFalse(
@@ -187,18 +187,56 @@ class AppUpdateTest {
                 now = now,
             ),
         )
-        assertTrue(
-            AppUpdatePolicy.shouldAutomaticallyPrompt(null, "v0.2.0"),
+    }
+
+    @Test
+    fun `缓存的新版本可恢复且升级后自动失效`() {
+        val entry = AppUpdateCacheEntry(
+            versionLabel = "v0.2.0",
+            pageUrl = "https://github.com/stophemo/woo-todo/releases/tag/v0.2.0",
+            apkUrl = "https://github.com/stophemo/woo-todo/releases/download/v0.2.0/" +
+                "Woo-Todo-v0.2.0-android.apk",
         )
-        assertFalse(
-            AppUpdatePolicy.shouldAutomaticallyPrompt("v0.2.0", "v0.2.0"),
+
+        val restored = AppUpdateCache.restore("0.1.7", entry)
+
+        assertEquals("v0.2.0", restored?.versionLabel)
+        assertEquals(entry.apkUrl, restored?.downloadUrl)
+        assertEquals(null, AppUpdateCache.restore("0.2.0", entry))
+        assertEquals(null, AppUpdateCache.restore("0.3.0", entry))
+    }
+
+    @Test
+    fun `缓存的新版本拒绝损坏版本和外部下载链接`() {
+        val validPage = "https://github.com/stophemo/woo-todo/releases/tag/v0.2.0"
+        assertEquals(
+            null,
+            AppUpdateCache.restore(
+                "0.1.7",
+                AppUpdateCacheEntry("latest", validPage, null),
+            ),
         )
-        assertTrue(
-            AppUpdatePolicy.shouldAutomaticallyPrompt("v0.1.9", "v0.2.0"),
+        assertEquals(
+            null,
+            AppUpdateCache.restore(
+                "0.1.7",
+                AppUpdateCacheEntry("v0.2.0", validPage, "https://example.com/update.apk"),
+            ),
         )
-        assertFalse(
-            AppUpdatePolicy.shouldAutomaticallyPrompt("v0.3.0", "v0.2.0"),
+    }
+
+    @Test
+    fun `旧版已处理记录可迁移为菜单版本并拒绝当前或损坏版本`() {
+        val migrated = AppUpdateCache.migrateLegacy("0.1.7", "v0.2.0")
+
+        assertEquals("v0.2.0", migrated?.versionLabel)
+        assertEquals(
+            "https://github.com/stophemo/woo-todo/releases/tag/v0.2.0",
+            migrated?.pageUrl,
         )
+        assertEquals(null, migrated?.apkUrl)
+        assertEquals(null, AppUpdateCache.migrateLegacy("0.2.0", "v0.2.0"))
+        assertEquals(null, AppUpdateCache.migrateLegacy("0.1.7", "latest"))
     }
 
     private fun release(tag: String): GitHubRelease = GitHubRelease(

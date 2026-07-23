@@ -37,7 +37,7 @@ import {
 } from "./sync-guards.ts";
 import { assertVaultCreationInvite } from "./vault-creation-auth.ts";
 
-const SERVICE_VERSION = "0.1.7";
+const SERVICE_VERSION = "0.1.8";
 
 interface PairingRow {
   id: string;

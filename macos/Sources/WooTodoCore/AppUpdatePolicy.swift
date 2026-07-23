@@ -189,13 +189,12 @@ public enum AppUpdatePolicy {
         return version
     }
 
-    public static func shouldNotify(
+    /// 更新检查结果用于菜单提示时，只依据当前版本和最新正式版判断。
+    /// 用户是否曾经忽略提示不会隐藏菜单中的可用更新。
+    public static func shouldShowAvailableUpdate(
         currentVersion: AppVersion,
-        latestVersion: AppVersion,
-        lastHandledVersion: AppVersion?
+        latestVersion: AppVersion
     ) -> Bool {
-        guard latestVersion > currentVersion else { return false }
-        guard let lastHandledVersion else { return true }
-        return latestVersion > lastHandledVersion
+        latestVersion > currentVersion
     }
 }

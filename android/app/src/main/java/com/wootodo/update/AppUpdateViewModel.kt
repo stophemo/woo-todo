@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.wootodo.BuildConfig
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 internal data class AppUpdateEvent(
@@ -22,6 +24,9 @@ internal class AppUpdateViewModel(
     private val eventChannel = Channel<AppUpdateEvent>(Channel.BUFFERED)
     val events = eventChannel.receiveAsFlow()
 
+    private val _availableRelease = MutableStateFlow<GitHubRelease?>(null)
+    val availableRelease = _availableRelease.asStateFlow()
+
     private var requestJob: Job? = null
     private var reportToUser = false
 
@@ -32,6 +37,12 @@ internal class AppUpdateViewModel(
             try {
                 val result = runCatching {
                     AppUpdateResolver.resolve(currentVersionName, releaseSource.latest())
+                }
+                result.getOrNull()?.let { updateResult ->
+                    _availableRelease.value = when (updateResult) {
+                        AppUpdateCheckResult.Current -> null
+                        is AppUpdateCheckResult.Available -> updateResult.release
+                    }
                 }
                 val shouldReport = reportToUser
                 reportToUser = false

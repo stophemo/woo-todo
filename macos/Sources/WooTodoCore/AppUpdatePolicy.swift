@@ -192,10 +192,10 @@ public enum AppUpdatePolicy {
     public static func shouldNotify(
         currentVersion: AppVersion,
         latestVersion: AppVersion,
-        lastNotifiedVersion: AppVersion?
+        lastHandledVersion: AppVersion?
     ) -> Bool {
         guard latestVersion > currentVersion else { return false }
-        guard let lastNotifiedVersion else { return true }
-        return latestVersion > lastNotifiedVersion
+        guard let lastHandledVersion else { return true }
+        return latestVersion > lastHandledVersion
     }
 }

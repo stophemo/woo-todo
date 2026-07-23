@@ -105,7 +105,8 @@ struct GitHubReleaseClient: @unchecked Sendable {
 final class AppUpdateController {
     private static let lastAutomaticCheckKey = "updates.lastAutomaticCheckAt.v1"
     private static let lastAutomaticAttemptKey = "updates.lastAutomaticAttemptAt.v1"
-    private static let lastNotifiedVersionKey = "updates.lastNotifiedVersion.v1"
+    private static let lastHandledVersionKey = "updates.lastHandledVersion.v1"
+    private static let legacyLastNotifiedVersionKey = "updates.lastNotifiedVersion.v1"
 
     private let defaults: UserDefaults
     private let bundle: Bundle
@@ -205,18 +206,25 @@ final class AppUpdateController {
         currentVersion: AppVersion,
         reportAllResults: Bool
     ) {
-        let lastNotifiedVersion = defaults
-            .string(forKey: Self.lastNotifiedVersionKey)
+        let lastHandledVersion = (
+            defaults.string(forKey: Self.lastHandledVersionKey)
+                ?? defaults.string(forKey: Self.legacyLastNotifiedVersionKey)
+        )
             .flatMap { AppVersion($0) }
         let shouldNotify = AppUpdatePolicy.shouldNotify(
             currentVersion: currentVersion,
             latestVersion: release.version,
-            lastNotifiedVersion: lastNotifiedVersion
+            lastHandledVersion: lastHandledVersion
         )
 
         if release.version > currentVersion, reportAllResults || shouldNotify {
-            defaults.set(release.version.description, forKey: Self.lastNotifiedVersionKey)
-            presentUpdate(release, currentVersion: currentVersion)
+            if presentUpdate(release, currentVersion: currentVersion) {
+                defaults.set(
+                    release.version.description,
+                    forKey: Self.lastHandledVersionKey
+                )
+                defaults.removeObject(forKey: Self.legacyLastNotifiedVersionKey)
+            }
         } else if reportAllResults {
             presentMessage(
                 title: "已经是最新版本",
@@ -274,23 +282,28 @@ final class AppUpdateController {
     private func presentUpdate(
         _ release: AvailableAppUpdate,
         currentVersion: AppVersion
-    ) {
+    ) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = "Woo Todo v\(release.version) 已发布"
-        alert.informativeText = "当前版本为 v\(currentVersion)。可以前往 GitHub Release 下载新的 macOS 安装包。"
-        alert.addButton(withTitle: "打开下载页")
-        alert.addButton(withTitle: "稍后")
+        alert.messageText = "发现新版本 v\(release.version)"
+        alert.informativeText = "当前版本为 v\(currentVersion)。你可以选择更新或忽略此版本；更新会打开 GitHub Release 下载页。"
+        alert.addButton(withTitle: "更新")
+        alert.addButton(withTitle: "忽略此版本")
         NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn || response == .alertSecondButtonReturn else {
+            return false
+        }
+        guard response == .alertFirstButtonReturn else { return true }
         guard NSWorkspace.shared.open(release.releasePageURL) else {
             presentMessage(
                 title: "无法打开下载页",
                 message: "请稍后再次选择菜单栏中的“检查更新…”。",
                 style: .warning
             )
-            return
+            return true
         }
+        return true
     }
 
     private func presentMessage(

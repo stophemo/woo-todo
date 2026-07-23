@@ -70,4 +70,49 @@ struct DayCounterConfigurationTests {
         #expect(configuration.subtitleText(on: today, calendar: calendar) ==
             "第 0 天 · {custom}")
     }
+
+    @Test func rendersEnglishWeekdayAndCompleteDateVariables() throws {
+        let start = try #require(calendar.date(from: DateComponents(
+            year: 2026, month: 12, day: 31
+        )))
+        let today = try #require(calendar.date(from: DateComponents(
+            year: 2027, month: 1, day: 2
+        )))
+        let deadline = try #require(calendar.date(from: DateComponents(
+            year: 2027, month: 1, day: 9
+        )))
+        let configuration = DayCounterConfiguration(
+            headerTemplate: "{weekdayEn} / {weekdayEnShort} / {weekdayShort}",
+            subtitleTemplate: "{date} | {dateLong} | {year}/{month}/{day} | {monthPadded}/{dayPadded} | {startDate} -> {deadlineDate}",
+            startDate: start,
+            deadlineDate: deadline
+        )
+
+        #expect(configuration.headerText(on: today, calendar: calendar) == "Saturday / Sat / 六")
+        #expect(configuration.subtitleText(on: today, calendar: calendar) ==
+            "2027-01-02 | 2027年1月2日 | 2027/1/2 | 01/02 | 2026-12-31 -> 2027-01-09")
+    }
+
+    @Test func chineseAndEnglishWeekdaysMatchForACompleteWeek() throws {
+        let monday = try #require(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 20
+        )))
+        let expected = [
+            "星期一|一|Monday|Mon",
+            "星期二|二|Tuesday|Tue",
+            "星期三|三|Wednesday|Wed",
+            "星期四|四|Thursday|Thu",
+            "星期五|五|Friday|Fri",
+            "星期六|六|Saturday|Sat",
+            "星期日|日|Sunday|Sun"
+        ]
+        let configuration = DayCounterConfiguration(
+            headerTemplate: "{weekday}|{weekdayShort}|{weekdayEn}|{weekdayEnShort}"
+        )
+
+        for (offset, value) in expected.enumerated() {
+            let date = try #require(calendar.date(byAdding: .day, value: offset, to: monday))
+            #expect(configuration.headerText(on: date, calendar: calendar) == value)
+        }
+    }
 }

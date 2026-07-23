@@ -987,12 +987,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun showUpdateDialog(release: GitHubRelease) {
         if (updateDialog?.isShowing == true) return
-        updatePreferences.markPrompted(release.versionLabel)
         val dialog = AlertDialog.Builder(this)
             .setTitle(getString(R.string.update_available_title, release.versionLabel))
             .setMessage(getString(R.string.update_available_message, currentVersionLabel()))
-            .setNegativeButton(R.string.update_later, null)
+            .setNegativeButton(R.string.update_ignore) { _, _ ->
+                updatePreferences.markHandled(release.versionLabel)
+            }
             .setPositiveButton(R.string.update_download) { _, _ ->
+                updatePreferences.markHandled(release.versionLabel)
                 openUpdateUrl(release.downloadUrl)
             }
             .create()

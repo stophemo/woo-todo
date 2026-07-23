@@ -204,9 +204,16 @@ internal object AppUpdatePolicy {
         elapsed(lastAttemptAt, now) >= FAILED_CHECK_RETRY_INTERVAL_MILLIS
 
     fun shouldAutomaticallyPrompt(
-        lastPromptedVersion: String?,
+        lastHandledVersion: String?,
         candidateVersion: String,
-    ): Boolean = lastPromptedVersion != candidateVersion
+    ): Boolean {
+        val candidate = AppVersion.parse(candidateVersion)
+        val handled = lastHandledVersion?.let(AppVersion::parse)
+        return when {
+            candidate == null || handled == null -> lastHandledVersion != candidateVersion
+            else -> candidate > handled
+        }
+    }
 
     private fun elapsed(previous: Long, now: Long): Long = when {
         previous <= 0L || now < previous -> Long.MAX_VALUE
@@ -242,14 +249,16 @@ internal class AppUpdatePreferences(context: Context) {
     @Synchronized
     fun shouldPromptAutomatically(version: String): Boolean =
         AppUpdatePolicy.shouldAutomaticallyPrompt(
-            lastPromptedVersion = preferences.getString(KEY_LAST_PROMPTED_VERSION, null),
+            lastHandledVersion = preferences.getString(KEY_LAST_HANDLED_VERSION, null)
+                ?: preferences.getString(LEGACY_KEY_LAST_PROMPTED_VERSION, null),
             candidateVersion = version,
         )
 
     @Synchronized
-    fun markPrompted(version: String) {
+    fun markHandled(version: String) {
         preferences.edit()
-            .putString(KEY_LAST_PROMPTED_VERSION, version)
+            .putString(KEY_LAST_HANDLED_VERSION, version)
+            .remove(LEGACY_KEY_LAST_PROMPTED_VERSION)
             .apply()
     }
 
@@ -257,6 +266,7 @@ internal class AppUpdatePreferences(context: Context) {
         const val FILE_NAME = "app_update_state"
         const val KEY_LAST_CHECK_AT = "last_automatic_check_at"
         const val KEY_LAST_ATTEMPT_AT = "last_automatic_attempt_at"
-        const val KEY_LAST_PROMPTED_VERSION = "last_prompted_version"
+        const val KEY_LAST_HANDLED_VERSION = "last_handled_version"
+        const val LEGACY_KEY_LAST_PROMPTED_VERSION = "last_prompted_version"
     }
 }

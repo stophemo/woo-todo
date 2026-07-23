@@ -2,6 +2,35 @@ import SwiftUI
 import WooTodoCore
 
 struct DayCounterSettingsView: View {
+    private struct TemplateVariable: Identifiable, Sendable {
+        let title: String
+        let token: String
+
+        var id: String { token }
+    }
+
+    private static let weekdayVariables = [
+        TemplateVariable(title: "星期几", token: DayCounterConfiguration.weekdayToken),
+        TemplateVariable(title: "星期简称", token: DayCounterConfiguration.weekdayShortToken),
+        TemplateVariable(title: "英文星期几", token: DayCounterConfiguration.weekdayEnToken),
+        TemplateVariable(title: "英文星期简称", token: DayCounterConfiguration.weekdayEnShortToken)
+    ]
+    private static let dateVariables = [
+        TemplateVariable(title: "日期", token: DayCounterConfiguration.dateToken),
+        TemplateVariable(title: "中文日期", token: DayCounterConfiguration.dateLongToken),
+        TemplateVariable(title: "年份", token: DayCounterConfiguration.yearToken),
+        TemplateVariable(title: "月份", token: DayCounterConfiguration.monthToken),
+        TemplateVariable(title: "两位月份", token: DayCounterConfiguration.monthPaddedToken),
+        TemplateVariable(title: "日", token: DayCounterConfiguration.dayToken),
+        TemplateVariable(title: "两位日", token: DayCounterConfiguration.dayPaddedToken),
+        TemplateVariable(title: "起始日期", token: DayCounterConfiguration.startDateToken),
+        TemplateVariable(title: "截止日期", token: DayCounterConfiguration.deadlineDateToken)
+    ]
+    private static let counterVariables = [
+        TemplateVariable(title: "耗时天数", token: DayCounterConfiguration.elapsedDaysToken),
+        TemplateVariable(title: "截止天数", token: DayCounterConfiguration.deadlineDaysToken)
+    ]
+
     @ObservedObject var store: DayCounterStore
     @State private var headerTemplate: String
     @State private var subtitleTemplate: String
@@ -119,27 +148,30 @@ struct DayCounterSettingsView: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
             Menu {
-                variableButton(
-                    "星期几",
-                    token: DayCounterConfiguration.weekdayToken,
-                    value: value,
-                    selection: selection,
-                    limit: limit
-                )
-                variableButton(
-                    "耗时天数",
-                    token: DayCounterConfiguration.elapsedDaysToken,
-                    value: value,
-                    selection: selection,
-                    limit: limit
-                )
-                variableButton(
-                    "截止天数",
-                    token: DayCounterConfiguration.deadlineDaysToken,
-                    value: value,
-                    selection: selection,
-                    limit: limit
-                )
+                Section("星期") {
+                    variableButtons(
+                        Self.weekdayVariables,
+                        value: value,
+                        selection: selection,
+                        limit: limit
+                    )
+                }
+                Section("日期") {
+                    variableButtons(
+                        Self.dateVariables,
+                        value: value,
+                        selection: selection,
+                        limit: limit
+                    )
+                }
+                Section("计时") {
+                    variableButtons(
+                        Self.counterVariables,
+                        value: value,
+                        selection: selection,
+                        limit: limit
+                    )
+                }
             } label: {
                 Image(systemName: "plus.circle")
             }
@@ -148,15 +180,17 @@ struct DayCounterSettingsView: View {
         }
     }
 
-    private func variableButton(
-        _ title: String,
-        token: String,
+    @ViewBuilder
+    private func variableButtons(
+        _ variables: [TemplateVariable],
         value: Binding<String>,
         selection: Binding<TextSelection?>,
         limit: Int
     ) -> some View {
-        Button("\(title)  \(token)") {
-            insert(token, into: value, selection: selection, limit: limit)
+        ForEach(variables) { variable in
+            Button("\(variable.title)  \(variable.token)") {
+                insert(variable.token, into: value, selection: selection, limit: limit)
+            }
         }
     }
 

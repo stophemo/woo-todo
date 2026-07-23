@@ -4,6 +4,18 @@ import Foundation
 public struct DayCounterConfiguration: Equatable, Sendable {
     public static let defaultHeaderTemplate = "今日任务"
     public static let weekdayToken = "{weekday}"
+    public static let weekdayShortToken = "{weekdayShort}"
+    public static let weekdayEnToken = "{weekdayEn}"
+    public static let weekdayEnShortToken = "{weekdayEnShort}"
+    public static let dateToken = "{date}"
+    public static let dateLongToken = "{dateLong}"
+    public static let yearToken = "{year}"
+    public static let monthToken = "{month}"
+    public static let monthPaddedToken = "{monthPadded}"
+    public static let dayToken = "{day}"
+    public static let dayPaddedToken = "{dayPadded}"
+    public static let startDateToken = "{startDate}"
+    public static let deadlineDateToken = "{deadlineDate}"
     public static let elapsedDaysToken = "{elapsedDays}"
     public static let deadlineDaysToken = "{deadlineDays}"
 
@@ -69,15 +81,48 @@ public struct DayCounterConfiguration: Equatable, Sendable {
         let deadline = calendar.startOfDay(for: deadlineDate)
         let elapsed = calendar.dateComponents([.day], from: start, to: current).day ?? 0
         let deadlineRemaining = calendar.dateComponents([.day], from: current, to: deadline).day ?? 0
-        let weekday = Self.weekdays[calendar.component(.weekday, from: current) - 1]
+        let year = calendar.component(.year, from: current)
+        let month = calendar.component(.month, from: current)
+        let day = calendar.component(.day, from: current)
+        let weekdayIndex = calendar.component(.weekday, from: current) - 1
+        let date = String(format: "%04d-%02d-%02d", year, month, day)
+        let dateLong = "\(year)年\(month)月\(day)日"
+        let variables: [(String, String)] = [
+            (Self.weekdayToken, Self.weekdays[weekdayIndex]),
+            (Self.weekdayShortToken, Self.weekdayShort[weekdayIndex]),
+            (Self.weekdayEnToken, Self.weekdaysEn[weekdayIndex]),
+            (Self.weekdayEnShortToken, Self.weekdaysEnShort[weekdayIndex]),
+            (Self.dateToken, date),
+            (Self.dateLongToken, dateLong),
+            (Self.yearToken, String(year)),
+            (Self.monthToken, String(month)),
+            (Self.monthPaddedToken, String(format: "%02d", month)),
+            (Self.dayToken, String(day)),
+            (Self.dayPaddedToken, String(format: "%02d", day)),
+            (Self.startDateToken, Self.isoDate(start, calendar: calendar)),
+            (Self.deadlineDateToken, Self.isoDate(deadline, calendar: calendar)),
+            (Self.elapsedDaysToken, String(max(0, elapsed + 1))),
+            (Self.deadlineDaysToken, String(deadlineRemaining))
+        ]
 
-        return normalizedTemplate
-            .replacingOccurrences(of: Self.weekdayToken, with: weekday)
-            .replacingOccurrences(of: Self.elapsedDaysToken, with: String(max(0, elapsed + 1)))
-            .replacingOccurrences(of: Self.deadlineDaysToken, with: String(deadlineRemaining))
+        return variables.reduce(normalizedTemplate) { rendered, variable in
+            rendered.replacingOccurrences(of: variable.0, with: variable.1)
+        }
     }
 
     private static let weekdays = [
         "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六",
     ]
+    private static let weekdayShort = ["日", "一", "二", "三", "四", "五", "六"]
+    private static let weekdaysEn = [
+        "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
+    ]
+    private static let weekdaysEnShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+    private static func isoDate(_ date: Date, calendar: Calendar) -> String {
+        let year = calendar.component(.year, from: date)
+        let month = calendar.component(.month, from: date)
+        let day = calendar.component(.day, from: date)
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
 }

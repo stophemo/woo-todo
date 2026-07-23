@@ -3,6 +3,7 @@ package com.wootodo.ui
 import android.app.AlertDialog
 import android.app.DatePickerDialog
 import android.text.InputFilter
+import android.view.Menu
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
@@ -19,6 +20,33 @@ import com.wootodo.display.DayCounterText
 import java.time.LocalDate
 
 internal object TodayDisplaySettingsDialog {
+    private data class TemplateVariable(val labelRes: Int, val token: String)
+
+    private val weekdayVariables = listOf(
+        TemplateVariable(R.string.display_variable_weekday, DayCounterText.WEEKDAY_TOKEN),
+        TemplateVariable(R.string.display_variable_weekday_short, DayCounterText.WEEKDAY_SHORT_TOKEN),
+        TemplateVariable(R.string.display_variable_weekday_en, DayCounterText.WEEKDAY_EN_TOKEN),
+        TemplateVariable(
+            R.string.display_variable_weekday_en_short,
+            DayCounterText.WEEKDAY_EN_SHORT_TOKEN,
+        ),
+    )
+    private val dateVariables = listOf(
+        TemplateVariable(R.string.display_variable_date, DayCounterText.DATE_TOKEN),
+        TemplateVariable(R.string.display_variable_date_long, DayCounterText.DATE_LONG_TOKEN),
+        TemplateVariable(R.string.display_variable_year, DayCounterText.YEAR_TOKEN),
+        TemplateVariable(R.string.display_variable_month, DayCounterText.MONTH_TOKEN),
+        TemplateVariable(R.string.display_variable_month_padded, DayCounterText.MONTH_PADDED_TOKEN),
+        TemplateVariable(R.string.display_variable_day, DayCounterText.DAY_TOKEN),
+        TemplateVariable(R.string.display_variable_day_padded, DayCounterText.DAY_PADDED_TOKEN),
+        TemplateVariable(R.string.display_variable_start_date, DayCounterText.START_DATE_TOKEN),
+        TemplateVariable(R.string.display_variable_deadline_date, DayCounterText.DEADLINE_DATE_TOKEN),
+    )
+    private val counterVariables = listOf(
+        TemplateVariable(R.string.display_variable_elapsed_days, DayCounterText.ELAPSED_DAYS_TOKEN),
+        TemplateVariable(R.string.display_variable_deadline_days, DayCounterText.DEADLINE_DAYS_TOKEN),
+    )
+
     fun show(
         activity: AppCompatActivity,
         initial: DayCounterSettings,
@@ -179,22 +207,26 @@ internal object TodayDisplaySettingsDialog {
         input: EditText,
     ) {
         PopupMenu(activity, anchor).apply {
-            menu.add(activity.getString(R.string.display_variable_weekday))
-                .setOnMenuItemClickListener {
-                    insertToken(input, DayCounterText.WEEKDAY_TOKEN)
-                    true
-                }
-            menu.add(activity.getString(R.string.display_variable_elapsed_days))
-                .setOnMenuItemClickListener {
-                    insertToken(input, DayCounterText.ELAPSED_DAYS_TOKEN)
-                    true
-                }
-            menu.add(activity.getString(R.string.display_variable_deadline_days))
-                .setOnMenuItemClickListener {
-                    insertToken(input, DayCounterText.DEADLINE_DAYS_TOKEN)
-                    true
-                }
+            menu.addSubMenu(R.string.display_variable_group_weekday)
+                .addVariables(activity, input, weekdayVariables)
+            menu.addSubMenu(R.string.display_variable_group_date)
+                .addVariables(activity, input, dateVariables)
+            menu.addSubMenu(R.string.display_variable_group_counter)
+                .addVariables(activity, input, counterVariables)
             show()
+        }
+    }
+
+    private fun Menu.addVariables(
+        activity: AppCompatActivity,
+        input: EditText,
+        variables: List<TemplateVariable>,
+    ) {
+        variables.forEach { variable ->
+            add(activity.getString(variable.labelRes)).setOnMenuItemClickListener {
+                insertToken(input, variable.token)
+                true
+            }
         }
     }
 

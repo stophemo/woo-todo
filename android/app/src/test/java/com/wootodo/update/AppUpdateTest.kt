@@ -156,7 +156,7 @@ class AppUpdateTest {
     }
 
     @Test
-    fun `自动检查每24小时一次且同版本只自动提醒一次`() {
+    fun `自动检查每24小时一次且处理版本后只提示更高版本`() {
         val now = 200_000_000L
         assertTrue(AppUpdatePolicy.shouldAutomaticallyCheck(0L, 0L, now))
         assertFalse(
@@ -187,11 +187,17 @@ class AppUpdateTest {
                 now = now,
             ),
         )
+        assertTrue(
+            AppUpdatePolicy.shouldAutomaticallyPrompt(null, "v0.2.0"),
+        )
         assertFalse(
             AppUpdatePolicy.shouldAutomaticallyPrompt("v0.2.0", "v0.2.0"),
         )
         assertTrue(
             AppUpdatePolicy.shouldAutomaticallyPrompt("v0.1.9", "v0.2.0"),
+        )
+        assertFalse(
+            AppUpdatePolicy.shouldAutomaticallyPrompt("v0.3.0", "v0.2.0"),
         )
     }
 

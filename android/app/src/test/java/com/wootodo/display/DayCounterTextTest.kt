@@ -37,6 +37,45 @@ class DayCounterTextTest {
     }
 
     @Test
+    fun `支持英文星期和完整日期变量`() {
+        val settings = DayCounterSettings(
+            headerTemplate = "{weekdayEn} / {weekdayEnShort} / {weekdayShort}",
+            subtitleTemplate = "{date} | {dateLong} | {year}/{month}/{day} | {monthPadded}/{dayPadded} | {startDate} -> {deadlineDate}",
+            startDate = LocalDate.of(2026, 12, 31),
+            deadlineDate = LocalDate.of(2027, 1, 9),
+        )
+
+        val rendered = DayCounterText.render(settings, LocalDate.of(2027, 1, 2))
+
+        assertEquals("Saturday / Sat / 六", rendered.header)
+        assertEquals(
+            "2027-01-02 | 2027年1月2日 | 2027/1/2 | 01/02 | 2026-12-31 -> 2027-01-09",
+            rendered.subtitle,
+        )
+    }
+
+    @Test
+    fun `中英文星期在完整一周内保持对应`() {
+        val monday = LocalDate.of(2026, 7, 20)
+        val expected = listOf(
+            "星期一|一|Monday|Mon",
+            "星期二|二|Tuesday|Tue",
+            "星期三|三|Wednesday|Wed",
+            "星期四|四|Thursday|Thu",
+            "星期五|五|Friday|Fri",
+            "星期六|六|Saturday|Sat",
+            "星期日|日|Sunday|Sun",
+        )
+        val settings = DayCounterSettings(
+            headerTemplate = "{weekday}|{weekdayShort}|{weekdayEn}|{weekdayEnShort}",
+        )
+
+        expected.forEachIndexed { offset, value ->
+            assertEquals(value, DayCounterText.render(settings, monday.plusDays(offset.toLong())).header)
+        }
+    }
+
+    @Test
     fun `未来起始为零且空模板隐藏未知变量保留`() {
         val today = LocalDate.of(2026, 7, 21)
         val rendered = DayCounterText.render(

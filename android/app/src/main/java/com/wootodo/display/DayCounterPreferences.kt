@@ -2,6 +2,7 @@ package com.wootodo.display
 
 import android.content.Context
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 
 data class DayCounterSettings(
@@ -26,6 +27,18 @@ data class DayCounterRenderResult(
 object DayCounterText {
     const val DEFAULT_HEADER_TEMPLATE = "今日任务"
     const val WEEKDAY_TOKEN = "{weekday}"
+    const val WEEKDAY_SHORT_TOKEN = "{weekdayShort}"
+    const val WEEKDAY_EN_TOKEN = "{weekdayEn}"
+    const val WEEKDAY_EN_SHORT_TOKEN = "{weekdayEnShort}"
+    const val DATE_TOKEN = "{date}"
+    const val DATE_LONG_TOKEN = "{dateLong}"
+    const val YEAR_TOKEN = "{year}"
+    const val MONTH_TOKEN = "{month}"
+    const val MONTH_PADDED_TOKEN = "{monthPadded}"
+    const val DAY_TOKEN = "{day}"
+    const val DAY_PADDED_TOKEN = "{dayPadded}"
+    const val START_DATE_TOKEN = "{startDate}"
+    const val DEADLINE_DATE_TOKEN = "{deadlineDate}"
     const val ELAPSED_DAYS_TOKEN = "{elapsedDays}"
     const val DEADLINE_DAYS_TOKEN = "{deadlineDays}"
 
@@ -36,13 +49,34 @@ object DayCounterText {
         val elapsedDays = (ChronoUnit.DAYS.between(settings.startDate, today) + 1)
             .coerceAtLeast(0)
         val deadlineDays = ChronoUnit.DAYS.between(today, settings.deadlineDate)
-        val weekday = WEEKDAYS[today.dayOfWeek.value - 1]
+        val weekdayIndex = today.dayOfWeek.value - 1
+        val date = today.format(DATE_FORMAT)
+        val dateLong = today.format(DATE_LONG_FORMAT)
+        val values = mapOf(
+            WEEKDAY_TOKEN to WEEKDAYS[weekdayIndex],
+            WEEKDAY_SHORT_TOKEN to WEEKDAY_SHORT[weekdayIndex],
+            WEEKDAY_EN_TOKEN to WEEKDAYS_EN[weekdayIndex],
+            WEEKDAY_EN_SHORT_TOKEN to WEEKDAYS_EN_SHORT[weekdayIndex],
+            DATE_TOKEN to date,
+            DATE_LONG_TOKEN to dateLong,
+            YEAR_TOKEN to today.year.toString(),
+            MONTH_TOKEN to today.monthValue.toString(),
+            MONTH_PADDED_TOKEN to today.monthValue.toString().padStart(2, '0'),
+            DAY_TOKEN to today.dayOfMonth.toString(),
+            DAY_PADDED_TOKEN to today.dayOfMonth.toString().padStart(2, '0'),
+            START_DATE_TOKEN to settings.startDate.format(DATE_FORMAT),
+            DEADLINE_DATE_TOKEN to settings.deadlineDate.format(DATE_FORMAT),
+            ELAPSED_DAYS_TOKEN to elapsedDays.toString(),
+            DEADLINE_DAYS_TOKEN to deadlineDays.toString(),
+        )
 
         fun renderTemplate(template: String): String? = template.trim()
             .takeIf(String::isNotEmpty)
-            ?.replace(WEEKDAY_TOKEN, weekday)
-            ?.replace(ELAPSED_DAYS_TOKEN, elapsedDays.toString())
-            ?.replace(DEADLINE_DAYS_TOKEN, deadlineDays.toString())
+            ?.let { source ->
+                values.entries.fold(source) { rendered, (token, value) ->
+                    rendered.replace(token, value)
+                }
+            }
 
         return DayCounterRenderResult(
             header = renderTemplate(settings.headerTemplate),
@@ -56,6 +90,13 @@ object DayCounterText {
     private val WEEKDAYS = listOf(
         "星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日",
     )
+    private val WEEKDAY_SHORT = listOf("一", "二", "三", "四", "五", "六", "日")
+    private val WEEKDAYS_EN = listOf(
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    )
+    private val WEEKDAYS_EN_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    private val DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE
+    private val DATE_LONG_FORMAT = DateTimeFormatter.ofPattern("yyyy年M月d日")
 }
 
 object DayCounterPreferences {

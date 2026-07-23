@@ -84,8 +84,8 @@ struct AppUpdatePolicyTests {
         ))
     }
 
-    @Test("同一新版只自动提醒一次，后续更高版本仍会提醒")
-    func notifiesOncePerNewVersion() throws {
+    @Test("处理当前新版后只自动提醒后续更高版本")
+    func notifiesForVersionsHigherThanLastHandled() throws {
         let current = try #require(AppVersion("0.1.4"))
         let latest = try #require(AppVersion("0.1.5"))
         let newer = try #require(AppVersion("0.2.0"))
@@ -93,27 +93,27 @@ struct AppUpdatePolicyTests {
         #expect(AppUpdatePolicy.shouldNotify(
             currentVersion: current,
             latestVersion: latest,
-            lastNotifiedVersion: nil
+            lastHandledVersion: nil
         ))
         #expect(!AppUpdatePolicy.shouldNotify(
             currentVersion: current,
             latestVersion: latest,
-            lastNotifiedVersion: latest
+            lastHandledVersion: latest
         ))
         #expect(!AppUpdatePolicy.shouldNotify(
             currentVersion: current,
             latestVersion: latest,
-            lastNotifiedVersion: newer
+            lastHandledVersion: newer
         ))
         #expect(AppUpdatePolicy.shouldNotify(
             currentVersion: current,
             latestVersion: newer,
-            lastNotifiedVersion: latest
+            lastHandledVersion: latest
         ))
         #expect(!AppUpdatePolicy.shouldNotify(
             currentVersion: latest,
             latestVersion: latest,
-            lastNotifiedVersion: nil
+            lastHandledVersion: nil
         ))
     }
 }

@@ -50,7 +50,7 @@
 - 可选的设备配对与端到端加密在线同步
 - 加密恢复备份导入导出，可手动保存到任意文件介质
 - 双端顶部标题/副标题模板与中英文星期、日期、耗时、截止天数变量
-- 双端自动检查 GitHub 最新正式版，可选择更新或忽略，并支持手动检查
+- 双端自动检查 GitHub 最新正式版，在菜单中显示可用版本，并支持手动检查
 
 ## 新架构
 
@@ -65,7 +65,7 @@
 
 ## 当前阶段
 
-当前已发布版本为 [`v0.1.7`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.7)，包含 Android 启动闪退热修复、Android App 内扫码配对、可扩展顶部模板和双端更新提醒。版本 tag 推送后由 GitHub Actions 自动生成并验证双端安装包；进度见 [执行计划](docs/EXECUTION_PLAN.md)。
+当前已发布版本为 [`v0.1.8`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.8)，包含非打扰式菜单更新提示、Android 启动闪退热修复、Android App 内扫码配对和可扩展顶部模板。版本 tag 推送后由 GitHub Actions 自动生成并验证双端安装包；进度见 [执行计划](docs/EXECUTION_PLAN.md)。
 
 详细文档：
 

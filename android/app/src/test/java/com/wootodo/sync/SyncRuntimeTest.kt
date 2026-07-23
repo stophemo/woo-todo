@@ -11,6 +11,16 @@ import org.junit.Test
 
 class SyncRuntimeTest {
     @Test
+    fun `读取安全存储期间不误报未配对`() {
+        val runtime = SyncRuntime(runnerFactory = { null })
+
+        assertEquals(SyncRuntimeState.Loading, runtime.state.value)
+
+        runtime.refreshConfiguration(configured = true)
+        assertEquals(SyncRuntimeState.Idle, runtime.state.value)
+    }
+
+    @Test
     fun `未配对时不执行同步`() = runBlocking {
         val runtime = SyncRuntime(runnerFactory = { null })
 

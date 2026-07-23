@@ -22,6 +22,7 @@ import android.widget.Toast
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.SwitchCompat
@@ -203,6 +204,8 @@ class MainActivity : AppCompatActivity() {
             showMoreMenu(anchor)
         }
         syncButton.setOnClickListener { handleSyncAction() }
+        // 凭据在 Application 的后台初始化中读取；先按当前快照渲染，避免启动窗口仍可点击。
+        renderSyncState((application as WooTodoApplication).syncRuntime.state.value)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -430,7 +433,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     MENU_DAY_COUNTER -> showDayCounterSettings()
                     MENU_REMINDER -> showReminderSettings()
-                    MENU_SCAN_MAC_WEBDAV -> scanMacWebDavConfiguration()
+                    MENU_SCAN_MAC_WEBDAV -> scanMacConfiguration()
                     MENU_WEBDAV -> showWebDavSettings()
                     MENU_CHECK_UPDATE -> checkForAppUpdate(manual = true)
                     MENU_EXPORT_BACKUP -> prepareBackupExport()
@@ -443,11 +446,50 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun scanMacWebDavConfiguration() {
+    private fun scanMacConfiguration() {
         qrScanner.launch(WooTodoScanOptions.create(this))
     }
 
+    private fun showPairingMethodMenu(anchor: View) {
+        PopupMenu(this, anchor).apply {
+            menuInflater.inflate(R.menu.pairing_methods, menu)
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    R.id.pairing_scan_qr -> scanMacConfiguration()
+                    R.id.pairing_paste_link -> showPairingLinkInput()
+                    R.id.pairing_manual_webdav -> showWebDavSettings()
+                    else -> return@setOnMenuItemClickListener false
+                }
+                true
+            }
+            show()
+        }
+    }
+
+    private fun showPairingLinkInput() {
+        val input = EditText(this).apply {
+            hint = getString(R.string.pairing_link_input_hint)
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            enableEditableTextActions()
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.pairing_link_input_title)
+            .setView(input)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                val source = input.text.toString().trim()
+                input.text.clear()
+                handleConfigurationSource(source, R.string.pairing_link_input_invalid)
+            }
+            .show()
+    }
+
     private fun handleScannedConfiguration(source: String) {
+        handleConfigurationSource(source, R.string.scan_qr_invalid)
+    }
+
+    private fun handleConfigurationSource(source: String, @StringRes invalidMessageRes: Int) {
         when (val configuration = runCatching {
             ScannedConfigurationParser.parse(source)
         }.getOrNull()) {
@@ -456,7 +498,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, R.string.pairing_link_received, Toast.LENGTH_SHORT).show()
                 pairingViewModel.begin(configuration.pairingLink, deviceDisplayName())
             }
-            null -> Toast.makeText(this, R.string.scan_qr_invalid, Toast.LENGTH_LONG).show()
+            null -> Toast.makeText(this, invalidMessageRes, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1066,20 +1108,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleSyncAction() {
-        if ((application as WooTodoApplication).syncRuntime.state.value == SyncRuntimeState.Unpaired) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.pairing_help_title)
-                .setMessage(R.string.pairing_help_message)
-                .setPositiveButton(R.string.confirm, null)
-                .show()
-                .enableMessageSelection()
-        } else {
-            synchronizeNow()
+        when ((application as WooTodoApplication).syncRuntime.state.value) {
+            SyncRuntimeState.Loading,
+            SyncRuntimeState.Running,
+            -> Unit
+
+            SyncRuntimeState.Unpaired -> showPairingMethodMenu(syncButton)
+            else -> synchronizeNow()
         }
     }
 
     private fun renderSyncState(state: SyncRuntimeState) {
-        syncButton.isEnabled = state != SyncRuntimeState.Running
+        syncButton.isEnabled = state != SyncRuntimeState.Loading && state != SyncRuntimeState.Running
         syncButton.setText(
             if (state == SyncRuntimeState.Unpaired) {
                 R.string.sync_pairing_help
@@ -1088,6 +1128,7 @@ class MainActivity : AppCompatActivity() {
             },
         )
         syncStatus.text = when (state) {
+            SyncRuntimeState.Loading -> getString(R.string.sync_loading)
             SyncRuntimeState.Unpaired -> getString(R.string.sync_unpaired)
             SyncRuntimeState.Idle -> getString(R.string.sync_ready)
             SyncRuntimeState.Running -> getString(R.string.sync_running)

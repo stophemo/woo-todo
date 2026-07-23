@@ -5,6 +5,7 @@ import WooTodoCore
 @MainActor
 final class DashboardWindowController: NSWindowController, NSWindowDelegate {
     private let store: DashboardStore
+    private let navigation: DashboardNavigation
     var onClose: (() -> Void)?
 
     init(
@@ -12,9 +13,11 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         syncSettingsStore: SyncSettingsStore,
         webDavSettingsStore: WebDavSettingsStore,
         dayCounterStore: DayCounterStore,
-        shortcutSettingsStore: ShortcutSettingsStore
+        shortcutSettingsStore: ShortcutSettingsStore,
+        initialSection: DashboardSection = .today
     ) {
         self.store = store
+        navigation = DashboardNavigation(selection: initialSection)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 940, height: 650),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -23,7 +26,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         )
         super.init(window: window)
 
-        window.title = "Woo Todo · 任务详情与统计"
+        window.title = "Woo Todo · 任务详情、统计与设置"
         window.minSize = NSSize(width: 760, height: 520)
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("WooTodoDashboardWindow")
@@ -32,7 +35,8 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             syncSettingsStore: syncSettingsStore,
             webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
-            shortcutSettingsStore: shortcutSettingsStore
+            shortcutSettingsStore: shortcutSettingsStore,
+            navigation: navigation
         ))
         window.delegate = self
     }
@@ -42,7 +46,8 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         fatalError("不支持从归档创建管理窗口")
     }
 
-    func show() {
+    func show(section: DashboardSection = .today) {
+        navigation.selection = section
         store.reload()
         if let window, !window.setFrameUsingName("WooTodoDashboardWindow") {
             window.center()

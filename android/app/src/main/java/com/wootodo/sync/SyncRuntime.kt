@@ -15,6 +15,8 @@ fun interface SyncRunner {
 }
 
 sealed interface SyncRuntimeState {
+    /** 凭据仍在从 Android 安全存储读取，界面暂不应把设备当作未配对。 */
+    data object Loading : SyncRuntimeState
     data object Unpaired : SyncRuntimeState
     data object Idle : SyncRuntimeState
     data object Running : SyncRuntimeState
@@ -91,7 +93,7 @@ class SyncRuntime(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val mutex = Mutex()
-    private val mutableState = MutableStateFlow<SyncRuntimeState>(SyncRuntimeState.Unpaired)
+    private val mutableState = MutableStateFlow<SyncRuntimeState>(SyncRuntimeState.Loading)
     val state: StateFlow<SyncRuntimeState> = mutableState.asStateFlow()
 
     fun refreshConfiguration(configured: Boolean) {

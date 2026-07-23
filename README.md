@@ -1,83 +1,122 @@
-# 无我待办（woo-todo）
+<p align="center">
+  <img src="web/assets/app-icon.svg" width="72" alt="无我待办图标">
+</p>
 
-一个为“今晚规划，明早开干”设计的轻量跨端待办应用，首要支持 macOS 与 Android。
+# 无我待办（Woo Todo）
 
-项目主页：[woo-todo.vercel.app](https://woo-todo.vercel.app) · 安装包：[GitHub Releases](https://github.com/stophemo/woo-todo/releases)
+> 今晚规划，明早开干。
 
-## 产品原则
+Woo Todo 是一个为个人日常规划设计的跨端待办应用，支持 **macOS** 和 **Android**。它坚持本地优先：任务先写入设备上的 SQLite，不登录 Woo Todo 账号也能完整使用；需要跨端时，再按自己的信任边界选择同步方式。
 
-- **不打扰，但始终可见**：macOS 使用可置顶、可毛玻璃、可鼠标穿透的原生悬浮任务板。
-- **手机负责规划**：Android 在睡前提醒规划明日任务，三星桌面 Widget 直接展示今日任务。
-- **本地优先**：安装后不注册 Woo Todo 账号，全部操作先落本地 SQLite；需要跨端自动同步时可直接使用坚果云 WebDAV，不必自建服务器。
-- **保持简单**：任务只有一句话；时间类型与任务级别相互独立，不引入笔记、附件和复杂项目管理。
-- **资源克制**：双端原生实现，不使用 Electron、Flutter 或常驻前台服务。
+[产品主页](https://woo-todo.vercel.app/) · [下载最新版](https://github.com/stophemo/woo-todo/releases) · [安装与首次使用](docs/INSTALLATION.md) · [问题反馈](https://github.com/stophemo/woo-todo/issues)
 
-## 快速上手
+当前正式版：[`v0.1.8`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.8)
+
+## 适合什么场景
+
+| 设备 | 主要体验 |
+| --- | --- |
+| macOS | 菜单栏常驻、可置顶/毛玻璃/鼠标穿透的悬浮任务板；支持快速新增和全局快捷键。 |
+| Android | 今日、明日、周/月与闲时任务；睡前规划提醒、任务级提醒和三星桌面 Widget。 |
+| 两端一起用 | 推荐使用坚果云 WebDAV 自动同步；也可以自建 Cloudflare Worker + D1 做端到端加密同步。 |
+
+任务支持一次性与周期重复、主线/支线/外传、完成/Pass、历史和履约统计。顶部标题和副标题可使用模板变量，包含中文或英文星期、日期、耗时和截止天数；详细变量表见[产品规格](docs/PRODUCT_SPEC.md)。
+
+## 下载与安装
+
+以下是当前正式版的直接下载入口，校验值在同一 Release 中的 `SHA256SUMS.txt`。
+
+| 平台 | 安装包 | 说明 |
+| --- | --- | --- |
+| macOS 15+、Apple Silicon | [Woo-Todo-v0.1.8-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.8/Woo-Todo-v0.1.8-macos-arm64.zip) | 解压后将 `Woo Todo.app` 拖入“应用程序”。首版使用 ad-hoc 签名，未经过 Apple 公证；首次打开若被拦截，请在“系统设置 → 隐私与安全性”允许。 |
+| Android 13+ | [Woo-Todo-v0.1.8-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.8/Woo-Todo-v0.1.8-android.apk) | 从系统文件管理器打开并允许本次来源安装；正式包使用项目长期 Release 签名。 |
+| 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.8/SHA256SUMS.txt) | 下载后可用 `shasum -a 256 <文件>` 对照。 |
+
+macOS 客户端只显示在菜单栏，不显示 Dock 图标。Android 正式包可直接覆盖升级：保留任务、同步身份和配对状态，**普通版本更新不需要重新配对**。请不要先卸载、清除应用数据，或用不同签名的 Debug 包覆盖正式包；这些操作可能删除本地数据库/Keystore，只有在更换设备、清除数据或主动更换同步空间时才需要重新配对。
+
+## 第一次使用
 
 ### macOS
 
-1. 启动后应用常驻菜单栏，不显示 Dock 图标；点击菜单栏的清单图标可找回任务板或打开“任务详情与统计”。
-2. 菜单栏可分别开关“始终置顶”“毛玻璃”和“鼠标穿透”，并选择日常不透明度。置顶与毛玻璃默认开启。
-3. 默认按 `Shift + Option + 1` 打开紧凑输入框，`Shift + Option + 2` 显隐任务板，`Shift + Option + 3` 切换置顶，`Shift + Option + 4` 切换鼠标穿透。四项快捷键都可在“任务详情与统计 → 快捷键”自定义；`Enter` 新增一条今日主线一次性任务，`Esc` 取消。
-4. 任务板右上角 `+` 新增今日任务；点击圆圈完成；双击任务编辑；右键删除；同一任务线内拖动待办项排序。
-5. 菜单栏选择“任务详情与统计”，可管理今日、本周、本月、闲时、历史、统计、加密备份和同步。
+1. 启动后点击菜单栏 Woo Todo 图标：选择“任务详情与统计…”打开任务和统计主窗口，选择独立的“设置…”管理显示、快捷键、同步等选项。
+2. 在主窗口左侧，“任务与统计”用于今日、本周、本月、闲时、历史和统计；“设置”用于显示、快捷键和同步。
+3. 任务板右上角 `+` 可新增任务；点击圆圈完成，双击编辑，右键删除，同一任务线内可拖动排序。
 
 ### Android
 
-1. 首页顶部切换今日、明日、本周、本月和闲时；睡前选择“明日”，再点右下角 `+` 连续添加第二天任务。
-2. 新建时可选择主线/支线/外传及重复方式；点击任务编辑，可打开“在指定时间提醒”并为该条待办选择时间；勾选完成，长按后在同一任务线内拖动排序。
-3. “更多”中可通过“扫描 Mac 配置二维码”直接加入坚果云或 Worker 同步，也可设置 23:10 睡前规划提醒及加密恢复备份；“统计”查看历史与履约趋势。首次扫码和使用通知时分别允许相机、通知权限。
-4. 长按三星桌面空白区域，进入“组件”，添加 Woo Todo 今日组件；组件内可查看、勾选任务，点击任务进入编辑。
+1. 首次打开后按系统提示授予通知权限；首页可切换今日、明日、本周、本月和闲时。
+2. 点击右下角 `+` 新建任务；编辑任务时可设置重复规则和指定时间提醒。
+3. 在“更多”中管理显示设置、提醒、备份和同步；三星设备可从桌面“组件”添加今日 Widget。
 
-### 坚果云自动同步（推荐跨端）
+## 连接两端
 
-坚果云 WebDAV 不需要自建 Worker、域名或额外服务器费用，适合只想让两台设备在线自动同步的个人使用。先安装并登录坚果云官方客户端确认账号可用，再在坚果云网页的“账户信息 → 安全选项 → 第三方应用管理”创建应用密码；Woo Todo 内置 WebDAV 客户端，会直接连接坚果云完成同步。推荐先在 Mac 保存配置并点击“显示 Android 配置二维码”，再在 Android 选择“更多 → 扫描 Mac 配置二维码”。App 会预填四项配置，确认保存后生成手机独立 `deviceId` 并立即同步。二维码等同完整敏感凭据，只能在两台设备近旁展示，用完立即隐藏，不得上传或记录。完整步骤见 [坚果云自动同步与通知](docs/JIANGUOYUN_SYNC.md)。坚果云免费空间和网络可用性仍受服务商政策限制。
+不需要同步时可以跳过配对，两端仍可独立使用。需要同步时，先在 Mac 的“设置 → 同步”完成一端配置，再在 Android 首页未连接状态点击“配对”；Android 会先让你选择连接方式，不会把说明强行弹成阻塞对话框。
 
-### 自建 Worker 同步（可选）
+### 方式一：坚果云 WebDAV（推荐，不用自建服务器）
 
-如果不使用坚果云，也可以自行部署 Woo Todo Worker。先注册/登录 Cloudflare 账号，在 `backend/` 用 Wrangler 创建 D1、写入两个 secrets、执行迁移并部署；无需购买域名，`workers_dev = true` 会提供 `workers.dev` 地址。完整的可执行命令、免费层额度边界和密钥安全说明见 [Cloudflare Workers + D1 免费部署指南](backend/README.md)，部署后再按 [可选在线配对同步](docs/PAIRING.md) 在 Mac 创建同步空间并用二维码加入 Android。应用未配置同步身份时不会访问 Worker；`127.0.0.1` 只表示当前设备，不能用于双机在线同步。Cloudflare 免费额度、计费政策和中国大陆网络可达性会变化，请以部署时官方 Dashboard 为准。
+1. 在坚果云网页“账户信息 → 安全选项 → 第三方应用管理”创建应用密码，不要把网页登录密码填入 Woo Todo。
+2. Mac 在“设置 → 同步 → 坚果云自动同步”填写账号和应用密码，点击保存连接，再选择“显示 Android 配置二维码”。
+3. Android 点击“配对 → 扫描二维码配对”，扫描 Mac 二维码并确认预填内容；手机会生成独立设备 ID，保存后自动首次同步。
+4. 没有相机或不方便扫码时，Android 选择“手动填写坚果云配置”，填写账号邮箱、应用密码、同步空间名和同步密钥；这些值必须与 Mac 完全一致。
 
-## 首版能力
+### 方式二：自建 Worker 在线配对
 
-- 时间类型：每日、每周、每月、闲时
-- 任务级别：主线、支线、外传
-- 一次性任务与周期重复任务
-- 完成、Pass、历史与履约统计
-- 每条待办的本地定时通知（macOS 与 Android）
-- macOS 原生透明悬浮任务板
-- Android 桌面 Widget、23:10 睡前规划提醒与任务级通知
-- 坚果云 WebDAV 密文自动同步
-- 可选的设备配对与端到端加密在线同步
-- 加密恢复备份导入导出，可手动保存到任意文件介质
-- 双端顶部标题/副标题模板与中英文星期、日期、耗时、截止天数变量
-- 双端自动检查 GitHub 最新正式版，在菜单中显示可用版本，并支持手动检查
+1. 按[后端部署指南](backend/README.md)部署 Cloudflare Worker + D1，并确认两端都能访问 HTTPS 根地址。
+2. Mac 在“设置 → 同步”页填写 Worker 根地址和创建邀请码，创建同步空间后点击“生成配对二维码”。
+3. Android 点击“配对 → 扫描二维码配对”，扫描后逐位核对两端显示的六位码，再回 Mac 确认绑定。
+4. 没有相机时，使用 Mac 的“复制配对链接（备用）”，通过私密渠道发送到自己的手机，在 Android 选择“配对 → 粘贴配对链接”；配对链接约 10 分钟有效。
 
-## 新架构
+两种方式的二维码/链接都可能包含完整同步凭据或一次性 secret，只应在两台设备旁使用，确认后立即隐藏或清理剪贴板，不要发到群聊、截图、公开仓库或日志。完整排错和撤销设备流程见[可选在线配对同步](docs/PAIRING.md)与[坚果云自动同步](docs/JIANGUOYUN_SYNC.md)。
 
-| 目录 | 说明 |
-|---|---|
-| `macos/` | Swift + AppKit/SwiftUI 原生客户端 |
-| `android/` | Kotlin + Android Views/RemoteViews 原生客户端 |
-| `backend/` | 可选 Cloudflare Workers + D1 增量同步服务 |
-| `web/` | Vercel 静态产品主页 |
-| `shared/` | JSON Schema、跨端契约与测试样例 |
-| `docs/` | 产品规格、架构、执行计划与 ADR |
+## 更新方式
 
-## 当前阶段
+- 双端会低频检查 GitHub 最新正式 Release；检查失败不会影响本地任务。
+- 发现新版本时只在菜单中留下“有新版本可用”：macOS 在菜单栏菜单，Android 在“更多”菜单。不会自动弹窗、抢占焦点、下载或安装，用户可以继续使用并自行决定何时更新。
+- 菜单中的版本入口会打开 GitHub Release 下载页；“检查更新”始终保留，用户也可以随时手动检查。
+- 安装到对应版本后，提示会自动消失。若 Release 页面暂时不可达，可稍后从[发布页](https://github.com/stophemo/woo-todo/releases)手动下载。
 
-当前已发布版本为 [`v0.1.8`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.8)，包含非打扰式菜单更新提示、Android 启动闪退热修复、Android App 内扫码配对和可扩展顶部模板。版本 tag 推送后由 GitHub Actions 自动生成并验证双端安装包；进度见 [执行计划](docs/EXECUTION_PLAN.md)。
+## 数据与隐私
 
-详细文档：
+- **任务默认只在本地**：不要求 Woo Todo 账号，应用启动和编辑不依赖网络；本地数据存储在设备 SQLite。
+- **坚果云同步**：Woo Todo 直接使用 WebDAV，上传的是 AES-256-GCM 加密的增量对象，不上传 SQLite 整库或任务明文。配置二维码包含坚果云应用密码和同步密钥，应按完整凭据保护。
+- **Worker 同步**：vault key 由客户端生成，Worker/D1 只保存密文和同步所需元数据，服务端不能读取任务正文。自建服务的域名、密钥和额度由部署者负责。
+- **加密备份**：`.wootodo` 使用 AES-256-GCM 加密，恢复口令无法找回；备份可保存到用户信任的本地或云端位置。默认不把同步身份放入备份，替换丢失设备时才按文档谨慎恢复。
+- **离线可用**：断网时两端仍可编辑，网络恢复后再发送积压变更。撤销设备会阻止后续同步，但不会远程删除该设备已经下载的本地数据。
 
-- [产品规格](docs/PRODUCT_SPEC.md)
-- [架构设计](docs/ARCHITECTURE.md)
-- [执行计划](docs/EXECUTION_PLAN.md)
-- [同步与安全](docs/SYNC_AND_SECURITY.md)
-- [加密备份与恢复](docs/BACKUP_AND_RESTORE.md)
-- [个人安装与首次使用](docs/INSTALLATION.md)
-- [坚果云自动同步与通知](docs/JIANGUOYUN_SYNC.md)
-- [可选在线配对同步](docs/PAIRING.md)
-- [发版与签名维护](docs/RELEASING.md)
+## 技术边界
+
+- `macos/` 是 Swift + AppKit/SwiftUI 原生客户端；`android/` 是 Kotlin + Android Views/RemoteViews 原生客户端；不引入 Electron、Flutter、WebView 运行时或 Android 前台常驻服务。
+- `backend/` 是可选的 Cloudflare Workers + D1 服务；`shared/` 保存 JSON Schema、fixture 和跨端契约。三端通过 `shared/` 约定协议，不直接依赖彼此实现。
+- 当前发布目标为 macOS Apple Silicon 和 Android 13+；暂不提供 iOS、Windows 或 Web 任务客户端。
+
+## 开发
+
+开发环境和真机验收要求见[开发指南](docs/DEVELOPMENT.md)。常用检查命令：
+
+```bash
+npm install
+npm run validate:contracts
+npm run test:crypto
+npm run test:backend
+cd android && ./gradlew testDebugUnitTest assembleDebug lintDebug
+cd ../macos && swift build
+```
+
+修改共享协议时，需要同步更新 `shared/schema/`、`shared/fixtures/`、Swift/Kotlin 模型和后端校验；完整测试矩阵见[测试与验收](docs/TESTING.md)。发版和签名维护见[发版指南](docs/RELEASING.md)。
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [个人安装与首次使用](docs/INSTALLATION.md) | 安装、权限、备份和首次验收 |
+| [产品规格](docs/PRODUCT_SPEC.md) | 任务规则、显示变量、通知和更新行为 |
+| [坚果云自动同步](docs/JIANGUOYUN_SYNC.md) | 不自建服务器的跨端同步 |
+| [可选在线配对同步](docs/PAIRING.md) | Worker 配对、六位核对码和撤销设备 |
+| [同步与安全](docs/SYNC_AND_SECURITY.md) | 加密、凭据和服务端边界 |
+| [加密备份与恢复](docs/BACKUP_AND_RESTORE.md) | `.wootodo` 格式与恢复限制 |
+| [开发指南](docs/DEVELOPMENT.md) | 工具链、构建和真机测试 |
+| [后端部署指南](backend/README.md) | Cloudflare Workers + D1 自托管 |
+| [发版指南](docs/RELEASING.md) | CI、签名和 Release 流程 |
 
 ## 许可
 

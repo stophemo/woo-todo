@@ -202,18 +202,22 @@ class WooTodoApplication : Application() {
         NotificationHelper.createChannel(this)
         ReminderScheduler.schedule(this)
         applicationScope.launch {
-            taskRepository.autoPassExpired()
-            TodayWidgetUpdater.updateAll(this@WooTodoApplication)
-            TaskReminderScheduler.scheduleAll(this@WooTodoApplication)
             val configured = runCatching {
                 syncCredentialsStore.load() != null || webDavCredentialsStore.load() != null
             }.getOrDefault(false)
-            syncRuntime.refreshConfiguration(configured)
-            if (configured) {
-                SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
-                SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
-            } else {
-                SyncJobScheduler.cancel(this@WooTodoApplication)
+            try {
+                taskRepository.autoPassExpired()
+                TodayWidgetUpdater.updateAll(this@WooTodoApplication)
+                TaskReminderScheduler.scheduleAll(this@WooTodoApplication)
+            } finally {
+                // 无论本地启动维护是否失败，都要让界面离开 Loading，显示真实配对状态。
+                syncRuntime.refreshConfiguration(configured)
+                if (configured) {
+                    SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
+                    SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
+                } else {
+                    SyncJobScheduler.cancel(this@WooTodoApplication)
+                }
             }
         }
     }

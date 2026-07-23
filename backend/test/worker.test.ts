@@ -235,7 +235,7 @@ test("vault、配对、密文同步、幂等与撤销形成完整闭环", async 
 
   const health = await callApi(env, "GET", "/health");
   assert.equal(health.status, 200);
-  assert.equal(health.payload.data.version, "0.1.8");
+  assert.equal(health.payload.data.version, "0.1.9");
   assert.equal(health.payload.data.database, "ok");
 
   const created = await callApi(env, "POST", "/v1/vaults", {

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/pairing_scan_qr"
+        android:title="@string/pairing_method_scan_qr" />
+    <item
+        android:id="@+id/pairing_paste_link"
+        android:title="@string/pairing_method_paste_link" />
+    <item
+        android:id="@+id/pairing_manual_webdav"
+        android:title="@string/pairing_method_webdav" />
+</menu>

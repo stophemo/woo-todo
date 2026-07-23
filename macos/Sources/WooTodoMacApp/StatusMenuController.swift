@@ -27,6 +27,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let shortcutSettingsStore: ShortcutSettingsStore
     private let quickAddAction: () -> Void
     private let openDashboardAction: () -> Void
+    private let openSettingsAction: () -> Void
     private let checkForUpdatesAction: () -> Void
     private let openAvailableUpdateAction: () -> Void
     private let statusItem: NSStatusItem
@@ -44,6 +45,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         shortcutSettingsStore: ShortcutSettingsStore,
         quickAdd: @escaping () -> Void,
         openDashboard: @escaping () -> Void,
+        openSettings: @escaping () -> Void,
         checkForUpdates: @escaping () -> Void,
         openAvailableUpdate: @escaping () -> Void
     ) {
@@ -51,6 +53,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         self.shortcutSettingsStore = shortcutSettingsStore
         quickAddAction = quickAdd
         openDashboardAction = openDashboard
+        openSettingsAction = openSettings
         checkForUpdatesAction = checkForUpdates
         openAvailableUpdateAction = openAvailableUpdate
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -119,7 +122,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         taskPanelItem.target = self
         taskPanelItem.action = #selector(toggleTaskPanel)
         menu.addItem(taskPanelItem)
-        menu.addItem(item("任务详情与统计", action: #selector(openDashboard)))
+        menu.addItem(item("任务详情与统计…", action: #selector(openDashboard)))
+        menu.addItem(item("设置…", action: #selector(openSettings)))
         menu.addItem(item("恢复可交互", action: #selector(makeInteractive)))
         menu.addItem(.separator())
 
@@ -179,6 +183,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func openDashboard() {
         openDashboardAction()
+    }
+
+    @objc private func openSettings() {
+        openSettingsAction()
     }
 
     @objc private func makeInteractive() {

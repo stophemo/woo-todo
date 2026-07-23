@@ -96,6 +96,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openDashboard: { [weak self] in
                     self?.showDashboard()
                 },
+                openSettings: { [weak self] in
+                    self?.showDashboard(section: .display)
+                },
                 checkForUpdates: { [weak appUpdateController] in
                     appUpdateController?.checkManually()
                 },
@@ -202,6 +205,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aboutItem.target = NSApp
         applicationMenu.addItem(aboutItem)
         applicationMenu.addItem(.separator())
+        let settingsItem = NSMenuItem(
+            title: "设置…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.keyEquivalentModifierMask = .command
+        settingsItem.target = self
+        applicationMenu.addItem(settingsItem)
+        applicationMenu.addItem(.separator())
         let quitItem = NSMenuItem(
             title: "退出 Woo Todo",
             action: #selector(NSApplication.terminate(_:)),
@@ -233,6 +245,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = mainMenu
     }
 
+    @objc private func openSettings() {
+        showDashboard(section: .display)
+    }
+
     private func editCommand(
         _ title: String,
         action: Selector,
@@ -257,9 +273,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .appendingPathComponent("tasks.sqlite")
     }
 
-    private func showDashboard() {
+    private func showDashboard(section: DashboardSection = .today) {
         if let dashboardWindowController {
-            dashboardWindowController.show()
+            dashboardWindowController.show(section: section)
             return
         }
         guard let repository,
@@ -281,13 +297,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             syncSettingsStore: syncSettingsStore,
             webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
-            shortcutSettingsStore: shortcutSettingsStore
+            shortcutSettingsStore: shortcutSettingsStore,
+            initialSection: section
         )
         controller.onClose = { [weak self] in
             self?.dashboardWindowController = nil
         }
         dashboardWindowController = controller
-        controller.show()
+        controller.show(section: section)
     }
 
     private func refreshTaskNotifications() {

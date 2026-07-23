@@ -39,6 +39,21 @@ class ScannedConfigurationParserTest {
     }
 
     @Test
+    fun `粘贴配对链接时忽略首尾空白`() {
+        val link = PairingDeepLink(
+            endpoint = "https://sync.example.test",
+            pairingId = "pairing-pasted",
+            pairingSecret = Base64Url.encode(ByteArray(32) { 5 }),
+            initiatorPublicKey = Base64Url.encode(ByteArray(32) { 6 }),
+        )
+
+        val parsed = ScannedConfigurationParser.parse("  ${link.toUri()}\n")
+
+        assertTrue(parsed is ScannedConfiguration.WorkerPairing)
+        assertEquals(link, (parsed as ScannedConfiguration.WorkerPairing).pairingLink)
+    }
+
+    @Test
     fun `拒绝网页文本和字段被篡改的配置`() {
         listOf(
             "https://github.com/stophemo/woo-todo",

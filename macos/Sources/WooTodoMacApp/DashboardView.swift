@@ -1,7 +1,7 @@
 import SwiftUI
 import WooTodoCore
 
-private enum DashboardSection: String, CaseIterable, Identifiable {
+enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
     case today
     case week
     case month
@@ -13,6 +13,14 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
     case shortcuts
 
     var id: Self { self }
+
+    static var taskSections: [Self] {
+        [.today, .week, .month, .someday, .history, .statistics]
+    }
+
+    static var settingSections: [Self] {
+        [.display, .shortcuts, .sync]
+    }
 
     var title: String {
         switch self {
@@ -53,6 +61,15 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
     }
 }
 
+@MainActor
+final class DashboardNavigation: ObservableObject {
+    @Published var selection: DashboardSection
+
+    init(selection: DashboardSection = .today) {
+        self.selection = selection
+    }
+}
+
 private struct TaskEditorRequest: Identifiable {
     let id = UUID()
     let mode: FullTaskEditorMode
@@ -64,40 +81,52 @@ struct DashboardView: View {
     @ObservedObject var webDavSettingsStore: WebDavSettingsStore
     @ObservedObject var dayCounterStore: DayCounterStore
     @ObservedObject var shortcutSettingsStore: ShortcutSettingsStore
-    @State private var selection: DashboardSection = .today
+    @ObservedObject var navigation: DashboardNavigation
     @State private var editorRequest: TaskEditorRequest?
 
     var body: some View {
         NavigationSplitView {
-            List(DashboardSection.allCases, selection: $selection) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section)
+            List(selection: $navigation.selection) {
+                Section("任务与统计") {
+                    ForEach(DashboardSection.taskSections) { section in
+                        Label(section.title, systemImage: section.systemImage)
+                            .tag(section)
+                    }
+                }
+                Section("设置") {
+                    ForEach(DashboardSection.settingSections) { section in
+                        Label(section.title, systemImage: section.systemImage)
+                            .tag(section)
+                    }
+                }
             }
             .navigationTitle("Woo Todo")
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
         } detail: {
             detail
-                .navigationTitle(selection.title)
+                .navigationTitle(navigation.selection.title)
                 .textSelection(.enabled)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    if selection == .sync {
+                    if navigation.selection == .sync {
                         syncSettingsStore.requestSync(.manual)
                         webDavSettingsStore.requestSync(.manual)
                         Task { await syncSettingsStore.refreshDevices() }
-                    } else if selection != .display && selection != .shortcuts {
+                    } else if navigation.selection != .display && navigation.selection != .shortcuts {
                         store.reload()
                     }
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
-                if selection != .sync && selection != .display && selection != .shortcuts {
+                if navigation.selection != .sync &&
+                    navigation.selection != .display &&
+                    navigation.selection != .shortcuts {
                     Button {
                         editorRequest = TaskEditorRequest(
                             mode: .create(
-                                defaultScope: selection.scope ?? .daily,
+                                defaultScope: navigation.selection.scope ?? .daily,
                                 targetDate: store.referenceDate
                             )
                         )
@@ -128,7 +157,7 @@ struct DashboardView: View {
 
     @ViewBuilder
     private var detail: some View {
-        switch selection {
+        switch navigation.selection {
         case .today:
             ScopedTasksView(
                 title: "今日与已规划的每日任务",

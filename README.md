@@ -10,7 +10,7 @@ Woo Todo 是一个为个人日常规划设计的跨端待办应用，支持 **ma
 
 [产品主页](https://woo-todo.vercel.app/) · [下载最新版](https://github.com/stophemo/woo-todo/releases) · [安装与首次使用](docs/INSTALLATION.md) · [问题反馈](https://github.com/stophemo/woo-todo/issues)
 
-当前正式版：[`v0.1.9`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.9)
+当前正式版：[`v0.1.10`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.10)
 
 ## 适合什么场景
 
@@ -28,9 +28,9 @@ Woo Todo 是一个为个人日常规划设计的跨端待办应用，支持 **ma
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | [Woo-Todo-v0.1.9-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.9/Woo-Todo-v0.1.9-macos-arm64.zip) | 解压后将 `Woo Todo.app` 拖入“应用程序”。当前使用 ad-hoc 签名，未经过 Apple 公证；首次打开若被拦截，请在“系统设置 → 隐私与安全性”允许。 |
-| Android 13+ | [Woo-Todo-v0.1.9-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.9/Woo-Todo-v0.1.9-android.apk) | 从系统文件管理器打开并允许本次来源安装；正式包使用项目长期 Release 签名。 |
-| 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.9/SHA256SUMS.txt) | 下载后可用 `shasum -a 256 <文件>` 对照。 |
+| macOS 15+、Apple Silicon | [Woo-Todo-v0.1.10-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.10/Woo-Todo-v0.1.10-macos-arm64.zip) | 解压后将 `Woo Todo.app` 拖入“应用程序”。当前使用 ad-hoc 签名，未经过 Apple 公证；首次打开若被拦截，请在“系统设置 → 隐私与安全性”允许。 |
+| Android 13+ | [Woo-Todo-v0.1.10-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.10/Woo-Todo-v0.1.10-android.apk) | 从系统文件管理器打开并允许本次来源安装；正式包使用项目长期 Release 签名。 |
+| 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.10/SHA256SUMS.txt) | 下载后可用 `shasum -a 256 <文件>` 对照。 |
 
 macOS 客户端只显示在菜单栏，不显示 Dock 图标。Android 正式包可直接覆盖升级：保留任务、同步身份和配对状态，**普通版本更新不需要重新配对**。请不要先卸载、清除应用数据，或用不同签名的 Debug 包覆盖正式包；这些操作可能删除本地数据库/Keystore，只有在更换设备、清除数据或主动更换同步空间时才需要重新配对。
 

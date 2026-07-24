@@ -324,6 +324,85 @@ public struct WireTombstonePayload: Codable, Equatable, Sendable {
     }
 }
 
+public struct WireDisplayConfigurationPayload: Codable, Equatable, Sendable {
+    public static let fixedID = "display.today.configuration"
+
+    public let protocolVersion: Int
+    public let entityType: String
+    public let id: String
+    public let headerTemplate: String
+    public let subtitleTemplate: String
+    public let startDate: String
+    public let deadlineDate: String
+
+    public init(
+        headerTemplate: String,
+        subtitleTemplate: String,
+        startDate: String,
+        deadlineDate: String
+    ) throws {
+        self.protocolVersion = 1
+        self.entityType = "displayConfiguration"
+        self.id = Self.fixedID
+        self.headerTemplate = headerTemplate
+        self.subtitleTemplate = subtitleTemplate
+        self.startDate = startDate
+        self.deadlineDate = deadlineDate
+        try validate()
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactTaskPayloadKeys(
+            decoder,
+            expected: [
+                "protocolVersion", "entityType", "id", "headerTemplate",
+                "subtitleTemplate", "startDate", "deadlineDate",
+            ]
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
+        entityType = try container.decode(String.self, forKey: .entityType)
+        id = try container.decode(String.self, forKey: .id)
+        headerTemplate = try container.decode(String.self, forKey: .headerTemplate)
+        subtitleTemplate = try container.decode(String.self, forKey: .subtitleTemplate)
+        startDate = try container.decode(String.self, forKey: .startDate)
+        deadlineDate = try container.decode(String.self, forKey: .deadlineDate)
+        try validate()
+    }
+
+    public func validate() throws {
+        guard protocolVersion == 1 else {
+            throw TaskPayloadValidationError.unsupportedProtocolVersion(protocolVersion)
+        }
+        guard entityType == "displayConfiguration" else {
+            throw TaskPayloadValidationError.invalidEntityType(entityType)
+        }
+        guard id == Self.fixedID,
+              headerTemplate.unicodeScalars.count <= 80,
+              subtitleTemplate.unicodeScalars.count <= 160,
+              !headerTemplate.contains(where: { $0.isNewline }),
+              !subtitleTemplate.contains(where: { $0.isNewline }),
+              Self.isValidISODate(startDate),
+              Self.isValidISODate(deadlineDate) else {
+            throw TaskPayloadValidationError.invalidField("displayConfiguration")
+        }
+    }
+
+    private static func isValidISODate(_ value: String) -> Bool {
+        guard value.range(
+            of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"#,
+            options: .regularExpression
+        ) != nil else { return false }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: WireTaskPayload.fixedTimeZone)
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.isLenient = false
+        return formatter.date(from: value).map { formatter.string(from: $0) == value } ?? false
+    }
+}
+
 private func isValidTaskIdentifier(_ value: String) -> Bool {
     (8...128).contains(value.unicodeScalars.count)
         && value.range(
@@ -383,6 +462,7 @@ private func requireTaskPayloadKeys(
 public enum WireTaskEntity: Codable, Equatable, Sendable {
     case task(WireTaskPayload)
     case tombstone(WireTombstonePayload)
+    case displayConfiguration(WireDisplayConfigurationPayload)
 
     private enum CodingKeys: String, CodingKey {
         case entityType
@@ -393,6 +473,8 @@ public enum WireTaskEntity: Codable, Equatable, Sendable {
         switch try container.decode(String.self, forKey: .entityType) {
         case "task": self = .task(try WireTaskPayload(from: decoder))
         case "tombstone": self = .tombstone(try WireTombstonePayload(from: decoder))
+        case "displayConfiguration":
+            self = .displayConfiguration(try WireDisplayConfigurationPayload(from: decoder))
         case let type: throw TaskPayloadValidationError.invalidEntityType(type)
         }
     }
@@ -401,6 +483,7 @@ public enum WireTaskEntity: Codable, Equatable, Sendable {
         switch self {
         case .task(let payload): try payload.encode(to: encoder)
         case .tombstone(let payload): try payload.encode(to: encoder)
+        case .displayConfiguration(let payload): try payload.encode(to: encoder)
         }
     }
 }

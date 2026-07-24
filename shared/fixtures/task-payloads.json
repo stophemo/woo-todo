@@ -40,5 +40,14 @@
     "entityType": "tombstone",
     "id": "task_01JZ7WZX2WQ9A8B7C6D5",
     "deletedAt": 1784251800000
+  },
+  {
+    "protocolVersion": 1,
+    "entityType": "displayConfiguration",
+    "id": "display.today.configuration",
+    "headerTemplate": "{dateLong} {weekdayEn}",
+    "subtitleTemplate": "已走过 {elapsedMonthsDays}，距截止 {deadlineMonthsDays}",
+    "startDate": "2020-01-01",
+    "deadlineDate": "2026-12-31"
   }
 ]

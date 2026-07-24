@@ -169,6 +169,7 @@ public struct AppVersion: Comparable, CustomStringConvertible, Hashable, Sendabl
 public enum AppUpdatePolicy {
     public static let automaticCheckInterval: TimeInterval = 24 * 60 * 60
     public static let failedCheckRetryInterval: TimeInterval = 15 * 60
+    public static let automaticCheckPollingInterval: TimeInterval = failedCheckRetryInterval
 
     public static func shouldPerformAutomaticCheck(
         lastCheckedAt: Date?,

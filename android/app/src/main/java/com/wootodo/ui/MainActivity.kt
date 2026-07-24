@@ -40,6 +40,7 @@ import com.wootodo.BuildConfig
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.display.DayCounterPreferences
+import com.wootodo.display.DayCounterSettings
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
@@ -64,6 +65,7 @@ import com.wootodo.sync.WebDavSetupLink
 import com.wootodo.sync.newWebDavIdentity
 import com.wootodo.update.AppUpdateCheckResult
 import com.wootodo.update.AppUpdateEvent
+import com.wootodo.update.AppUpdatePolicy
 import com.wootodo.update.AppUpdatePreferences
 import com.wootodo.update.AppUpdateViewModel
 import com.wootodo.update.GitHubRelease
@@ -73,6 +75,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -93,6 +96,9 @@ class MainActivity : AppCompatActivity() {
     private var backupProgressDialog: AlertDialog? = null
     private var availableUpdateRelease: GitHubRelease? = null
     private val updatePreferences by lazy { AppUpdatePreferences(this) }
+    private val dayCounterChangeListener: (DayCounterSettings) -> Unit = {
+        runOnUiThread { renderDayCounter() }
+    }
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -225,7 +231,15 @@ class MainActivity : AppCompatActivity() {
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                appUpdateViewModel.events.collect(::renderAppUpdateEvent)
+                launch {
+                    appUpdateViewModel.events.collect(::renderAppUpdateEvent)
+                }
+                launch {
+                    while (true) {
+                        checkForAppUpdate(manual = false)
+                        delay(AppUpdatePolicy.AUTOMATIC_CHECK_POLL_INTERVAL_MILLIS)
+                    }
+                }
             }
         }
         requestNotificationPermissionIfNeeded()
@@ -269,7 +283,16 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         viewModel.refresh()
         renderDayCounter()
-        checkForAppUpdate(manual = false)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        DayCounterPreferences.addListener(dayCounterChangeListener)
+    }
+
+    override fun onStop() {
+        DayCounterPreferences.removeListener(dayCounterChangeListener)
+        super.onStop()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -624,9 +647,16 @@ class MainActivity : AppCompatActivity() {
             initial = DayCounterPreferences.load(this),
             today = TaskDateRules.today(),
         ) { settings ->
-            DayCounterPreferences.save(this, settings)
-            renderDayCounter()
-            TodayWidgetUpdater.updateAllAsync(applicationContext)
+            lifecycleScope.launch {
+                val recorded = withContext(Dispatchers.IO) {
+                    DayCounterPreferences.save(this@MainActivity, settings)
+                }
+                renderDayCounter()
+                TodayWidgetUpdater.updateAllAsync(applicationContext)
+                if (recorded) {
+                    (application as WooTodoApplication).notifyLocalMutation()
+                }
+            }
         }
     }
 

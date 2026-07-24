@@ -73,6 +73,58 @@ class SyncJsonCodecTest {
     }
 
     @Test
+    fun `显示配置payload严格编解码`() {
+        val payload = DisplayConfigurationPayload(
+            headerTemplate = "{dateLong} {weekdayEn}",
+            subtitleTemplate = "已走过 {elapsedMonthsDays}，距截止 {deadlineMonthsDays}",
+            startDate = "2020-01-01",
+            deadlineDate = "2026-12-31",
+        )
+
+        val encoded = SyncJsonCodec.encodeTaskPayload(payload)
+        val objectValue = JSONObject(encoded)
+
+        assertEquals(
+            setOf(
+                "protocolVersion", "entityType", "id", "headerTemplate",
+                "subtitleTemplate", "startDate", "deadlineDate",
+            ),
+            objectValue.keys().asSequence().toSet(),
+        )
+        assertEquals(payload, SyncJsonCodec.decodeTaskPayload(encoded))
+    }
+
+    @Test
+    fun `显示配置payload拒绝非法值`() {
+        val valid = JSONObject(
+            SyncJsonCodec.encodeTaskPayload(
+                DisplayConfigurationPayload(
+                    headerTemplate = "{dateLong} {weekdayEn}",
+                    subtitleTemplate = "已走过 {elapsedMonthsDays}",
+                    startDate = "2020-01-01",
+                    deadlineDate = "2026-12-31",
+                ),
+            ),
+        )
+        val invalidPayloads = listOf(
+            JSONObject(valid.toString()).put("id", "display.today.other"),
+            JSONObject(valid.toString()).put("headerTemplate", "标".repeat(81)),
+            JSONObject(valid.toString()).put("subtitleTemplate", "题".repeat(161)),
+            JSONObject(valid.toString()).put("subtitleTemplate", "第一行\n第二行"),
+            JSONObject(valid.toString()).put("headerTemplate", "第一行\u2028第二行"),
+            JSONObject(valid.toString()).put("deadlineDate", "2026-02-30"),
+            JSONObject(valid.toString()).apply { remove("startDate") },
+            JSONObject(valid.toString()).put("unexpected", true),
+        )
+
+        invalidPayloads.forEach { invalid ->
+            assertThrows(Exception::class.java) {
+                SyncJsonCodec.decodeTaskPayload(invalid.toString())
+            }
+        }
+    }
+
+    @Test
     fun `共享Wire v1边界正反例在Kotlin中严格一致`() {
         val source = requireNotNull(
             javaClass.classLoader?.getResourceAsStream("task-validation-cases.json"),

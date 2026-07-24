@@ -123,9 +123,15 @@ for (const operation of syncRequest.push) {
 }
 
 const taskPayloads = documents.get("shared/fixtures/task-payloads.json");
+if (
+  !Array.isArray(taskPayloads)
+  || taskPayloads.filter(({ entityType }) => entityType === "displayConfiguration").length !== 1
+) {
+  throw new Error("任务正文 fixture 必须包含且仅包含一条显示配置");
+}
 for (const payload of taskPayloads) {
   validateTaskPayload(payload);
-  if (payload.entityType === "tombstone") continue;
+  if (payload.entityType !== "task") continue;
   if (!payload.title.trim() || payload.timezone !== "Asia/Shanghai") {
     throw new Error(`任务 payload ${payload.id} 的标题或时区无效`);
   }
@@ -245,6 +251,31 @@ function validateTaskPayload(payload) {
     ) {
       throw new Error("tombstone payload 无效");
     }
+    return;
+  }
+  if (payload.entityType === "displayConfiguration") {
+    const expectedKeys = new Set([
+      "protocolVersion", "entityType", "id", "headerTemplate",
+      "subtitleTemplate", "startDate", "deadlineDate",
+    ]);
+    const actualKeys = Object.keys(payload);
+    if (
+      actualKeys.length !== expectedKeys.size
+      || actualKeys.some((key) => !expectedKeys.has(key))
+      || payload.id !== "display.today.configuration"
+      || typeof payload.headerTemplate !== "string"
+      || codePointLength(payload.headerTemplate) > 80
+      || /[\r\n\u000B\u000C\u0085\u2028\u2029]/u.test(payload.headerTemplate)
+      || typeof payload.subtitleTemplate !== "string"
+      || codePointLength(payload.subtitleTemplate) > 160
+      || /[\r\n\u000B\u000C\u0085\u2028\u2029]/u.test(payload.subtitleTemplate)
+      || typeof payload.startDate !== "string"
+      || typeof payload.deadlineDate !== "string"
+    ) {
+      throw new Error("显示配置 payload 无效");
+    }
+    parseDateKey(payload.startDate);
+    parseDateKey(payload.deadlineDate);
     return;
   }
   if (payload.entityType !== "task") {

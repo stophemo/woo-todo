@@ -185,6 +185,38 @@ class TaskDatabaseInstrumentedTest {
         )
     }
 
+    @Test
+    fun `版本六升级会创建显示配置表且不删除旧表`() {
+        database.close()
+        context.deleteDatabase(DATABASE_NAME)
+        context.openOrCreateDatabase(DATABASE_NAME, Context.MODE_PRIVATE, null).use { legacy ->
+            legacy.execSQL("CREATE TABLE migration_marker(id INTEGER PRIMARY KEY)")
+            legacy.execSQL("INSERT INTO migration_marker(id) VALUES (1)")
+            legacy.version = 6
+        }
+
+        database = TaskDatabase(context)
+        val sqlite = database.writableDatabase
+        assertEquals(
+            1,
+            sqlite.rawQuery(
+                "SELECT COUNT(*) FROM sqlite_master " +
+                    "WHERE type = 'table' AND name = 'display_configuration'",
+                null,
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                cursor.getInt(0)
+            },
+        )
+        assertEquals(
+            1,
+            sqlite.rawQuery("SELECT COUNT(*) FROM migration_marker", null).use { cursor ->
+                check(cursor.moveToFirst())
+                cursor.getInt(0)
+            },
+        )
+    }
+
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
     }

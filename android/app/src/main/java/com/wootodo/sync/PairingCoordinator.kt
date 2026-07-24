@@ -24,7 +24,7 @@ data class PairingCompletion(
 sealed class PairingException(message: String) : Exception(message) {
     data object AlreadyPaired : PairingException("本机已经完成配对")
     data object CurrentDeviceOnlyEndpoint : PairingException(
-        "这个二维码使用了 127.0.0.1/localhost，它在手机上只代表手机自己。请在 Mac 改用两台设备都能访问的 HTTPS Worker 地址，然后重新创建同步空间。",
+        "这个二维码使用了 127.0.0.1/localhost，它在手机上只代表手机自己。请在 Mac 选择局域网同步重新生成二维码，或改用两台设备都能访问的 HTTPS 同步服务。",
     )
     data object InvalidClaim : PairingException("服务端返回了无效的配对认领结果")
     data object InvalidResult : PairingException("服务端返回了不一致的配对结果")

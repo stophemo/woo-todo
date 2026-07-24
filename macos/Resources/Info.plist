@@ -19,9 +19,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.10</string>
+    <string>0.1.11</string>
     <key>CFBundleVersion</key>
-    <string>11</string>
+    <string>12</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
     <key>LSMinimumSystemVersion</key>
@@ -32,6 +32,17 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>用于让 Woo Todo 在同一网络内与 Android 安全同步任务。</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_wootodo._tcp</string>
+    </array>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

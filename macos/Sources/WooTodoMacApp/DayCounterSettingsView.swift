@@ -98,21 +98,30 @@ struct DayCounterSettingsView: View {
 
             Section {
                 Button {
-                    store.update(
+                    if store.update(
                         headerTemplate: headerTemplate,
                         subtitleTemplate: subtitleTemplate,
                         startDate: startDate,
                         deadlineDate: deadlineDate
-                    )
-                    load(store.configuration)
+                    ) {
+                        load(store.configuration)
+                    }
                 } label: {
                     Label("保存显示设置", systemImage: "checkmark")
                 }
                 Button {
-                    store.restoreDefaults()
-                    load(store.configuration)
+                    if store.restoreDefaults() {
+                        load(store.configuration)
+                    }
                 } label: {
                     Label("恢复默认", systemImage: "arrow.counterclockwise")
+                }
+            }
+
+            if let message = store.persistenceErrorMessage {
+                Section {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
                 }
             }
         }
@@ -147,13 +156,13 @@ struct DayCounterSettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
                 .onChange(of: value.wrappedValue) { _, updated in
-                    guard updated.count > limit else { return }
-                    value.wrappedValue = String(updated.prefix(limit))
+                    guard updated.unicodeScalars.count > limit else { return }
+                    value.wrappedValue = String(updated.unicodeScalars.prefix(limit))
                     selection.wrappedValue = TextSelection(
                         insertionPoint: value.wrappedValue.endIndex
                     )
                 }
-            Text("\(value.wrappedValue.count)/\(limit)")
+            Text("\(value.wrappedValue.unicodeScalars.count)/\(limit)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
             Menu {
@@ -228,7 +237,7 @@ struct DayCounterSettingsView: View {
         let insertionOffset = source.distance(from: source.startIndex, to: range.lowerBound)
         var updated = source
         updated.replaceSubrange(range, with: token)
-        guard updated.count <= limit else { return }
+        guard updated.unicodeScalars.count <= limit else { return }
         value.wrappedValue = updated
         let insertionPoint = updated.index(
             updated.startIndex,

@@ -9,7 +9,7 @@ final class QuickAddPanelController: NSWindowController {
 
     init(store: TodayStore) {
         let panel = QuickAddPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 92)
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 166)
         )
         model = QuickAddModel(store: store)
         super.init(window: panel)
@@ -114,6 +114,10 @@ final class QuickAddPanelController: NSWindowController {
 @MainActor
 private final class QuickAddModel: ObservableObject {
     @Published var title = ""
+    @Published var tier = QuestTier.mainline
+    @Published var repeatsDaily = false
+    @Published var reminderEnabled = false
+    @Published var reminderDate = QuickAddModel.defaultReminderDate
     @Published private(set) var errorMessage: String?
     @Published private(set) var focusRequest = 0
 
@@ -127,6 +131,10 @@ private final class QuickAddModel: ObservableObject {
 
     func prepareForPresentation() {
         title = ""
+        tier = .mainline
+        repeatsDaily = false
+        reminderEnabled = false
+        reminderDate = Self.defaultReminderDate
         errorMessage = nil
     }
 
@@ -135,7 +143,12 @@ private final class QuickAddModel: ObservableObject {
     }
 
     func submit() {
-        guard store.add(title: title, tier: .mainline, repeatsDaily: false) else {
+        guard store.add(
+            title: title,
+            tier: tier,
+            repeatsDaily: repeatsDaily,
+            reminderTime: reminderEnabled ? selectedReminderTime : nil
+        ) else {
             errorMessage = store.errorMessage ?? "无法新增任务"
             requestFocus()
             return
@@ -150,6 +163,39 @@ private final class QuickAddModel: ObservableObject {
         errorMessage = nil
         onDismiss?()
     }
+
+    var selectionSummary: String {
+        var components = ["今日", tier.displayName]
+        if repeatsDaily { components.append("每天重复") }
+        if reminderEnabled, let reminderTime = selectedReminderTime {
+            components.append("\(reminderTime.wireValue) 提醒")
+        }
+        return components.joined(separator: " · ")
+    }
+
+    private var selectedReminderTime: TaskReminderTime? {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: reminderDate)
+        return try? TaskReminderTime(
+            hour: components.hour ?? 0,
+            minute: components.minute ?? 0
+        )
+    }
+
+    private static var defaultReminderDate: Date {
+        let now = Date()
+        let calendar = Calendar.current
+        let nextHalfHour = calendar.date(
+            byAdding: .minute,
+            value: 30 - calendar.component(.minute, from: now) % 30,
+            to: now
+        ) ?? now
+        return calendar.date(
+            bySettingHour: calendar.component(.hour, from: nextHalfHour),
+            minute: calendar.component(.minute, from: nextHalfHour),
+            second: 0,
+            of: nextHalfHour
+        ) ?? nextHalfHour
+    }
 }
 
 private struct QuickAddView: View {
@@ -157,7 +203,7 @@ private struct QuickAddView: View {
     @FocusState private var isTitleFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 Image(systemName: "checklist")
                     .font(.title3)
@@ -180,13 +226,40 @@ private struct QuickAddView: View {
                 .accessibilityLabel("添加任务")
             }
 
+            HStack(spacing: 14) {
+                Picker("任务级别", selection: $model.tier) {
+                    ForEach(QuestTier.allCases, id: \.self) { tier in
+                        Text(tier.displayName).tag(tier)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 210)
+
+                Toggle("每天重复", isOn: $model.repeatsDaily)
+                    .toggleStyle(.checkbox)
+
+                Toggle("提醒", isOn: $model.reminderEnabled)
+                    .toggleStyle(.checkbox)
+
+                if model.reminderEnabled {
+                    DatePicker(
+                        "提醒时间",
+                        selection: $model.reminderDate,
+                        displayedComponents: .hourAndMinute
+                    )
+                    .labelsHidden()
+                    .frame(width: 72)
+                }
+            }
+
             Group {
                 if let errorMessage = model.errorMessage {
                     Text(errorMessage)
                         .foregroundStyle(.red)
                         .accessibilityLabel("新增失败：\(errorMessage)")
                 } else {
-                    Text("今日 · 主线")
+                    Text(model.selectionSummary)
                         .foregroundStyle(.secondary)
                 }
             }

@@ -3,6 +3,7 @@ package com.wootodo.sync
 internal const val WIRE_FIXED_TIMEZONE = "Asia/Shanghai"
 internal const val WIRE_MAXIMUM_SORT_ORDER = 2_147_483_647L
 internal const val WIRE_MAXIMUM_SAFE_INTEGER = 9_007_199_254_740_991L
+const val DISPLAY_CONFIGURATION_ENTITY_ID = "display.today.configuration"
 
 enum class WireTimeType(val value: String) {
     DAY("day"), WEEK("week"), MONTH("month"), SOMEDAY("someday");
@@ -70,4 +71,14 @@ data class TombstonePayload(
     override val entityType: String = "tombstone",
     override val id: String,
     val deletedAt: Long,
+) : TaskWirePayload
+
+data class DisplayConfigurationPayload(
+    override val protocolVersion: Int = 1,
+    override val entityType: String = "displayConfiguration",
+    override val id: String = DISPLAY_CONFIGURATION_ENTITY_ID,
+    val headerTemplate: String,
+    val subtitleTemplate: String,
+    val startDate: String,
+    val deadlineDate: String,
 ) : TaskWirePayload

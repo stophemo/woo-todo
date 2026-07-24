@@ -1,9 +1,14 @@
 package com.wootodo.display
 
 import android.content.Context
+import com.wootodo.sync.DisplayConfigurationPayload
+import com.wootodo.sync.SQLiteLocalMutationRecorder
+import com.wootodo.sync.readDisplayConfiguration
+import com.wootodo.sync.writeDisplayConfiguration
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.CopyOnWriteArraySet
 
 data class DayCounterSettings(
     val headerTemplate: String = DayCounterText.DEFAULT_HEADER_TEMPLATE,
@@ -139,6 +144,8 @@ object DayCounterPreferences {
     private const val LEGACY_KEY_TITLE = "day_counter_title"
     private const val LEGACY_KEY_START_DATE = "day_counter_start_date"
     private const val CURRENT_CONFIGURATION_VERSION = 1
+    private val listeners = CopyOnWriteArraySet<(DayCounterSettings) -> Unit>()
+    private val lineBreak = Regex("\\R")
 
     fun load(context: Context): DayCounterSettings {
         val preferences = context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
@@ -151,12 +158,15 @@ object DayCounterPreferences {
             CURRENT_CONFIGURATION_VERSION && headerTemplate != null && subtitleTemplate != null &&
             startDate != null && deadlineDate != null
         if (complete) {
-            return DayCounterSettings(
+            val stored = DayCounterSettings(
                 headerTemplate = requireNotNull(headerTemplate),
                 subtitleTemplate = requireNotNull(subtitleTemplate),
                 startDate = requireNotNull(startDate),
                 deadlineDate = requireNotNull(deadlineDate),
             )
+            val normalized = stored.normalized()
+            if (normalized != stored) persistPreferences(context, normalized)
+            return normalized
         }
 
         val legacyStartDate = parseDate(
@@ -173,14 +183,64 @@ object DayCounterPreferences {
             subtitleTemplate = subtitleTemplate ?: fallback.subtitleTemplate,
             startDate = startDate ?: fallback.startDate,
             deadlineDate = deadlineDate ?: startDate ?: fallback.startDate,
-        ).also { save(context, it) }
+        ).normalized().also { persistPreferences(context, it) }
     }
 
-    fun save(context: Context, settings: DayCounterSettings) {
+    fun save(context: Context, settings: DayCounterSettings): Boolean {
+        val normalized = settings.normalized()
+        val appContext = context.applicationContext
+        val application = appContext as? com.wootodo.WooTodoApplication
+        var recordedForSync = false
+        if (application != null) {
+            val sqlite = application.database.writableDatabase
+            sqlite.beginTransaction()
+            try {
+                val payload = toPayload(normalized)
+                if (readDisplayConfiguration(sqlite) != payload) {
+                    writeDisplayConfiguration(sqlite, payload)
+                    recordedForSync = SQLiteLocalMutationRecorder.recordDisplayConfiguration(
+                        sqlite,
+                        payload,
+                    )
+                }
+                sqlite.setTransactionSuccessful()
+            } finally {
+                sqlite.endTransaction()
+            }
+        }
+        persistPreferences(appContext, normalized)
+        return recordedForSync
+    }
+
+    fun applyRemote(context: Context, payload: DisplayConfigurationPayload) {
+        val settings = payload.toSettings()
+        persistPreferences(context.applicationContext, settings)
+        listeners.forEach { it(settings) }
+    }
+
+    fun toPayload(settings: DayCounterSettings): DisplayConfigurationPayload {
+        val normalized = settings.normalized()
+        return DisplayConfigurationPayload(
+            headerTemplate = normalized.headerTemplate,
+            subtitleTemplate = normalized.subtitleTemplate,
+            startDate = normalized.startDate.toString(),
+            deadlineDate = normalized.deadlineDate.toString(),
+        )
+    }
+
+    fun addListener(listener: (DayCounterSettings) -> Unit) {
+        listeners += listener
+    }
+
+    fun removeListener(listener: (DayCounterSettings) -> Unit) {
+        listeners -= listener
+    }
+
+    private fun persistPreferences(context: Context, settings: DayCounterSettings) {
         context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putString(KEY_HEADER_TEMPLATE, normalize(settings.headerTemplate, 80))
-            .putString(KEY_SUBTITLE_TEMPLATE, normalize(settings.subtitleTemplate, 160))
+            .putString(KEY_HEADER_TEMPLATE, settings.headerTemplate)
+            .putString(KEY_SUBTITLE_TEMPLATE, settings.subtitleTemplate)
             .putString(KEY_START_DATE, settings.startDate.toString())
             .putString(KEY_DEADLINE_DATE, settings.deadlineDate.toString())
             .putInt(KEY_CONFIGURATION_VERSION, CURRENT_CONFIGURATION_VERSION)
@@ -195,11 +255,12 @@ object DayCounterPreferences {
     fun displayText(context: Context, today: LocalDate = LocalDate.now()): String? =
         render(context, today).subtitle
 
-    private fun normalize(value: String, limit: Int): String = value
-        .replace('\r', ' ')
-        .replace('\n', ' ')
-        .trim()
-        .take(limit)
+    private fun normalize(value: String, limit: Int): String {
+        val singleLine = value.replace(lineBreak, " ").trim()
+        val codePointCount = singleLine.codePointCount(0, singleLine.length)
+        if (codePointCount <= limit) return singleLine
+        return singleLine.substring(0, singleLine.offsetByCodePoints(0, limit))
+    }
 
     private fun parseDate(value: String?, fallback: LocalDate): LocalDate = value
         ?.let(::parseDateOrNull)
@@ -207,4 +268,17 @@ object DayCounterPreferences {
 
     private fun parseDateOrNull(value: String): LocalDate? =
         runCatching { LocalDate.parse(value) }.getOrNull()
+
+    private fun DayCounterSettings.normalized(): DayCounterSettings = copy(
+        headerTemplate = normalize(headerTemplate, 80),
+        subtitleTemplate = normalize(subtitleTemplate, 160),
+    )
+
+    private fun DisplayConfigurationPayload.toSettings(): DayCounterSettings =
+        DayCounterSettings(
+            headerTemplate = headerTemplate,
+            subtitleTemplate = subtitleTemplate,
+            startDate = LocalDate.parse(startDate),
+            deadlineDate = LocalDate.parse(deadlineDate),
+        )
 }

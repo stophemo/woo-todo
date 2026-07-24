@@ -36,7 +36,7 @@ class PairingDeepLinkTest {
     }
 
     @Test
-    fun `配对深链只允许HTTPS和本机HTTP`() {
+    fun `配对深链允许HTTPS回环调试和受限局域网HTTP`() {
         val secret = Base64Url.encode(ByteArray(32) { 1 })
         val publicKey = Base64Url.encode(ByteArray(32) { 2 })
         val suffix = "&pairingId=pair-1&pairingSecret=$secret&initiatorPublicKey=$publicKey"
@@ -48,6 +48,12 @@ class PairingDeepLinkTest {
             "http://127.0.0.1:8787",
             PairingDeepLink.parse(
                 "wootodo://pair?endpoint=http%3A%2F%2F127.0.0.1%3A8787$suffix",
+            ).endpoint,
+        )
+        assertEquals(
+            "http://192.168.8.21:48473",
+            PairingDeepLink.parse(
+                "wootodo://pair?endpoint=http%3A%2F%2F192.168.8.21%3A48473$suffix",
             ).endpoint,
         )
     }
@@ -67,8 +73,24 @@ class PairingDeepLinkTest {
             SyncEndpointPolicy.scope(URI("http://127.0.0.1:8787")),
         )
         assertEquals(
-            SyncEndpointScope.INVALID,
+            SyncEndpointScope.LOCAL_NETWORK,
             SyncEndpointPolicy.scope(URI("http://192.168.1.10:8787")),
+        )
+        assertEquals(
+            SyncEndpointScope.LOCAL_NETWORK,
+            SyncEndpointPolicy.scope(URI("http://woo-mac.local:48473")),
+        )
+        assertEquals(
+            SyncEndpointScope.INVALID,
+            SyncEndpointPolicy.scope(URI("http://172.15.255.255:48473")),
+        )
+        assertEquals(
+            SyncEndpointScope.INVALID,
+            SyncEndpointPolicy.scope(URI("http://172.32.0.1:48473")),
+        )
+        assertEquals(
+            SyncEndpointScope.INVALID,
+            SyncEndpointPolicy.scope(URI("http://192.168.001.10:48473")),
         )
     }
 }

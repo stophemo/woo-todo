@@ -152,18 +152,18 @@ internal object PairingErrorMessage {
         is PairingException -> requireNotNull(error.message)
         is SyncApiException.Transport -> when (error.cause) {
             is UnknownHostException ->
-                "找不到同步服务。请确认 Mac 使用的是已部署 Worker 的 HTTPS 根地址，并重新生成二维码。"
+                "找不到同步服务。局域网同步请确认手机与 Mac 在同一网络且 Mac 同步已开启；远程同步请确认服务地址可访问。"
 
             is ConnectException ->
-                "无法连接同步服务。Worker 可能尚未部署或暂时离线，请在 Mac 检查服务地址后重新生成二维码。"
+                "无法连接同步服务。请确认 Mac 与手机在同一网络并已开启同步，或检查远程同步服务是否在线。"
 
             is SocketTimeoutException ->
-                "连接同步服务超时。请检查手机网络与 Worker 状态，然后重新扫码。"
+                "连接同步服务超时。请检查手机网络、Mac 局域网同步或远程同步服务状态，然后重试。"
 
             is SSLException ->
-                "同步服务的 HTTPS 证书校验失败。请在 Mac 改用证书有效的 Worker 地址后重新生成二维码。"
+                "同步服务的 HTTPS 证书校验失败。请在 Mac 检查远程同步服务地址后重新生成二维码。"
 
-            else -> "无法连接同步服务。请检查手机网络，并确认二维码来自可公开访问的 HTTPS Worker。"
+            else -> "无法连接同步服务。请确认手机与 Mac 在同一网络，或远程同步服务可以访问。"
         }
         is SyncApiException.Decoding -> "同步服务响应无法识别，请更新应用后重试"
         is SyncApiException.InvalidEndpoint -> "配对链接中的同步服务地址无效"

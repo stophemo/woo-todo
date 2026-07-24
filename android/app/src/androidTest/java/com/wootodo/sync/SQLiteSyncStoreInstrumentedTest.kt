@@ -473,6 +473,133 @@ class SQLiteSyncStoreInstrumentedTest {
         assertEquals(1, rowCount("sync_webdav_applied_operations"))
     }
 
+    @Test
+    fun `未绑定显示配置会在首次绑定后只补录一次`() {
+        val payload = displayConfiguration("首次配置")
+        val sqlite = database.writableDatabase
+        sqlite.beginTransaction()
+        try {
+            writeDisplayConfiguration(sqlite, payload)
+            assertEquals(false, SQLiteLocalMutationRecorder.recordDisplayConfiguration(sqlite, payload))
+            sqlite.setTransactionSuccessful()
+        } finally {
+            sqlite.endTransaction()
+        }
+        assertEquals(0, rowCount("sync_outbox"))
+
+        val store = SQLiteSyncStore(database, credentials)
+        val operation = store.pendingOperations(50).single()
+
+        assertEquals(DISPLAY_CONFIGURATION_ENTITY_ID, operation.entityId)
+        assertEquals(SyncOperationKind.UPSERT, operation.kind)
+        assertEquals(payload, decrypt(operation))
+        assertEquals(payload, readDisplayConfiguration(database.readableDatabase))
+
+        SQLiteSyncStore(database, credentials)
+        assertEquals(1, rowCount("sync_outbox"))
+    }
+
+    @Test
+    fun `显示配置按版本合并且重复远端操作不重复刷新`() {
+        val refreshed = mutableListOf<DisplayConfigurationPayload>()
+        val store = SQLiteSyncStore(
+            database = database,
+            credentials = credentials,
+            onDisplayConfigurationChanged = refreshed::add,
+        )
+        val first = displayConfiguration("远端版本一")
+        val second = displayConfiguration("远端版本二")
+        val firstOperation = operation(
+            serverSeq = 1,
+            opId = "operation-display-first",
+            lamport = 10,
+            payload = first,
+        )
+
+        store.applyRemoteOperations(listOf(firstOperation), advancingCursorTo = 1)
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 2,
+                    opId = "operation-display-older",
+                    lamport = 9,
+                    payload = second,
+                ),
+            ),
+            advancingCursorTo = 2,
+        )
+        store.applyRemoteOperations(
+            listOf(
+                corruptedOperation(
+                    serverSeq = 3,
+                    opId = firstOperation.opId,
+                    entityId = DISPLAY_CONFIGURATION_ENTITY_ID,
+                    kind = SyncOperationKind.UPSERT,
+                    lamport = 99,
+                ),
+            ),
+            advancingCursorTo = 3,
+        )
+
+        assertEquals(first, readDisplayConfiguration(database.readableDatabase))
+        assertEquals(listOf(first), refreshed)
+
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 4,
+                    opId = "operation-display-newer",
+                    lamport = 11,
+                    payload = second,
+                ),
+            ),
+            advancingCursorTo = 4,
+        )
+
+        assertEquals(second, readDisplayConfiguration(database.readableDatabase))
+        assertEquals(listOf(first, second), refreshed)
+        assertEquals(3, rowCount("sync_applied_operations"))
+    }
+
+    @Test
+    fun `固定显示配置实体拒绝tombstone且整页回滚`() {
+        val store = SQLiteSyncStore(database, credentials)
+        val display = displayConfiguration("保留配置")
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 1,
+                    opId = "operation-display-valid",
+                    lamport = 1,
+                    payload = display,
+                ),
+            ),
+            advancingCursorTo = 1,
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.applyRemoteOperations(
+                listOf(
+                    operation(
+                        serverSeq = 2,
+                        opId = "operation-display-delete",
+                        lamport = 2,
+                        payload = TombstonePayload(
+                            id = DISPLAY_CONFIGURATION_ENTITY_ID,
+                            deletedAt = 20_000,
+                        ),
+                    ),
+                ),
+                advancingCursorTo = 2,
+            )
+        }
+
+        assertEquals(display, readDisplayConfiguration(database.readableDatabase))
+        assertEquals(1L, store.currentCursor())
+        assertEquals(1, rowCount("sync_applied_operations"))
+        assertEquals(0, rowCount("sync_tombstones"))
+    }
+
     private fun localTask(id: String, title: String): TaskEntity = TaskEntity(
         id = id,
         seriesId = id,
@@ -504,6 +631,13 @@ class SQLiteSyncStoreInstrumentedTest {
         settledAt = null,
     )
 
+    private fun displayConfiguration(label: String) = DisplayConfigurationPayload(
+        headerTemplate = "$label {weekdayEn}",
+        subtitleTemplate = "$label {deadlineMonthsDays}",
+        startDate = "2026-01-01",
+        deadlineDate = "2026-12-31",
+    )
+
     private fun operation(
         serverSeq: Long,
         opId: String,
@@ -513,6 +647,7 @@ class SQLiteSyncStoreInstrumentedTest {
         val kind = when (payload) {
             is TombstonePayload -> SyncOperationKind.DELETE
             is TaskInstancePayload -> SyncOperationKind.UPSERT
+            is DisplayConfigurationPayload -> SyncOperationKind.UPSERT
         }
         val metadata = SyncOperationMetadata(
             opId = opId,

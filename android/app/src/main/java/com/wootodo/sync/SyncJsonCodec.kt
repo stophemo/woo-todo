@@ -109,6 +109,7 @@ object SyncJsonCodec {
     fun encodeTaskPayload(payload: TaskWirePayload): String = when (payload) {
         is TaskInstancePayload -> encodeTask(payload).toString()
         is TombstonePayload -> encodeTombstone(payload).toString()
+        is DisplayConfigurationPayload -> encodeDisplayConfiguration(payload).toString()
     }
 
     fun decodeTaskPayload(source: String): TaskWirePayload {
@@ -116,6 +117,7 @@ object SyncJsonCodec {
         return when (objectValue.string("entityType")) {
             "task" -> decodeTask(objectValue)
             "tombstone" -> decodeTombstone(objectValue)
+            "displayConfiguration" -> decodeDisplayConfiguration(objectValue)
             else -> throw ProtocolJsonException("未知任务正文 entityType")
         }
     }
@@ -415,6 +417,55 @@ object SyncJsonCodec {
         ).also { encodeTombstone(it) }
     }
 
+    private fun encodeDisplayConfiguration(payload: DisplayConfigurationPayload): JSONObject {
+        validateDisplayConfiguration(payload)
+        return JSONObject()
+            .put("protocolVersion", payload.protocolVersion)
+            .put("entityType", payload.entityType)
+            .put("id", payload.id)
+            .put("headerTemplate", payload.headerTemplate)
+            .put("subtitleTemplate", payload.subtitleTemplate)
+            .put("startDate", payload.startDate)
+            .put("deadlineDate", payload.deadlineDate)
+    }
+
+    private fun decodeDisplayConfiguration(value: JSONObject): DisplayConfigurationPayload {
+        value.requireKeys(
+            setOf(
+                "protocolVersion", "entityType", "id", "headerTemplate",
+                "subtitleTemplate", "startDate", "deadlineDate",
+            ),
+        )
+        return DisplayConfigurationPayload(
+            protocolVersion = value.nonNegativeInt("protocolVersion"),
+            entityType = value.string("entityType"),
+            id = value.string("id"),
+            headerTemplate = value.string("headerTemplate"),
+            subtitleTemplate = value.string("subtitleTemplate"),
+            startDate = value.string("startDate"),
+            deadlineDate = value.string("deadlineDate"),
+        ).also(::validateDisplayConfiguration)
+    }
+
+    private fun validateDisplayConfiguration(payload: DisplayConfigurationPayload) {
+        require(
+            payload.protocolVersion == 1 &&
+                payload.entityType == "displayConfiguration" &&
+                payload.id == DISPLAY_CONFIGURATION_ENTITY_ID,
+        )
+        require(payload.headerTemplate.hasWireCodePointLength(0..80))
+        require(payload.subtitleTemplate.hasWireCodePointLength(0..160))
+        require(!LINE_BREAK.containsMatchIn(payload.headerTemplate))
+        require(!LINE_BREAK.containsMatchIn(payload.subtitleTemplate))
+        validateDisplayDate(payload.startDate)
+        validateDisplayDate(payload.deadlineDate)
+    }
+
+    private fun validateDisplayDate(value: String) {
+        require(DATE_KEY.matches(value))
+        require(LocalDate.parse(value).year in 1..9_999)
+    }
+
     private fun validateTask(task: TaskInstancePayload) {
         require(task.protocolVersion == 1 && task.entityType == "task")
         require(
@@ -487,6 +538,7 @@ object SyncJsonCodec {
     private val IDENTIFIER = Regex("^[A-Za-z0-9._:-]+$")
     private val DATE_KEY = Regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
     private val REMINDER_TIME = Regex("^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+    private val LINE_BREAK = Regex("\\R")
 }
 
 private fun String.hasWireCodePointLength(range: IntRange): Boolean {

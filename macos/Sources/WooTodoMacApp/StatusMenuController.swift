@@ -130,7 +130,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         taskPanelItem.action = #selector(toggleTaskPanel)
         menu.addItem(taskPanelItem)
         menu.addItem(item("任务详情与统计…", action: #selector(openDashboard)))
-        menu.addItem(item("设置…", action: #selector(openSettings)))
+        menu.addItem(item("设置…", action: #selector(openSettingsFromStatusMenu)))
         makeInteractiveItem.target = self
         makeInteractiveItem.action = #selector(makeInteractive)
         menu.addItem(makeInteractiveItem)
@@ -239,7 +239,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         openDashboardAction()
     }
 
-    @objc private func openSettings() {
+    @objc private func openSettingsFromStatusMenu() {
         openSettingsAction()
     }
 

@@ -190,6 +190,31 @@ class AppUpdateTest {
     }
 
     @Test
+    fun `运行中周期轮询会在自动检查到期后放行`() {
+        val checkedAt = 200_000_000L
+        var elapsed = AppUpdatePolicy.AUTOMATIC_CHECK_POLL_INTERVAL_MILLIS
+
+        while (elapsed < AppUpdatePolicy.AUTOMATIC_CHECK_INTERVAL_MILLIS) {
+            assertFalse(
+                AppUpdatePolicy.shouldAutomaticallyCheck(
+                    lastSuccessfulCheckAt = checkedAt,
+                    lastAttemptAt = checkedAt,
+                    now = checkedAt + elapsed,
+                ),
+            )
+            elapsed += AppUpdatePolicy.AUTOMATIC_CHECK_POLL_INTERVAL_MILLIS
+        }
+
+        assertTrue(
+            AppUpdatePolicy.shouldAutomaticallyCheck(
+                lastSuccessfulCheckAt = checkedAt,
+                lastAttemptAt = checkedAt,
+                now = checkedAt + AppUpdatePolicy.AUTOMATIC_CHECK_INTERVAL_MILLIS,
+            ),
+        )
+    }
+
+    @Test
     fun `缓存的新版本可恢复且升级后自动失效`() {
         val entry = AppUpdateCacheEntry(
             versionLabel = "v0.2.0",

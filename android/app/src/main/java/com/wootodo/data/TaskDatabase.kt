@@ -25,6 +25,9 @@ class TaskDatabase(context: Context) :
         if (oldVersion < 6) {
             createWebDavAppliedSchema(database)
         }
+        if (oldVersion < 7) {
+            createDisplayConfigurationSchema(database)
+        }
         // 兼容曾经中断或裁剪过的旧升级：同步表均使用 IF NOT EXISTS，可安全幂等补齐。
         createSyncSchema(database)
     }
@@ -188,6 +191,7 @@ class TaskDatabase(context: Context) :
         )
         createWebDavAppliedSchema(database)
         createDeferredDeletionSchema(database)
+        createDisplayConfigurationSchema(database)
     }
 
     private fun createWebDavAppliedSchema(database: SQLiteDatabase) {
@@ -212,6 +216,20 @@ class TaskDatabase(context: Context) :
         )
     }
 
+    private fun createDisplayConfigurationSchema(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS display_configuration (
+                id TEXT NOT NULL PRIMARY KEY CHECK(id = 'display.today.configuration'),
+                header_template TEXT NOT NULL,
+                subtitle_template TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                deadline_date TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+
     private fun tableExists(database: SQLiteDatabase, tableName: String): Boolean =
         database.rawQuery(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
@@ -227,6 +245,6 @@ class TaskDatabase(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 6
+        const val DATABASE_VERSION = 7
     }
 }

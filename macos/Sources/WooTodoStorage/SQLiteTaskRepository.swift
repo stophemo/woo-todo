@@ -59,6 +59,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     private var syncConfiguration: SQLiteSyncConfiguration?
     private var hasPersistedSyncIdentity = false
 
+    public static let displayConfigurationEntityID = WireDisplayConfigurationPayload.fixedID
+
     private static let transientDestructor = unsafeBitCast(
         -1,
         to: sqlite3_destructor_type.self
@@ -460,7 +462,72 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             )
             """
         )
-        try execute("PRAGMA user_version = 5")
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS sync_deferred_display_configuration (
+                singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+                is_dirty INTEGER NOT NULL CHECK (is_dirty = 1)
+            )
+            """
+        )
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS sync_display_configuration (
+                entity_id TEXT PRIMARY KEY NOT NULL,
+                header_template TEXT NOT NULL,
+                subtitle_template TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                deadline_date TEXT NOT NULL
+            )
+            """
+        )
+        try execute("PRAGMA user_version = 6")
+    }
+
+    public func displayConfiguration() throws -> WireDisplayConfigurationPayload? {
+        try withLock {
+            let statement = try prepare(
+                """
+                SELECT header_template, subtitle_template, start_date, deadline_date
+                FROM sync_display_configuration WHERE entity_id = ? LIMIT 1
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind([.text(Self.displayConfigurationEntityID)], to: statement)
+            switch sqlite3_step(statement) {
+            case SQLITE_DONE:
+                return nil
+            case SQLITE_ROW:
+                return try WireDisplayConfigurationPayload(
+                    headerTemplate: text(at: 0, from: statement),
+                    subtitleTemplate: text(at: 1, from: statement),
+                    startDate: text(at: 2, from: statement),
+                    deadlineDate: text(at: 3, from: statement)
+                )
+            default:
+                throw statementError()
+            }
+        }
+    }
+
+    public func saveDisplayConfiguration(_ payload: WireDisplayConfigurationPayload) throws {
+        try withLock {
+            try payload.validate()
+            if try displayConfiguration() == payload { return }
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try upsertDisplayConfiguration(payload)
+                if let configuration = syncConfiguration {
+                    try enqueueLocalDisplayConfiguration(payload, configuration: configuration)
+                } else if hasPersistedSyncIdentity {
+                    try recordDeferredDisplayConfiguration()
+                }
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
     }
 
     /// 只读预检安全存储中的候选身份，不修改数据库或生成 outbox。
@@ -580,6 +647,12 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 ) {
                     try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
                 }
+                if let displayConfiguration = try displayConfiguration() {
+                    try enqueueLocalDisplayConfiguration(
+                        displayConfiguration,
+                        configuration: configuration
+                    )
+                }
                 for deletion in try deferredDeletions() {
                     try deleteTaskRow(entityID: deletion.entityID)
                     try enqueueLocalTombstone(
@@ -590,6 +663,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 }
                 try execute("DELETE FROM sync_deferred_upserts")
                 try execute("DELETE FROM sync_deferred_deletions")
+                try execute("DELETE FROM sync_deferred_display_configuration")
                 try execute("COMMIT")
                 syncConfiguration = configuration
                 hasPersistedSyncIdentity = true
@@ -790,6 +864,30 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
     }
 
+    private func recordDeferredDisplayConfiguration() throws {
+        try execute(
+            """
+            INSERT OR REPLACE INTO sync_deferred_display_configuration(singleton, is_dirty)
+            VALUES (1, 1)
+            """
+        )
+    }
+
+    private func hasDeferredDisplayConfiguration() throws -> Bool {
+        let statement = try prepare(
+            "SELECT 1 FROM sync_deferred_display_configuration WHERE singleton = 1 LIMIT 1"
+        )
+        defer { sqlite3_finalize(statement) }
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW:
+            return true
+        case SQLITE_DONE:
+            return false
+        default:
+            throw statementError()
+        }
+    }
+
     private func isDeferredDeletion(entityID: String) throws -> Bool {
         let statement = try prepare(
             "SELECT 1 FROM sync_deferred_deletions WHERE entity_id = ? LIMIT 1"
@@ -855,6 +953,16 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
             }
 
+            if try hasDeferredDisplayConfiguration() {
+                guard let displayConfiguration = try displayConfiguration() else {
+                    throw SQLiteRepositoryError.invalidRecord("待同步显示配置缺少正文")
+                }
+                try enqueueLocalDisplayConfiguration(
+                    displayConfiguration,
+                    configuration: configuration
+                )
+            }
+
             for deletion in try deferredDeletions() {
                 try deleteTaskRow(entityID: deletion.entityID)
                 try enqueueLocalTombstone(
@@ -865,6 +973,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             }
             try execute("DELETE FROM sync_deferred_upserts")
             try execute("DELETE FROM sync_deferred_deletions")
+            try execute("DELETE FROM sync_deferred_display_configuration")
             try execute("COMMIT")
         } catch {
             try? execute("ROLLBACK")
@@ -877,6 +986,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             """
             SELECT EXISTS(SELECT 1 FROM sync_deferred_upserts)
                 OR EXISTS(SELECT 1 FROM sync_deferred_deletions)
+                OR EXISTS(SELECT 1 FROM sync_deferred_display_configuration)
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -1054,6 +1164,42 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             deletedAtMilliseconds: milliseconds(since1970: deletedAt),
             configuration: configuration
         )
+    }
+
+    private func enqueueLocalDisplayConfiguration(
+        _ configurationPayload: WireDisplayConfigurationPayload,
+        configuration: SQLiteSyncConfiguration
+    ) throws {
+        let entityID = Self.displayConfigurationEntityID
+        let lamport = try nextLamport()
+        let operationID = UUID().uuidString.lowercased()
+        let metadata = SyncAADMetadata(
+            vaultId: configuration.vaultId,
+            operationId: operationID,
+            entityId: entityID,
+            kind: .upsert,
+            lamport: lamport,
+            deviceId: configuration.deviceId
+        )
+        let envelope = try TaskPayloadCodec.seal(
+            .displayConfiguration(configurationPayload),
+            vaultKey: configuration.vaultKey,
+            metadata: metadata
+        )
+        try insertOutbox(
+            operationID: operationID,
+            entityID: entityID,
+            kind: .upsert,
+            lamport: lamport,
+            envelope: envelope
+        )
+        try upsertEntityVersion(EntityVersion(
+            entityID: entityID,
+            lamport: lamport,
+            deviceID: configuration.deviceId,
+            isDeleted: false,
+            deletedAt: nil
+        ))
     }
 
     private func enqueueLocalTombstone(
@@ -1240,6 +1386,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         switch entity {
         case .task(let payload):
             guard operation.kind != .delete,
+                  entityID != Self.displayConfigurationEntityID,
                   canonicalEntityID(payload.id) == entityID else {
                 throw SQLiteRepositoryError.invalidRemotePage("任务正文与外层元数据不一致")
             }
@@ -1318,6 +1465,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
 
         case .tombstone(let payload):
             guard operation.kind == .delete,
+                  entityID != Self.displayConfigurationEntityID,
                   canonicalEntityID(payload.id) == entityID else {
                 throw SQLiteRepositoryError.invalidRemotePage("tombstone 与外层元数据不一致")
             }
@@ -1345,7 +1493,55 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 isDeleted: true,
                 deletedAt: payload.deletedAt
             ))
+
+        case .displayConfiguration(let payload):
+            guard operation.kind == .upsert,
+                  payload.id == entityID,
+                  entityID == Self.displayConfigurationEntityID else {
+                throw SQLiteRepositoryError.invalidRemotePage(
+                    "显示配置正文与外层元数据不一致"
+                )
+            }
+            guard remoteVersionWins(
+                lamport: operation.lamport,
+                deviceID: operation.deviceId,
+                over: currentVersion
+            ) else { return }
+            try upsertDisplayConfiguration(payload)
+            try upsertEntityVersion(EntityVersion(
+                entityID: entityID,
+                lamport: operation.lamport,
+                deviceID: operation.deviceId,
+                isDeleted: false,
+                deletedAt: nil
+            ))
         }
+    }
+
+    private func upsertDisplayConfiguration(
+        _ payload: WireDisplayConfigurationPayload
+    ) throws {
+        let statement = try prepare(
+            """
+            INSERT INTO sync_display_configuration(
+                entity_id, header_template, subtitle_template, start_date, deadline_date
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(entity_id) DO UPDATE SET
+                header_template = excluded.header_template,
+                subtitle_template = excluded.subtitle_template,
+                start_date = excluded.start_date,
+                deadline_date = excluded.deadline_date
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([
+            .text(payload.id),
+            .text(payload.headerTemplate),
+            .text(payload.subtitleTemplate),
+            .text(payload.startDate),
+            .text(payload.deadlineDate),
+        ], to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
     }
 
     private func remoteVersionWins(

@@ -3,6 +3,8 @@ import Foundation
 public enum SyncEndpointScope: Equatable, Sendable {
     /// 可供 Mac 与 Android 共同访问的 HTTPS 地址。
     case crossDevice
+    /// 仅允许 RFC1918 IPv4 或 mDNS `.local` 主机名使用明文 HTTP。
+    case localNetwork
     /// 仅指向当前设备的回环地址，不能用于真实双机配对。
     case currentDeviceOnly
     case invalid
@@ -26,11 +28,48 @@ public enum SyncEndpointPolicy {
             }
             return .invalid
         }
-        return scheme == "https" ? .crossDevice : .invalid
+        if scheme == "https" { return .crossDevice }
+        if scheme == "http", isPrivateIPv4(host) || isLocalHostname(host) {
+            return .localNetwork
+        }
+        return .invalid
     }
 
     public static func isAllowed(_ endpoint: URL) -> Bool {
         scope(of: endpoint) != .invalid
+    }
+
+    private static func isPrivateIPv4(_ host: String) -> Bool {
+        let components = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard components.count == 4 else { return false }
+        var octets: [Int] = []
+        for component in components {
+            guard !component.isEmpty,
+                  component.count <= 3,
+                  component.allSatisfy(\.isNumber),
+                  !(component.count > 1 && component.first == "0"),
+                  let value = Int(component), (0...255).contains(value) else {
+                return false
+            }
+            octets.append(value)
+        }
+        return octets[0] == 10 ||
+            (octets[0] == 172 && (16...31).contains(octets[1])) ||
+            (octets[0] == 192 && octets[1] == 168)
+    }
+
+    private static func isLocalHostname(_ host: String) -> Bool {
+        guard host.count <= 253, host.hasSuffix(".local") else { return false }
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2, labels.last == "local" else { return false }
+        return labels.dropLast().allSatisfy { label in
+            guard (1...63).contains(label.count),
+                  label.first?.isLetter == true || label.first?.isNumber == true,
+                  label.last?.isLetter == true || label.last?.isNumber == true else {
+                return false
+            }
+            return label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
+        }
     }
 }
 
@@ -54,6 +93,8 @@ public enum SyncEndpointSetupPolicy {
             return .invalid
         case .currentDeviceOnly:
             return .currentDeviceOnly
+        case .localNetwork:
+            return .invalid
         case .crossDevice:
             let finalPathComponent = endpoint.path
                 .split(separator: "/", omittingEmptySubsequences: true)
@@ -80,7 +121,7 @@ public enum PairingDeepLinkError: Error, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidScheme: "不是 woo-todo 配对深链"
-        case .invalidEndpoint: "配对服务必须使用 HTTPS；本地调试仅允许 127.0.0.1 HTTP"
+        case .invalidEndpoint: "配对服务必须使用 HTTPS，或使用受限的局域网 HTTP 地址"
         case .missingField(let field): "配对深链缺少字段：\(field)"
         case .duplicateOrUnknownField: "配对深链包含重复或未知字段"
         case .invalidPairingId: "配对 ID 格式无效"

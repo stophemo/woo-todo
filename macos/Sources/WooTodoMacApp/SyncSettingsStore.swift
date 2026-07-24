@@ -13,6 +13,13 @@ struct SyncConnectionSummary: Equatable {
     let deviceId: String
 }
 
+enum LocalNetworkHostState: Equatable {
+    case disabled
+    case starting
+    case ready(URL)
+    case failed(String)
+}
+
 private enum SyncSetupError: LocalizedError {
     case credentialsAlreadyStored
     case credentialsRollbackFailed(original: String, rollback: String)
@@ -91,6 +98,7 @@ final class SyncSettingsStore: ObservableObject {
     @Published private(set) var actionErrorMessage: String?
     @Published private(set) var isBackupBusy = false
     @Published private(set) var backupStatusMessage: String?
+    @Published private(set) var localNetworkHostState: LocalNetworkHostState = .disabled
 
     var endpointSetupAssessment: SyncEndpointSetupAssessment {
         SyncEndpointSetupPolicy.assess(endpointText)
@@ -99,6 +107,10 @@ final class SyncSettingsStore: ObservableObject {
     var canCreateVault: Bool {
         if case .ready = endpointSetupAssessment { return true }
         return false
+    }
+
+    var isLocalNetworkConnection: Bool {
+        connection.map { SyncEndpointPolicy.scope(of: $0.endpoint) == .localNetwork } ?? false
     }
 
     var onRemoteChanges: (() -> Void)?
@@ -113,6 +125,7 @@ final class SyncSettingsStore: ObservableObject {
     private var credentials: SyncCredentials?
     private var apiClient: SyncAPIClient?
     private var coordinator: SyncCoordinator?
+    private var localNetworkServer: LocalNetworkSyncHTTPServer?
     private var runtimeMachine: SyncRuntimeStateMachine
     private var pairingMachine = InitiatorPairingStateMachine()
     private var pairingContext: PairingContext?
@@ -193,7 +206,14 @@ final class SyncSettingsStore: ObservableObject {
             }
         }
         fallbackTimer?.tolerance = 60
-        requestSync(.launch)
+        if isLocalNetworkConnection, let credentials {
+            localNetworkHostState = .starting
+            Task { [weak self] in
+                await self?.startLocalNetworkHost(using: credentials, trigger: .launch)
+            }
+        } else {
+            requestSync(.launch)
+        }
     }
 
     func stop() {
@@ -211,10 +231,97 @@ final class SyncSettingsStore: ObservableObject {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
             self.wakeObserver = nil
         }
+        localNetworkServer?.stop()
+        localNetworkServer = nil
+        if isLocalNetworkConnection {
+            localNetworkHostState = .disabled
+        }
         hasStarted = false
     }
 
+    func enableLocalNetworkSync() async {
+        guard connection == nil, localNetworkServer == nil else { return }
+        actionErrorMessage = nil
+        localNetworkHostState = .starting
+
+        var createdStateURL: URL?
+        var server: LocalNetworkSyncHTTPServer?
+        do {
+            guard try credentialsStore.load() == nil else {
+                throw SyncSetupError.credentialsAlreadyStored
+            }
+            let endpoint = try LocalNetworkSyncEndpointResolver.preferredEndpoint()
+            let randomVault = Base64URL.encode(try SecureRandom.bytes(count: 9))
+            let newCredentials = SyncCredentials(
+                endpoint: endpoint,
+                vaultId: "vault-\(randomVault)",
+                deviceId: UUID().uuidString.lowercased(),
+                deviceToken: try SecureRandom.deviceToken(),
+                vaultKey: try SecureRandom.bytes(count: AES256GCM.keyByteCount)
+            )
+            try newCredentials.validate()
+            try repository.validateSyncBinding(
+                vaultId: newCredentials.vaultId,
+                deviceId: newCredentials.deviceId
+            )
+
+            let stateURL = try Self.localNetworkStateURL()
+            guard !FileManager.default.fileExists(atPath: stateURL.path) else {
+                throw LocalSyncServerError.identityMismatch
+            }
+            let localStore = try LocalSyncServerStore(
+                fileURL: stateURL,
+                bootstrapCredentials: newCredentials
+            )
+            createdStateURL = stateURL
+            let localServer = try LocalNetworkSyncHTTPServer(
+                store: localStore,
+                endpoint: endpoint,
+                serviceName: "Woo Todo · \(Self.localDeviceName)"
+            )
+            server = localServer
+            try await localServer.start()
+
+            try credentialsStore.save(newCredentials)
+            do {
+                try repository.configureSync(Self.sqliteConfiguration(for: newCredentials))
+            } catch {
+                try? credentialsStore.delete()
+                throw error
+            }
+            try activate(newCredentials)
+            localNetworkServer = localServer
+            localNetworkHostState = .ready(endpoint)
+            runtimeMachine.setConfigured(true)
+            publishRuntimeState()
+            UserDefaults.standard.set(endpoint.absoluteString, forKey: Self.endpointDefaultsKey)
+            requestSync(.localChange)
+        } catch {
+            server?.stop()
+            if let createdStateURL {
+                try? FileManager.default.removeItem(at: createdStateURL)
+            }
+            localNetworkHostState = .failed(error.localizedDescription)
+            actionErrorMessage = error.localizedDescription
+            logger.error("启用局域网同步失败：\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func retryLocalNetworkHost() async {
+        guard isLocalNetworkConnection,
+              localNetworkServer == nil,
+              localNetworkHostState != .starting,
+              let credentials else { return }
+        actionErrorMessage = nil
+        localNetworkHostState = .starting
+        await startLocalNetworkHost(using: credentials, trigger: .manual)
+    }
+
     func requestSync(_ trigger: SyncTrigger = .manual) {
+        if isLocalNetworkConnection, localNetworkServer?.isReady != true {
+            syncOrRestartLocalNetworkHost(trigger)
+            return
+        }
         guard runtimeMachine.request(trigger) else {
             publishRuntimeState()
             return
@@ -568,6 +675,33 @@ final class SyncSettingsStore: ObservableObject {
         endpointText = credentials.endpoint.absoluteString
     }
 
+    private func startLocalNetworkHost(
+        using credentials: SyncCredentials,
+        trigger: SyncTrigger
+    ) async {
+        do {
+            let localStore = try LocalSyncServerStore(
+                fileURL: Self.localNetworkStateURL(),
+                bootstrapCredentials: credentials
+            )
+            let server = try LocalNetworkSyncHTTPServer(
+                store: localStore,
+                endpoint: credentials.endpoint,
+                serviceName: "Woo Todo · \(Self.localDeviceName)"
+            )
+            try await server.start()
+            localNetworkServer = server
+            localNetworkHostState = .ready(credentials.endpoint)
+            requestSync(trigger)
+        } catch {
+            localNetworkServer?.stop()
+            localNetworkServer = nil
+            localNetworkHostState = .failed(error.localizedDescription)
+            actionErrorMessage = error.localizedDescription
+            logger.error("恢复局域网同步主机失败：\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func runSyncLoop(startingWith initialTrigger: SyncTrigger) async {
         var trigger: SyncTrigger? = initialTrigger
         while let activeTrigger = trigger, !Task.isCancelled {
@@ -694,7 +828,9 @@ final class SyncSettingsStore: ObservableObject {
             switch apiError {
             case .transport, .invalidHTTPResponse:
                 // 临时网络失败不结束 10 分钟配对窗口，下一轮继续尝试。
-                actionErrorMessage = "暂时无法连接配对服务，将在二维码有效期内自动重试。请检查 Mac 网络与 Worker 状态。"
+                actionErrorMessage = isLocalNetworkConnection
+                    ? "暂时无法连接局域网同步主机，将在二维码有效期内自动重试。请确认局域网服务已启动。"
+                    : "暂时无法连接配对服务，将在二维码有效期内自动重试。请检查 Mac 网络与 Worker 状态。"
                 return
             case .server(let statusCode, _, _) where statusCode == 429 || statusCode >= 500:
                 actionErrorMessage = "配对服务暂时不可用，将自动重试"
@@ -717,13 +853,29 @@ final class SyncSettingsStore: ObservableObject {
         let isRestored = lastPathWasSatisfied == false
             || (lastPathWasSatisfied == nil && runtimeSnapshot.lastErrorMessage != nil)
         if isSatisfied && isRestored {
-            requestSync(.networkRestored)
+            syncOrRestartLocalNetworkHost(.networkRestored)
         }
     }
 
     private func refreshLocalPeriodsAndSync(_ trigger: SyncTrigger) {
         onLifecycleRefresh?()
-        requestSync(trigger)
+        syncOrRestartLocalNetworkHost(trigger)
+    }
+
+    private func syncOrRestartLocalNetworkHost(_ trigger: SyncTrigger) {
+        if isLocalNetworkConnection,
+           localNetworkServer?.isReady != true,
+           localNetworkHostState != .starting,
+           let credentials {
+            localNetworkServer?.stop()
+            localNetworkServer = nil
+            localNetworkHostState = .starting
+            Task { [weak self] in
+                await self?.startLocalNetworkHost(using: credentials, trigger: trigger)
+            }
+        } else if !isLocalNetworkConnection || localNetworkServer?.isReady == true {
+            requestSync(trigger)
+        }
     }
 
     private func publishRuntimeState() {
@@ -767,10 +919,19 @@ final class SyncSettingsStore: ObservableObject {
         case .invalidEndpoint:
             return SyncSetupError.invalidEndpoint.localizedDescription
         case .transport:
+            if isLocalNetworkConnection {
+                return "局域网同步主机暂时不可用。请确认 Mac 已获本地网络权限，稍后重试。"
+            }
             return "无法连接同步服务。请确认 Worker 已部署、服务地址能在 Mac 与手机上访问，并检查网络后重试。"
         case .invalidHTTPResponse:
+            if isLocalNetworkConnection {
+                return "局域网地址没有返回有效的 Woo Todo 同步响应，请重新启动局域网同步。"
+            }
             return "已连接到该地址，但没有收到有效的 HTTP 响应。请确认它是 Woo Todo Worker 的根地址。"
         case .decoding:
+            if isLocalNetworkConnection {
+                return "局域网同步响应与当前版本不兼容，请将 Mac 与 Android 更新到兼容版本。"
+            }
             return "服务已响应，但返回格式与当前版本不兼容。请确认没有把 Vercel 主页或其他网页地址当作同步服务。"
         case .encoding:
             return "无法准备\(action.label)请求，请重新启动应用后重试。"
@@ -811,6 +972,19 @@ final class SyncSettingsStore: ObservableObject {
             deviceId: credentials.deviceId,
             vaultKey: credentials.vaultKey
         )
+    }
+
+    private static func localNetworkStateURL() throws -> URL {
+        let root = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        return root
+            .appendingPathComponent("WooTodo", isDirectory: true)
+            .appendingPathComponent("local-sync", isDirectory: true)
+            .appendingPathComponent("server-state.json", isDirectory: false)
     }
 
     private func restoreCredentials(_ credentials: SyncCredentials?) throws {

@@ -4,6 +4,7 @@ import android.app.Application
 import com.wootodo.data.SQLiteTaskStore
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskRepository
+import com.wootodo.display.DayCounterPreferences
 import com.wootodo.reminder.NotificationHelper
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.reminder.TaskReminderScheduler
@@ -16,6 +17,7 @@ import com.wootodo.sync.BackupRestoreResult
 import com.wootodo.sync.BackupTransferService
 import com.wootodo.sync.SQLiteBackupDatabase
 import com.wootodo.sync.SQLiteSyncStore
+import com.wootodo.sync.SQLiteLocalMutationRecorder
 import com.wootodo.sync.SyncApiClient
 import com.wootodo.sync.SyncCoordinator
 import com.wootodo.sync.SyncJobScheduler
@@ -25,6 +27,8 @@ import com.wootodo.sync.SyncRuntime
 import com.wootodo.sync.WebDavClient
 import com.wootodo.sync.WebDavCredentials
 import com.wootodo.sync.WebDavSyncRunner
+import com.wootodo.sync.readDisplayConfiguration
+import com.wootodo.sync.writeDisplayConfiguration
 import com.wootodo.widget.TodayWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,10 +57,12 @@ class WooTodoApplication : Application() {
     private fun createSyncRunner(): SyncRunner? {
         val webDav = webDavCredentialsStore.load()
         if (webDav != null) {
+            ensureDisplayConfigurationStored()
             val syncStore = SQLiteSyncStore(
                 database = database,
                 credentials = webDav.syncIdentity(),
                 onTasksChanged = { onRemoteTasksChanged() },
+                onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
             )
             return SyncRunner(WebDavSyncRunner(
                 client = WebDavClient(webDav),
@@ -73,10 +79,12 @@ class WooTodoApplication : Application() {
     fun createSyncCoordinator(): SyncCoordinator? {
         if (webDavCredentialsStore.load() != null) return null
         val credentials = syncCredentialsStore.load() ?: return null
+        ensureDisplayConfigurationStored()
         val syncStore = SQLiteSyncStore(
             database = database,
             credentials = credentials,
             onTasksChanged = { onRemoteTasksChanged() },
+            onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
         )
         return SyncCoordinator(
             transport = SyncApiClient(credentials.endpoint),
@@ -92,6 +100,35 @@ class WooTodoApplication : Application() {
         TaskReminderScheduler.scheduleAllAsync(this)
     }
 
+    private fun onRemoteDisplayConfigurationChanged(
+        payload: com.wootodo.sync.DisplayConfigurationPayload,
+    ) {
+        DayCounterPreferences.applyRemote(this, payload)
+        TodayWidgetUpdater.updateAllAsync(this)
+    }
+
+    private fun ensureDisplayConfigurationStored() {
+        val preferencePayload = DayCounterPreferences.toPayload(DayCounterPreferences.load(this))
+        val sqlite = database.writableDatabase
+        var storedPayload = preferencePayload
+        sqlite.beginTransaction()
+        try {
+            val existing = readDisplayConfiguration(sqlite)
+            if (existing == null) {
+                writeDisplayConfiguration(sqlite, preferencePayload)
+                SQLiteLocalMutationRecorder.recordDisplayConfiguration(sqlite, preferencePayload)
+            } else {
+                storedPayload = existing
+            }
+            sqlite.setTransactionSuccessful()
+        } finally {
+            sqlite.endTransaction()
+        }
+        if (storedPayload != preferencePayload) {
+            DayCounterPreferences.applyRemote(this, storedPayload)
+        }
+    }
+
     suspend fun configureWebDav(credentials: WebDavCredentials) = withContext(Dispatchers.IO) {
         if (syncCredentialsStore.load() != null) {
             throw IllegalStateException("当前已配置 Worker 同步，请先使用现有同步方式")
@@ -99,6 +136,7 @@ class WooTodoApplication : Application() {
         val previous = webDavCredentialsStore.load()
         webDavCredentialsStore.save(credentials)
         try {
+            ensureDisplayConfigurationStored()
             SQLiteSyncStore(database, credentials.syncIdentity())
         } catch (error: Exception) {
             if (previous == null) webDavCredentialsStore.delete() else webDavCredentialsStore.save(previous)

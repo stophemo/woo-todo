@@ -33,6 +33,34 @@ struct TodayStoreTests {
         #expect(changeCount == 1)
     }
 
+    @Test("快速新增保留任务级别、每日重复与提醒")
+    func quickAddPreservesOptions() throws {
+        let now = try #require(
+            ISO8601DateFormatter().date(from: "2026-07-17T10:00:00+08:00")
+        )
+        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
+        let repository = TodayMemoryTaskRepository(tasks: [])
+        let store = TodayStore(repository: repository, engine: engine, now: { now })
+        let reminder = try TaskReminderTime(hour: 18, minute: 30)
+        var changeCount = 0
+        store.onTasksChanged = { changeCount += 1 }
+
+        let didAdd = store.add(
+            title: "晚间复盘",
+            tier: .side,
+            repeatsDaily: true,
+            reminderTime: reminder
+        )
+
+        let task = try #require(repository.tasks.only)
+        #expect(didAdd)
+        #expect(task.tier == .side)
+        #expect(task.recurrence == .repeating(RepeatRule(frequency: .daily)))
+        #expect(task.reminderTime == reminder)
+        #expect(task.period == engine.period(containing: now, for: .daily))
+        #expect(changeCount == 1)
+    }
+
     @Test("快速新增空白任务时不写入也不发送变更回调")
     func quickAddRejectsBlankTitle() throws {
         let now = try #require(

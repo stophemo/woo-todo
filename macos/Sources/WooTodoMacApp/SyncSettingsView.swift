@@ -58,63 +58,68 @@ struct SyncSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("在线同步")
+                    Text("同步方式")
                         .font(.title2.weight(.semibold))
-                    Text("任务始终先写入本地数据库。可直接使用坚果云，或继续使用自建 Worker。")
+                    Text("任务始终先写入本地数据库。可直接在同一网络同步，也可使用坚果云或自建 Worker。")
                         .foregroundStyle(.secondary)
                 }
 
+                localNetworkCard
                 webDavCard
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("同步服务地址")
-                        .font(.headline)
-                    TextField("https://你的-worker.workers.dev", text: $store.endpointText)
-                        .textFieldStyle(.roundedBorder)
-                    endpointGuidance
-                    Text("这里需要填写已部署的 Cloudflare Worker 根地址。Vercel 产品主页和夸克网盘都不是同步服务；夸克网盘仅用于手动保存加密备份。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                if webDavStore.connection == nil {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("同步服务地址")
+                            .font(.headline)
+                        TextField("https://你的-worker.workers.dev", text: $store.endpointText)
+                            .textFieldStyle(.roundedBorder)
+                        endpointGuidance
+                        Text("这里需要填写已部署的 Cloudflare Worker 根地址。Vercel 产品主页和夸克网盘都不是同步服务；夸克网盘仅用于手动保存加密备份。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("创建邀请码")
-                        .font(.headline)
-                    SecureField("部署同步服务时设置的邀请码", text: $vaultCreationInviteCode)
-                        .textFieldStyle(.roundedBorder)
-                    Text("邀请码须为 16–256 个无空格可打印 ASCII 字符。它仅在首次创建空间时随本次请求发送，不会保存到 UserDefaults、Keychain 或日志。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("创建邀请码")
+                            .font(.headline)
+                        SecureField("部署同步服务时设置的邀请码", text: $vaultCreationInviteCode)
+                            .textFieldStyle(.roundedBorder)
+                        Text("邀请码须为 16–256 个无空格可打印 ASCII 字符。它仅在首次创建空间时随本次请求发送，不会保存到 UserDefaults、Keychain 或日志。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
-                Button {
-                    let submittedInviteCode = vaultCreationInviteCode
-                    Task {
-                        await store.createVault(inviteCode: submittedInviteCode)
-                        if store.connection != nil {
-                            vaultCreationInviteCode = ""
+                    Button {
+                        let submittedInviteCode = vaultCreationInviteCode
+                        Task {
+                            await store.createVault(inviteCode: submittedInviteCode)
+                            if store.connection != nil {
+                                vaultCreationInviteCode = ""
+                            }
+                        }
+                    } label: {
+                        if store.isCreatingVault {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("创建同步空间", systemImage: "lock.shield")
                         }
                     }
-                } label: {
-                    if store.isCreatingVault {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("创建同步空间", systemImage: "lock.shield")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    store.isCreatingVault
-                        || !store.canCreateVault
-                        || vaultCreationInviteCode
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                            .isEmpty
-                )
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        store.isCreatingVault
+                            || webDavStore.isSaving
+                            || store.localNetworkHostState == .starting
+                            || !store.canCreateVault
+                            || vaultCreationInviteCode
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                                .isEmpty
+                    )
 
-                Text("空间创建成功后，Android 无需再输入服务地址；配对二维码会带上同一个地址和一次性配对材料。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Text("空间创建成功后，Android 无需再输入服务地址；配对二维码会带上同一个地址和一次性配对材料。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 backupCard
                 privacyNote
@@ -130,6 +135,9 @@ struct SyncSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 connectionCard(connection)
+                if store.isLocalNetworkConnection {
+                    localNetworkCard
+                }
                 webDavCard
                 runtimeCard
                 pairingCard
@@ -144,12 +152,76 @@ struct SyncSettingsView: View {
         }
     }
 
+    private var localNetworkCard: some View {
+        SettingsCard(title: "同一网络同步", systemImage: "wifi") {
+            Text("Mac 作为本地同步主机。手机与 Mac 连接同一网络后扫码配对，无需填写服务地址或同步空间；离开网络仍可编辑，重新连上后自动补齐。")
+                .foregroundStyle(.secondary)
+
+            switch store.localNetworkHostState {
+            case .disabled:
+                if webDavStore.connection != nil {
+                    Label("当前任务库正在使用坚果云同步，不能同时开启局域网同步。", systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if store.connection == nil {
+                    Button {
+                        Task { await store.enableLocalNetworkSync() }
+                    } label: {
+                        Label("开启同一网络同步", systemImage: "wifi")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(webDavStore.isSaving || store.isCreatingVault)
+                } else {
+                    Label("当前任务库正在使用其他同步方式", systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            case .starting:
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("正在启动 Mac 局域网同步服务…")
+                }
+            case .ready(let endpoint):
+                Label("局域网同步已开启", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                LabeledContent("手机访问地址", value: endpoint.absoluteString)
+                Text("地址由应用自动维护，只用于同一网络内连接，无需手动填写。下方可生成 Android 配对二维码。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .failed(let message):
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                if store.isLocalNetworkConnection {
+                    Button {
+                        Task { await store.retryLocalNetworkHost() }
+                    } label: {
+                        Label("重新启动局域网同步", systemImage: "arrow.clockwise")
+                    }
+                } else if webDavStore.connection == nil {
+                    Button {
+                        Task { await store.enableLocalNetworkSync() }
+                    } label: {
+                        Label("重试开启", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(webDavStore.isSaving || store.isCreatingVault)
+                }
+            }
+
+            Text("首次开启时 macOS 会询问是否允许访问本地网络；需要选择允许。任务正文仍使用 AES-256-GCM 端到端加密。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var webDavCard: some View {
         SettingsCard(title: "坚果云自动同步", systemImage: "externaldrive.connected.to.line.below") {
             LabeledContent("WebDAV 地址", value: WebDavEndpointPolicy.endpoint.absoluteString)
-            if webDavStore.workerSyncConfigured {
+            if webDavStore.workerSyncConfigured
+                || store.connection != nil
+                || store.isCreatingVault
+                || store.localNetworkHostState == .starting {
                 Label(
-                    "当前任务库已连接 Worker，不能同时启用坚果云同步。",
+                    "当前任务库已连接 Worker 或局域网同步，不能同时启用坚果云同步。",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.caption)
@@ -285,7 +357,9 @@ struct SyncSettingsView: View {
     private func connectionCard(_ connection: SyncConnectionSummary) -> some View {
         SettingsCard(title: "同步连接", systemImage: "lock.shield.fill") {
             LabeledContent("服务地址", value: connection.endpoint.absoluteString)
-            LabeledContent("同步空间", value: shortened(connection.vaultId))
+            if !store.isLocalNetworkConnection {
+                LabeledContent("同步空间", value: shortened(connection.vaultId))
+            }
             LabeledContent("当前设备", value: shortened(connection.deviceId))
             if SyncEndpointPolicy.scope(of: connection.endpoint) == .currentDeviceOnly {
                 Label(
@@ -294,6 +368,10 @@ struct SyncSettingsView: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.orange)
+            }
+            if store.isLocalNetworkConnection {
+                Label("同一网络同步 · Mac 作为主机", systemImage: "wifi")
+                    .foregroundStyle(.green)
             }
         }
     }
@@ -373,7 +451,7 @@ struct SyncSettingsView: View {
     private var pairingContent: some View {
         switch store.pairingPhase {
         case .idle:
-            Text("Android 不需要创建空间或手动填写服务器地址。按下面步骤加入 Mac 已创建的空间：")
+            Text("Android 不需要创建空间或手动填写服务器地址。按下面步骤加入当前同步：")
                 .foregroundStyle(.secondary)
             androidJoinSteps
             Button("生成配对二维码") {
@@ -576,7 +654,11 @@ struct SyncSettingsView: View {
 
     private var androidJoinSteps: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("1. 确认 Mac 与手机均可联网，且上方服务地址是 HTTPS Worker。")
+            if store.isLocalNetworkConnection {
+                Text("1. 确认 Mac 与手机连接同一个 Wi-Fi 或有线局域网。")
+            } else {
+                Text("1. 确认 Mac 与手机均可联网，且上方服务地址是 HTTPS Worker。")
+            }
             Text("2. 在 Mac 点击“生成配对二维码”。")
             Text("3. 在三星手机用快捷面板“扫描二维码”扫描，并选择用 Woo Todo 打开。")
             Text("4. 核对两端六位码完全相同，再回到 Mac 点击“确认绑定”。")

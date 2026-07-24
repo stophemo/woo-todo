@@ -8,7 +8,7 @@ struct TaskWirePayloadTests {
     func sharedFixturesRoundTrip() throws {
         let data = try Data(contentsOf: fixtureURL())
         let payloads = try JSONDecoder().decode([WireTaskEntity].self, from: data)
-        #expect(payloads.count == 3)
+        #expect(payloads.count == 4)
 
         guard case .task(let first) = payloads[0] else {
             Issue.record("第一条应为任务正文")
@@ -25,6 +25,16 @@ struct TaskWirePayloadTests {
             return
         }
         #expect(tombstone.deletedAt == 1_784_251_800_000)
+
+        guard case .displayConfiguration(let displayConfiguration) = payloads[3] else {
+            Issue.record("第四条应为显示配置正文")
+            return
+        }
+        #expect(displayConfiguration.id == WireDisplayConfigurationPayload.fixedID)
+        #expect(displayConfiguration.headerTemplate == "{dateLong} {weekdayEn}")
+        #expect(displayConfiguration.subtitleTemplate.contains("{deadlineMonthsDays}"))
+        #expect(displayConfiguration.startDate == "2020-01-01")
+        #expect(displayConfiguration.deadlineDate == "2026-12-31")
 
         for payload in payloads {
             #expect(try TaskPayloadCodec.decode(TaskPayloadCodec.encode(payload)) == payload)
@@ -62,7 +72,7 @@ struct TaskWirePayloadTests {
         )
     }
 
-    @Test("任务与 tombstone 正文拒绝未知字段")
+    @Test("所有正文类型拒绝未知字段")
     func rejectsUnknownFields() throws {
         let payloads = try JSONSerialization.jsonObject(
             with: Data(contentsOf: fixtureURL())
@@ -73,10 +83,59 @@ struct TaskWirePayloadTests {
             try TaskPayloadCodec.decode(JSONSerialization.data(withJSONObject: task))
         }
 
-        var tombstone = try #require(payloads?.last)
+        var tombstone = try #require(payloads?[2])
         tombstone["unexpected"] = true
         #expect(throws: (any Error).self) {
             try TaskPayloadCodec.decode(JSONSerialization.data(withJSONObject: tombstone))
+        }
+
+        var displayConfiguration = try #require(payloads?[3])
+        displayConfiguration["unexpected"] = true
+        #expect(throws: (any Error).self) {
+            try TaskPayloadCodec.decode(
+                JSONSerialization.data(withJSONObject: displayConfiguration)
+            )
+        }
+    }
+
+    @Test("显示配置可编解码并拒绝非法值")
+    func displayConfigurationValidation() throws {
+        let payload = try WireDisplayConfigurationPayload(
+            headerTemplate: "{dateLong} {weekdayEn}",
+            subtitleTemplate: "已走过 {elapsedMonthsDays}",
+            startDate: "2020-01-01",
+            deadlineDate: "2026-12-31"
+        )
+        let entity = WireTaskEntity.displayConfiguration(payload)
+        #expect(try TaskPayloadCodec.decode(TaskPayloadCodec.encode(entity)) == entity)
+
+        let fixtures = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL())
+        ) as? [[String: Any]]
+        let valid = try #require(fixtures?[3])
+
+        var wrongID = valid
+        wrongID["id"] = "display.today.other"
+        var longHeader = valid
+        longHeader["headerTemplate"] = String(repeating: "标", count: 81)
+        var longSubtitle = valid
+        longSubtitle["subtitleTemplate"] = String(repeating: "题", count: 161)
+        var multilineTemplate = valid
+        multilineTemplate["subtitleTemplate"] = "第一行\n第二行"
+        var unicodeLineSeparator = valid
+        unicodeLineSeparator["headerTemplate"] = "第一行\u{2028}第二行"
+        var invalidDate = valid
+        invalidDate["deadlineDate"] = "2026-02-30"
+        var missingField = valid
+        missingField.removeValue(forKey: "startDate")
+
+        for invalid in [
+            wrongID, longHeader, longSubtitle, multilineTemplate, unicodeLineSeparator,
+            invalidDate, missingField,
+        ] {
+            #expect(throws: (any Error).self) {
+                try TaskPayloadCodec.decode(JSONSerialization.data(withJSONObject: invalid))
+            }
         }
     }
 

@@ -23,7 +23,7 @@ struct PairingDeepLinkTests {
         #expect(!value.description.contains(publicKey))
     }
 
-    @Test("生产拒绝 HTTP 但允许 127.0.0.1 本地调试")
+    @Test("公网拒绝 HTTP，但允许回环调试与受限局域网地址")
     func endpointPolicy() throws {
         let secret = Base64URL.encode(Data(repeating: 1, count: 32))
         let publicKey = Base64URL.encode(Data(repeating: 2, count: 32))
@@ -42,6 +42,26 @@ struct PairingDeepLinkTests {
             initiatorPublicKey: publicKey
         )
         #expect(local.endpoint.host == "127.0.0.1")
+
+        let privateNetwork = try PairingDeepLink(
+            endpoint: URL(string: "http://192.168.8.21:48473")!,
+            pairingId: "pair-private",
+            pairingSecret: secret,
+            initiatorPublicKey: publicKey
+        )
+        #expect(SyncEndpointPolicy.scope(of: privateNetwork.endpoint) == .localNetwork)
+        #expect(
+            SyncEndpointPolicy.scope(of: URL(string: "http://woo-mac.local:48473")!)
+                == .localNetwork
+        )
+        #expect(
+            SyncEndpointPolicy.scope(of: URL(string: "http://172.15.255.255:48473")!)
+                == .invalid
+        )
+        #expect(
+            SyncEndpointPolicy.scope(of: URL(string: "http://172.32.0.1:48473")!)
+                == .invalid
+        )
     }
 
     @Test("创建双端空间时拒绝回环地址与 API 子路径")
@@ -53,6 +73,9 @@ struct PairingDeepLinkTests {
         )
         #expect(
             SyncEndpointSetupPolicy.assess("https://localhost:8787") == .currentDeviceOnly
+        )
+        #expect(
+            SyncEndpointSetupPolicy.assess("http://192.168.8.21:48473") == .invalid
         )
         #expect(
             SyncEndpointSetupPolicy.assess("https://sync.example.test/v1") == .includesAPIVersion

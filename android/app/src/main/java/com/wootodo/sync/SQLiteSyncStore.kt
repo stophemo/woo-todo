@@ -30,6 +30,25 @@ data class TaskMergeDecision(
     val resolvedVersion: EntityVersion,
 )
 
+data class DisplayConfigurationMergeDecision(
+    val resolvedConfiguration: DisplayConfigurationPayload?,
+    val resolvedVersion: EntityVersion,
+)
+
+object DisplayConfigurationMergePolicy {
+    fun resolve(
+        currentConfiguration: DisplayConfigurationPayload?,
+        currentVersion: EntityVersion?,
+        incomingConfiguration: DisplayConfigurationPayload,
+        incomingVersion: EntityVersion,
+    ): DisplayConfigurationMergeDecision {
+        if (currentVersion == null || incomingVersion > currentVersion) {
+            return DisplayConfigurationMergeDecision(incomingConfiguration, incomingVersion)
+        }
+        return DisplayConfigurationMergeDecision(currentConfiguration, currentVersion)
+    }
+}
+
 /** tombstone 之外先合并终态语义，其余字段使用 (lamport, deviceId) 的确定性 LWW。 */
 object TaskMergePolicy {
     fun resolve(
@@ -150,6 +169,9 @@ object SQLiteLocalMutationRecorder {
             ),
         )
         val normalizedTask = task.copy(id = canonicalEntityId(task.id))
+        require(normalizedTask.id != DISPLAY_CONFIGURATION_ENTITY_ID) {
+            "任务不能使用固定显示配置实体 ID"
+        }
         check(!isDeletionBarrier(database, normalizedTask.id)) {
             "已删除任务不能以相同 ID 复活"
         }
@@ -169,6 +191,9 @@ object SQLiteLocalMutationRecorder {
 
     fun recordDeletion(database: SQLiteDatabase, entityId: String, deletedAt: Long) {
         val normalizedId = canonicalEntityId(entityId)
+        require(normalizedId != DISPLAY_CONFIGURATION_ENTITY_ID) {
+            "固定显示配置实体不能删除"
+        }
         val version = nextLocalVersion(database)
         if (version == null) {
             recordDeferredDeletion(database, normalizedId, deletedAt)
@@ -192,9 +217,30 @@ object SQLiteLocalMutationRecorder {
         )
     }
 
+    fun recordDisplayConfiguration(
+        database: SQLiteDatabase,
+        payload: DisplayConfigurationPayload,
+        createdAt: Long = System.currentTimeMillis(),
+    ): Boolean {
+        val version = nextLocalVersion(database) ?: return false
+        enqueue(
+            database = database,
+            entityId = payload.id,
+            kind = SyncOperationKind.UPSERT,
+            version = version,
+            payloadJson = SyncJsonCodec.encodeTaskPayload(payload),
+            createdAt = createdAt,
+        )
+        writeVersion(database, payload.id, version, isTombstone = false)
+        return true
+    }
+
     fun recordDeferredDeletion(database: SQLiteDatabase, entityId: String, deletedAt: Long) {
         require(entityId.isNotBlank() && deletedAt >= 0)
         val normalizedId = canonicalEntityId(entityId)
+        require(normalizedId != DISPLAY_CONFIGURATION_ENTITY_ID) {
+            "固定显示配置实体不能删除"
+        }
         val values = ContentValues(2).apply {
             put("entity_id", normalizedId)
             put("deleted_at", deletedAt)
@@ -274,6 +320,7 @@ object SQLiteLocalMutationRecorder {
 class SQLiteSyncStore(
     private val database: TaskDatabase,
     private val credentials: SyncCredentials,
+    private val onDisplayConfigurationChanged: (DisplayConfigurationPayload) -> Unit = {},
     private val onTasksChanged: () -> Unit = {},
 ) : OutboxStore, RemoteApplyStore, WebDavLocalApplying {
     init {
@@ -342,6 +389,7 @@ class SQLiteSyncStore(
     ) {
         val sqlite = database.writableDatabase
         var tasksChanged = false
+        var displayConfiguration: DisplayConfigurationPayload? = null
         sqlite.beginTransaction()
         try {
             val currentCursor = currentCursor(sqlite)
@@ -358,7 +406,9 @@ class SQLiteSyncStore(
                         String(plaintext, StandardCharsets.UTF_8),
                     )
                     require(payload.id == operation.entityId) { "密文实体与外层 entityId 不一致" }
-                    tasksChanged = applyPayload(sqlite, operation, payload) || tasksChanged
+                    val result = applyPayload(sqlite, operation, payload)
+                    tasksChanged = result.tasksChanged || tasksChanged
+                    displayConfiguration = result.displayConfiguration ?: displayConfiguration
                     rememberApplied(sqlite, operation)
                 }
                 sqlite.execSQL(
@@ -375,12 +425,14 @@ class SQLiteSyncStore(
             sqlite.endTransaction()
         }
         if (tasksChanged) onTasksChanged()
+        displayConfiguration?.let(onDisplayConfigurationChanged)
     }
 
     @Synchronized
     override fun applyWebDavOperations(operations: List<WebDavOperation>) {
         val sqlite = database.writableDatabase
         var tasksChanged = false
+        var displayConfiguration: DisplayConfigurationPayload? = null
         sqlite.beginTransaction()
         try {
             operations.forEach { operation ->
@@ -413,7 +465,9 @@ class SQLiteSyncStore(
                         nonce = operation.nonce,
                         createdAt = System.currentTimeMillis(),
                     )
-                    tasksChanged = applyPayload(sqlite, synthetic, payload) || tasksChanged
+                    val result = applyPayload(sqlite, synthetic, payload)
+                    tasksChanged = result.tasksChanged || tasksChanged
+                    displayConfiguration = result.displayConfiguration ?: displayConfiguration
                     sqlite.execSQL(
                         "UPDATE sync_state SET lamport = MAX(lamport, ?) WHERE id = 1",
                         arrayOf(operation.lamport),
@@ -426,6 +480,7 @@ class SQLiteSyncStore(
             sqlite.endTransaction()
         }
         if (tasksChanged) onTasksChanged()
+        displayConfiguration?.let(onDisplayConfigurationChanged)
     }
 
     private fun bindDeviceIdentity() {
@@ -480,6 +535,7 @@ class SQLiteSyncStore(
                         }
                     }
                 }
+                val displayConfiguration = readDisplayConfiguration(sqlite)
                 existingTasks.forEach { task ->
                     SQLiteLocalMutationRecorder.recordTask(
                         sqlite,
@@ -489,6 +545,9 @@ class SQLiteSyncStore(
                 }
                 deferredDeletions.forEach { (entityId, deletedAt) ->
                     SQLiteLocalMutationRecorder.recordDeletion(sqlite, entityId, deletedAt)
+                }
+                displayConfiguration?.let { payload ->
+                    SQLiteLocalMutationRecorder.recordDisplayConfiguration(sqlite, payload)
                 }
             }
             sqlite.setTransactionSuccessful()
@@ -529,13 +588,48 @@ class SQLiteSyncStore(
         return row.toPushOperation(envelope.ciphertext, envelope.nonce)
     }
 
+    private data class ApplyResult(
+        val tasksChanged: Boolean = false,
+        val displayConfiguration: DisplayConfigurationPayload? = null,
+    )
+
     private fun applyPayload(
         sqlite: SQLiteDatabase,
         operation: SyncPulledOperation,
         payload: TaskWirePayload,
-    ): Boolean = when (payload) {
-        is TaskInstancePayload -> applyTask(sqlite, operation, payload)
-        is TombstonePayload -> applyTombstone(sqlite, operation, payload)
+    ): ApplyResult = when (payload) {
+        is TaskInstancePayload -> ApplyResult(tasksChanged = applyTask(sqlite, operation, payload))
+        is TombstonePayload -> ApplyResult(tasksChanged = applyTombstone(sqlite, operation, payload))
+        is DisplayConfigurationPayload -> ApplyResult(
+            displayConfiguration = applyDisplayConfiguration(sqlite, operation, payload),
+        )
+    }
+
+    private fun applyDisplayConfiguration(
+        sqlite: SQLiteDatabase,
+        operation: SyncPulledOperation,
+        payload: DisplayConfigurationPayload,
+    ): DisplayConfigurationPayload? {
+        require(operation.kind == SyncOperationKind.UPSERT) {
+            "显示配置只能用于 upsert 操作"
+        }
+        val incomingVersion = EntityVersion(operation.lamport, operation.deviceId)
+        val currentVersion = readVersion(sqlite, payload.id)
+        require(currentVersion?.isTombstone != true) { "显示配置不能处于删除状态" }
+        val currentConfiguration = readDisplayConfiguration(sqlite)
+        val decision = DisplayConfigurationMergePolicy.resolve(
+            currentConfiguration = currentConfiguration,
+            currentVersion = currentVersion?.version,
+            incomingConfiguration = payload,
+            incomingVersion = incomingVersion,
+        )
+        if (currentVersion == null || decision.resolvedVersion != currentVersion.version) {
+            writeVersion(sqlite, payload.id, decision.resolvedVersion, isTombstone = false)
+        }
+        val resolved = decision.resolvedConfiguration
+        if (resolved == null || resolved == currentConfiguration) return null
+        writeDisplayConfiguration(sqlite, resolved)
+        return resolved
     }
 
     private fun applyTask(
@@ -544,6 +638,9 @@ class SQLiteSyncStore(
         payload: TaskInstancePayload,
     ): Boolean {
         val normalizedPayload = payload.withCanonicalEntityId()
+        require(normalizedPayload.id != DISPLAY_CONFIGURATION_ENTITY_ID) {
+            "任务不能使用固定显示配置实体 ID"
+        }
         requireKindMatchesTask(operation.kind, normalizedPayload)
         val incomingVersion = EntityVersion(operation.lamport, operation.deviceId)
         val currentVersion = readVersion(sqlite, normalizedPayload.id)
@@ -594,6 +691,9 @@ class SQLiteSyncStore(
             "tombstone 只能用于 delete 操作"
         }
         val normalizedPayload = payload.withCanonicalEntityId()
+        require(normalizedPayload.id != DISPLAY_CONFIGURATION_ENTITY_ID) {
+            "固定显示配置实体不能删除"
+        }
         val incomingVersion = EntityVersion(operation.lamport, operation.deviceId)
         val currentVersion = readVersion(sqlite, normalizedPayload.id)
         if (currentVersion?.isTombstone == true && incomingVersion <= currentVersion.version) {
@@ -775,6 +875,49 @@ private fun readTask(database: SQLiteDatabase, id: String): TaskEntity? = databa
     if (!cursor.moveToFirst()) null else cursor.toTaskEntity()
 }
 
+fun readDisplayConfiguration(database: SQLiteDatabase): DisplayConfigurationPayload? =
+    database.query(
+        TABLE_DISPLAY_CONFIGURATION,
+        arrayOf("id", "header_template", "subtitle_template", "start_date", "deadline_date"),
+        "id = ?",
+        arrayOf(DISPLAY_CONFIGURATION_ENTITY_ID),
+        null,
+        null,
+        null,
+        "1",
+    ).use { cursor ->
+        if (!cursor.moveToFirst()) null else DisplayConfigurationPayload(
+            id = cursor.getString(0),
+            headerTemplate = cursor.getString(1),
+            subtitleTemplate = cursor.getString(2),
+            startDate = cursor.getString(3),
+            deadlineDate = cursor.getString(4),
+        ).also { SyncJsonCodec.encodeTaskPayload(it) }
+    }
+
+fun writeDisplayConfiguration(
+    database: SQLiteDatabase,
+    payload: DisplayConfigurationPayload,
+) {
+    // 通过 codec 校验长度、日期和固定实体 ID，避免旁路写入无效共享配置。
+    SyncJsonCodec.encodeTaskPayload(payload)
+    val values = ContentValues(5).apply {
+        put("id", payload.id)
+        put("header_template", payload.headerTemplate)
+        put("subtitle_template", payload.subtitleTemplate)
+        put("start_date", payload.startDate)
+        put("deadline_date", payload.deadlineDate)
+    }
+    check(
+        database.insertWithOnConflict(
+            TABLE_DISPLAY_CONFIGURATION,
+            null,
+            values,
+            SQLiteDatabase.CONFLICT_REPLACE,
+        ) != -1L,
+    ) { "显示配置写入失败" }
+}
+
 private fun Cursor.toTaskEntity(): TaskEntity = TaskEntity(
     id = getString(getColumnIndexOrThrow("id")),
     seriesId = getString(getColumnIndexOrThrow("series_id")),
@@ -911,3 +1054,4 @@ private const val TABLE_TOMBSTONES = "sync_tombstones"
 private const val TABLE_APPLIED = "sync_applied_operations"
 private const val TABLE_WEBDAV_APPLIED = "sync_webdav_applied_operations"
 private const val TABLE_DEFERRED_DELETIONS = "sync_deferred_deletions"
+private const val TABLE_DISPLAY_CONFIGURATION = "display_configuration"

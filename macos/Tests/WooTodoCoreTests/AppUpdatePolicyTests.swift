@@ -84,6 +84,25 @@ struct AppUpdatePolicyTests {
         ))
     }
 
+    @Test("运行中周期轮询会在自动检查到期后放行")
+    func periodicPollingEventuallyAllowsAutomaticCheck() {
+        let checkedAt = Date(timeIntervalSince1970: 2_000_000)
+        var elapsed = AppUpdatePolicy.automaticCheckPollingInterval
+
+        while elapsed < AppUpdatePolicy.automaticCheckInterval {
+            #expect(!AppUpdatePolicy.shouldPerformAutomaticCheck(
+                lastCheckedAt: checkedAt,
+                now: checkedAt.addingTimeInterval(elapsed)
+            ))
+            elapsed += AppUpdatePolicy.automaticCheckPollingInterval
+        }
+
+        #expect(AppUpdatePolicy.shouldPerformAutomaticCheck(
+            lastCheckedAt: checkedAt,
+            now: checkedAt.addingTimeInterval(AppUpdatePolicy.automaticCheckInterval)
+        ))
+    }
+
     @Test("菜单提示只要有更高版本就保持可见")
     func showsAvailableUpdateForHigherVersion() throws {
         let current = try #require(AppVersion("0.1.7"))

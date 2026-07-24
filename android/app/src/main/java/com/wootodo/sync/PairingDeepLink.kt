@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets
 
 enum class SyncEndpointScope {
     CROSS_DEVICE,
+    LOCAL_NETWORK,
     CURRENT_DEVICE_ONLY,
     INVALID,
 }
@@ -30,16 +31,43 @@ object SyncEndpointPolicy {
                 SyncEndpointScope.INVALID
             }
         }
-        return if (scheme == "https") {
-            SyncEndpointScope.CROSS_DEVICE
-        } else {
-            SyncEndpointScope.INVALID
+        return when {
+            scheme == "https" -> SyncEndpointScope.CROSS_DEVICE
+            scheme == "http" && (isPrivateIpv4(host) || isLocalHostname(host)) ->
+                SyncEndpointScope.LOCAL_NETWORK
+            else -> SyncEndpointScope.INVALID
         }
     }
 
     fun isAllowed(endpoint: URI): Boolean = scope(endpoint) != SyncEndpointScope.INVALID
 
-    fun isCrossDevice(endpoint: URI): Boolean = scope(endpoint) == SyncEndpointScope.CROSS_DEVICE
+    fun isCrossDevice(endpoint: URI): Boolean = scope(endpoint) in setOf(
+        SyncEndpointScope.CROSS_DEVICE,
+        SyncEndpointScope.LOCAL_NETWORK,
+    )
+
+    private fun isPrivateIpv4(host: String): Boolean {
+        val parts = host.split('.')
+        if (parts.size != 4) return false
+        val octets = parts.map { part ->
+            if (part.isEmpty() || part.length > 3 || part.any { !it.isDigit() } ||
+                (part.length > 1 && part.startsWith('0'))
+            ) {
+                return false
+            }
+            part.toIntOrNull()?.takeIf { it in 0..255 } ?: return false
+        }
+        return octets[0] == 10 ||
+            (octets[0] == 172 && octets[1] in 16..31) ||
+            (octets[0] == 192 && octets[1] == 168)
+    }
+
+    private fun isLocalHostname(host: String): Boolean =
+        host.length <= 253 && LOCAL_HOSTNAME.matches(host)
+
+    private val LOCAL_HOSTNAME = Regex(
+        "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+local$",
+    )
 }
 
 data class PairingDeepLink(

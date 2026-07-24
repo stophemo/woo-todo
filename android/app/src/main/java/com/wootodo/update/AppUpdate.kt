@@ -239,6 +239,7 @@ internal object AppUpdateCache {
 internal object AppUpdatePolicy {
     const val AUTOMATIC_CHECK_INTERVAL_MILLIS = 24L * 60L * 60L * 1_000L
     const val FAILED_CHECK_RETRY_INTERVAL_MILLIS = 15L * 60L * 1_000L
+    const val AUTOMATIC_CHECK_POLL_INTERVAL_MILLIS = FAILED_CHECK_RETRY_INTERVAL_MILLIS
 
     fun shouldAutomaticallyCheck(
         lastSuccessfulCheckAt: Long,

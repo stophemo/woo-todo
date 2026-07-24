@@ -95,6 +95,37 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.pendingOperations(limit: 50) == baseline)
     }
 
+    @Test("首次绑定会把已有显示配置作为加密基线且不会重复入队")
+    func firstBindingCreatesDisplayConfigurationBaseline() async throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let display = try displayConfiguration(
+            header: "{weekdayEn} · 今日任务",
+            subtitle: "已进行 {elapsedMonthsDays}",
+            startDate: "2026-01-01",
+            deadlineDate: "2026-12-31"
+        )
+        try repository.saveDisplayConfiguration(display)
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+
+        let configuration = syncConfiguration()
+        try repository.configureSync(configuration)
+        let baseline = try await repository.pendingOperations(limit: 50)
+        #expect(baseline.count == 1)
+        #expect(baseline.first?.entityId == SQLiteTaskRepository.displayConfigurationEntityID)
+        guard let operation = baseline.first,
+              case .displayConfiguration(let payload) = try open(
+                  operation,
+                  configuration: configuration
+              ) else {
+            Issue.record("首次绑定应生成显示配置正文")
+            return
+        }
+        #expect(payload == display)
+
+        try repository.configureSync(configuration)
+        #expect(try await repository.pendingOperations(limit: 50) == baseline)
+    }
+
     @Test("备份不能恢复到仅任务表为空但仍有删除历史的任务库")
     func backupRestoreRejectsResidualDeletionHistory() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
@@ -224,6 +255,55 @@ struct SQLiteSyncIntegrationTests {
             return
         }
         #expect(payload.title == "仅修改任务 A")
+    }
+
+    @Test("同步密钥恢复后只补录最新一份离线显示配置")
+    func deferredDisplayConfigurationRecoversLatestValue() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-display-deferred-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("tasks.sqlite").path
+        let configuration = syncConfiguration()
+
+        do {
+            let repository = try SQLiteTaskRepository(
+                path: path,
+                syncConfiguration: configuration
+            )
+            try repository.saveDisplayConfiguration(try displayConfiguration(header: "初始"))
+            let baseline = try await repository.pendingOperations(limit: 50)
+            try await repository.acknowledgeOperations(opIds: baseline.map(\.opId))
+        }
+
+        let localOnly = try SQLiteTaskRepository(path: path)
+        try localOnly.saveDisplayConfiguration(try displayConfiguration(header: "离线版本一"))
+        let latest = try displayConfiguration(
+            header: "离线版本二",
+            subtitle: "截止 {deadlineMonthsDays}",
+            deadlineDate: "2027-01-01"
+        )
+        try localOnly.saveDisplayConfiguration(latest)
+        #expect(try await localOnly.pendingOperations(limit: 50).isEmpty)
+
+        try localOnly.configureSync(configuration)
+        let recovered = try await localOnly.pendingOperations(limit: 50)
+        #expect(recovered.count == 1)
+        guard let operation = recovered.first,
+              case .displayConfiguration(let payload) = try open(
+                  operation,
+                  configuration: configuration
+              ) else {
+            Issue.record("恢复同步密钥后应补录显示配置正文")
+            return
+        }
+        #expect(payload == latest)
+
+        try localOnly.configureSync(configuration)
+        #expect(try await localOnly.pendingOperations(limit: 50) == recovered)
     }
 
     @Test("同步身份不匹配后本地仓储仍可编辑并等待正确身份恢复")
@@ -521,6 +601,71 @@ struct SQLiteSyncIntegrationTests {
         try repository.save(localEdit)
         let localOperation = try #require(try await repository.pendingOperations(limit: 1).first)
         #expect(localOperation.lamport == 3)
+    }
+
+    @Test("显示配置使用 Lamport 与设备 ID 做 LWW 且远端应用不回写 outbox")
+    func displayConfigurationUsesLWW() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let newest = try displayConfiguration(header: "远端新标题")
+        let stale = try displayConfiguration(header: "远端旧标题")
+
+        try await repository.applyRemoteOperations([
+            try remoteDisplayConfigurationOperation(
+                newest,
+                lamport: 2,
+                serverSequence: 1,
+                deviceID: "device-z",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+        try await repository.applyRemoteOperations([
+            try remoteDisplayConfigurationOperation(
+                stale,
+                lamport: 1,
+                serverSequence: 2,
+                deviceID: "device-a",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 2)
+
+        #expect(try repository.displayConfiguration() == newest)
+        #expect(try await repository.currentCursor() == 2)
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+
+        let local = try displayConfiguration(header: "本地继续修改")
+        try repository.saveDisplayConfiguration(local)
+        let operation = try #require(try await repository.pendingOperations(limit: 1).first)
+        #expect(operation.lamport == 3)
+        #expect(operation.entityId == SQLiteTaskRepository.displayConfigurationEntityID)
+    }
+
+    @Test("固定显示配置实体拒绝 tombstone 且整页回滚")
+    func displayConfigurationRejectsTombstone() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        do {
+            try await repository.applyRemoteOperations([
+                try remoteTombstoneOperation(
+                    entityID: SQLiteTaskRepository.displayConfigurationEntityID,
+                    lamport: 1,
+                    serverSequence: 1,
+                    deviceID: "device-old",
+                    configuration: configuration
+                ),
+            ], advancingCursorTo: 1)
+            Issue.record("固定显示配置实体不应接受 tombstone")
+        } catch SQLiteRepositoryError.invalidRemotePage(_) {
+            // 旧客户端不能删除固定配置实体。
+        }
+        #expect(try repository.displayConfiguration() == nil)
+        #expect(try await repository.currentCursor() == 0)
     }
 
     @Test("远端页面失败时任务、inbox 与 cursor 一起回滚后可重试")
@@ -1010,6 +1155,20 @@ private func makeTask(
     )
 }
 
+private func displayConfiguration(
+    header: String,
+    subtitle: String = "",
+    startDate: String = "2026-01-01",
+    deadlineDate: String = "2026-12-31"
+) throws -> WireDisplayConfigurationPayload {
+    try WireDisplayConfigurationPayload(
+        headerTemplate: header,
+        subtitleTemplate: subtitle,
+        startDate: startDate,
+        deadlineDate: deadlineDate
+    )
+}
+
 private func remoteTaskOperation(
     _ task: TodoTask,
     kind: SyncOperationKind,
@@ -1071,6 +1230,41 @@ private func remoteTaskOperation(
         ciphertext: envelope.ciphertext,
         nonce: envelope.nonce,
         createdAt: milliseconds(task.updatedAt)
+    )
+}
+
+private func remoteDisplayConfigurationOperation(
+    _ payload: WireDisplayConfigurationPayload,
+    lamport: Int64,
+    serverSequence: Int64,
+    deviceID: String,
+    configuration: SQLiteSyncConfiguration
+) throws -> SyncPulledOperation {
+    let entityID = WireDisplayConfigurationPayload.fixedID
+    let operationID = "remote-display-\(serverSequence)-\(lamport)-\(deviceID)"
+    let metadata = SyncAADMetadata(
+        vaultId: configuration.vaultId,
+        operationId: operationID,
+        entityId: entityID,
+        kind: .upsert,
+        lamport: lamport,
+        deviceId: deviceID
+    )
+    let envelope = try TaskPayloadCodec.seal(
+        .displayConfiguration(payload),
+        vaultKey: configuration.vaultKey,
+        metadata: metadata
+    )
+    return SyncPulledOperation(
+        serverSeq: serverSequence,
+        opId: operationID,
+        deviceId: deviceID,
+        entityId: entityID,
+        kind: .upsert,
+        lamport: lamport,
+        ciphertext: envelope.ciphertext,
+        nonce: envelope.nonce,
+        createdAt: serverSequence
     )
 }
 

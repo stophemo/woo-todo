@@ -136,7 +136,7 @@
     <string name="sync_loading">正在读取同步配置…</string>
     <string name="sync_unpaired">尚未连接 · 点击“配对”选择连接方式</string>
     <string name="sync_pairing_help">配对</string>
-    <string name="pairing_method_scan_qr">扫描二维码配对</string>
+    <string name="pairing_method_scan_qr">扫描 Mac 同步二维码</string>
     <string name="pairing_method_paste_link">粘贴配对链接</string>
     <string name="pairing_method_webdav">手动填写坚果云配置</string>
     <string name="pairing_link_input_title">输入配对链接</string>
@@ -154,8 +154,8 @@
     <string name="update_up_to_date">当前已是最新版本（%1$s）</string>
     <string name="update_available_menu">新版本 %1$s 可用</string>
     <string name="update_open_failed">无法打开下载链接</string>
-    <string name="scan_mac_webdav_qr">扫描 Mac 配置二维码</string>
-    <string name="scan_qr_prompt">将 Mac 上的 Woo Todo 配置二维码放入取景框</string>
+    <string name="scan_mac_webdav_qr">扫描 Mac 同步二维码</string>
+    <string name="scan_qr_prompt">将 Mac 上的 Woo Todo 同步二维码放入取景框</string>
     <string name="scan_qr_cancelled">已取消扫码</string>
     <string name="scan_qr_invalid">二维码不是有效的 Woo Todo 配置</string>
     <string name="backup_export_title">导出 .wootodo</string>

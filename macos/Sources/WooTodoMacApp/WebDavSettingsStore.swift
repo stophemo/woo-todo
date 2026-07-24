@@ -74,7 +74,7 @@ final class WebDavSettingsStore: ObservableObject {
             if workerSyncConfigured {
                 makeFreshDraft()
                 if try credentialsStore.load() != nil {
-                    actionErrorMessage = "当前已连接 Worker，同一个任务库不能同时启用坚果云同步"
+                    actionErrorMessage = "当前已连接 Worker 或局域网同步，同一个任务库不能同时启用坚果云同步"
                 }
             } else if let stored = try credentialsStore.load() {
                 try repository.configureSync(Self.sqliteConfiguration(for: stored))

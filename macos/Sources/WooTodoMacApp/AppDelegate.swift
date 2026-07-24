@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dashboardWindowController: DashboardWindowController?
     private var statusMenuController: StatusMenuController?
     private var appUpdateController: AppUpdateController?
+    private var updateCheckTimer: Timer?
     private var wakeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -57,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 workerSyncConfigured: activeCredentials != nil
             )
             let store = TodayStore(repository: repository)
-            let dayCounterStore = DayCounterStore()
+            let dayCounterStore = DayCounterStore(repository: repository)
             let taskNotificationScheduler = TaskNotificationScheduler()
             store.reload()
             store.onTasksChanged = { [weak self] in
@@ -138,9 +139,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             shortcutSettingsStore.onBindingsChanged = { [weak statusMenuController] in
                 statusMenuController?.refreshState()
             }
+            dayCounterStore.onLocalConfigurationChanged = { [weak self] in
+                self?.syncSettingsStore?.requestSync(.localChange)
+                self?.webDavSettingsStore?.requestSync(.localChange)
+            }
             shortcutSettingsStore.start()
             syncSettingsStore.onRemoteChanges = { [weak self] in
                 self?.todayStore?.reload()
+                self?.dayCounterStore?.reloadFromRepository()
                 self?.dashboardWindowController?.reload()
                 self?.refreshTaskNotifications()
             }
@@ -151,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             webDavSettingsStore.onRemoteChanges = { [weak self] in
                 self?.todayStore?.reload()
+                self?.dayCounterStore?.reloadFromRepository()
                 self?.dashboardWindowController?.reload()
                 self?.refreshTaskNotifications()
             }
@@ -161,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let syncActivationError {
                 showSyncCredentialsWarning(syncActivationError)
             }
-            appUpdateController.checkAutomatically()
+            startPeriodicUpdateChecks()
             logger.info("Woo Todo 已启动，本地任务面板准备完成")
         } catch {
             logger.error("启动失败：\(error.localizedDescription, privacy: .public)")
@@ -179,6 +186,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        updateCheckTimer?.invalidate()
+        updateCheckTimer = nil
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
             self.wakeObserver = nil
@@ -186,6 +195,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncSettingsStore?.stop()
         webDavSettingsStore?.stop()
         appUpdateController?.stop()
+    }
+
+    private func startPeriodicUpdateChecks() {
+        guard updateCheckTimer == nil else { return }
+        appUpdateController?.checkAutomatically()
+        let timer = Timer(
+            timeInterval: AppUpdatePolicy.automaticCheckPollingInterval,
+            target: self,
+            selector: #selector(runAutomaticUpdateCheck),
+            userInfo: nil,
+            repeats: true
+        )
+        timer.tolerance = 60
+        RunLoop.main.add(timer, forMode: .common)
+        updateCheckTimer = timer
+    }
+
+    @objc private func runAutomaticUpdateCheck() {
+        appUpdateController?.checkAutomatically()
     }
 
     private func configureMainMenu() {

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 动态局域网地址无法静态枚举，应用层 SyncEndpointPolicy 负责限制明文目标。 -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -2,7 +2,6 @@ package com.wootodo.display
 
 import android.content.Context
 import java.time.LocalDate
-import java.time.Period
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 
@@ -115,10 +114,16 @@ object DayCounterText {
         val isNegative = destination.isBefore(source)
         val earlier = if (isNegative) destination else source
         val later = if (isNegative) source else destination
-        val period = Period.between(earlier, later)
-        val months = period.years * 12 + period.months
+        // plusMonths 会把月末收敛到目标月最后一天，与 macOS Calendar 的自然月语义一致。
+        var months = (later.year - earlier.year) * 12 + later.monthValue - earlier.monthValue
+        var monthBoundary = earlier.plusMonths(months.toLong())
+        if (monthBoundary.isAfter(later)) {
+            months -= 1
+            monthBoundary = earlier.plusMonths(months.toLong())
+        }
+        val days = ChronoUnit.DAYS.between(monthBoundary, later)
         val sign = if (isNegative) "-" else ""
-        return "$sign${months}个月零${period.days}天"
+        return "$sign${months}个月零${days}天"
     }
 }
 

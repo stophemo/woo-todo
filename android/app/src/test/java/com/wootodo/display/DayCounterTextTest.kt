@@ -52,6 +52,45 @@ class DayCounterTextTest {
     }
 
     @Test
+    fun `月末闰日和同日边界使用自然月收敛规则`() {
+        val vectors = listOf(
+            Triple(LocalDate.of(2026, 1, 31), LocalDate.of(2026, 2, 28), "1个月零0天"),
+            Triple(LocalDate.of(2024, 2, 29), LocalDate.of(2025, 2, 28), "12个月零0天"),
+        )
+
+        vectors.forEach { (startDate, endDate, expected) ->
+            val elapsed = DayCounterText.render(
+                DayCounterSettings(
+                    headerTemplate = "{elapsedMonthsDays}",
+                    startDate = startDate,
+                ),
+                endDate.minusDays(1),
+            )
+            val overdue = DayCounterText.render(
+                DayCounterSettings(
+                    subtitleTemplate = "{deadlineMonthsDays}",
+                    deadlineDate = startDate,
+                ),
+                endDate,
+            )
+            assertEquals(expected, elapsed.header)
+            assertEquals("-$expected", overdue.subtitle)
+        }
+
+        val sameDay = DayCounterText.render(
+            DayCounterSettings(
+                headerTemplate = "{elapsedMonthsDays}",
+                subtitleTemplate = "{deadlineMonthsDays}",
+                startDate = LocalDate.of(2026, 7, 24),
+                deadlineDate = LocalDate.of(2026, 7, 24),
+            ),
+            LocalDate.of(2026, 7, 24),
+        )
+        assertEquals("0个月零1天", sameDay.header)
+        assertEquals("0个月零0天", sameDay.subtitle)
+    }
+
+    @Test
     fun `支持英文星期和完整日期变量`() {
         val settings = DayCounterSettings(
             headerTemplate = "{weekdayEn} / {weekdayEnShort} / {weekdayShort}",

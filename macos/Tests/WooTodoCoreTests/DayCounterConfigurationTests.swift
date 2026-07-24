@@ -75,6 +75,46 @@ struct DayCounterConfigurationTests {
         #expect(configuration.subtitleText(on: today, calendar: calendar) == "-1个月零21天")
     }
 
+    @Test func monthEndLeapDayAndSameDayUseNaturalMonthClamping() throws {
+        let vectors = [
+            (start: DateComponents(year: 2026, month: 1, day: 31),
+             end: DateComponents(year: 2026, month: 2, day: 28),
+             expected: "1个月零0天"),
+            (start: DateComponents(year: 2024, month: 2, day: 29),
+             end: DateComponents(year: 2025, month: 2, day: 28),
+             expected: "12个月零0天")
+        ]
+
+        for vector in vectors {
+            let start = try #require(calendar.date(from: vector.start))
+            let end = try #require(calendar.date(from: vector.end))
+            let elapsedDate = try #require(calendar.date(byAdding: .day, value: -1, to: end))
+            let elapsed = DayCounterConfiguration(
+                headerTemplate: "{elapsedMonthsDays}",
+                startDate: start
+            )
+            let overdue = DayCounterConfiguration(
+                subtitleTemplate: "{deadlineMonthsDays}",
+                deadlineDate: start
+            )
+
+            #expect(elapsed.headerText(on: elapsedDate, calendar: calendar) == vector.expected)
+            #expect(overdue.subtitleText(on: end, calendar: calendar) == "-\(vector.expected)")
+        }
+
+        let date = try #require(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 24
+        )))
+        let sameDay = DayCounterConfiguration(
+            headerTemplate: "{elapsedMonthsDays}",
+            subtitleTemplate: "{deadlineMonthsDays}",
+            startDate: date,
+            deadlineDate: date
+        )
+        #expect(sameDay.headerText(on: date, calendar: calendar) == "0个月零1天")
+        #expect(sameDay.subtitleText(on: date, calendar: calendar) == "0个月零0天")
+    }
+
     @Test func futureStartUsesZeroAndUnknownVariablesRemainLiteral() throws {
         let today = try #require(calendar.date(from: DateComponents(
             year: 2026, month: 7, day: 21

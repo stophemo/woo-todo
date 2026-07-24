@@ -18,6 +18,8 @@ public struct DayCounterConfiguration: Equatable, Sendable {
     public static let deadlineDateToken = "{deadlineDate}"
     public static let elapsedDaysToken = "{elapsedDays}"
     public static let deadlineDaysToken = "{deadlineDays}"
+    public static let elapsedMonthsDaysToken = "{elapsedMonthsDays}"
+    public static let deadlineMonthsDaysToken = "{deadlineMonthsDays}"
 
     public var headerTemplate: String
     public var subtitleTemplate: String
@@ -81,6 +83,19 @@ public struct DayCounterConfiguration: Equatable, Sendable {
         let deadline = calendar.startOfDay(for: deadlineDate)
         let elapsed = calendar.dateComponents([.day], from: start, to: current).day ?? 0
         let deadlineRemaining = calendar.dateComponents([.day], from: current, to: deadline).day ?? 0
+        let elapsedMonthsDays: String
+        if current < start {
+            elapsedMonthsDays = Self.zeroMonthsDays
+        } else if let elapsedEnd = calendar.date(byAdding: .day, value: 1, to: current) {
+            elapsedMonthsDays = Self.monthsDays(from: start, to: elapsedEnd, calendar: calendar)
+        } else {
+            elapsedMonthsDays = Self.zeroMonthsDays
+        }
+        let deadlineMonthsDays = Self.monthsDays(
+            from: current,
+            to: deadline,
+            calendar: calendar
+        )
         let year = calendar.component(.year, from: current)
         let month = calendar.component(.month, from: current)
         let day = calendar.component(.day, from: current)
@@ -102,7 +117,9 @@ public struct DayCounterConfiguration: Equatable, Sendable {
             (Self.startDateToken, Self.isoDate(start, calendar: calendar)),
             (Self.deadlineDateToken, Self.isoDate(deadline, calendar: calendar)),
             (Self.elapsedDaysToken, String(max(0, elapsed + 1))),
-            (Self.deadlineDaysToken, String(deadlineRemaining))
+            (Self.deadlineDaysToken, String(deadlineRemaining)),
+            (Self.elapsedMonthsDaysToken, elapsedMonthsDays),
+            (Self.deadlineMonthsDaysToken, deadlineMonthsDays)
         ]
 
         return variables.reduce(normalizedTemplate) { rendered, variable in
@@ -124,5 +141,27 @@ public struct DayCounterConfiguration: Equatable, Sendable {
         let month = calendar.component(.month, from: date)
         let day = calendar.component(.day, from: date)
         return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
+    private static let zeroMonthsDays = "0个月零0天"
+
+    private static func monthsDays(
+        from source: Date,
+        to destination: Date,
+        calendar: Calendar
+    ) -> String {
+        guard source != destination else { return zeroMonthsDays }
+        let isNegative = destination < source
+        let earlier = isNegative ? destination : source
+        let later = isNegative ? source : destination
+        let components = calendar.dateComponents(
+            [.year, .month, .day],
+            from: earlier,
+            to: later
+        )
+        let months = max(0, (components.year ?? 0) * 12 + (components.month ?? 0))
+        let days = max(0, components.day ?? 0)
+        let sign = isNegative ? "-" : ""
+        return "\(sign)\(months)个月零\(days)天"
     }
 }

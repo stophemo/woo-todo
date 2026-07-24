@@ -99,6 +99,8 @@
     <string name="display_variable_deadline_date">截止日期  {deadlineDate}</string>
     <string name="display_variable_elapsed_days">耗时天数  {elapsedDays}</string>
     <string name="display_variable_deadline_days">截止天数  {deadlineDays}</string>
+    <string name="display_variable_elapsed_months_days">耗时（月+天）  {elapsedMonthsDays}</string>
+    <string name="display_variable_deadline_months_days">截止（月+天）  {deadlineMonthsDays}</string>
     <string name="display_preview">实时预览</string>
     <string name="display_preview_hidden">顶部文字已隐藏</string>
     <string name="display_restore_default">恢复默认</string>

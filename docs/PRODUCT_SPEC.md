@@ -101,9 +101,9 @@ macOS 悬浮任务板和 Android Widget 只展示当天的 `day` 任务：
 - 今日标题和副标题分别是自由文本模板，默认标题为“今日任务”，空模板不占用空间；“今日任务”等固定文字也可完全替换。
 - 星期变量支持中文全称 `{weekday}`、中文简称 `{weekdayShort}`、英文全称 `{weekdayEn}` 和英文简称 `{weekdayEnShort}`。
 - 当前日期支持 `{date}`（`yyyy-MM-dd`）、`{dateLong}`（中文长日期）、`{year}`、`{month}`、`{monthPadded}`、`{day}` 与 `{dayPadded}`。
-- 变量日期支持 `{startDate}` 与 `{deadlineDate}`（均为 `yyyy-MM-dd`）；计时支持 `{elapsedDays}` 与 `{deadlineDays}`。
+- 变量日期支持 `{startDate}` 与 `{deadlineDate}`（均为 `yyyy-MM-dd`）；计时支持纯天数 `{elapsedDays}`、`{deadlineDays}`，以及按自然月和天显示的 `{elapsedMonthsDays}`、`{deadlineMonthsDays}`（例如 `4个月零22天`）。
 - 模板中的自由文字和未知变量原样保留，变量值完全由本地日期计算，不进入同步协议。
-- 起始日为第 1 天，起始日前为第 0 天；截止日当天为 0，过期后为负数。
+- 起始日为第 1 天，起始日前为第 0 天；截止日当天为 0，过期后为负数。月+天变量沿用相同边界语义，按日历自然月拆分，过期截止值保留负号。
 - macOS 今日面板、Android 今日页和 Android Widget 使用同一语义；明日、周、月和闲时仍显示对应固定范围标题。
 
 ### 3.5 版本更新提醒

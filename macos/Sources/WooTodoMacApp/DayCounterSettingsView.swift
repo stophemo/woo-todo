@@ -28,7 +28,9 @@ struct DayCounterSettingsView: View {
     ]
     private static let counterVariables = [
         TemplateVariable(title: "耗时天数", token: DayCounterConfiguration.elapsedDaysToken),
-        TemplateVariable(title: "截止天数", token: DayCounterConfiguration.deadlineDaysToken)
+        TemplateVariable(title: "截止天数", token: DayCounterConfiguration.deadlineDaysToken),
+        TemplateVariable(title: "耗时（月+天）", token: DayCounterConfiguration.elapsedMonthsDaysToken),
+        TemplateVariable(title: "截止（月+天）", token: DayCounterConfiguration.deadlineMonthsDaysToken)
     ]
 
     @ObservedObject var store: DayCounterStore
@@ -51,6 +53,7 @@ struct DayCounterSettingsView: View {
         Form {
             Section("标题模板") {
                 templateField(
+                    accessibilityLabel: "标题模板内容",
                     placeholder: "今日任务",
                     value: $headerTemplate,
                     selection: $headerSelection,
@@ -60,6 +63,7 @@ struct DayCounterSettingsView: View {
 
             Section("副标题模板") {
                 templateField(
+                    accessibilityLabel: "副标题模板内容",
                     placeholder: "留空则隐藏副标题",
                     value: $subtitleTemplate,
                     selection: $subtitleSelection,
@@ -130,13 +134,18 @@ struct DayCounterSettingsView: View {
 
     @ViewBuilder
     private func templateField(
+        accessibilityLabel: String,
         placeholder: String,
         value: Binding<String>,
         selection: Binding<TextSelection?>,
         limit: Int
     ) -> some View {
         HStack(spacing: 10) {
-            TextField(placeholder, text: value, selection: selection)
+            TextField("", text: value, selection: selection, prompt: Text(placeholder))
+                .labelsHidden()
+                .accessibilityLabel(accessibilityLabel)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
                 .onChange(of: value.wrappedValue) { _, updated in
                     guard updated.count > limit else { return }
                     value.wrappedValue = String(updated.prefix(limit))
@@ -176,6 +185,8 @@ struct DayCounterSettingsView: View {
                 Image(systemName: "plus.circle")
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
             .help("插入动态变量")
         }
     }

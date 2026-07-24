@@ -45,6 +45,14 @@ internal object TodayDisplaySettingsDialog {
     private val counterVariables = listOf(
         TemplateVariable(R.string.display_variable_elapsed_days, DayCounterText.ELAPSED_DAYS_TOKEN),
         TemplateVariable(R.string.display_variable_deadline_days, DayCounterText.DEADLINE_DAYS_TOKEN),
+        TemplateVariable(
+            R.string.display_variable_elapsed_months_days,
+            DayCounterText.ELAPSED_MONTHS_DAYS_TOKEN,
+        ),
+        TemplateVariable(
+            R.string.display_variable_deadline_months_days,
+            DayCounterText.DEADLINE_MONTHS_DAYS_TOKEN,
+        ),
     )
 
     fun show(

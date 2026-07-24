@@ -37,6 +37,21 @@ class DayCounterTextTest {
     }
 
     @Test
+    fun `跨月按自然月和天渲染耗时与过期截止`() {
+        val settings = DayCounterSettings(
+            headerTemplate = "{elapsedMonthsDays}",
+            subtitleTemplate = "{deadlineMonthsDays}",
+            startDate = LocalDate.of(2026, 3, 3),
+            deadlineDate = LocalDate.of(2026, 6, 3),
+        )
+
+        val rendered = DayCounterText.render(settings, LocalDate.of(2026, 7, 24))
+
+        assertEquals("4个月零22天", rendered.header)
+        assertEquals("-1个月零21天", rendered.subtitle)
+    }
+
+    @Test
     fun `支持英文星期和完整日期变量`() {
         val settings = DayCounterSettings(
             headerTemplate = "{weekdayEn} / {weekdayEnShort} / {weekdayShort}",
@@ -81,7 +96,7 @@ class DayCounterTextTest {
         val rendered = DayCounterText.render(
             DayCounterSettings(
                 headerTemplate = "  ",
-                subtitleTemplate = "第 {elapsedDays} 天 · {custom}",
+                subtitleTemplate = "第 {elapsedDays} 天 · {elapsedMonthsDays} · {custom}",
                 startDate = today.plusDays(3),
                 deadlineDate = today.plusDays(3),
             ),
@@ -89,6 +104,6 @@ class DayCounterTextTest {
         )
 
         assertNull(rendered.header)
-        assertEquals("第 0 天 · {custom}", rendered.subtitle)
+        assertEquals("第 0 天 · 0个月零0天 · {custom}", rendered.subtitle)
     }
 }

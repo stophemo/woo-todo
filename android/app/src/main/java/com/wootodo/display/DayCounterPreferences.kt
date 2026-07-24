@@ -2,6 +2,7 @@ package com.wootodo.display
 
 import android.content.Context
 import java.time.LocalDate
+import java.time.Period
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 
@@ -41,6 +42,8 @@ object DayCounterText {
     const val DEADLINE_DATE_TOKEN = "{deadlineDate}"
     const val ELAPSED_DAYS_TOKEN = "{elapsedDays}"
     const val DEADLINE_DAYS_TOKEN = "{deadlineDays}"
+    const val ELAPSED_MONTHS_DAYS_TOKEN = "{elapsedMonthsDays}"
+    const val DEADLINE_MONTHS_DAYS_TOKEN = "{deadlineMonthsDays}"
 
     fun render(
         settings: DayCounterSettings,
@@ -49,6 +52,12 @@ object DayCounterText {
         val elapsedDays = (ChronoUnit.DAYS.between(settings.startDate, today) + 1)
             .coerceAtLeast(0)
         val deadlineDays = ChronoUnit.DAYS.between(today, settings.deadlineDate)
+        val elapsedMonthsDays = if (today.isBefore(settings.startDate)) {
+            ZERO_MONTHS_DAYS
+        } else {
+            monthsDays(settings.startDate, today.plusDays(1))
+        }
+        val deadlineMonthsDays = monthsDays(today, settings.deadlineDate)
         val weekdayIndex = today.dayOfWeek.value - 1
         val date = today.format(DATE_FORMAT)
         val dateLong = today.format(DATE_LONG_FORMAT)
@@ -68,6 +77,8 @@ object DayCounterText {
             DEADLINE_DATE_TOKEN to settings.deadlineDate.format(DATE_FORMAT),
             ELAPSED_DAYS_TOKEN to elapsedDays.toString(),
             DEADLINE_DAYS_TOKEN to deadlineDays.toString(),
+            ELAPSED_MONTHS_DAYS_TOKEN to elapsedMonthsDays,
+            DEADLINE_MONTHS_DAYS_TOKEN to deadlineMonthsDays,
         )
 
         fun renderTemplate(template: String): String? = template.trim()
@@ -97,6 +108,18 @@ object DayCounterText {
     private val WEEKDAYS_EN_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
     private val DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE
     private val DATE_LONG_FORMAT = DateTimeFormatter.ofPattern("yyyy年M月d日")
+    private const val ZERO_MONTHS_DAYS = "0个月零0天"
+
+    private fun monthsDays(source: LocalDate, destination: LocalDate): String {
+        if (source == destination) return ZERO_MONTHS_DAYS
+        val isNegative = destination.isBefore(source)
+        val earlier = if (isNegative) destination else source
+        val later = if (isNegative) source else destination
+        val period = Period.between(earlier, later)
+        val months = period.years * 12 + period.months
+        val sign = if (isNegative) "-" else ""
+        return "$sign${months}个月零${period.days}天"
+    }
 }
 
 object DayCounterPreferences {

@@ -54,6 +54,27 @@ struct DayCounterConfigurationTests {
             "耗时 3 天 · 截止 -1 天")
     }
 
+    @Test func rendersCalendarMonthsAndDaysAcrossPeriodsAndPastDeadline() throws {
+        let start = try #require(calendar.date(from: DateComponents(
+            year: 2026, month: 3, day: 3
+        )))
+        let today = try #require(calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 24
+        )))
+        let deadline = try #require(calendar.date(from: DateComponents(
+            year: 2026, month: 6, day: 3
+        )))
+        let configuration = DayCounterConfiguration(
+            headerTemplate: "{elapsedMonthsDays}",
+            subtitleTemplate: "{deadlineMonthsDays}",
+            startDate: start,
+            deadlineDate: deadline
+        )
+
+        #expect(configuration.headerText(on: today, calendar: calendar) == "4个月零22天")
+        #expect(configuration.subtitleText(on: today, calendar: calendar) == "-1个月零21天")
+    }
+
     @Test func futureStartUsesZeroAndUnknownVariablesRemainLiteral() throws {
         let today = try #require(calendar.date(from: DateComponents(
             year: 2026, month: 7, day: 21
@@ -61,14 +82,14 @@ struct DayCounterConfigurationTests {
         let future = try #require(calendar.date(byAdding: .day, value: 3, to: today))
         let configuration = DayCounterConfiguration(
             headerTemplate: "  ",
-            subtitleTemplate: "第 {elapsedDays} 天 · {custom}",
+            subtitleTemplate: "第 {elapsedDays} 天 · {elapsedMonthsDays} · {custom}",
             startDate: future,
             deadlineDate: future
         )
 
         #expect(configuration.headerText(on: today, calendar: calendar) == nil)
         #expect(configuration.subtitleText(on: today, calendar: calendar) ==
-            "第 0 天 · {custom}")
+            "第 0 天 · 0个月零0天 · {custom}")
     }
 
     @Test func rendersEnglishWeekdayAndCompleteDateVariables() throws {

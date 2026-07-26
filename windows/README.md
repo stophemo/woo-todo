@@ -30,13 +30,13 @@ dotnet run --project windows/src/WooTodo.WindowsApp/WooTodo.WindowsApp.csproj
 
 ```powershell
 pwsh -NoProfile -File windows/scripts/package.ps1
-pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.11
+pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.12
 ```
 
 输出文件为：
 
 ```text
-windows/dist/Woo-Todo-v0.1.11-windows-x64-setup.exe
+windows/dist/Woo-Todo-v0.1.12-windows-x64-setup.exe
 ```
 
 正式 tag 发布会在 Windows Runner 上重新执行测试，用 Inno Setup 生成安装器，并把该 EXE 与 Android APK、macOS ZIP 一起发布。

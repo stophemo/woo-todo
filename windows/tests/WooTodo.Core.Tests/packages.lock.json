@@ -99,7 +99,7 @@
       "wootodo.storage": {
         "type": "Project",
         "dependencies": {
-          "WooTodo.Core": "[0.1.11, )"
+          "WooTodo.Core": "[0.1.12, )"
         }
       }
     }

@@ -11,6 +11,8 @@
   #error IconPath is required
 #endif
 
+#define ChineseMessagesFile AddBackslash(SourcePath) + "ChineseSimplified.isl"
+
 [Setup]
 AppId={{B64B8A7B-A289-4B46-B6AB-F28B39E7D40A}
 AppName=Woo Todo
@@ -40,7 +42,7 @@ VersionInfoDescription=无我待办 Windows 安装程序
 SetupIconFile={#IconPath}
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\Unofficial\ChineseSimplified.isl"
+Name: "chinesesimp"; MessagesFile: "{#ChineseMessagesFile}"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："; Flags: unchecked

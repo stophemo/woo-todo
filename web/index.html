@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>无我待办 | 今晚规划，明早开干</title>
-  <meta name="description" content="面向 macOS 与 Android 的轻量本地优先待办应用。手机睡前规划，Mac 次日直接查看。">
+  <meta name="description" content="面向 macOS、Android 与 Windows 的轻量本地优先待办应用。三端原生交互，断网也能继续完成任务。">
   <meta name="author" content="Woo Todo">
   <meta name="theme-color" content="#171817">
   <meta name="color-scheme" content="light">
@@ -13,7 +13,7 @@
   <meta property="og:locale" content="zh_CN">
   <meta property="og:url" content="https://woo-todo.vercel.app/">
   <meta property="og:title" content="无我待办 | 今晚规划，明早开干">
-  <meta property="og:description" content="macOS 原生悬浮任务板与 Android 今日桌面 Widget，本地优先、坚果云密文自动同步。">
+  <meta property="og:description" content="macOS 原生悬浮任务板、Android 今日桌面 Widget 与 Windows 原生任务板，本地优先、轻量高效。">
   <meta property="og:image" content="https://woo-todo.vercel.app/assets/og-cover.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -38,7 +38,7 @@
         <a href="#download">安装</a>
         <a href="https://github.com/stophemo/woo-todo" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
-      <a class="header-download" href="#download">下载 v0.1.11</a>
+      <a class="header-download" href="#download">下载 v0.1.12</a>
     </div>
   </header>
 
@@ -48,13 +48,14 @@
       <div class="hero-rule hero-rule-two" aria-hidden="true"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="release-line"><span>v0.1.11</span> macOS + Android</p>
+          <p class="release-line"><span>v0.1.12</span> macOS + Android + Windows</p>
           <h1 id="hero-title">无我待办</h1>
           <p class="hero-tagline">今晚规划，明早开干。</p>
-          <p class="hero-support">手机睡前列好明日任务，Mac 次日直接展开今日清单。双端原生、本地优先，断网也不耽误做事。</p>
+          <p class="hero-support">手机睡前列好明日任务，Mac 或 Windows 电脑次日直接展开今日清单。三端原生、本地优先，断网也不耽误做事。</p>
           <div class="hero-actions" aria-label="下载与项目链接">
-            <a class="button button-primary" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.11/Woo-Todo-v0.1.11-android.apk">下载 Android</a>
-            <a class="button button-secondary" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.11/Woo-Todo-v0.1.11-macos-arm64.zip">下载 macOS</a>
+            <a class="button button-primary" aria-label="下载 Android APK" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-android.apk"><span class="download-label">下载&nbsp;</span>Android</a>
+            <a class="button button-secondary" aria-label="下载 macOS ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-macos-arm64.zip"><span class="download-label">下载&nbsp;</span>macOS</a>
+            <a class="button button-secondary" aria-label="下载 Windows x64 EXE" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64-setup.exe"><span class="download-label">下载&nbsp;</span>Windows</a>
           </div>
           <p class="hero-meta">MIT 开源 · 无传统账号 · 无应用商店依赖</p>
         </div>
@@ -252,8 +253,8 @@
           <article class="feature-row">
             <span class="feature-index">A</span>
             <div>
-              <h3>双端原生，轻量常驻</h3>
-              <p>macOS 使用 AppKit + SwiftUI，Android 使用 Kotlin + RemoteViews。没有 Electron、Flutter，也没有前台常驻服务。</p>
+              <h3>三端原生，轻量常驻</h3>
+              <p>macOS 使用 AppKit + SwiftUI，Android 使用 Kotlin + RemoteViews，Windows 使用 WPF + .NET。Windows 已通过 Rust 共享核心复用任务规则、SQLite 仓储语义与通知计划，三端均不携带跨端 UI 运行时。</p>
             </div>
             <span class="feature-tag">原生</span>
           </article>
@@ -261,7 +262,7 @@
             <span class="feature-index">B</span>
             <div>
               <h3>本地优先，网络不挡路</h3>
-              <p>新增、修改、完成和排序只依赖本地 SQLite。断网时照常工作，恢复联网后继续自动同步。</p>
+              <p>新增、修改、完成和排序只依赖本地 SQLite，三端断网时都能照常工作；macOS 与 Android 恢复联网后可继续自动同步。</p>
             </div>
             <span class="feature-tag">离线可用</span>
           </article>
@@ -277,7 +278,7 @@
             <span class="feature-index">D</span>
             <div>
               <h3>无传统账号，加密备份</h3>
-              <p>默认不注册账号、不连接服务器。恢复备份使用加密的 <code>.wootodo</code>，可手动保存到自己的网盘或本地介质。</p>
+              <p>macOS 与 Android 无需传统账号，可使用加密的 <code>.wootodo</code> 恢复备份；Windows 首版聚焦本地任务，暂不支持同步和加密备份。</p>
             </div>
             <span class="feature-tag">自己掌控</span>
           </article>
@@ -289,31 +290,41 @@
       <div class="section-inner">
         <div class="platform-title-row">
           <div>
-            <p class="section-kicker">双端各司其职</p>
-            <h2 id="platforms-title">同一份清单，两种合适的形态</h2>
+            <p class="section-kicker">三端各司其职</p>
+            <h2 id="platforms-title">同一套逻辑，三种合适形态</h2>
           </div>
-          <p>Android 负责睡前规划和桌面速览；Mac 负责工作时持续呈现。完整详情、历史和统计在两端 App 内查看。</p>
+          <p>Android 负责睡前规划和桌面速览；macOS 与 Windows 负责工作时持续呈现。完整详情、历史和统计在三端 App 内查看。</p>
         </div>
-        <div class="platform-table" role="table" aria-label="macOS 与 Android 能力对照">
+        <div class="platform-table" role="table" aria-label="macOS、Android 与 Windows 能力对照" tabindex="0">
           <div class="platform-row platform-head" role="row">
             <span role="columnheader">场景</span>
             <strong role="columnheader">macOS</strong>
             <strong role="columnheader">Android</strong>
+            <strong role="columnheader">Windows</strong>
           </div>
           <div class="platform-row" role="row">
             <span role="cell">桌面呈现</span>
             <strong role="cell">原生透明悬浮面板</strong>
             <strong role="cell">今日桌面 Widget</strong>
+            <strong role="cell">WPF 悬浮任务板</strong>
           </div>
           <div class="platform-row" role="row">
             <span role="cell">快捷操作</span>
             <strong role="cell">⇧⌥1 快速新增、⇧⌥2 显隐</strong>
             <strong role="cell">查看、勾选；编辑打开 App</strong>
+            <strong role="cell">Ctrl+Alt+1 至 4、系统托盘</strong>
           </div>
           <div class="platform-row" role="row">
             <span role="cell">系统特性</span>
             <strong role="cell">置顶、毛玻璃、穿透、快捷键</strong>
             <strong role="cell">23:10 提醒、重启后恢复调度</strong>
+            <strong role="cell">置顶、穿透、退出后系统提醒</strong>
+          </div>
+          <div class="platform-row" role="row">
+            <span role="cell">同步与备份</span>
+            <strong role="cell">坚果云 / Worker 同步、加密备份</strong>
+            <strong role="cell">坚果云 / Worker 同步、加密备份</strong>
+            <strong role="cell">首版暂不支持同步和加密备份</strong>
           </div>
         </div>
       </div>
@@ -322,9 +333,9 @@
     <section class="security section" aria-labelledby="security-title">
       <div class="section-inner security-layout">
         <div class="security-copy">
-          <p class="section-kicker">本地优先，坚果云密文自动同步</p>
+          <p class="section-kicker">macOS 与 Android：坚果云密文自动同步</p>
           <h2 id="security-title">任务明文只留在设备里</h2>
-          <p>两端始终先读写本地 SQLite。启用坚果云后，每次变更会写成 AES-256-GCM 密文对象并自动同步，云端只能看到同步所需的实体标识、逻辑时钟和密文大小等元数据。暂时断网时改动留在本地，恢复联网后继续同步；自建 Worker + D1 也是可选在线方案。</p>
+          <p>macOS 与 Android 始终先读写本地 SQLite。启用坚果云后，每次变更会写成 AES-256-GCM 密文对象并自动同步，云端只能看到同步所需的实体标识、逻辑时钟和密文大小等元数据。暂时断网时改动留在本地，恢复联网后继续同步；自建 Worker + D1 也是可选在线方案。Windows 首版不参与跨端同步。</p>
           <a href="https://github.com/stophemo/woo-todo/blob/main/docs/SYNC_AND_SECURITY.md" target="_blank" rel="noreferrer">查看同步与安全设计</a>
         </div>
         <div class="sync-flow" aria-label="坚果云加密自动同步流程">
@@ -359,7 +370,7 @@
       <div class="section-inner">
         <div class="download-heading">
           <div>
-            <p class="section-kicker">v0.1.11 · 2026-07-24</p>
+            <p class="section-kicker">v0.1.12 · 2026-07-26</p>
             <h2 id="download-title">现在就装上</h2>
           </div>
           <p>不经过应用商店，直接从 GitHub Release 下载。安装前可使用同页提供的 SHA-256 文件校验产物。</p>
@@ -372,7 +383,7 @@
             </div>
             <h3>手机端与今日 Widget</h3>
             <p>适用于 Galaxy S23 Ultra 等 Android 设备。Release APK 使用项目长期升级密钥签名。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.11/Woo-Todo-v0.1.11-android.apk">下载 APK</a>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-android.apk">下载 APK</a>
           </article>
           <article class="download-card download-macos">
             <div class="download-card-top">
@@ -381,17 +392,26 @@
             </div>
             <h3>悬浮任务板与完整管理页</h3>
             <p>适用于 M 系列 Mac。当前为 ad-hoc 签名且未经过 Apple 公证，首次启动可能需要手动允许。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.11/Woo-Todo-v0.1.11-macos-arm64.zip">下载 macOS ZIP</a>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-macos-arm64.zip">下载 macOS ZIP</a>
+          </article>
+          <article class="download-card download-windows">
+            <div class="download-card-top">
+              <span class="platform-badge">WINDOWS</span>
+              <span>Windows 10 / 11 · x64</span>
+            </div>
+            <h3>悬浮任务板与系统提醒</h3>
+            <p>适用于 Windows 10 build 19041+ 或 Windows 11 x64。自包含 EXE 无需另装 .NET；当前未做代码签名，SmartScreen 可能提示来源，请核对 SHA-256 后安装。首版暂不支持同步和加密备份。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64-setup.exe">下载 Windows EXE</a>
           </article>
         </div>
         <div class="release-links">
-          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.11">发布说明</a>
-          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.11/SHA256SUMS.txt">SHA-256 校验</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.12">发布说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/SHA256SUMS.txt">SHA-256 校验</a>
           <a href="https://github.com/stophemo/woo-todo/blob/main/docs/INSTALLATION.md">安装指南</a>
         </div>
         <aside class="deployment-note">
           <strong>关于跨端同步</strong>
-          <p>推荐使用坚果云 WebDAV 密文自动同步，不需要自建服务器、代理或额外服务器费用；也可自行部署 Cloudflare Workers + D1 作为可选在线方案。自建路径无需购买域名，按当前免费计划的额度可先服务个人双端，但 Cloudflare 的额度、计费与地区网络政策会变化。断网期间两端仍可独立使用，恢复联网后再同步积压变更。</p>
+          <p>macOS 与 Android 推荐使用坚果云 WebDAV 密文自动同步，不需要自建服务器、代理或额外服务器费用；也可自行部署 Cloudflare Workers + D1 作为可选在线方案。自建路径无需购买域名，按当前免费计划的额度可先服务个人双端，但 Cloudflare 的额度、计费与地区网络政策会变化。断网期间两端仍可独立使用，恢复联网后再同步积压变更；Windows 首版暂不支持这两种同步方式。</p>
           <div class="deployment-links">
             <a href="https://github.com/stophemo/woo-todo/blob/main/docs/JIANGUOYUN_SYNC.md">坚果云配置</a>
             <a href="https://github.com/stophemo/woo-todo/blob/main/backend/README.md">Cloudflare 免费部署</a>

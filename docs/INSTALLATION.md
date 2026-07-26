@@ -1,10 +1,10 @@
 # 个人安装与首次使用
 
-woo-todo 不依赖应用商店，也不要求先部署服务器。可从 [GitHub Releases](https://github.com/stophemo/woo-todo/releases) 下载各平台安装包；macOS 与 Android 的以下链接对应 `v0.1.11`，Windows EXE 从下一个正式版本起随 Release 发布。
+woo-todo 不依赖应用商店，也不要求先部署服务器。可从 [GitHub Releases](https://github.com/stophemo/woo-todo/releases/tag/v0.1.12) 下载 `v0.1.12` 的 macOS、Android 与 Windows 安装包。Windows 首版专注本地任务闭环，暂不支持同步与加密备份。
 
 ## 1. 安装 macOS 客户端
 
-下载 [Woo-Todo-v0.1.11-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.11/Woo-Todo-v0.1.11-macos-arm64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.11/SHA256SUMS.txt) 校验后解压，把 `Woo Todo.app` 拖到“应用程序”。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
+下载 [Woo-Todo-v0.1.12-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-macos-arm64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/SHA256SUMS.txt) 校验后解压，把 `Woo Todo.app` 拖到“应用程序”。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
 
 需要自行构建时，要求完整 Xcode 与当前 macOS SDK/Swift 编译器匹配。仅有版本不匹配的 Command Line Tools 时不能作为 Release 构建环境：
 
@@ -26,10 +26,10 @@ cd macos
 
 ## 2. 安装 Android 客户端
 
-下载 [Woo-Todo-v0.1.11-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.11/Woo-Todo-v0.1.11-android.apk)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.11/SHA256SUMS.txt) 校验后从三星“我的文件”打开，并允许本次来源安装。连接 ADB 时也可执行：
+下载 [Woo-Todo-v0.1.12-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-android.apk)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/SHA256SUMS.txt) 校验后从三星“我的文件”打开，并允许本次来源安装。连接 ADB 时也可执行：
 
 ```bash
-adb install -r Woo-Todo-v0.1.11-android.apk
+adb install -r Woo-Todo-v0.1.12-android.apk
 ```
 
 正式 APK 使用项目专用 Release 密钥签名，后续 GitHub Release 可直接覆盖升级。Debug 包与正式包签名不同，不能相互覆盖；切换前先导出加密恢复备份，再卸载旧包。
@@ -58,7 +58,7 @@ cd android
 
 ## 3. 安装 Windows 客户端
 
-Windows 客户端支持 Windows 10 build 19041 及以上版本和 Windows 11 x64。下载 `Woo-Todo-vX.Y.Z-windows-x64-setup.exe` 后直接运行安装向导；安装包自带 .NET 运行时，不需要另行配置开发环境。
+Windows 客户端支持 Windows 10 build 19041 及以上版本和 Windows 11，仅限 x64。下载 [Woo-Todo-v0.1.12-windows-x64-setup.exe](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64-setup.exe)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/SHA256SUMS.txt) 校验后直接运行安装向导；安装包自带 .NET 运行时，不需要另行配置开发环境。
 
 当前 EXE 未做代码签名，SmartScreen 可能提示来源未知；请只从本仓库 Release 下载并先核对 `SHA256SUMS.txt`。覆盖安装会保留 `%LOCALAPPDATA%\Woo Todo` 下的 SQLite 与设置，卸载程序默认也不会主动删除这份用户数据。
 
@@ -112,7 +112,7 @@ npx wrangler deploy
 - 睡前提醒在 Android 16 / One UI 8 的电池优化下记录实际延迟；
 - macOS 快速新增、悬浮、置顶、毛玻璃、穿透和四个全局快捷键连续运行 24 小时；
 - Windows 10/11 安装、覆盖升级、卸载入口、托盘、置顶、穿透恢复和 `Ctrl + Alt + 1...4` 在 x64 真机或 VM 验收；再设置一个未来几分钟的任务提醒，退出应用后确认 Toast 到达，点击后只激活现有实例并打开对应任务；
-- 任一端导出的恢复备份能在空白安装恢复，并确认旧设备身份不会同时活跃；
+- macOS 或 Android 导出的恢复备份能在空白安装恢复，并确认旧设备身份不会同时活跃；
 - 若启用可选在线同步，再验证不同网络下的 `/health`、二维码配对和双向增量同步。
 
 详细矩阵见 [测试与验收](TESTING.md)。

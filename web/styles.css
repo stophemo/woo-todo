@@ -926,16 +926,24 @@ strong {
 }
 
 .platform-table {
+  max-width: 100%;
+  overflow-x: auto;
   border-top: 2px solid var(--ink);
+  overscroll-behavior-x: contain;
 }
 
 .platform-row {
   display: grid;
-  grid-template-columns: 0.55fr 1fr 1fr;
-  gap: 24px;
+  grid-template-columns: 0.48fr repeat(3, minmax(0, 1fr));
+  gap: 20px;
   align-items: center;
   min-height: 74px;
   border-bottom: 1px solid var(--line);
+}
+
+.platform-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .platform-row span {
@@ -1078,11 +1086,13 @@ strong {
 
 .download-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
 .download-card {
+  display: flex;
+  flex-direction: column;
   min-height: 338px;
   padding: 30px;
   border: 1px solid #cdd0c9;
@@ -1110,6 +1120,10 @@ strong {
   background: var(--purple);
 }
 
+.download-windows .platform-badge {
+  background: var(--blue);
+}
+
 .download-card h3 {
   margin-bottom: 10px;
   font-size: 24px;
@@ -1117,11 +1131,15 @@ strong {
 
 .download-card p {
   max-width: 500px;
-  min-height: 51px;
   margin-bottom: 25px;
   color: var(--muted);
   font-size: 14px;
   line-height: 1.75;
+}
+
+.download-card .button {
+  align-self: flex-start;
+  margin-top: auto;
 }
 
 .button-dark {
@@ -1228,6 +1246,10 @@ strong {
 }
 
 @media (max-width: 1050px) {
+  .download-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .hero h1 {
     font-size: 54px;
   }
@@ -1581,9 +1603,10 @@ strong {
   }
 
   .platform-row {
-    grid-template-columns: 0.5fr 1fr 1fr;
+    grid-template-columns: 100px repeat(3, minmax(180px, 1fr));
     gap: 12px;
     min-height: 82px;
+    min-width: 720px;
   }
 
   .platform-row span,
@@ -1627,6 +1650,10 @@ strong {
 
   .download-card-top {
     margin-bottom: 50px;
+  }
+
+  .download-label {
+    display: none;
   }
 
   .deployment-note {

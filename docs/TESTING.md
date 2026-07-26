@@ -5,13 +5,14 @@
 | 层级 | 覆盖内容 |
 |---|---|
 | 共享 golden tests | 周期边界、确定性实例 ID、同步/备份 AES-GCM 格式 |
+| Rust 共享核心 | `camelCase` FFI、合法 `null`、跨周期幂等、SQLite 事务、tombstone、稳定通知计划 |
 | 领域单元测试 | 日/周/月/闲时、重复、完成、Pass、统计、排序 |
 | 本地仓储测试 | SQLite 往返、迁移、事务结算、历史不可改写 |
 | 后端测试 | vault、配对、鉴权、幂等同步、分页、撤销 |
 | 客户端同步测试 | 加密、API 错误、outbox、cursor、失败重试 |
 | 配置与更新测试 | 双端二维码 URI、严格 Release 解析、版本比较、检查节流与重复提醒 |
 | Android instrumentation | 真实 SQLite 绑定、tombstone、幂等、事务回滚、cursor 与备份恢复 |
-| 平台测试 | NSPanel、全局快捷键、App Widget、通知、重启 |
+| 平台测试 | NSPanel、WPF 悬浮板、全局快捷键、EXE 安装升级、App Widget、通知、重启 |
 
 ## Android 验证执行位置
 
@@ -83,10 +84,21 @@
 - 穿透状态下全局快捷键与菜单栏均可恢复交互
 - 睡眠、唤醒、网络切换和连续运行 24 小时
 
+## Windows 平台矩阵
+
+- Windows 10 build 19041+ x64 与 Windows 11 x64
+- EXE 当前用户安装、覆盖升级、带 AppUserModelID 的开始菜单入口、`wootodo://` 协议与卸载
+- 托盘重建、DPI/多显示器、置顶、穿透以及托盘/`Ctrl + Alt + 4` 恢复交互
+- SQLite 重启往返、跨日/周/月惰性结算和删除任务不复活
+- 设置、修改、完成、Pass、删除任务后系统调度队列收敛；退出应用后 Toast 仍按时到达
+- 冷启动和应用已运行两种状态下点击 Toast，均只保留一个进程并打开对应 pending 任务
+- 系统关闭通知、开始菜单快捷方式缺失和协议负载无效时不影响本地任务操作
+
 ## 性能预算
 
 - macOS Release：RSS 目标不超过 60MB、硬上限 100MB，30 分钟平均 CPU 不超过 0.3%。
 - Android：无前台服务；典型使用额外耗电目标不超过 0.5%/天。
+- Windows Release：空闲工作集目标不超过 90MB、硬上限 150MB，30 分钟平均 CPU 不超过 0.3%；任务提醒不得依赖应用轮询。
 - Widget 本地操作反馈不超过 1 秒。
 - 典型个人使用同步流量不超过 1MB/天。
 

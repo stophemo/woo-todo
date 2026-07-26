@@ -1,0 +1,30 @@
+[package]
+name = "woo_todo_core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Woo Todo 三端共享的领域、SQLite 与通知计划核心"
+
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[dependencies]
+chrono = { version = "0.4.41", default-features = false, features = ["clock", "serde"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+sha2 = "0.10.9"
+uuid = { version = "1.16.0", features = ["v4"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "android"))'.dependencies]
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+
+[target.'cfg(not(any(target_os = "windows", target_os = "android")))'.dependencies]
+rusqlite = "0.37.0"
+
+[dev-dependencies]
+tempfile = "3.20.0"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

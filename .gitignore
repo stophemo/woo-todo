@@ -15,6 +15,11 @@ Thumbs.db
 .agents/
 .vercel/
 
+# 本地 AI 助手指令
+[Aa][Gg][Ee][Nn][Tt].md
+[Aa][Gg][Ee][Nn][Tt][Ss].md
+[Cc][Ll][Aa][Uu][Dd][Ee].md
+
 # 本地环境、凭据与用户数据
 .env
 .env.*
@@ -96,6 +101,17 @@ captures/
 *.apks
 *.idsig
 *.hprof
+
+# .NET / Windows
+/windows/.vs/
+/windows/**/bin/
+/windows/**/obj/
+*.suo
+*.user
+/windows/dist/
+
+# Rust 共享核心
+/shared/core-rust/target/
 
 # 本地发版暂存产物
 /release/

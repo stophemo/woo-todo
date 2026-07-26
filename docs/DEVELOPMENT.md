@@ -5,9 +5,21 @@
 - macOS 15 或更高版本
 - 完整 Xcode，Swift 工具链与 macOS SDK 版本必须匹配
 - Android SDK 36、Android Build Tools 35、JDK 17
+- .NET 10 SDK；生成 Windows 安装包还需要 Inno Setup 6
+- Rust stable（含 `rustfmt` 与 `clippy`）
 - Node.js 24、npm 11
 
 目标真机为 macOS Tahoe 26.5.2 / Apple M4 和 Android 16 / Samsung One UI 8.0。较低系统版本只用于兼容性测试，不代表完成三星专项验收。
+
+## Rust 共享核心
+
+```bash
+cargo fmt --manifest-path shared/core-rust/Cargo.toml --check
+cargo test --manifest-path shared/core-rust/Cargo.toml --locked --all-targets
+cargo clippy --manifest-path shared/core-rust/Cargo.toml --locked --all-targets -- -D warnings
+```
+
+Windows 的 MSBuild 会自动构建并复制 Rust 动态库。macOS 与 Android 当前按能力切片渐进迁移；切换一项调用前，必须先增加旧实现与 Rust 的等价用例，不重写原生 UI、Widget、通知调度或安全存储。
 
 ## 共享契约
 
@@ -67,6 +79,18 @@ swift run woo-todo-mac
 
 个人安装包脚本位于 `macos/scripts/`。它使用 Release 产物组装 `.app` 并进行 ad-hoc 签名，不等同于 Developer ID 公证。
 
+## Windows
+
+Windows 领域、SQLite 与通知计划测试可在安装 .NET 10 和 Rust stable 的系统运行；WPF、Toast、托盘、快捷键和 EXE 安装器必须在 Windows 10/11 验证：
+
+```powershell
+dotnet restore windows/WooTodo.sln
+dotnet test windows/WooTodo.sln --configuration Release
+pwsh -NoProfile -File windows/scripts/package.ps1
+```
+
+安装器输出为 `windows/dist/Woo-Todo-vX.Y.Z-windows-x64-setup.exe`。
+
 ## 全仓 CI
 
-GitHub Actions 分成契约/后端、macOS、Android JVM/构建和 Android SQLite instrumentation 四个独立任务。任何一端失败都不会隐藏其他端的诊断结果；CI 不部署服务，也不读取生产秘密。
+GitHub Actions 分成 Rust 共享核心、契约/后端、macOS、Windows、Android JVM/构建和 Android SQLite instrumentation 六个独立任务。任何一端失败都不会隐藏其他端的诊断结果；CI 不部署服务，也不读取生产秘密。

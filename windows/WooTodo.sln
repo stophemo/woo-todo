@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WooTodo.Core", "src\WooTodo.Core\WooTodo.Core.csproj", "{F3C96E31-9A40-46DC-9152-42F1812C37A9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WooTodo.Storage", "src\WooTodo.Storage\WooTodo.Storage.csproj", "{DD802A5A-E3FC-4CA9-AB52-D7681759B5E2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WooTodo.WindowsApp", "src\WooTodo.WindowsApp\WooTodo.WindowsApp.csproj", "{75DC1244-ECDB-4A34-BFB1-A2F7CC516B96}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WooTodo.Core.Tests", "tests\WooTodo.Core.Tests\WooTodo.Core.Tests.csproj", "{5DF9D5B2-0613-45F5-9577-A4812671CE5C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F3C96E31-9A40-46DC-9152-42F1812C37A9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F3C96E31-9A40-46DC-9152-42F1812C37A9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F3C96E31-9A40-46DC-9152-42F1812C37A9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F3C96E31-9A40-46DC-9152-42F1812C37A9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DD802A5A-E3FC-4CA9-AB52-D7681759B5E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DD802A5A-E3FC-4CA9-AB52-D7681759B5E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DD802A5A-E3FC-4CA9-AB52-D7681759B5E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DD802A5A-E3FC-4CA9-AB52-D7681759B5E2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{75DC1244-ECDB-4A34-BFB1-A2F7CC516B96}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{75DC1244-ECDB-4A34-BFB1-A2F7CC516B96}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{75DC1244-ECDB-4A34-BFB1-A2F7CC516B96}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{75DC1244-ECDB-4A34-BFB1-A2F7CC516B96}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5DF9D5B2-0613-45F5-9577-A4812671CE5C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5DF9D5B2-0613-45F5-9577-A4812671CE5C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5DF9D5B2-0613-45F5-9577-A4812671CE5C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5DF9D5B2-0613-45F5-9577-A4812671CE5C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

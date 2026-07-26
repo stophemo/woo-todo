@@ -1,122 +1,144 @@
 <p align="center">
-  <img src="web/assets/app-icon.svg" width="72" alt="无我待办图标">
+  <img src="web/assets/app-icon.svg" width="76" alt="无我待办图标">
 </p>
 
-# 无我待办（Woo Todo）
+<h1 align="center">无我待办（Woo Todo）</h1>
 
-> 今晚规划，明早开干。
+<p align="center">
+  <strong>今晚规划，明早开干。</strong><br>
+  一款安静待在桌面和手机上的本地优先待办应用。
+</p>
 
-Woo Todo 是一个为个人日常规划设计的跨端待办应用，支持 **macOS** 和 **Android**。它坚持本地优先：任务先写入设备上的 SQLite，不登录 Woo Todo 账号也能完整使用；需要跨端时，再按自己的信任边界选择同步方式。
+<p align="center">
+  <a href="https://woo-todo.vercel.app/">产品主页</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.11">下载 v0.1.11</a> ·
+  <a href="docs/INSTALLATION.md">安装指南</a> ·
+  <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
+</p>
 
-[产品主页](https://woo-todo.vercel.app/) · [下载最新版](https://github.com/stophemo/woo-todo/releases) · [安装与首次使用](docs/INSTALLATION.md) · [问题反馈](https://github.com/stophemo/woo-todo/issues)
+## 别让“管理任务”变成另一项任务
 
-当前正式版：[`v0.1.10`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.10)
+很多待办工具擅长收集，却让清单越积越长。Woo Todo 更关心另一件事：**下一段时间，你真正准备完成什么？**
 
-## 适合什么场景
+它把一天压缩成一个自然的节奏：晚上用手机列好明日任务，第二天在电脑桌面直接开工；周期结束后，完成就是完成，没有完成就诚实地记为 `Pass`。任务不会无休止地滚到明天，历史会留下真实结果。
 
-| 设备 | 主要体验 |
-| --- | --- |
-| macOS | 菜单栏常驻、可置顶/毛玻璃/鼠标穿透的悬浮任务板；支持快速新增和全局快捷键。 |
-| Android | 今日、明日、周/月与闲时任务；睡前规划提醒、任务级提醒和三星桌面 Widget。 |
-| 两端一起用 | 推荐使用坚果云 WebDAV 自动同步；也可以自建 Cloudflare Worker + D1 做端到端加密同步。 |
+没有 Woo Todo 账号，没有联网门槛，也没有为了跨平台塞进来的浏览器运行时。任务先写入本地 SQLite；要不要同步、用哪种同步方式，都由你决定。
 
-任务支持一次性与周期重复、主线/支线/外传、完成/Pass、历史和履约统计。顶部标题和副标题可使用模板变量，包含中文或英文星期、日期，以及按纯天数或“自然月+天”显示的耗时和截止时间；详细变量表见[产品规格](docs/PRODUCT_SPEC.md)。
+## 一天怎么流过 Woo Todo
 
-## 下载与安装
+### 23:10 · 把明天交代清楚
 
-以下是当前正式版的直接下载入口，校验值在同一 Release 中的 `SHA256SUMS.txt`。
+在 Android 切到“明日”，写下真正要做的几件事，分成主线、支线和外传。睡前规划提醒可以叫你回来，但不会替你制造一套复杂流程。
 
-| 平台 | 安装包 | 说明 |
+### 第二天 · 打开电脑直接开始
+
+macOS 的原生悬浮任务板常驻桌面，可置顶、毛玻璃或鼠标穿透；Android Widget 留在手机桌面。Windows 原生客户端也已进入 `main`，提供托盘与悬浮任务板，首个 EXE 安装包将在下个正式版本发布。
+
+### 周期结束 · 完成，或者诚实 Pass
+
+日、周、月任务会按周期结算。你可以回看历史与履约趋势，而不是面对一张永远清不完、也说不清从何而来的旧清单。
+
+## 它刻意做少，但把这些做好
+
+- **本地优先**：新增、编辑、完成、排序都只依赖本机数据库，断网照常使用。
+- **原生而轻量**：macOS 使用 AppKit/SwiftUI，Android 使用 Kotlin/RemoteViews，Windows 使用 WPF；领域规则由 Rust 共享，没有 Electron、Flutter 或 WebView 运行时。
+- **适合真实生活的周期**：支持日、周、月、闲时，一次性或重复任务，以及主线、支线、外传。
+- **看见真实结果**：完成、`Pass`、历史与履约统计都被认真记录，不靠无限顺延粉饰计划。
+- **提醒不抢方向盘**：支持睡前规划、任务级提醒和非阻塞更新提示，不用强制弹窗打断当前工作。
+- **数据边界清楚**：默认只保存在设备上；启用同步时，任务正文以 AES-256-GCM 密文离开设备。
+
+## 现在可以在哪里用
+
+当前稳定版是 [`v0.1.11`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.11)，正式安装包覆盖 macOS 与 Android。Windows 客户端源码和发布流程已在 `main` 就绪，EXE 从下个正式版本开始提供。
+
+| 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | [Woo-Todo-v0.1.10-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.10/Woo-Todo-v0.1.10-macos-arm64.zip) | 解压后将 `Woo Todo.app` 拖入“应用程序”。当前使用 ad-hoc 签名，未经过 Apple 公证；首次打开若被拦截，请在“系统设置 → 隐私与安全性”允许。 |
-| Android 13+ | [Woo-Todo-v0.1.10-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.10/Woo-Todo-v0.1.10-android.apk) | 从系统文件管理器打开并允许本次来源安装；正式包使用项目长期 Release 签名。 |
-| 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.10/SHA256SUMS.txt) | 下载后可用 `shasum -a 256 <文件>` 对照。 |
+| macOS 15+、Apple Silicon | 工作时常驻桌面的悬浮任务板、完整任务管理与统计 | `v0.1.11` 可下载 |
+| Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.1.11` 可下载 |
+| Windows 10/11 x64 | 本地任务、历史统计、系统托盘与可置顶/穿透的悬浮任务板 | 下个正式版本提供 EXE |
 
-macOS 客户端只显示在菜单栏，不显示 Dock 图标。Android 正式包可直接覆盖升级：保留任务、同步身份和配对状态，**普通版本更新不需要重新配对**。请不要先卸载、清除应用数据，或用不同签名的 Debug 包覆盖正式包；这些操作可能删除本地数据库/Keystore，只有在更换设备、清除数据或主动更换同步空间时才需要重新配对。
+Windows 首版聚焦本地任务闭环和系统任务提醒，不包含现有 macOS/Android 的同步与加密备份。
 
-## 第一次使用
+## 下载 v0.1.11
+
+| 平台 | 安装包 | 安装提示 |
+| --- | --- | --- |
+| macOS | [Woo-Todo-v0.1.11-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.11/Woo-Todo-v0.1.11-macos-arm64.zip) | 解压后把 `Woo Todo.app` 拖入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.1.11-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.11/Woo-Todo-v0.1.11-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.11/SHA256SUMS.txt) | 下载后用 `shasum -a 256 <文件>` 或系统等价工具核对。 |
+
+覆盖升级会保留任务、同步身份与配对状态，**普通更新不需要重新配对**。不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版；这些操作可能删除本地数据库或 Android Keystore。
+
+## 装好以后，从这里开始
 
 ### macOS
 
-1. 启动后点击菜单栏 Woo Todo 图标：选择“任务详情与统计…”打开任务和统计主窗口，选择独立的“设置…”管理显示、快捷键、同步等选项。
-2. 在主窗口左侧，“任务与统计”用于今日、本周、本月、闲时、历史和统计；“设置”用于显示、快捷键和同步。
-3. 任务板右上角 `+` 可新增任务；点击圆圈完成，双击编辑，右键删除，同一任务线内可拖动排序。
+1. 启动后在菜单栏找到 Woo Todo；它不会占用 Dock 位置。
+2. 打开“任务详情与统计…”管理今日、本周、本月、闲时、历史与设置。
+3. 用任务板右上角 `+` 新增任务；点击圆圈完成，双击编辑，右键删除，同一任务线内可以拖动排序。
 
 ### Android
 
-1. 首次打开后按系统提示授予通知权限；首页可切换今日、明日、本周、本月和闲时。
-2. 点击右下角 `+` 新建任务；编辑任务时可设置重复规则和指定时间提醒。
-3. 在“更多”中管理显示设置、提醒、备份和同步；三星设备可从桌面“组件”添加今日 Widget。
+1. 首次打开后按需授予通知权限，在顶部切换今日、明日、本周、本月与闲时。
+2. 点击右下角 `+` 新建任务，也可以设置重复规则和指定时间提醒。
+3. 三星设备可长按桌面空白处，从“组件”中添加 Woo Todo 今日 Widget。
 
-## 连接两端
+### Windows（下个正式版本）
 
-不需要同步时可以跳过配对，两端仍可独立使用。需要同步时，先在 Mac 的“设置 → 同步”完成一端配置，再在 Android 首页未连接状态点击“配对”；Android 会先让你选择连接方式，不会把说明强行弹成阻塞对话框。
+1. 运行 `Woo-Todo-vX.Y.Z-windows-x64-setup.exe` 完成当前用户安装。
+2. 在悬浮任务板快速新增、完成或编辑任务，右键可 `Pass` 或删除。
+3. 托盘菜单负责完整窗口、任务板显隐与穿透恢复；默认全局快捷键为 `Ctrl + Alt + 1` 至 `Ctrl + Alt + 4`。任务提醒由 Windows 系统调度，应用退出后仍可触发。
 
-### 方式一：坚果云 WebDAV（推荐，不用自建服务器）
+更完整的安装、权限和首次验收步骤见[安装指南](docs/INSTALLATION.md)。
 
-1. 在坚果云网页“账户信息 → 安全选项 → 第三方应用管理”创建应用密码，不要把网页登录密码填入 Woo Todo。
-2. Mac 在“设置 → 同步 → 坚果云自动同步”填写账号和应用密码，点击保存连接，再选择“显示 Android 配置二维码”。
-3. Android 点击“配对 → 扫描二维码配对”，扫描 Mac 二维码并确认预填内容；手机会生成独立设备 ID，保存后自动首次同步。
-4. 没有相机或不方便扫码时，Android 选择“手动填写坚果云配置”，填写账号邮箱、应用密码、同步空间名和同步密钥；这些值必须与 Mac 完全一致。
+## 同步，按自己的信任边界选
 
-### 方式二：自建 Worker 在线配对
+Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；任务始终留在本地。
 
-1. 按[后端部署指南](backend/README.md)部署 Cloudflare Worker + D1，并确认两端都能访问 HTTPS 根地址。
-2. Mac 在“设置 → 同步”页填写 Worker 根地址和创建邀请码，创建同步空间后点击“生成配对二维码”。
-3. Android 点击“配对 → 扫描二维码配对”，扫描后逐位核对两端显示的六位码，再回 Mac 确认绑定。
-4. 没有相机时，使用 Mac 的“复制配对链接（备用）”，通过私密渠道发送到自己的手机，在 Android 选择“配对 → 粘贴配对链接”；配对链接约 10 分钟有效。
+- **同一网络，最快开始**：`v0.1.11` 支持由 Mac 提供局域网同步，Android 扫码连接，适合两台设备经常处于同一网络的场景。
+- **坚果云 WebDAV，推荐长期使用**：不需要部署服务器。Woo Todo 直接上传端到端加密的增量对象，坚果云只保存密文。
+- **Cloudflare Worker + D1，自己托管**：适合希望掌控在线服务端与设备授权的人；服务端仍接触不到任务明文。
 
-两种方式的二维码/链接都可能包含完整同步凭据或一次性 secret，只应在两台设备旁使用，确认后立即隐藏或清理剪贴板，不要发到群聊、截图、公开仓库或日志。完整排错和撤销设备流程见[可选在线配对同步](docs/PAIRING.md)与[坚果云自动同步](docs/JIANGUOYUN_SYNC.md)。
+三种同步方式互斥，但都不会成为本地操作的前置条件。配置二维码和配对链接可能含有完整凭据或一次性 secret，只应在自己的设备旁展示，用完立即隐藏或清理剪贴板。
 
-## 更新方式
+[坚果云配置](docs/JIANGUOYUN_SYNC.md) · [Worker 配对](docs/PAIRING.md) · [同步与安全设计](docs/SYNC_AND_SECURITY.md)
 
-- 双端会低频检查 GitHub 最新正式 Release；检查失败不会影响本地任务。
-- 发现新版本时只在菜单中留下“有新版本可用”：macOS 在菜单栏菜单，Android 在“更多”菜单。不会自动弹窗、抢占焦点、下载或安装，用户可以继续使用并自行决定何时更新。
-- 菜单中的版本入口会打开 GitHub Release 下载页；“检查更新”始终保留，用户也可以随时手动检查。
-- 安装到对应版本后，提示会自动消失。若 Release 页面暂时不可达，可稍后从[发布页](https://github.com/stophemo/woo-todo/releases)手动下载。
+## 数据归你，不是口号
 
-## 数据与隐私
-
-- **任务默认只在本地**：不要求 Woo Todo 账号，应用启动和编辑不依赖网络；本地数据存储在设备 SQLite。
-- **坚果云同步**：Woo Todo 直接使用 WebDAV，上传的是 AES-256-GCM 加密的增量对象，不上传 SQLite 整库或任务明文。配置二维码包含坚果云应用密码和同步密钥，应按完整凭据保护。
-- **Worker 同步**：vault key 由客户端生成，Worker/D1 只保存密文和同步所需元数据，服务端不能读取任务正文。自建服务的域名、密钥和额度由部署者负责。
-- **加密备份**：`.wootodo` 使用 AES-256-GCM 加密，恢复口令无法找回；备份可保存到用户信任的本地或云端位置。默认不把同步身份放入备份，替换丢失设备时才按文档谨慎恢复。
-- **离线可用**：断网时两端仍可编辑，网络恢复后再发送积压变更。撤销设备会阻止后续同步，但不会远程删除该设备已经下载的本地数据。
-
-## 技术边界
-
-- `macos/` 是 Swift + AppKit/SwiftUI 原生客户端；`android/` 是 Kotlin + Android Views/RemoteViews 原生客户端；不引入 Electron、Flutter、WebView 运行时或 Android 前台常驻服务。
-- `backend/` 是可选的 Cloudflare Workers + D1 服务；`shared/` 保存 JSON Schema、fixture 和跨端契约。三端通过 `shared/` 约定协议，不直接依赖彼此实现。
-- 当前发布目标为 macOS Apple Silicon 和 Android 13+；暂不提供 iOS、Windows 或 Web 任务客户端。
+- 本地任务保存在设备 SQLite 中，启动和编辑不依赖网络。
+- 坚果云与 Worker 同步只传输 AES-256-GCM 密文及收敛所需元数据，云端不保存任务明文或 Woo Todo 登录凭据。
+- 加密备份使用 `.wootodo` 格式；恢复口令无法找回，请把它和备份文件分开保管。
+- 撤销设备会阻止它继续同步，但无法远程删除已经下载到该设备的本地数据。
 
 ## 开发
 
-开发环境和真机验收要求见[开发指南](docs/DEVELOPMENT.md)。常用检查命令：
+三端保持原生 UI、彼此不直接依赖；领域、SQLite 语义与通知计划逐步收敛到 `shared/core-rust/`，同步协议继续通过 `shared/schema/` 与 `shared/fixtures/` 对齐。常用检查命令：
 
 ```bash
 npm install
 npm run validate:contracts
 npm run test:crypto
 npm run test:backend
-cd android && ./gradlew testDebugUnitTest assembleDebug lintDebug
-cd ../macos && swift build
+cargo test --manifest-path shared/core-rust/Cargo.toml --locked --all-targets
+./android/gradlew -p android testDebugUnitTest
+swift test --package-path macos
+dotnet test windows/WooTodo.sln --configuration Release
 ```
 
-修改共享协议时，需要同步更新 `shared/schema/`、`shared/fixtures/`、Swift/Kotlin 模型和后端校验；完整测试矩阵见[测试与验收](docs/TESTING.md)。发版和签名维护见[发版指南](docs/RELEASING.md)。
+修改共享协议时，需要同时更新 JSON Schema、fixture、Swift/Kotlin 模型和后端校验。环境要求与完整测试矩阵见[开发指南](docs/DEVELOPMENT.md)和[测试与验收](docs/TESTING.md)。
 
-## 文档
+## 继续了解
 
-| 文档 | 内容 |
+| 文档 | 你会找到什么 |
 | --- | --- |
-| [个人安装与首次使用](docs/INSTALLATION.md) | 安装、权限、备份和首次验收 |
-| [产品规格](docs/PRODUCT_SPEC.md) | 任务规则、显示变量、通知和更新行为 |
+| [安装与首次使用](docs/INSTALLATION.md) | 各平台安装、权限、升级和首次验收 |
+| [产品规格](docs/PRODUCT_SPEC.md) | 任务周期、状态、显示变量与提醒规则 |
 | [坚果云自动同步](docs/JIANGUOYUN_SYNC.md) | 不自建服务器的跨端同步 |
-| [可选在线配对同步](docs/PAIRING.md) | Worker 配对、六位核对码和撤销设备 |
-| [同步与安全](docs/SYNC_AND_SECURITY.md) | 加密、凭据和服务端边界 |
+| [可选在线配对同步](docs/PAIRING.md) | Worker 配对、核对码与设备撤销 |
+| [同步与安全](docs/SYNC_AND_SECURITY.md) | 加密、凭据、威胁边界与收敛规则 |
 | [加密备份与恢复](docs/BACKUP_AND_RESTORE.md) | `.wootodo` 格式与恢复限制 |
-| [开发指南](docs/DEVELOPMENT.md) | 工具链、构建和真机测试 |
-| [后端部署指南](backend/README.md) | Cloudflare Workers + D1 自托管 |
-| [发版指南](docs/RELEASING.md) | CI、签名和 Release 流程 |
+| [架构说明](docs/ARCHITECTURE.md) | 原生客户端、领域层与本地优先设计 |
+| [发版指南](docs/RELEASING.md) | CI、签名、安装包与 Release 流程 |
 
 ## 许可
 

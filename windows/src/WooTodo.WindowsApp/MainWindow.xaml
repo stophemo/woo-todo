@@ -1,0 +1,77 @@
+<Window x:Class="WooTodo.WindowsApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Woo Todo · 任务详情、统计与设置" Width="1040" Height="700"
+        MinWidth="820" MinHeight="560" WindowStartupLocation="CenterScreen"
+        Background="{StaticResource PageBrush}">
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="210" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+    <Border Background="#F0F0F5" BorderBrush="{StaticResource DividerBrush}" BorderThickness="0,0,1,0">
+      <DockPanel Margin="14,18">
+        <TextBlock DockPanel.Dock="Top" Text="Woo Todo" FontSize="22" FontWeight="SemiBold" Margin="10,2,10,18" />
+        <ListBox x:Name="NavigationList" SelectionChanged="NavigationChanged" BorderThickness="0" Background="Transparent">
+          <ListBoxItem Tag="Today" Content="今日" Padding="12,9" />
+          <ListBoxItem Tag="Tomorrow" Content="明日" Padding="12,9" />
+          <ListBoxItem Tag="Week" Content="本周" Padding="12,9" />
+          <ListBoxItem Tag="Month" Content="本月" Padding="12,9" />
+          <ListBoxItem Tag="Someday" Content="闲时" Padding="12,9" />
+          <Separator Margin="6,9" />
+          <ListBoxItem Tag="History" Content="历史" Padding="12,9" />
+          <ListBoxItem Tag="Statistics" Content="统计" Padding="12,9" />
+          <Separator Margin="6,9" />
+          <ListBoxItem Tag="Settings" Content="显示与快捷键" Padding="12,9" />
+        </ListBox>
+      </DockPanel>
+    </Border>
+    <Grid Grid.Column="1" Margin="26,20,26,24">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock x:Name="PageTitle" Text="今日" FontSize="26" FontWeight="SemiBold" />
+          <TextBlock x:Name="PageSubtitle" Margin="0,4,0,0" Foreground="{StaticResource SecondaryTextBrush}" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal">
+          <Button Style="{StaticResource IconButton}" Content="&#xE72C;" ToolTip="刷新" Click="RefreshClicked" />
+          <Button x:Name="AddButton" Style="{StaticResource IconButton}" Content="&#xE710;" Margin="8,0,0,0" ToolTip="新增任务" Click="AddClicked" />
+        </StackPanel>
+      </Grid>
+      <Grid Grid.Row="1" Margin="0,20,0,0">
+        <ScrollViewer x:Name="TaskScroll" VerticalScrollBarVisibility="Auto">
+          <StackPanel x:Name="TaskPanel" />
+        </ScrollViewer>
+        <ScrollViewer x:Name="StatisticsScroll" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+          <StackPanel x:Name="StatisticsPanel" />
+        </ScrollViewer>
+        <Grid x:Name="SettingsPanel" Visibility="Collapsed">
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+          <TextBlock Text="悬浮任务板" FontSize="18" FontWeight="SemiBold" />
+          <Grid Grid.Row="1" Margin="0,16,0,0" MaxWidth="520" HorizontalAlignment="Left">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="160" /><ColumnDefinition Width="280" /><ColumnDefinition Width="60" /></Grid.ColumnDefinitions>
+            <TextBlock Text="不透明度" VerticalAlignment="Center" />
+            <Slider x:Name="OpacitySlider" Grid.Column="1" Minimum="0.35" Maximum="1" TickFrequency="0.05" IsSnapToTickEnabled="True" ValueChanged="OpacityChanged" />
+            <TextBlock x:Name="OpacityValue" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" />
+          </Grid>
+          <StackPanel Grid.Row="2" Margin="0,18,0,0">
+            <CheckBox x:Name="TopmostCheckBox" Content="任务板始终置顶" Checked="TopmostChanged" Unchecked="TopmostChanged" />
+            <CheckBox x:Name="ClickThroughCheckBox" Content="鼠标穿透（可用 Ctrl+Alt+4 或托盘菜单恢复）" Margin="0,12,0,0" Checked="ClickThroughChanged" Unchecked="ClickThroughChanged" />
+          </StackPanel>
+          <StackPanel Grid.Row="3" Margin="0,30,0,0">
+            <TextBlock Text="全局快捷键" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock x:Name="HotKeyStatusText" Visibility="Collapsed" Margin="0,10,0,2" Foreground="#B42318" TextWrapping="Wrap" />
+            <TextBlock Margin="0,12,0,0" Foreground="{StaticResource SecondaryTextBrush}" Text="Ctrl+Alt+1  快速新增" />
+            <TextBlock Margin="0,6,0,0" Foreground="{StaticResource SecondaryTextBrush}" Text="Ctrl+Alt+2  显示或隐藏任务板" />
+            <TextBlock Margin="0,6,0,0" Foreground="{StaticResource SecondaryTextBrush}" Text="Ctrl+Alt+3  切换置顶" />
+            <TextBlock Margin="0,6,0,0" Foreground="{StaticResource SecondaryTextBrush}" Text="Ctrl+Alt+4  切换鼠标穿透" />
+          </StackPanel>
+        </Grid>
+      </Grid>
+    </Grid>
+  </Grid>
+</Window>

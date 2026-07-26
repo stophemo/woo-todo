@@ -1,16 +1,22 @@
-# woo-todo v1 架构设计
+# Woo Todo 架构设计
 
 ## 1. 总体原则
 
-v1 采用“双原生、共协议、不共享运行时”：macOS 与 Android 分别使用平台原生技术，只共享 JSON 数据契约、加密格式和跨端测试样例。
+Woo Todo 采用“Rust 共享核心 + 三端原生外壳”：领域规则只维护一份，UI、系统集成与通知调度直接使用各平台能力，不引入 WebView 或跨端 UI 运行时。
 
 ```text
+macOS：Swift + AppKit/SwiftUI ─┐
+Android：Kotlin + Views       ├── C ABI/JSON ── Rust 领域、SQLite 语义、通知计划
+Windows：C# + WPF/Win32 ─────┘
+
 Android 本地 SQLite ── 坚果云 WebDAV 密文对象（推荐） ── macOS 本地 SQLite
          └──── 可选 HTTPS 增量同步 ── Worker + D1 ─────────┘
                                   远端只保存密文
 ```
 
 所有 UI 始终读取本地数据库。默认安装不创建同步空间，也不发送任务数据；应用只会低频访问 GitHub 公共 Release API 检查正式版。用户主动启用坚果云或 Worker 后，网络请求失败也只会延迟同步，不会阻塞用户操作。
+
+共享核心位于 `shared/core-rust/`，通过窄 C ABI 传递 `camelCase` JSON。Windows 已完成领域、仓储与通知计划接入；macOS、Android 按能力切片渐进迁移，迁移期间继续以跨端 fixture 和双实现测试锁定行为。详细决策见 [ADR-0004](adr/0004-rust-core-native-shells.md)。
 
 ## 2. 客户端
 
@@ -38,6 +44,24 @@ Android 本地 SQLite ── 坚果云 WebDAV 密文对象（推荐） ── ma
 - JourneyApps ZXing：仅由 App 内操作启动的二维码扫描 Activity，用于消费 Mac 生成的坚果云配置和 Worker 配对二维码。
 
 Widget 进程可随时被系统回收，所有展示状态必须能从本地数据库重建。
+
+### 2.3 Windows
+
+- C#、WPF 与 .NET 10 构建 Windows 原生桌面客户端。
+- `WooTodo.Core` 与 `WooTodo.Storage` 是 Rust C ABI 的薄适配层；周期、结算、统计、SQLite 仓储语义和通知计划由共享核心实现。
+- `WooTodo.WindowsApp` 负责 WPF UI、托盘、窗口、Win32 集成与 Windows Toast Scheduler。安装器注册 AppUserModelID 和 `wootodo://` 协议，提醒交给系统调度后无需应用常驻。
+- 采用本地优先架构：UI 只读写本地 SQLite，新增、编辑、完成、Pass、删除与排序先在本地提交，不以网络为前置条件。
+- Windows 首版不接入 WebDAV、Worker 或其他同步通道，不提供跨端同步。
+
+### 2.4 通知边界
+
+Rust 根据任务快照生成稳定计划：`id + taskId + fireDate + fireTime + title + body + deepLink`。原生外壳消费计划并负责权限、系统调度、点击激活、重启恢复与展示：
+
+- macOS：`UNUserNotificationCenter`
+- Android：`AlarmManager`、广播接收器与 `NotificationManager`
+- Windows：WinRT `ScheduledToastNotification`
+
+Rust 不请求权限、不保留平台回调，也不尝试在后台自行计时。这样既统一提醒语义，又保留三端最可靠的系统生命周期。
 
 ## 3. 领域层
 
@@ -125,6 +149,7 @@ v1/<vaultId>/ops/<opId 前两位>/<opId>.json
 
 - macOS Release：空闲 RSS 目标不超过 60MB、硬上限 100MB；30 分钟平均 CPU 不超过 0.3%。
 - Android：无前台服务、无主动常驻进程；典型使用额外耗电目标不超过 0.5%/天。
+- Windows Release：空闲工作集目标不超过 90MB、硬上限 150MB；30 分钟平均 CPU 不超过 0.3%，通知到期由系统调度而非应用轮询。
 - Widget 操作本地反馈不超过 1 秒。
 - 无变更时不高频轮询；典型个人使用同步流量不超过 1MB/天。
 

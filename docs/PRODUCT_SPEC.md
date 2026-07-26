@@ -124,7 +124,7 @@ macOS 悬浮任务板和 Android Widget 只展示当天的 `day` 任务：
 ### 4.1 任务级提醒
 
 - 有日期的 pending 待办可设置 `HH:mm` 提醒时间，提醒时间随加密任务正文跨端同步。
-- macOS 使用 UserNotifications，Android 使用 AlarmManager 与本地通知；两端权限和已显示状态互不复制。
+- Rust 共享核心根据任务快照生成稳定通知计划；macOS 使用 UserNotifications，Android 使用 AlarmManager 与本地通知，Windows 使用系统 Toast Scheduler。权限、系统队列和已显示状态留在各设备，不参与同步。
 - 完成、Pass、删除、改期、系统时间/时区变化和设备重启后重新计算或取消对应提醒。
 - 闲时任务没有日期，不支持任务级提醒。
 
@@ -152,9 +152,11 @@ macOS 悬浮任务板和 Android Widget 只展示当天的 `day` 任务：
 ## 7. 非目标
 
 - 用户名、密码、邮箱登录与多人协作
-- iOS、Windows、Web、HarmonyOS
+- iOS、Web、HarmonyOS
 - Android 全局悬浮窗与桌面真实毛玻璃
 - 笔记、附件、子任务、标签、自然语言录入
 - 秒级实时同步、WebSocket 和云端推送提醒
 - 应用商店发布、静默下载与自动安装
 - AI 自律评价、积分和排行榜
+
+Windows 首版仅覆盖 Windows 10/11 x64 的本地任务闭环、任务级系统提醒、托盘与悬浮任务板；在线同步、加密备份、ARM64 原生包和应用商店发布暂不纳入范围。

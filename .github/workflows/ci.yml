@@ -15,6 +15,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  shared-core:
+    name: Rust 共享核心
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: 缓存 Rust 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: shared/core-rust -> target
+
+      - name: 检查 Rust 格式
+        run: cargo fmt --manifest-path shared/core-rust/Cargo.toml --check
+
+      - name: 运行 Rust 全量测试
+        run: cargo test --manifest-path shared/core-rust/Cargo.toml --locked --all-targets
+
+      - name: 检查 Rust 静态诊断
+        run: cargo clippy --manifest-path shared/core-rust/Cargo.toml --locked --all-targets -- -D warnings
+
   contracts-backend:
     name: 契约与后端
     runs-on: ubuntu-latest
@@ -57,6 +84,44 @@ jobs:
 
       - name: 运行 Swift 测试
         run: swift test --package-path macos
+
+  windows:
+    name: Windows 原生测试与发布验证
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: shared/core-rust -> target
+
+      - name: 配置 .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: 还原 Windows 依赖
+        run: dotnet restore windows/WooTodo.sln --locked-mode
+
+      - name: 构建 Windows 解决方案
+        run: dotnet build windows/WooTodo.sln --configuration Release --no-restore
+
+      - name: 运行 Windows 测试
+        run: dotnet test windows/WooTodo.sln --configuration Release --no-build --no-restore
+
+      - name: 安装 Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: 验证 Windows EXE 安装包
+        shell: pwsh
+        run: ./windows/scripts/package.ps1 -NoRestore
 
   android:
     name: Android 原生测试

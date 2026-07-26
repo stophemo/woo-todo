@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RustCoreManifest>$(MSBuildProjectDirectory)/../../../shared/core-rust/Cargo.toml</RustCoreManifest>
+    <RustCoreDirectory>$(MSBuildProjectDirectory)/../../../shared/core-rust</RustCoreDirectory>
+    <RustCoreLibrary Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(RustCoreDirectory)/target/release/woo_todo_core.dll</RustCoreLibrary>
+    <RustCoreLibrary Condition="$([MSBuild]::IsOSPlatform('OSX'))">$(RustCoreDirectory)/target/release/libwoo_todo_core.dylib</RustCoreLibrary>
+    <RustCoreLibrary Condition="$([MSBuild]::IsOSPlatform('Linux'))">$(RustCoreDirectory)/target/release/libwoo_todo_core.so</RustCoreLibrary>
+  </PropertyGroup>
+
+  <Target Name="BuildSharedRustCore" BeforeTargets="BeforeBuild">
+    <Exec Command="cargo build --manifest-path &quot;$(RustCoreManifest)&quot; --release --locked" />
+  </Target>
+
+  <Target Name="CopySharedRustCore" AfterTargets="Build">
+    <Error Condition="!Exists('$(RustCoreLibrary)')" Text="缺少共享 Rust 核心产物：$(RustCoreLibrary)" />
+    <Copy SourceFiles="$(RustCoreLibrary)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <ItemGroup>
+    <None Include="$(RustCoreLibrary)"
+          Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

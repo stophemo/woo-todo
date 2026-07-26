@@ -2,13 +2,15 @@
   "name": "woo-todo",
   "version": "0.1.11",
   "private": true,
-  "description": "无我待办：macOS 与 Android 原生 local-first 待办应用",
+  "description": "无我待办：macOS、Android 与 Windows 原生 local-first 待办应用",
   "scripts": {
     "validate:contracts": "node scripts/validate-contracts.mjs",
     "test:crypto": "node --test shared/reference/*.test.mjs",
+    "test:core": "cargo test --manifest-path shared/core-rust/Cargo.toml --locked --all-targets",
     "test:backend": "npm --prefix backend test",
     "test:macos": "swift test --package-path macos",
     "test:android": "./android/gradlew -p android testDebugUnitTest",
+    "test:windows": "dotnet test windows/WooTodo.sln --configuration Release",
     "test": "npm run validate:contracts && npm run test:crypto && npm run test:backend && npm run test:macos && npm run test:android"
   },
   "engines": {

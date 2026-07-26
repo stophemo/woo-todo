@@ -133,11 +133,79 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  windows:
+    name: 构建 Windows x64 自包含包
+    needs: validate-tag
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: shared/core-rust -> target
+
+      - name: 配置 .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: 校验 tag 与 Windows 版本
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:GITHUB_REF_NAME -replace "^v", ""
+          [xml] $props = Get-Content -LiteralPath "windows/Directory.Build.props" -Raw
+          $sourceVersion = [string] $props.Project.PropertyGroup.Version
+          if ($sourceVersion -ne $version) {
+            throw "Windows 源码版本 $sourceVersion 与 tag $version 不一致"
+          }
+
+      - name: 还原 Windows 依赖
+        run: dotnet restore windows/WooTodo.sln --locked-mode
+
+      - name: 构建 Windows 解决方案
+        run: dotnet build windows/WooTodo.sln --configuration Release --no-restore
+
+      - name: 运行 Windows 全量测试
+        run: dotnet test windows/WooTodo.sln --configuration Release --no-build --no-restore
+
+      - name: 安装 Inno Setup 6
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: 打包并验证 Windows EXE 安装包
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:GITHUB_REF_NAME -replace "^v", ""
+          ./windows/scripts/package.ps1 -Version $version -NoRestore
+          $installer = "windows/dist/Woo-Todo-v$version-windows-x64-setup.exe"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "没有找到 Windows EXE 安装包：$installer"
+          }
+          New-Item -ItemType Directory -Path "release" -Force | Out-Null
+          Copy-Item -LiteralPath $installer -Destination "release/Woo-Todo-$($env:GITHUB_REF_NAME)-windows-x64-setup.exe"
+
+      - name: 上传 Windows 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: 创建 GitHub Release
     needs:
       - android
       - macos
+      - windows
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -157,7 +225,7 @@ jobs:
         run: |
           set -euo pipefail
           cd release
-          shasum -a 256 ./*.apk ./*.zip > SHA256SUMS.txt
+          shasum -a 256 ./*.apk ./*.zip ./*.exe > SHA256SUMS.txt
 
       - name: 发布安装包
         env:

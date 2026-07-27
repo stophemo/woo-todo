@@ -52,13 +52,23 @@ function Wait-ForCondition {
 
 Add-Type -TypeDefinition @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
 public static class WooTodoSmokeNative
 {
+    public delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern IntPtr FindWindowW(string className, string windowName);
+    public static extern int GetClassNameW(IntPtr window, StringBuilder text, int maximum);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetDlgItem(IntPtr parent, int id);
@@ -95,8 +105,61 @@ public static class WooTodoSmokeNative
 
     [DllImport("user32.dll")]
     public static extern int GetSystemMetrics(int index);
+
+    public static IntPtr FindTopLevelWindow(uint processId, int childId)
+    {
+        IntPtr result = IntPtr.Zero;
+        EnumWindows(delegate(IntPtr window, IntPtr parameter)
+        {
+            uint ownerProcessId;
+            GetWindowThreadProcessId(window, out ownerProcessId);
+            if (ownerProcessId == processId && GetDlgItem(window, childId) != IntPtr.Zero)
+            {
+                result = window;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
+
+    public static string DescribeTopLevelWindows(uint processId)
+    {
+        var descriptions = new List<string>();
+        EnumWindows(delegate(IntPtr window, IntPtr parameter)
+        {
+            uint ownerProcessId;
+            GetWindowThreadProcessId(window, out ownerProcessId);
+            if (ownerProcessId != processId)
+            {
+                return true;
+            }
+            var className = new StringBuilder(256);
+            var title = new StringBuilder(512);
+            GetClassNameW(window, className, className.Capacity);
+            GetWindowTextW(window, title, title.Capacity);
+            descriptions.Add(string.Format(
+                "handle={0}, class={1}, title={2}, visible={3}",
+                window,
+                className,
+                title,
+                IsWindowVisible(window)
+            ));
+            return true;
+        }, IntPtr.Zero);
+        return descriptions.Count == 0 ? "<none>" : string.Join(" | ", descriptions);
+    }
 }
 "@
+
+function Find-AppWindow {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
+        [Parameter(Mandatory = $true)][int] $ChildId
+    )
+
+    return [WooTodoSmokeNative]::FindTopLevelWindow([uint32] $Process.Id, $ChildId)
+}
 
 function Get-WindowText {
     param([Parameter(Mandatory = $true)][IntPtr] $Window)
@@ -312,12 +375,12 @@ try {
     if ($primary.WaitForExit(5000)) {
         throw "解压后的 WooTodo.exe 启动后意外退出，退出码：$($primary.ExitCode)"
     }
-    Wait-ForCondition -Description "创建主窗口与悬浮任务板" -Condition {
-        [WooTodoSmokeNative]::FindWindowW("WooTodo.Native.Main.v1", $null) -ne [IntPtr]::Zero -and
-        [WooTodoSmokeNative]::FindWindowW("WooTodo.Native.Float.v1", $null) -ne [IntPtr]::Zero
+    Wait-ForCondition -Description "创建主窗口与悬浮任务板" -TimeoutSeconds 30 -Condition {
+        (Find-AppWindow -Process $primary -ChildId 100) -ne [IntPtr]::Zero -and
+        (Find-AppWindow -Process $primary -ChildId 200) -ne [IntPtr]::Zero
     }
-    $main = [WooTodoSmokeNative]::FindWindowW("WooTodo.Native.Main.v1", $null)
-    $floating = [WooTodoSmokeNative]::FindWindowW("WooTodo.Native.Float.v1", $null)
+    $main = Find-AppWindow -Process $primary -ChildId 100
+    $floating = Find-AppWindow -Process $primary -ChildId 200
     if (-not [WooTodoSmokeNative]::IsWindowVisible($floating)) {
         throw "悬浮任务板启动后不可见"
     }
@@ -409,12 +472,12 @@ try {
     if ($primary.WaitForExit(5000)) {
         throw "重启后的 WooTodo.exe 意外退出，退出码：$($primary.ExitCode)"
     }
-    Wait-ForCondition -Description "重启后恢复原生窗口" -Condition {
-        [WooTodoSmokeNative]::FindWindowW("WooTodo.Native.Main.v1", $null) -ne [IntPtr]::Zero -and
-        [WooTodoSmokeNative]::FindWindowW("WooTodo.Native.Float.v1", $null) -ne [IntPtr]::Zero
+    Wait-ForCondition -Description "重启后恢复原生窗口" -TimeoutSeconds 30 -Condition {
+        (Find-AppWindow -Process $primary -ChildId 100) -ne [IntPtr]::Zero -and
+        (Find-AppWindow -Process $primary -ChildId 200) -ne [IntPtr]::Zero
     }
-    $main = [WooTodoSmokeNative]::FindWindowW("WooTodo.Native.Main.v1", $null)
-    $floating = [WooTodoSmokeNative]::FindWindowW("WooTodo.Native.Float.v1", $null)
+    $main = Find-AppWindow -Process $primary -ChildId 100
+    $floating = Find-AppWindow -Process $primary -ChildId 200
     $taskList = Require-ChildWindow -Parent $floating -Id 200
     Assert-TaskState -Inspector $inspector -Database $database -Title $taskTitle -State pending
     Assert-Settings -Path $settingsPath -Opacity 0.61 -ClickThrough $false
@@ -452,6 +515,10 @@ try {
 }
 catch {
     Add-Diagnostic "烟测失败：$($_.Exception.Message)"
+    if ($null -ne $primary -and -not $primary.HasExited) {
+        $windows = [WooTodoSmokeNative]::DescribeTopLevelWindows([uint32] $primary.Id)
+        Add-Diagnostic "主实例顶层窗口：$windows"
+    }
     Add-Content -LiteralPath $diagnosticPath -Value ($_ | Out-String) -Encoding utf8
     Save-Screenshot -Name "failure.png"
     Set-Content `

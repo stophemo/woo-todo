@@ -6,8 +6,8 @@ Woo Todo 采用“Rust 共享核心 + 三端原生外壳”：领域规则只维
 
 ```text
 macOS：Swift + AppKit/SwiftUI ─┐
-Android：Kotlin + Views       ├── C ABI/JSON ── Rust 领域、SQLite 语义、通知计划
-Windows：C# + WPF/Win32 ─────┘
+Android：Kotlin + Views       ├── 原生绑定/协议适配 ── Rust 领域、SQLite 语义、通知计划
+Windows：Rust + windows-rs ───┘        └── 同一进程内直接依赖 crate
 
 Android 本地 SQLite ── 坚果云 WebDAV 密文对象（推荐） ── macOS 本地 SQLite
          └──── 可选 HTTPS 增量同步 ── Worker + D1 ─────────┘
@@ -16,7 +16,7 @@ Android 本地 SQLite ── 坚果云 WebDAV 密文对象（推荐） ── ma
 
 所有 UI 始终读取本地数据库。默认安装不创建同步空间，也不发送任务数据；应用只会低频访问 GitHub 公共 Release API 检查正式版。用户主动启用坚果云或 Worker 后，网络请求失败也只会延迟同步，不会阻塞用户操作。
 
-共享核心位于 `shared/core-rust/`，通过窄 C ABI 传递 `camelCase` JSON。Windows 已完成领域、仓储与通知计划接入；macOS、Android 按能力切片渐进迁移，迁移期间继续以跨端 fixture 和双实现测试锁定行为。详细决策见 [ADR-0004](adr/0004-rust-core-native-shells.md)。
+共享核心位于 `shared/core-rust/`。Windows 与核心同为 Rust，在同一进程内直接依赖 crate；需要跨语言调用的客户端才通过窄原生绑定传递 `camelCase` JSON。Windows 已完成领域、仓储与通知计划接入；macOS、Android 按能力切片渐进迁移，迁移期间继续以跨端 fixture 和双实现测试锁定行为。详细决策见 [ADR-0004](adr/0004-rust-core-native-shells.md)。
 
 ## 2. 客户端
 
@@ -47,10 +47,11 @@ Widget 进程可随时被系统回收，所有展示状态必须能从本地数�
 
 ### 2.3 Windows
 
-- C#、WPF 与 .NET 10 构建 Windows 原生桌面客户端。
-- `WooTodo.Core` 与 `WooTodo.Storage` 是 Rust C ABI 的薄适配层；周期、结算、统计、SQLite 仓储语义和通知计划由共享核心实现。
-- `WooTodo.WindowsApp` 负责 WPF UI、托盘、窗口、Win32 集成与 Windows Toast Scheduler。安装器注册 AppUserModelID 和 `wootodo://` 协议，提醒交给系统调度后无需应用常驻。
+- Rust、`windows-rs`/`windows-sys` 与 Win32 构建 Windows 原生桌面客户端，不加载 CLR、WebView 或跨端 UI 运行时。
+- `windows` crate 直接依赖 `shared/core-rust`；周期、结算、统计、SQLite 仓储语义和通知计划以 Rust 类型在同一进程内调用。
+- Windows 外壳负责原生控件、任务板、托盘、全局快捷键、单实例、协议激活与 WinRT Toast Scheduler。免安装程序首次运行时在当前用户范围注册 AppUserModelID 开始菜单身份和 `wootodo://` 协议，不复制程序或请求管理员权限；提醒交给系统调度后无需应用常驻。
 - 采用本地优先架构：UI 只读写本地 SQLite，新增、编辑、完成、Pass、删除与排序先在本地提交，不以网络为前置条件。
+- 悬浮板透明度与鼠标穿透分别持久化，任一设置变化都不会隐式改写另一项。
 - Windows 首版不接入 WebDAV、Worker 或其他同步通道，不提供跨端同步。
 
 ### 2.4 通知边界

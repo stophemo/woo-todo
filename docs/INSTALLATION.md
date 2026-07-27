@@ -1,10 +1,10 @@
-# 个人安装与首次使用
+# 下载与首次使用
 
-woo-todo 不依赖应用商店，也不要求先部署服务器。可从 [GitHub Releases](https://github.com/stophemo/woo-todo/releases/tag/v0.1.12) 下载 `v0.1.12` 的 macOS、Android 与 Windows 安装包。Windows 首版专注本地任务闭环，暂不支持同步与加密备份。
+woo-todo 不依赖应用商店，也不要求先部署服务器。可从 [GitHub Releases](https://github.com/stophemo/woo-todo/releases/tag/v0.1.12) 下载 `v0.1.12` 的 macOS ZIP、Android APK 与 Windows 免安装 ZIP。只有 Android 需要执行系统安装；macOS 和 Windows 都可在解压后直接运行。Windows 首版专注本地任务闭环，暂不支持同步与加密备份。
 
-## 1. 安装 macOS 客户端
+## 1. 使用 macOS 客户端
 
-下载 [Woo-Todo-v0.1.12-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-macos-arm64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/SHA256SUMS.txt) 校验后解压，把 `Woo Todo.app` 拖到“应用程序”。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
+下载 [Woo-Todo-v0.1.12-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-macos-arm64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/SHA256SUMS.txt) 校验后解压，直接运行 `Woo Todo.app`；需要固定入口时可自行移入“应用程序”。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
 
 需要自行构建时，要求完整 Xcode 与当前 macOS SDK/Swift 编译器匹配。仅有版本不匹配的 Command Line Tools 时不能作为 Release 构建环境：
 
@@ -56,13 +56,17 @@ cd android
 5. 长按三星桌面空白区域，进入“组件”，添加 Woo Todo 今日组件；组件内可查看、勾选任务，点击任务进入编辑；
 6. 在系统电池设置中保持默认优化，先观察通知延迟和日耗电，不要开启前台常驻服务。
 
-## 3. 安装 Windows 客户端
+## 3. 使用 Windows 客户端
 
-Windows 客户端支持 Windows 10 build 19041 及以上版本和 Windows 11，仅限 x64。下载 [Woo-Todo-v0.1.12-windows-x64-setup.exe](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64-setup.exe)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/SHA256SUMS.txt) 校验后直接运行安装向导；安装包自带 .NET 运行时，不需要另行配置开发环境。
+Windows 客户端支持 Windows 10 build 19041 及以上版本和 Windows 11，仅限 x64。下载 [Woo-Todo-v0.1.12-windows-x64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/SHA256SUMS.txt) 校验后解压，直接运行根目录中的 `WooTodo.exe`。客户端使用 Rust + Win32，并静态链接 MSVC CRT，不需要安装 .NET、Visual C++ Runtime、开发环境或 Woo Todo 安装器。
 
-当前 EXE 未做代码签名，SmartScreen 可能提示来源未知；请只从本仓库 Release 下载并先核对 `SHA256SUMS.txt`。覆盖安装会保留 `%LOCALAPPDATA%\Woo Todo` 下的 SQLite 与设置，卸载程序默认也不会主动删除这份用户数据。
+当前 `WooTodo.exe` 未做代码签名，SmartScreen 可能提示来源未知；请只从本仓库 Release 下载并先核对 `SHA256SUMS.txt`。更新时先退出 Woo Todo，再解压新 ZIP 并替换旧程序文件。任务与设置位于 `%LOCALAPPDATA%\Woo Todo`，不在解压目录中，因此替换或移动程序不会清空数据。
 
-Windows 首版提供本地任务、重复与 Pass、历史统计、悬浮任务板、托盘、全局快捷键和任务级系统提醒，不包含坚果云/Worker 同步与加密备份。请通过安装器创建开始菜单快捷方式；Windows Toast 需要该快捷方式的应用身份。为有日期的任务设置提醒时间后，即使退出 Woo Todo，提醒仍由系统调度；点击提醒会打开对应任务。若没有显示，请在“设置 → 系统 → 通知”中确认 Woo Todo 未被关闭。
+如果已经使用过早期 Windows 安装器，请先退出并通过系统“已安装的应用”卸载旧程序，再运行 ZIP 中的新版本；旧卸载器不会删除 `%LOCALAPPDATA%\Woo Todo` 的任务与设置。顺序不要反过来，否则旧卸载器会移除新便携版刚写入的通知身份和协议注册；重新运行一次新版本可恢复。
+
+Windows 首版提供本地任务、重复与 Pass、历史统计、悬浮任务板、托盘、全局快捷键和任务级系统提醒，不包含坚果云/Worker 同步与加密备份。首次运行会在当前用户下创建系统通知所需的开始菜单身份，并把 `wootodo://` 协议指向当前 `WooTodo.exe`；它不会复制程序、创建卸载项或请求管理员权限。移动程序后重新运行一次即可刷新路径。为有日期的任务设置提醒时间后，即使退出 Woo Todo，提醒仍由系统调度；点击提醒会打开对应任务。若没有显示，请在“设置 → 系统 → 通知”中确认 Woo Todo 未被关闭。
+
+悬浮板透明度可在 35%～100% 调整，鼠标穿透单独开关；切换穿透不会自动降低或恢复透明度。
 
 ## 4. 坚果云自动同步（推荐，仅 macOS/Android）
 
@@ -111,7 +115,7 @@ npx wrangler deploy
 - 三星 Widget 在进程回收、重启、锁屏后仍能刷新；
 - 睡前提醒在 Android 16 / One UI 8 的电池优化下记录实际延迟；
 - macOS 快速新增、悬浮、置顶、毛玻璃、穿透和四个全局快捷键连续运行 24 小时；
-- Windows 10/11 安装、覆盖升级、卸载入口、托盘、置顶、穿透恢复和 `Ctrl + Alt + 1...4` 在 x64 真机或 VM 验收；再设置一个未来几分钟的任务提醒，退出应用后确认 Toast 到达，点击后只激活现有实例并打开对应任务；
+- Windows 10/11 ZIP 解压启动、替换升级、程序移动后的系统集成刷新、托盘、置顶、穿透恢复和 `Ctrl + Alt + 1...4` 在 x64 真机或 VM 验收；再设置一个未来几分钟的任务提醒，退出应用后确认 Toast 到达，点击后只激活现有实例并打开对应任务；
 - macOS 或 Android 导出的恢复备份能在空白安装恢复，并确认旧设备身份不会同时活跃；
 - 若启用可选在线同步，再验证不同网络下的 `/health`、二维码配对和双向增量同步。
 

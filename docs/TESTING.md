@@ -6,13 +6,13 @@
 |---|---|
 | 共享 golden tests | 周期边界、确定性实例 ID、同步/备份 AES-GCM 格式 |
 | Rust 共享核心 | `camelCase` FFI、合法 `null`、跨周期幂等、SQLite 事务、tombstone、稳定通知计划 |
-| 领域单元测试 | 日/周/月/闲时、重复、完成、Pass、统计、排序 |
+| 领域单元测试 | 日/周/月/闲时、重复、完成、取消完成、Pass、统计、排序 |
 | 本地仓储测试 | SQLite 往返、迁移、事务结算、历史不可改写 |
 | 后端测试 | vault、配对、鉴权、幂等同步、分页、撤销 |
 | 客户端同步测试 | 加密、API 错误、outbox、cursor、失败重试 |
 | 配置与更新测试 | 双端二维码 URI、严格 Release 解析、版本比较、检查节流与重复提醒 |
 | Android instrumentation | 真实 SQLite 绑定、tombstone、幂等、事务回滚、cursor 与备份恢复 |
-| 平台测试 | NSPanel、WPF 悬浮板、全局快捷键、EXE 安装升级、App Widget、通知、重启 |
+| 平台测试 | NSPanel、Win32 悬浮板、全局快捷键、ZIP 解压升级、App Widget、通知、重启 |
 
 ## Android 验证执行位置
 
@@ -87,9 +87,14 @@
 ## Windows 平台矩阵
 
 - Windows 10 build 19041+ x64 与 Windows 11 x64
-- EXE 当前用户安装、覆盖升级、带 AppUserModelID 的开始菜单入口、`wootodo://` 协议与卸载
-- 托盘重建、DPI/多显示器、置顶、穿透以及托盘/`Ctrl + Alt + 4` 恢复交互
+- GitHub `windows-latest` Runner 会对最终 ZIP 执行真实 Win32 交互烟测：校验 AMD64 PE、启动、原生窗口、单实例、协议激活、快速新增、完成/取消完成、透明度与穿透独立变化、托盘退出及重启持久化
+- Runner 无论成功或失败都会上传诊断日志、桌面截图、Windows Application 事件、隔离 SQLite 与设置文件；该自动化结果是发布门禁，但不能替代 Windows 10/11 真机上的 DPI、多显示器、IME、Toast 和耗电验收
+- 最终 ZIP 只含根目录 `WooTodo.exe`，可解压启动；退出后替换 EXE 保留 `%LOCALAPPDATA%\Woo Todo` 数据
+- 首次运行创建带 AppUserModelID 的当前用户开始菜单入口和 `wootodo://` 协议；移动 EXE 后再次运行会刷新二者路径
+- 托盘重建、DPI/多显示器、IME 输入、置顶、透明度和穿透的任意组合，以及托盘/`Ctrl + Alt + 4` 恢复交互
+- 调整透明度后反复切换穿透，透明度不得被隐式降到最低或恢复成其他值；重启后两项分别还原
 - SQLite 重启往返、跨日/周/月惰性结算和删除任务不复活
+- 当前周期完成项可通过复选框或“取消完成”恢复为待办；重复撤销幂等，过期完成项与 Pass 不可恢复
 - 设置、修改、完成、Pass、删除任务后系统调度队列收敛；退出应用后 Toast 仍按时到达
 - 冷启动和应用已运行两种状态下点击 Toast，均只保留一个进程并打开对应 pending 任务
 - 系统关闭通知、开始菜单快捷方式缺失和协议负载无效时不影响本地任务操作

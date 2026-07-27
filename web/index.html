@@ -55,7 +55,7 @@
           <div class="hero-actions" aria-label="下载与项目链接">
             <a class="button button-primary" aria-label="下载 Android APK" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-android.apk"><span class="download-label">下载&nbsp;</span>Android</a>
             <a class="button button-secondary" aria-label="下载 macOS ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-macos-arm64.zip"><span class="download-label">下载&nbsp;</span>macOS</a>
-            <a class="button button-secondary" aria-label="下载 Windows x64 EXE" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64-setup.exe"><span class="download-label">下载&nbsp;</span>Windows</a>
+            <a class="button button-secondary" aria-label="下载 Windows x64 免安装 ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64.zip"><span class="download-label">下载&nbsp;</span>Windows</a>
           </div>
           <p class="hero-meta">MIT 开源 · 无传统账号 · 无应用商店依赖</p>
         </div>
@@ -254,7 +254,7 @@
             <span class="feature-index">A</span>
             <div>
               <h3>三端原生，轻量常驻</h3>
-              <p>macOS 使用 AppKit + SwiftUI，Android 使用 Kotlin + RemoteViews，Windows 使用 WPF + .NET。Windows 已通过 Rust 共享核心复用任务规则、SQLite 仓储语义与通知计划，三端均不携带跨端 UI 运行时。</p>
+              <p>macOS 使用 AppKit + SwiftUI，Android 使用 Kotlin + RemoteViews，Windows 使用 Rust + Win32。Windows 直接调用 Rust 共享核心中的任务规则、SQLite 仓储语义与通知计划，三端均不携带跨端 UI 运行时。</p>
             </div>
             <span class="feature-tag">原生</span>
           </article>
@@ -306,7 +306,7 @@
             <span role="cell">桌面呈现</span>
             <strong role="cell">原生透明悬浮面板</strong>
             <strong role="cell">今日桌面 Widget</strong>
-            <strong role="cell">WPF 悬浮任务板</strong>
+            <strong role="cell">Win32 悬浮任务板</strong>
           </div>
           <div class="platform-row" role="row">
             <span role="cell">快捷操作</span>
@@ -400,8 +400,8 @@
               <span>Windows 10 / 11 · x64</span>
             </div>
             <h3>悬浮任务板与系统提醒</h3>
-            <p>适用于 Windows 10 build 19041+ 或 Windows 11 x64。自包含 EXE 无需另装 .NET；当前未做代码签名，SmartScreen 可能提示来源，请核对 SHA-256 后安装。首版暂不支持同步和加密备份。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64-setup.exe">下载 Windows EXE</a>
+            <p>适用于 Windows 10 build 19041+ 或 Windows 11 x64。ZIP 解压即可运行，无需安装 .NET 或 Visual C++ Runtime；当前程序未签名，SmartScreen 可能提示来源，请核对 SHA-256 后运行。首版暂不支持同步和加密备份。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64.zip">下载 Windows ZIP</a>
           </article>
         </div>
         <div class="release-links">

@@ -180,6 +180,65 @@ fn repository_rejects_deleted_and_mutated_settled_tasks_transactionally() {
 }
 
 #[test]
+fn repository_reopens_only_current_completed_tasks_and_resettles_idempotently() {
+    let directory = tempdir().expect("应创建临时目录");
+    let database = directory.path().join("tasks.sqlite3");
+    let mut repository = TaskRepository::open(&database).expect("应打开数据库");
+    let id = repository
+        .create(
+            "误点完成的每日复盘",
+            TimeType::Day,
+            date("2026-07-24"),
+            QuestLine::Main,
+            true,
+            None,
+            1,
+        )
+        .unwrap();
+
+    assert!(repository.complete(&id, 2).unwrap());
+    assert!(
+        repository
+            .reopen_completed(&id, date("2026-07-24"), 3)
+            .unwrap()
+    );
+    assert!(
+        !repository
+            .reopen_completed(&id, date("2026-07-24"), 4)
+            .unwrap()
+    );
+    let reopened = repository.find(&id).unwrap().unwrap();
+    assert_eq!(reopened.state, TaskState::Pending);
+    assert_eq!(reopened.updated_at, 3);
+    assert_eq!(reopened.settled_at, None);
+
+    let first = repository
+        .settle_expired(date("2026-07-25"), 5)
+        .expect("跨日后应重新结算");
+    assert_eq!(first.changed_task_ids.len(), 1);
+    assert_eq!(first.generated_task_ids.len(), 1);
+    assert_eq!(repository.fetch_all().unwrap().len(), 2);
+    let second = repository
+        .settle_expired(date("2026-07-25"), 6)
+        .expect("重复结算应幂等");
+    assert!(second.changed_task_ids.is_empty());
+    assert!(second.generated_task_ids.is_empty());
+
+    assert!(
+        !repository
+            .reopen_completed(&id, date("2026-07-25"), 7)
+            .unwrap()
+    );
+    let next_id = first.generated_task_ids.iter().next().unwrap();
+    assert!(repository.pass(next_id, 8).unwrap());
+    assert!(
+        !repository
+            .reopen_completed(next_id, date("2026-07-25"), 9)
+            .unwrap()
+    );
+}
+
+#[test]
 fn someday_task_cannot_repeat_or_schedule_notification() {
     let mut value = TodoTask::create(
         "闲时阅读",

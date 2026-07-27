@@ -20,6 +20,20 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
 
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 校验发布说明
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOTES_FILE="docs/releases/${GITHUB_REF_NAME}.md"
+          test -f "$NOTES_FILE"
+          if head -n 1 "$NOTES_FILE" | grep -Eq '^# '; then
+            echo "Release 正文不要重复一级标题；GitHub Release 标题由工作流单独生成。" >&2
+            exit 1
+          fi
+
   android:
     name: 构建 Android 正式安装包
     needs: validate-tag
@@ -94,7 +108,7 @@ jobs:
         run: rm -f "$ANDROID_SIGNING_STORE_FILE"
 
   macos:
-    name: 构建 macOS Apple Silicon 安装包
+    name: 构建 macOS Apple Silicon ZIP
     needs: validate-tag
     runs-on: macos-15
     timeout-minutes: 30
@@ -134,7 +148,7 @@ jobs:
           retention-days: 7
 
   windows:
-    name: 构建 Windows x64 自包含包
+    name: 构建 Windows x64 原生包
     needs: validate-tag
     runs-on: windows-latest
     timeout-minutes: 30
@@ -144,59 +158,78 @@ jobs:
 
       - name: 配置 Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: 缓存 Rust 构建
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: shared/core-rust -> target
-
-      - name: 配置 .NET 10
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
+          workspaces: |
+            shared/core-rust -> target
+            windows -> target
 
       - name: 校验 tag 与 Windows 版本
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $version = $env:GITHUB_REF_NAME -replace "^v", ""
-          [xml] $props = Get-Content -LiteralPath "windows/Directory.Build.props" -Raw
-          $sourceVersion = [string] $props.Project.PropertyGroup.Version
+          $metadata = cargo metadata --manifest-path windows/Cargo.toml --format-version 1 --no-deps |
+            ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            throw "cargo metadata 失败，退出码：$LASTEXITCODE"
+          }
+          $package = @($metadata.packages | Where-Object { $_.name -eq "woo-todo-windows" })
+          if ($package.Count -ne 1) {
+            throw "无法从 windows/Cargo.toml 唯一确定 woo-todo-windows 包"
+          }
+          $sourceVersion = [string] $package[0].version
           if ($sourceVersion -ne $version) {
             throw "Windows 源码版本 $sourceVersion 与 tag $version 不一致"
           }
 
-      - name: 还原 Windows 依赖
-        run: dotnet restore windows/WooTodo.sln --locked-mode
+      - name: 检查 Windows Rust 格式
+        run: cargo fmt --manifest-path windows/Cargo.toml --all -- --check
 
-      - name: 构建 Windows 解决方案
-        run: dotnet build windows/WooTodo.sln --configuration Release --no-restore
+      - name: 运行 Windows Rust 全量测试
+        run: cargo test --manifest-path windows/Cargo.toml --locked --all-targets
 
-      - name: 运行 Windows 全量测试
-        run: dotnet test windows/WooTodo.sln --configuration Release --no-build --no-restore
+      - name: 检查 Windows Rust 目标
+        run: cargo check --manifest-path windows/Cargo.toml --locked --all-targets
 
-      - name: 安装 Inno Setup 6
-        shell: pwsh
-        run: choco install innosetup --no-progress --yes
+      - name: 检查 Windows Rust 静态诊断
+        run: cargo clippy --manifest-path windows/Cargo.toml --locked --all-targets -- -D warnings
 
-      - name: 打包并验证 Windows EXE 安装包
+      - name: 打包并烟测 Windows 免安装 ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $version = $env:GITHUB_REF_NAME -replace "^v", ""
-          ./windows/scripts/package.ps1 -Version $version -NoRestore
-          $installer = "windows/dist/Woo-Todo-v$version-windows-x64-setup.exe"
-          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
-            throw "没有找到 Windows EXE 安装包：$installer"
+          ./windows/scripts/package.ps1 -Version $version
+          $archive = "windows/dist/Woo-Todo-v$version-windows-x64.zip"
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw "没有找到 Windows 免安装 ZIP：$archive"
           }
+          ./windows/scripts/smoke-test.ps1 `
+            -ArchivePath $archive `
+            -TestIntegration `
+            -ArtifactDirectory windows/dist/smoke
           New-Item -ItemType Directory -Path "release" -Force | Out-Null
-          Copy-Item -LiteralPath $installer -Destination "release/Woo-Todo-$($env:GITHUB_REF_NAME)-windows-x64-setup.exe"
+          Copy-Item -LiteralPath $archive -Destination "release/Woo-Todo-$($env:GITHUB_REF_NAME)-windows-x64.zip"
+
+      - name: 上传 Windows 烟测诊断
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-smoke-${{ github.run_attempt }}
+          path: windows/dist/smoke/**
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: 上传 Windows 产物
         uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: release/*.exe
+          path: release/*.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -214,7 +247,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 下载安装包
+      - name: 下载发布产物
         uses: actions/download-artifact@v4
         with:
           pattern: "*-release"
@@ -225,9 +258,10 @@ jobs:
         run: |
           set -euo pipefail
           cd release
-          shasum -a 256 ./*.apk ./*.zip ./*.exe > SHA256SUMS.txt
+          test "$(find . -maxdepth 1 -type f \( -name '*.apk' -o -name '*.zip' \) | wc -l | tr -d ' ')" = "3"
+          shasum -a 256 ./*.apk ./*.zip > SHA256SUMS.txt
 
-      - name: 发布安装包
+      - name: 发布产物
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

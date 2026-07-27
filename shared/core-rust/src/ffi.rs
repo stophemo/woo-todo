@@ -106,6 +106,11 @@ enum RepositoryRequest {
         id: String,
         now: i64,
     },
+    ReopenCompleted {
+        id: String,
+        reference_date: NaiveDate,
+        now: i64,
+    },
     Pass {
         id: String,
         now: i64,
@@ -284,6 +289,11 @@ fn call_repository(
             now,
         )?),
         RepositoryRequest::Complete { id, now } => serialize(repository.complete(&id, now)?),
+        RepositoryRequest::ReopenCompleted {
+            id,
+            reference_date,
+            now,
+        } => serialize(repository.reopen_completed(&id, reference_date, now)?),
         RepositoryRequest::Pass { id, now } => serialize(repository.pass(&id, now)?),
         RepositoryRequest::Move { id, offset, now } => {
             serialize(repository.move_task(&id, offset, now)?)

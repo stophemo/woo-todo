@@ -10,7 +10,7 @@ use crate::model::{
     QuestLine, Recurrence, ReminderTime, TIMEZONE, TaskState, TimeType, TodoTask, sort_tasks,
     validate_title,
 };
-use crate::period::normalize_start;
+use crate::period::{is_expired, normalize_start};
 use crate::settlement::{SettlementResult, settle};
 
 pub struct TaskRepository {
@@ -167,6 +167,25 @@ impl TaskRepository {
 
     pub fn pass(&mut self, id: &str, now: i64) -> CoreResult<bool> {
         self.settle_one(id, TaskState::Pass, now)
+    }
+
+    pub fn reopen_completed(
+        &mut self,
+        id: &str,
+        reference_date: NaiveDate,
+        now: i64,
+    ) -> CoreResult<bool> {
+        let Some(current) = self.find(id)? else {
+            return Ok(false);
+        };
+        if current.state != TaskState::Completed || is_expired(&current, reference_date) {
+            return Ok(false);
+        }
+        let changed = self.connection.execute(
+            "UPDATE tasks SET status = 'pending', updated_at = ?2, settled_at = NULL WHERE id = ?1 AND status = 'completed'",
+            params![id, now],
+        )? == 1;
+        Ok(changed)
     }
 
     pub fn move_task(&mut self, id: &str, offset: i32, now: i64) -> CoreResult<bool> {

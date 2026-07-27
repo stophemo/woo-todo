@@ -5,8 +5,7 @@
 - macOS 15 或更高版本
 - 完整 Xcode，Swift 工具链与 macOS SDK 版本必须匹配
 - Android SDK 36、Android Build Tools 35、JDK 17
-- .NET 10 SDK；生成 Windows 安装包还需要 Inno Setup 6
-- Rust stable（含 `rustfmt` 与 `clippy`）
+- Rust stable（含 `rustfmt` 与 `clippy`）；Windows 构建还需要 MSVC x64 工具链
 - Node.js 24、npm 11
 
 目标真机为 macOS Tahoe 26.5.2 / Apple M4 和 Android 16 / Samsung One UI 8.0。较低系统版本只用于兼容性测试，不代表完成三星专项验收。
@@ -19,7 +18,7 @@ cargo test --manifest-path shared/core-rust/Cargo.toml --locked --all-targets
 cargo clippy --manifest-path shared/core-rust/Cargo.toml --locked --all-targets -- -D warnings
 ```
 
-Windows 的 MSBuild 会自动构建并复制 Rust 动态库。macOS 与 Android 当前按能力切片渐进迁移；切换一项调用前，必须先增加旧实现与 Rust 的等价用例，不重写原生 UI、Widget、通知调度或安全存储。
+Windows crate 直接依赖共享核心，不经过 C ABI 或动态库复制。macOS 与 Android 当前按能力切片渐进迁移；切换一项调用前，必须先增加旧实现与 Rust 的等价用例，不重写原生 UI、Widget、通知调度或安全存储。
 
 ## 共享契约
 
@@ -77,19 +76,21 @@ swift run woo-todo-mac
 
 仅安装 Command Line Tools 时，如果 Swift 编译器与系统 SDK 补丁版本不一致，标准命令会拒绝构建。应优先安装并通过 `xcode-select` 选择匹配的完整 Xcode，不应在发布流程中绕过版本检查。
 
-个人安装包脚本位于 `macos/scripts/`。它使用 Release 产物组装 `.app` 并进行 ad-hoc 签名，不等同于 Developer ID 公证。
+macOS 个人发布脚本位于 `macos/scripts/`。它使用 Release 产物组装 `.app` 并进行 ad-hoc 签名，不等同于 Developer ID 公证。
 
 ## Windows
 
-Windows 领域、SQLite 与通知计划测试可在安装 .NET 10 和 Rust stable 的系统运行；WPF、Toast、托盘、快捷键和 EXE 安装器必须在 Windows 10/11 验证：
+Windows 客户端使用 Rust、`windows-rs` 和 Win32。单元测试可在其他系统运行；Win32 窗口、Toast、托盘、快捷键和免安装 ZIP 必须在 Windows 10/11 验证：
 
 ```powershell
-dotnet restore windows/WooTodo.sln
-dotnet test windows/WooTodo.sln --configuration Release
+cargo fmt --manifest-path windows/Cargo.toml --all -- --check
+cargo test --manifest-path windows/Cargo.toml --locked --all-targets
+cargo clippy --manifest-path windows/Cargo.toml --locked --all-targets -- -D warnings
 pwsh -NoProfile -File windows/scripts/package.ps1
+pwsh -NoProfile -File windows/scripts/smoke-test.ps1 -ArchivePath windows/dist/Woo-Todo-vX.Y.Z-windows-x64.zip
 ```
 
-安装器输出为 `windows/dist/Woo-Todo-vX.Y.Z-windows-x64-setup.exe`。
+发布文件输出为 `windows/dist/Woo-Todo-vX.Y.Z-windows-x64.zip`。烟测默认隔离本地数据并跳过当前用户系统集成写入；GitHub Windows Runner 会额外传入 `-TestIntegration` 验证开始菜单通知身份和 `wootodo://` 协议。
 
 ## 全仓 CI
 

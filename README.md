@@ -41,7 +41,7 @@ macOS 的原生悬浮任务板常驻桌面，可置顶、毛玻璃或鼠标穿�
 ## 它刻意做少，但把这些做好
 
 - **本地优先**：新增、编辑、完成、排序都只依赖本机数据库，断网照常使用。
-- **原生而轻量**：macOS 使用 AppKit/SwiftUI，Android 使用 Kotlin/RemoteViews，Windows 使用 WPF；领域规则由 Rust 共享，没有 Electron、Flutter 或 WebView 运行时。
+- **原生而轻量**：macOS 使用 AppKit/SwiftUI，Android 使用 Kotlin/RemoteViews，Windows 使用 Rust、`windows-rs` 与 Win32；领域规则由 Rust 共享，没有 Electron、Flutter、WebView 或 .NET 桌面运行时。
 - **适合真实生活的周期**：支持日、周、月、闲时，一次性或重复任务，以及主线、支线、外传。
 - **看见真实结果**：完成、`Pass`、历史与履约统计都被认真记录，不靠无限顺延粉饰计划。
 - **提醒不抢方向盘**：支持睡前规划、任务级提醒和非阻塞更新提示，不用强制弹窗打断当前工作。
@@ -49,7 +49,7 @@ macOS 的原生悬浮任务板常驻桌面，可置顶、毛玻璃或鼠标穿�
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.1.12`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.12)，提供 macOS、Android 与 Windows 正式安装包。三端都坚持原生、轻量和本地优先，但 Windows 首版的功能范围与 macOS/Android 不完全相同。
+当前稳定版是 [`v0.1.12`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.12)，提供 macOS ZIP、Android APK 与 Windows 免安装 ZIP。三端都坚持原生、轻量和本地优先，但 Windows 首版的功能范围与 macOS/Android 不完全相同。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
@@ -61,14 +61,14 @@ Windows 首版聚焦本地任务闭环和系统任务提醒，不包含现有 ma
 
 ## 下载 v0.1.12
 
-| 平台 | 安装包 | 安装提示 |
+| 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.1.12-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-macos-arm64.zip) | 解压后把 `Woo Todo.app` 拖入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| macOS | [Woo-Todo-v0.1.12-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-macos-arm64.zip) | 解压后可直接运行 `Woo Todo.app`，也可自行移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
 | Android | [Woo-Todo-v0.1.12-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| Windows | [Woo-Todo-v0.1.12-windows-x64-setup.exe](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64-setup.exe) | 支持 Windows 10 build 19041+ 与 Windows 11，仅限 x64。当前 EXE 未签名，SmartScreen 可能提示来源未知，请核对校验和后再运行。 |
+| Windows | [Woo-Todo-v0.1.12-windows-x64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/Woo-Todo-v0.1.12-windows-x64.zip) | 解压后直接运行 `WooTodo.exe`，无需安装且无需管理员权限。当前程序未签名，SmartScreen 可能提示来源未知，请核对校验和后再运行。 |
 | 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.12/SHA256SUMS.txt) | 下载后用 `shasum -a 256 <文件>` 或系统等价工具核对。 |
 
-macOS/Android 覆盖升级会保留任务、同步身份与配对状态，**普通更新不需要重新配对**；Windows 覆盖安装会保留本地任务与设置。不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版；这些操作可能删除本地数据库或 Android Keystore。
+macOS/Android 更新会保留任务、同步身份与配对状态，**普通更新不需要重新配对**；Windows 退出程序后替换 `WooTodo.exe` 也会保留本地任务与设置。不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版；这些操作可能删除本地数据库或 Android Keystore。
 
 ## 装好以后，从这里开始
 
@@ -86,7 +86,7 @@ macOS/Android 覆盖升级会保留任务、同步身份与配对状态，**普�
 
 ### Windows
 
-1. 运行 `Woo-Todo-v0.1.12-windows-x64-setup.exe` 完成当前用户安装；若 SmartScreen 拦截，请先确认文件来自本仓库 Release 并核对校验和。
+1. 解压 `Woo-Todo-v0.1.12-windows-x64.zip`，运行其中的 `WooTodo.exe`；若 SmartScreen 拦截，请先确认文件来自本仓库 Release 并核对校验和。
 2. 在悬浮任务板快速新增、完成或编辑任务，右键可 `Pass` 或删除。
 3. 托盘菜单负责完整窗口、任务板显隐与穿透恢复；默认全局快捷键为 `Ctrl + Alt + 1` 至 `Ctrl + Alt + 4`。任务提醒由 Windows 系统调度，应用退出后仍可触发。
 
@@ -123,7 +123,7 @@ npm run test:backend
 cargo test --manifest-path shared/core-rust/Cargo.toml --locked --all-targets
 ./android/gradlew -p android testDebugUnitTest
 swift test --package-path macos
-dotnet test windows/WooTodo.sln --configuration Release
+cargo test --manifest-path windows/Cargo.toml --locked --all-targets
 ```
 
 修改共享协议时，需要同时更新 JSON Schema、fixture、Swift/Kotlin 模型和后端校验。环境要求与完整测试矩阵见[开发指南](docs/DEVELOPMENT.md)和[测试与验收](docs/TESTING.md)。
@@ -139,7 +139,7 @@ dotnet test windows/WooTodo.sln --configuration Release
 | [同步与安全](docs/SYNC_AND_SECURITY.md) | 加密、凭据、威胁边界与收敛规则 |
 | [加密备份与恢复](docs/BACKUP_AND_RESTORE.md) | `.wootodo` 格式与恢复限制 |
 | [架构说明](docs/ARCHITECTURE.md) | 原生客户端、领域层与本地优先设计 |
-| [发版指南](docs/RELEASING.md) | CI、签名、安装包与 Release 流程 |
+| [发版指南](docs/RELEASING.md) | CI、签名、发布文件与 Release 流程 |
 
 ## 许可
 

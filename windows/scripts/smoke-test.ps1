@@ -325,6 +325,7 @@ $primary = $null
 $secondary = $null
 $dataDirectory = $null
 $previousSkipIntegration = $env:WOO_TODO_SKIP_PORTABLE_INTEGRATION
+$previousSmokeTrace = $env:WOO_TODO_SMOKE_TRACE
 $previousLocalAppData = $env:LOCALAPPDATA
 
 try {
@@ -333,6 +334,7 @@ try {
     $dataDirectory = Join-Path $env:LOCALAPPDATA "Woo Todo"
     $database = Join-Path $dataDirectory "woo-todo.sqlite3"
     $settingsPath = Join-Path $dataDirectory "settings.json"
+    $env:WOO_TODO_SMOKE_TRACE = Join-Path $ArtifactDirectory "app-trace.txt"
     Expand-Archive -LiteralPath $resolvedArchive -DestinationPath $temporaryDirectory
 
     $files = @(Get-ChildItem -LiteralPath $temporaryDirectory -File -Recurse)
@@ -428,9 +430,19 @@ try {
     if (-not [WooTodoSmokeNative]::SetWindowTextW($quickEdit, $taskTitle)) {
         throw "无法向快速新增输入框写入测试任务"
     }
+    $writtenTitle = Get-WindowText -Window $quickEdit
+    if ($writtenTitle -ne $taskTitle) {
+        throw "快速新增输入框内容不匹配：预期 $taskTitle，实际 $writtenTitle"
+    }
+    Add-Diagnostic "快速新增输入框写入成功：$writtenTitle"
     [WooTodoSmokeNative]::SendMessageW($addButton, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-    Wait-ForCondition -Description "快速新增任务后列表可用" -Condition {
-        [WooTodoSmokeNative]::IsWindowEnabled($taskList)
+    Wait-ForCondition -Description "快速新增任务后列表出现一条任务" -Condition {
+        [WooTodoSmokeNative]::SendMessageW(
+            $taskList,
+            0x1004,
+            [IntPtr]::Zero,
+            [IntPtr]::Zero
+        ).ToInt64() -eq 1 -and [WooTodoSmokeNative]::IsWindowEnabled($taskList)
     }
     $itemCount = [WooTodoSmokeNative]::SendMessageW(
         $taskList,
@@ -532,6 +544,11 @@ finally {
         Remove-Item Env:WOO_TODO_SKIP_PORTABLE_INTEGRATION -ErrorAction SilentlyContinue
     } else {
         $env:WOO_TODO_SKIP_PORTABLE_INTEGRATION = $previousSkipIntegration
+    }
+    if ($null -eq $previousSmokeTrace) {
+        Remove-Item Env:WOO_TODO_SMOKE_TRACE -ErrorAction SilentlyContinue
+    } else {
+        $env:WOO_TODO_SMOKE_TRACE = $previousSmokeTrace
     }
     $env:LOCALAPPDATA = $previousLocalAppData
     foreach ($process in @($secondary, $primary)) {

@@ -2,6 +2,8 @@
 
 use std::cmp::Reverse;
 use std::ffi::c_void;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::mem::{size_of, zeroed};
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
@@ -996,6 +998,10 @@ unsafe fn refresh_floating(app: &mut App) {
         .repository
         .fetch_scope(TimeType::Day, today, false)
         .unwrap_or_default();
+    smoke_trace(&format!(
+        "refresh_floating date={today} count={}",
+        app.floating_tasks.len()
+    ));
     app.populating_float_tasks = true;
     SendMessageW(app.float_controls.tasks, LVM_DELETEALLITEMS, 0, 0);
     if app.floating_tasks.is_empty() {
@@ -1237,6 +1243,10 @@ unsafe fn create_task(app: &mut App, quick_title: Option<String>) {
         show_task_editor(app.main, app.floating, default_type, default_date, None)
     };
     let Some(input) = input else { return };
+    smoke_trace(&format!(
+        "create_task title={:?} type={:?} date={}",
+        input.title, input.time_type, input.target_date
+    ));
     match app.repository.create(
         &input.title,
         input.time_type,
@@ -1246,8 +1256,14 @@ unsafe fn create_task(app: &mut App, quick_title: Option<String>) {
         input.reminder_time,
         now_millis(),
     ) {
-        Ok(_) => refresh_all(app),
-        Err(error) => show_error(app.main, "无法新增任务", &error.to_string()),
+        Ok(id) => {
+            smoke_trace(&format!("create_task success id={id}"));
+            refresh_all(app);
+        }
+        Err(error) => {
+            smoke_trace(&format!("create_task error={error}"));
+            show_error(app.main, "无法新增任务", &error.to_string());
+        }
     }
 }
 
@@ -1350,6 +1366,7 @@ unsafe fn handle_float_command(app: &mut App, id: i32) {
     match id {
         ID_FLOAT_ADD => {
             let title = get_text(app.float_controls.quick_edit);
+            smoke_trace(&format!("float_add title={title:?}"));
             if !title.trim().is_empty() {
                 create_task(app, Some(title));
                 set_text(app.float_controls.quick_edit, "");
@@ -2436,6 +2453,15 @@ unsafe fn apply_suggested_window_rect(window: HWND, lparam: LPARAM) {
 
 fn now_millis() -> i64 {
     Utc::now().timestamp_millis()
+}
+
+fn smoke_trace(message: &str) {
+    let Some(path) = std::env::var_os("WOO_TODO_SMOKE_TRACE") else {
+        return;
+    };
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{} {message}", Utc::now().to_rfc3339());
+    }
 }
 
 fn wide(value: &str) -> Vec<u16> {

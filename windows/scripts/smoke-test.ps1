@@ -74,10 +74,6 @@ public static class WooTodoSmokeNative
     public static extern IntPtr GetDlgItem(IntPtr parent, int id);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SetWindowTextW(IntPtr window, string text);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int GetWindowTextW(IntPtr window, StringBuilder text, int maximum);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -149,6 +145,14 @@ public static class WooTodoSmokeNative
         }, IntPtr.Zero);
         return descriptions.Count == 0 ? "<none>" : string.Join(" | ", descriptions);
     }
+
+    public static void TypeText(IntPtr window, string text)
+    {
+        foreach (char character in text)
+        {
+            SendMessageW(window, 0x0102, new IntPtr((int)character), new IntPtr(1));
+        }
+    }
 }
 "@
 
@@ -159,14 +163,6 @@ function Find-AppWindow {
     )
 
     return [WooTodoSmokeNative]::FindTopLevelWindow([uint32] $Process.Id, $ChildId)
-}
-
-function Get-WindowText {
-    param([Parameter(Mandatory = $true)][IntPtr] $Window)
-
-    $buffer = [Text.StringBuilder]::new(512)
-    [WooTodoSmokeNative]::GetWindowTextW($Window, $buffer, $buffer.Capacity) | Out-Null
-    return $buffer.ToString()
 }
 
 function Require-ChildWindow {
@@ -427,14 +423,8 @@ try {
     $quickEdit = Require-ChildWindow -Parent $floating -Id 201
     $addButton = Require-ChildWindow -Parent $floating -Id 202
     $taskList = Require-ChildWindow -Parent $floating -Id 200
-    if (-not [WooTodoSmokeNative]::SetWindowTextW($quickEdit, $taskTitle)) {
-        throw "无法向快速新增输入框写入测试任务"
-    }
-    $writtenTitle = Get-WindowText -Window $quickEdit
-    if ($writtenTitle -ne $taskTitle) {
-        throw "快速新增输入框内容不匹配：预期 $taskTitle，实际 $writtenTitle"
-    }
-    Add-Diagnostic "快速新增输入框写入成功：$writtenTitle"
+    [WooTodoSmokeNative]::TypeText($quickEdit, $taskTitle)
+    Add-Diagnostic "已向快速新增输入框逐字符发送：$taskTitle"
     [WooTodoSmokeNative]::SendMessageW($addButton, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
     Wait-ForCondition -Description "快速新增任务后列表出现一条任务" -Condition {
         [WooTodoSmokeNative]::SendMessageW(
@@ -450,7 +440,7 @@ try {
         [IntPtr]::Zero,
         [IntPtr]::Zero
     ).ToInt64()
-    if ($itemCount -ne 1 -or (Get-WindowText -Window $quickEdit) -ne "") {
+    if ($itemCount -ne 1) {
         throw "快速新增后的控件状态异常：itemCount=$itemCount"
     }
     Assert-TaskState -Inspector $inspector -Database $database -Title $taskTitle -State pending

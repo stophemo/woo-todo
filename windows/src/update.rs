@@ -326,9 +326,11 @@ fn wait_for_process(pid: u32) -> Result<(), String> {
     use windows_sys::Win32::Foundation::{
         CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, WAIT_OBJECT_0,
     };
-    use windows_sys::Win32::System::Threading::{OpenProcess, SYNCHRONIZE, WaitForSingleObject};
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
 
-    let process = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+    const PROCESS_SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+
+    let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE_ACCESS, 0, pid) };
     if process.is_null() {
         return if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
             Ok(())

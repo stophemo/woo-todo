@@ -64,6 +64,16 @@ private final class MemoryTaskRepository: TaskRepository {
         }
     }
 
+    func reopenCompleted(id: UUID, at date: Date) throws -> Bool {
+        guard let index = tasks.firstIndex(where: { $0.id == id }),
+              tasks[index].status == .completed,
+              (tasks[index].period?.end ?? .distantFuture) > date else { return false }
+        tasks[index].status = .pending
+        tasks[index].completedAt = nil
+        tasks[index].updatedAt = date
+        return true
+    }
+
     func delete(id: UUID) throws {
         tasks.removeAll { $0.id == id }
     }

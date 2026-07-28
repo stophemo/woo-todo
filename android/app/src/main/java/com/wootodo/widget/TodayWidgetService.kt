@@ -70,11 +70,13 @@ internal object TodayWidgetRowViews {
             setTextViewText(R.id.widget_task_title, task.title)
             setTextViewText(R.id.widget_task_line, context.getString(task.questLine.labelRes()))
             setCompoundButtonChecked(R.id.widget_task_check, completed)
-            if (!completed) {
+            if (task.status != TaskStatus.PASS) {
                 setOnClickFillInIntent(
                     R.id.widget_task_check,
-                    itemIntent(TodayWidgetProvider.COMMAND_COMPLETE, task.id),
+                    itemIntent(TodayWidgetProvider.COMMAND_TOGGLE_COMPLETION, task.id),
                 )
+            }
+            if (!completed) {
                 setOnClickFillInIntent(
                     R.id.widget_task_row,
                     itemIntent(TodayWidgetProvider.COMMAND_EDIT, task.id),

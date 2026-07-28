@@ -5,14 +5,15 @@
     android:layout_height="wrap_content"
     android:foreground="?attr/selectableItemBackground"
     android:gravity="center_vertical"
-    android:minHeight="64dp"
+    android:minHeight="58dp"
     android:orientation="horizontal"
-    android:paddingVertical="6dp">
+    android:paddingVertical="5dp">
 
     <CheckBox
         android:id="@+id/task_check"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:buttonTint="@color/task_check_tint"
         android:contentDescription="@string/status_completed" />
 
     <LinearLayout
@@ -26,13 +27,15 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:maxLines="2"
-            android:textAppearance="?attr/textAppearanceBodyLarge" />
+            android:textAppearance="?attr/textAppearanceBodyLarge"
+            android:textColor="@color/task_text" />
 
         <TextView
             android:id="@+id/task_status"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textAppearance="?attr/textAppearanceBodySmall" />
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="@color/muted" />
     </LinearLayout>
 
     <Button
@@ -41,6 +44,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:minWidth="0dp"
-        android:text="@string/pass" />
+        android:text="@string/pass"
+        android:textColor="@color/orange" />
 
 </LinearLayout>

@@ -17,7 +17,6 @@ import com.wootodo.sync.BackupRestoreResult
 import com.wootodo.sync.BackupTransferService
 import com.wootodo.sync.SQLiteBackupDatabase
 import com.wootodo.sync.SQLiteSyncStore
-import com.wootodo.sync.SQLiteLocalMutationRecorder
 import com.wootodo.sync.SyncApiClient
 import com.wootodo.sync.SyncCoordinator
 import com.wootodo.sync.SyncJobScheduler
@@ -115,8 +114,11 @@ class WooTodoApplication : Application() {
         try {
             val existing = readDisplayConfiguration(sqlite)
             if (existing == null) {
-                writeDisplayConfiguration(sqlite, preferencePayload)
-                SQLiteLocalMutationRecorder.recordDisplayConfiguration(sqlite, preferencePayload)
+                writeDisplayConfiguration(
+                    sqlite,
+                    preferencePayload,
+                    isLocalOverride = false,
+                )
             } else {
                 storedPayload = existing
             }

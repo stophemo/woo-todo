@@ -28,6 +28,15 @@ class TaskDatabase(context: Context) :
         if (oldVersion < 7) {
             createDisplayConfigurationSchema(database)
         }
+        if (oldVersion < 8) {
+            createDisplayConfigurationSchema(database)
+            if (!columnExists(database, "display_configuration", "is_local_override")) {
+                database.execSQL(
+                    "ALTER TABLE display_configuration " +
+                        "ADD COLUMN is_local_override INTEGER NOT NULL DEFAULT 1",
+                )
+            }
+        }
         // 兼容曾经中断或裁剪过的旧升级：同步表均使用 IF NOT EXISTS，可安全幂等补齐。
         createSyncSchema(database)
     }
@@ -224,7 +233,9 @@ class TaskDatabase(context: Context) :
                 header_template TEXT NOT NULL,
                 subtitle_template TEXT NOT NULL,
                 start_date TEXT NOT NULL,
-                deadline_date TEXT NOT NULL
+                deadline_date TEXT NOT NULL,
+                is_local_override INTEGER NOT NULL DEFAULT 0
+                    CHECK(is_local_override IN (0, 1))
             )
             """.trimIndent(),
         )
@@ -245,6 +256,6 @@ class TaskDatabase(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 7
+        const val DATABASE_VERSION = 8
     }
 }

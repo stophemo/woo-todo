@@ -84,6 +84,35 @@ class TaskRepositoryTest {
     }
 
     @Test
+    fun `当前周期已完成任务可以撤销且重复恢复保持幂等`() = runBlocking {
+        val id = repository.create(TaskDraft(title = "误点完成", targetDate = date))
+        assertTrue(repository.toggleCompletion(id, date))
+        assertEquals(TaskStatus.COMPLETED, repository.get(id)?.status)
+
+        assertTrue(repository.toggleCompletion(id, date))
+        assertEquals(TaskStatus.PENDING, repository.get(id)?.status)
+        assertEquals(null, repository.get(id)?.settledAt)
+
+        assertFalse(store.reopenCompleted(id, 99_999))
+        assertEquals(TaskStatus.PENDING, repository.get(id)?.status)
+    }
+
+    @Test
+    fun `过期周期与Pass任务不能恢复为待办`() = runBlocking {
+        val expiredId = repository.create(
+            TaskDraft(title = "昨日完成", targetDate = date.minusDays(1)),
+        )
+        assertTrue(repository.settle(expiredId, TaskStatus.COMPLETED))
+        assertFalse(repository.toggleCompletion(expiredId, date))
+        assertEquals(TaskStatus.COMPLETED, repository.get(expiredId)?.status)
+
+        val passedId = repository.create(TaskDraft(title = "已Pass", targetDate = date))
+        assertTrue(repository.settle(passedId, TaskStatus.PASS))
+        assertFalse(repository.toggleCompletion(passedId, date))
+        assertEquals(TaskStatus.PASS, repository.get(passedId)?.status)
+    }
+
+    @Test
     fun `一次性任务 Pass 后不会产生新实例且不能重复结算`() = runBlocking {
         val id = repository.create(TaskDraft(title = "可选整理", targetDate = date))
 
@@ -294,8 +323,27 @@ private class FakeTaskStore : TaskStore {
         val current = getById(id) ?: return false
         if (current.status != TaskStatus.PENDING) return false
         val settled = current.copy(status = status, settledAt = settledAt, updatedAt = settledAt)
-        val next = nextTask(current)
+        val next = nextTask(current)?.takeUnless { candidate ->
+            items.value.any { it.id == candidate.id }
+        }
         items.value = items.value.map { if (it.id == id) settled else it } + listOfNotNull(next)
+        return true
+    }
+
+    override suspend fun reopenCompleted(id: String, updatedAt: Long): Boolean {
+        val current = getById(id) ?: return false
+        if (current.status != TaskStatus.COMPLETED) return false
+        items.value = items.value.map { task ->
+            if (task.id == id) {
+                task.copy(
+                    status = TaskStatus.PENDING,
+                    settledAt = null,
+                    updatedAt = updatedAt,
+                )
+            } else {
+                task
+            }
+        }
         return true
     }
 

@@ -75,6 +75,39 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.pendingOperations(limit: 50) == Array(operations.dropFirst(3)))
     }
 
+    @Test("撤销完成写入明确的 reopen 操作")
+    func reopenEntersOutbox() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let start = date("2026-07-15T08:00:00+08:00")
+        var task = try makeTask(title: "误点完成", createdAt: start)
+        try repository.save(task)
+        task.status = .completed
+        task.completedAt = start.addingTimeInterval(60)
+        task.updatedAt = start.addingTimeInterval(60)
+        try repository.save(task)
+
+        #expect(try repository.reopenCompleted(
+            id: task.id,
+            at: start.addingTimeInterval(120)
+        ))
+
+        let operations = try await repository.pendingOperations(limit: 50)
+        #expect(operations.map(\.kind) == [.upsert, .complete, .reopen])
+        guard case .task(let payload) = try open(
+            try #require(operations.last),
+            configuration: configuration
+        ) else {
+            Issue.record("reopen 应携带任务正文")
+            return
+        }
+        #expect(payload.state == .pending)
+        #expect(payload.settledAt == nil)
+    }
+
     @Test("首次绑定为既有任务生成一次基线快照")
     func firstBindingCreatesOneBaseline() async throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
@@ -124,6 +157,18 @@ struct SQLiteSyncIntegrationTests {
 
         try repository.configureSync(configuration)
         #expect(try await repository.pendingOperations(limit: 50) == baseline)
+    }
+
+    @Test("新设备默认显示配置不会覆盖同步空间已有配置")
+    func seededDisplayConfigurationDoesNotCreateBaseline() async throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let localDefault = try displayConfiguration(header: "新设备默认值")
+        try repository.seedDisplayConfiguration(localDefault)
+
+        try repository.configureSync(syncConfiguration())
+
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+        #expect(try repository.displayConfiguration() == localDefault)
     }
 
     @Test("备份不能恢复到仅任务表为空但仍有删除历史的任务库")
@@ -1034,6 +1079,56 @@ struct SQLiteSyncIntegrationTests {
 
         #expect(try completedThenPending.fetchAll() == [completed])
         #expect(try pendingThenCompleted.fetchAll() == [completed])
+    }
+
+    @Test("较新的显式 reopen 可以同步恢复当前周期完成项")
+    func explicitReopenRestoresPendingTask() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let id = UUID()
+        let createdAt = date("2026-07-15T08:00:00+08:00")
+        let completed = try makeTask(
+            id: id,
+            title: "误点完成",
+            status: .completed,
+            createdAt: createdAt,
+            updatedAt: date("2026-07-15T20:00:00+08:00"),
+            settledAt: date("2026-07-15T20:00:00+08:00")
+        )
+        let reopened = try makeTask(
+            id: id,
+            title: "误点完成",
+            createdAt: createdAt,
+            updatedAt: date("2026-07-15T21:00:00+08:00")
+        )
+
+        try await repository.applyRemoteOperations([
+            try remoteTaskOperation(
+                completed,
+                kind: .complete,
+                lamport: 2,
+                serverSequence: 1,
+                deviceID: "device-completed",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+        try await repository.applyRemoteOperations([
+            try remoteTaskOperation(
+                reopened,
+                kind: .reopen,
+                lamport: 9,
+                serverSequence: 2,
+                deviceID: "device-reopen",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 2)
+
+        let result = try #require(try repository.fetchAll().first)
+        #expect(result.status == .pending)
+        #expect(result.completedAt == nil)
     }
 
     @Test("左闭右开周期的截止瞬间 completed 不享有领域优先级")

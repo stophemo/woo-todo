@@ -12,7 +12,7 @@
         android:id="@+id/widget_task_check"
         android:layout_width="40dp"
         android:layout_height="40dp"
-        android:buttonTint="@color/widget_text" />
+        android:buttonTint="@color/green" />
 
     <TextView
         android:id="@+id/widget_task_title"
@@ -30,7 +30,7 @@
         android:layout_height="wrap_content"
         android:paddingStart="6dp"
         android:paddingEnd="0dp"
-        android:textColor="@color/widget_text"
+        android:textColor="@color/widget_muted"
         android:textSize="11sp" />
 
 </LinearLayout>

@@ -162,6 +162,73 @@ struct TodayStoreTests {
         #expect(pending.map(\.title) == ["后做", "先做"])
         #expect(repository.tasks.first { $0.id == completed.id }?.status == .completed)
     }
+
+    @Test("当前周期已完成任务可以撤销且重复操作保持幂等")
+    func completedTaskCanBeReopenedIdempotently() throws {
+        let now = try #require(
+            ISO8601DateFormatter().date(from: "2026-07-17T10:00:00+08:00")
+        )
+        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
+        let period = try #require(engine.period(containing: now, for: .daily))
+        var task = try TodoTask(
+            title: "误点完成",
+            timeScope: .daily,
+            tier: .mainline,
+            period: period,
+            createdAt: now.addingTimeInterval(-60)
+        )
+        task.status = .completed
+        task.completedAt = now.addingTimeInterval(-30)
+        let repository = TodayMemoryTaskRepository(tasks: [task])
+        let store = TodayStore(repository: repository, engine: engine, now: { now })
+        var changeCount = 0
+        store.onTasksChanged = { changeCount += 1 }
+        store.reload()
+
+        store.toggleCompletion(id: task.id)
+
+        let reopened = try #require(repository.tasks.first)
+        #expect(reopened.status == .pending)
+        #expect(reopened.completedAt == nil)
+        #expect(reopened.updatedAt == now)
+        #expect(changeCount == 1)
+
+        #expect(try repository.reopenCompleted(id: task.id, at: now) == false)
+        #expect(repository.tasks.first?.status == .pending)
+    }
+
+    @Test("过期周期与Pass任务不能恢复为待办")
+    func expiredAndPassedTasksCannotBeReopened() throws {
+        let now = try #require(
+            ISO8601DateFormatter().date(from: "2026-07-18T10:00:00+08:00")
+        )
+        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
+        let yesterday = try #require(
+            engine.period(containing: now.addingTimeInterval(-86_400), for: .daily)
+        )
+        var completed = try TodoTask(
+            title: "昨日完成",
+            timeScope: .daily,
+            tier: .mainline,
+            period: yesterday,
+            createdAt: yesterday.start
+        )
+        completed.status = .completed
+        completed.completedAt = yesterday.start.addingTimeInterval(60)
+        var passed = try TodoTask(
+            title: "昨日 Pass",
+            timeScope: .daily,
+            tier: .mainline,
+            period: yesterday,
+            createdAt: yesterday.start.addingTimeInterval(1)
+        )
+        passed.status = .pass
+        passed.completedAt = yesterday.end
+        let repository = TodayMemoryTaskRepository(tasks: [completed, passed])
+
+        #expect(try repository.reopenCompleted(id: completed.id, at: now) == false)
+        #expect(try repository.reopenCompleted(id: passed.id, at: now) == false)
+    }
 }
 
 private extension Array {
@@ -194,6 +261,16 @@ private final class TodayMemoryTaskRepository: TaskRepository {
                 tasks.append(task)
             }
         }
+    }
+
+    func reopenCompleted(id: UUID, at date: Date) throws -> Bool {
+        guard let index = tasks.firstIndex(where: { $0.id == id }),
+              tasks[index].status == .completed,
+              (tasks[index].period?.end ?? .distantFuture) > date else { return false }
+        tasks[index].status = .pending
+        tasks[index].completedAt = nil
+        tasks[index].updatedAt = date
+        return true
     }
 
     func delete(id: UUID) throws {

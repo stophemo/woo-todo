@@ -130,10 +130,23 @@ struct DayCounterSettingsView: View {
         .onChange(of: store.configuration) { _, value in
             load(value)
         }
+        .onDisappear {
+            saveDraftIfNeeded()
+        }
     }
 
     private var preview: DayCounterConfiguration {
         DayCounterConfiguration(
+            headerTemplate: headerTemplate,
+            subtitleTemplate: subtitleTemplate,
+            startDate: startDate,
+            deadlineDate: deadlineDate
+        )
+    }
+
+    private func saveDraftIfNeeded() {
+        guard preview != store.configuration else { return }
+        _ = store.update(
             headerTemplate: headerTemplate,
             subtitleTemplate: subtitleTemplate,
             startDate: startDate,

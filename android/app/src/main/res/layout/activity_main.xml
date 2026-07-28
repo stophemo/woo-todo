@@ -3,80 +3,102 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/main_root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@color/app_background">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:paddingStart="16dp"
-        android:paddingTop="20dp"
-        android:paddingEnd="16dp">
+        android:orientation="vertical">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:background="@color/ink"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingTop="18dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/screen_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="@string/today_title"
+                    android:textAppearance="?attr/textAppearanceHeadlineMedium"
+                    android:textColor="@color/header_text"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/insights_button"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:text="@string/insights"
+                    android:textColor="@color/header_text" />
+
+                <Button
+                    android:id="@+id/reminder_settings_button"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:text="@string/reminder_settings"
+                    android:textColor="@color/header_text" />
+
+                <Button
+                    android:id="@+id/sync_button"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:text="@string/sync_now"
+                    android:textColor="@color/purple_light" />
+            </LinearLayout>
 
             <TextView
-                android:id="@+id/screen_title"
-                android:layout_width="0dp"
+                android:id="@+id/day_counter_text"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
+                android:layout_marginTop="2dp"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:text="@string/today_title"
-                android:textAppearance="?attr/textAppearanceHeadlineMedium"
-                android:textStyle="bold" />
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="@color/header_muted"
+                android:visibility="gone" />
 
-            <Button
-                android:id="@+id/insights_button"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
+            <TextView
+                android:id="@+id/sync_status"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:minWidth="0dp"
-                android:text="@string/insights" />
-
-            <Button
-                android:id="@+id/reminder_settings_button"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:minWidth="0dp"
-                android:text="@string/reminder_settings" />
-
-            <Button
-                android:id="@+id/sync_button"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:minWidth="0dp"
-                android:text="@string/sync_now" />
+                android:layout_marginTop="2dp"
+                android:text="@string/sync_unpaired"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="@color/header_muted" />
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/day_counter_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:textAppearance="?attr/textAppearanceBodySmall"
-            android:visibility="gone" />
-
-        <TextView
-            android:id="@+id/sync_status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:text="@string/sync_unpaired"
-            android:textAppearance="?attr/textAppearanceBodySmall" />
 
         <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:fillViewport="true"
+            android:paddingStart="16dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="6dp"
             android:scrollbars="none">
 
             <RadioGroup
@@ -87,33 +109,42 @@
 
                 <RadioButton
                     android:id="@+id/scope_today"
+                    style="@style/WooTodo.ScopeButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="38dp"
+                    android:layout_marginEnd="6dp"
                     android:checked="true"
                     android:text="@string/scope_today" />
 
                 <RadioButton
                     android:id="@+id/scope_tomorrow"
+                    style="@style/WooTodo.ScopeButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="38dp"
+                    android:layout_marginEnd="6dp"
                     android:text="@string/scope_tomorrow" />
 
                 <RadioButton
                     android:id="@+id/scope_week"
+                    style="@style/WooTodo.ScopeButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="38dp"
+                    android:layout_marginEnd="6dp"
                     android:text="@string/scope_week" />
 
                 <RadioButton
                     android:id="@+id/scope_month"
+                    style="@style/WooTodo.ScopeButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="38dp"
+                    android:layout_marginEnd="6dp"
                     android:text="@string/scope_month" />
 
                 <RadioButton
                     android:id="@+id/scope_leisure"
+                    style="@style/WooTodo.ScopeButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="38dp"
                     android:text="@string/scope_leisure" />
             </RadioGroup>
         </HorizontalScrollView>
@@ -121,8 +152,9 @@
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="8dp"
-            android:layout_weight="1">
+            android:layout_weight="1"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/task_list"
@@ -138,7 +170,8 @@
                 android:layout_gravity="center"
                 android:gravity="center"
                 android:text="@string/empty_tasks"
-                android:textAppearance="?attr/textAppearanceBodyLarge" />
+                android:textAppearance="?attr/textAppearanceBodyLarge"
+                android:textColor="@color/muted" />
         </FrameLayout>
     </LinearLayout>
 
@@ -150,6 +183,7 @@
         android:layout_margin="24dp"
         android:contentDescription="@string/add_task"
         android:src="@android:drawable/ic_input_add"
+        app:backgroundTint="@color/primary"
         app:tint="@color/on_primary" />
 
 </FrameLayout>

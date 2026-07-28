@@ -75,6 +75,14 @@ class MainViewModel(
         }
     }
 
+    fun toggleCompletion(id: String) {
+        viewModelScope.launch {
+            if (repository.toggleCompletion(id)) {
+                onTasksChanged()
+            }
+        }
+    }
+
     fun reorder(idsInOrder: List<String>) {
         viewModelScope.launch {
             repository.reorder(idsInOrder)

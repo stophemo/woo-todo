@@ -40,6 +40,14 @@ const STATIC_LEFT: u32 = 0;
 const STATIC_RIGHT: u32 = 2;
 const TRACKBAR_GET_POSITION: u32 = WM_USER;
 
+const INK: COLORREF = rgb(23, 24, 23);
+const INK_SOFT: COLORREF = rgb(37, 39, 37);
+const PAPER_BRIGHT: COLORREF = rgb(250, 251, 248);
+const TEXT_ON_DARK: COLORREF = rgb(240, 242, 238);
+const MUTED_ON_DARK: COLORREF = rgb(174, 178, 172);
+const TEXT_ON_LIGHT: COLORREF = rgb(23, 24, 23);
+const PURPLE_LIGHT: COLORREF = rgb(169, 154, 232);
+
 const ID_NAV: i32 = 100;
 const ID_TASKS: i32 = 101;
 const ID_CONTENT: i32 = 102;
@@ -139,10 +147,74 @@ struct MainControls {
 struct FloatControls {
     heading: HWND,
     date: HWND,
+    progress: HWND,
     tasks: HWND,
     quick_edit: HWND,
     add: HWND,
     open: HWND,
+}
+
+struct ThemeResources {
+    paper_brush: HBRUSH,
+    ink_brush: HBRUSH,
+    ink_soft_brush: HBRUSH,
+    heading_font: HFONT,
+    subheading_font: HFONT,
+}
+
+impl ThemeResources {
+    unsafe fn new() -> Self {
+        let face = wide("Segoe UI Variable Display");
+        Self {
+            paper_brush: CreateSolidBrush(PAPER_BRIGHT),
+            ink_brush: CreateSolidBrush(INK),
+            ink_soft_brush: CreateSolidBrush(INK_SOFT),
+            heading_font: CreateFontW(
+                -25,
+                0,
+                0,
+                0,
+                FW_SEMIBOLD as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE,
+                face.as_ptr(),
+            ),
+            subheading_font: CreateFontW(
+                -17,
+                0,
+                0,
+                0,
+                FW_SEMIBOLD as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY,
+                DEFAULT_PITCH | FF_DONTCARE,
+                face.as_ptr(),
+            ),
+        }
+    }
+}
+
+impl Drop for ThemeResources {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteObject(self.paper_brush);
+            DeleteObject(self.ink_brush);
+            DeleteObject(self.ink_soft_brush);
+            DeleteObject(self.heading_font);
+            DeleteObject(self.subheading_font);
+        }
+    }
 }
 
 struct App {
@@ -161,6 +233,7 @@ struct App {
     exiting: bool,
     tray_added: bool,
     mutex: HANDLE,
+    theme: ThemeResources,
 }
 
 #[derive(Debug, Clone)]
@@ -227,23 +300,24 @@ pub fn run() -> Result<(), String> {
         if instance.is_null() {
             return Err(last_error("无法获取应用模块"));
         }
+        let theme = ThemeResources::new();
         register_window_class(
             instance,
             MAIN_CLASS,
             Some(main_window_proc),
-            (COLOR_WINDOW + 1) as u32,
+            theme.paper_brush,
         )?;
         register_window_class(
             instance,
             FLOAT_CLASS,
             Some(float_window_proc),
-            (COLOR_WINDOW + 1) as u32,
+            theme.ink_brush,
         )?;
         register_window_class(
             instance,
             EDITOR_CLASS,
             Some(editor_window_proc),
-            (COLOR_WINDOW + 1) as u32,
+            theme.paper_brush,
         )?;
 
         let data_directory = data_directory();
@@ -271,6 +345,7 @@ pub fn run() -> Result<(), String> {
             exiting: false,
             tray_added: false,
             mutex,
+            theme,
         });
         let app_pointer = (&mut *app) as *mut App;
 
@@ -372,7 +447,7 @@ unsafe fn register_window_class(
     instance: HINSTANCE,
     name: &str,
     proc: WNDPROC,
-    background: u32,
+    background: HBRUSH,
 ) -> Result<(), String> {
     let class_name = wide(name);
     let icon = LoadIconW(instance, resource_id(1));
@@ -388,7 +463,7 @@ unsafe fn register_window_class(
         hInstance: instance,
         hIcon: fallback_icon,
         hCursor: LoadCursorW(null_mut(), IDC_ARROW),
-        hbrBackground: background as usize as HBRUSH,
+        hbrBackground: background,
         lpszClassName: class_name.as_ptr(),
         hIconSm: fallback_icon,
         ..Default::default()
@@ -477,8 +552,8 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         parent,
         "LISTBOX",
         "",
-        visible | WS_BORDER | WS_VSCROLL | LBS_NOTIFY as u32,
-        WS_EX_CLIENTEDGE,
+        visible | WS_VSCROLL | LBS_NOTIFY as u32,
+        0,
         ID_NAV,
     )?;
     for label in [
@@ -506,16 +581,15 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         parent,
         "SysListView32",
         "",
-        visible | WS_BORDER | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-        WS_EX_CLIENTEDGE,
+        visible | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+        0,
         ID_TASKS,
     )?;
     SendMessageW(
         app.main_controls.tasks,
         LVM_SETEXTENDEDLISTVIEWSTYLE,
         0,
-        (LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER | LVS_EX_CHECKBOXES)
-            as isize,
+        (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_CHECKBOXES) as isize,
     );
     add_list_column(app.main_controls.tasks, 0, "状态", 80);
     add_list_column(app.main_controls.tasks, 1, "任务", 390);
@@ -570,6 +644,10 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         ID_CLICK_THROUGH,
     )?;
 
+    set_control_font(app.main_controls.title, app.theme.heading_font);
+    set_control_font(app.main_controls.subtitle, app.theme.subheading_font);
+    set_list_palette(app.main_controls.tasks, PAPER_BRIGHT, TEXT_ON_LIGHT);
+
     layout_main(app);
     Ok(())
 }
@@ -580,12 +658,20 @@ unsafe fn create_float_controls(app: &mut App) -> Result<(), String> {
     app.float_controls.heading =
         create_child(parent, "STATIC", "今日任务", visible | STATIC_LEFT, 0, 0)?;
     app.float_controls.date = create_child(parent, "STATIC", "", visible | STATIC_LEFT, 0, 0)?;
+    app.float_controls.progress = create_child(
+        parent,
+        "STATIC",
+        "今日进度  0 / 0",
+        visible | STATIC_LEFT,
+        0,
+        0,
+    )?;
     app.float_controls.tasks = create_child(
         parent,
         "SysListView32",
         "",
-        visible | WS_BORDER | LVS_REPORT | LVS_SINGLESEL | LVS_NOCOLUMNHEADER | LVS_SHOWSELALWAYS,
-        WS_EX_CLIENTEDGE,
+        visible | LVS_REPORT | LVS_SINGLESEL | LVS_NOCOLUMNHEADER | LVS_SHOWSELALWAYS,
+        0,
         ID_FLOAT_LIST,
     )?;
     SendMessageW(
@@ -605,6 +691,13 @@ unsafe fn create_float_controls(app: &mut App) -> Result<(), String> {
     )?;
     app.float_controls.add = button(parent, "添加", ID_FLOAT_ADD)?;
     app.float_controls.open = button(parent, "详情", ID_FLOAT_OPEN)?;
+    set_control_font(app.float_controls.heading, app.theme.heading_font);
+    set_control_font(app.float_controls.progress, app.theme.subheading_font);
+    set_list_palette(app.float_controls.tasks, INK_SOFT, TEXT_ON_DARK);
+    apply_dark_control_theme(app.float_controls.tasks);
+    apply_dark_control_theme(app.float_controls.quick_edit);
+    apply_dark_control_theme(app.float_controls.add);
+    apply_dark_control_theme(app.float_controls.open);
     let previous = SetWindowLongPtrW(
         app.float_controls.quick_edit,
         GWLP_WNDPROC,
@@ -720,15 +813,16 @@ unsafe fn layout_floating(app: &App) {
     GetClientRect(app.floating, &mut area);
     let width = area.right.max(320);
     let height = area.bottom.max(360);
-    MoveWindow(app.float_controls.heading, 18, 14, width - 110, 26, 1);
-    MoveWindow(app.float_controls.date, 18, 42, width - 100, 22, 1);
+    MoveWindow(app.float_controls.heading, 18, 14, width - 110, 30, 1);
+    MoveWindow(app.float_controls.date, 18, 45, width - 100, 20, 1);
     MoveWindow(app.float_controls.open, width - 82, 16, 64, 28, 1);
+    MoveWindow(app.float_controls.progress, 18, 70, width - 36, 22, 1);
     MoveWindow(
         app.float_controls.tasks,
         18,
-        74,
+        98,
         width - 36,
-        height - 132,
+        height - 156,
         1,
     );
     SendMessageW(
@@ -998,6 +1092,15 @@ unsafe fn refresh_floating(app: &mut App) {
         .repository
         .fetch_scope(TimeType::Day, today, false)
         .unwrap_or_default();
+    let completed = app
+        .floating_tasks
+        .iter()
+        .filter(|task| task.state == TaskState::Completed)
+        .count();
+    set_text(
+        app.float_controls.progress,
+        &format!("今日进度  {completed} / {}", app.floating_tasks.len()),
+    );
     smoke_trace(&format!(
         "refresh_floating date={today} count={}",
         app.floating_tasks.len()
@@ -1768,6 +1871,9 @@ unsafe extern "system" fn main_window_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     };
     match message {
+        WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX => {
+            paint_main_control(app, message, wparam)
+        }
         WM_SIZE => {
             layout_main(app);
             0
@@ -1880,6 +1986,9 @@ unsafe extern "system" fn float_window_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     };
     match message {
+        WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN => {
+            paint_floating_control(app, message, wparam, lparam)
+        }
         WM_SIZE => {
             layout_floating(app);
             0
@@ -2400,6 +2509,10 @@ fn is_main_app_message(message: u32) -> bool {
     matches!(
         message,
         WM_SIZE
+            | WM_CTLCOLORSTATIC
+            | WM_CTLCOLOREDIT
+            | WM_CTLCOLORBTN
+            | WM_CTLCOLORLISTBOX
             | WM_GETMINMAXINFO
             | WM_DPICHANGED
             | WM_CLOSE
@@ -2417,6 +2530,9 @@ fn is_float_app_message(message: u32) -> bool {
     matches!(
         message,
         WM_SIZE
+            | WM_CTLCOLORSTATIC
+            | WM_CTLCOLOREDIT
+            | WM_CTLCOLORBTN
             | WM_GETMINMAXINFO
             | WM_DPICHANGED
             | WM_DISPLAYCHANGE
@@ -2449,6 +2565,67 @@ unsafe fn apply_suggested_window_rect(window: HWND, lparam: LPARAM) {
         rect.bottom - rect.top,
         SWP_NOZORDER | SWP_NOACTIVATE,
     );
+}
+
+unsafe fn set_control_font(control: HWND, font: HFONT) {
+    if !font.is_null() {
+        SendMessageW(control, WM_SETFONT, font as usize, 1);
+    }
+}
+
+unsafe fn set_list_palette(list: HWND, background: COLORREF, text: COLORREF) {
+    SendMessageW(list, LVM_SETBKCOLOR, 0, background as isize);
+    SendMessageW(list, LVM_SETTEXTBKCOLOR, 0, background as isize);
+    SendMessageW(list, LVM_SETTEXTCOLOR, 0, text as isize);
+}
+
+unsafe fn apply_dark_control_theme(control: HWND) {
+    let theme = wide("DarkMode_Explorer");
+    SetWindowTheme(control, theme.as_ptr(), null());
+}
+
+unsafe fn paint_main_control(app: &App, message: u32, wparam: WPARAM) -> LRESULT {
+    let context = wparam as HDC;
+    SetTextColor(context, TEXT_ON_LIGHT);
+    SetBkColor(context, PAPER_BRIGHT);
+    if message == WM_CTLCOLORSTATIC {
+        SetBkMode(context, TRANSPARENT);
+    }
+    app.theme.paper_brush as LRESULT
+}
+
+unsafe fn paint_floating_control(
+    app: &App,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let context = wparam as HDC;
+    let control = lparam as HWND;
+    if message == WM_CTLCOLOREDIT {
+        SetTextColor(context, TEXT_ON_LIGHT);
+        SetBkColor(context, PAPER_BRIGHT);
+        return app.theme.paper_brush as LRESULT;
+    }
+    let text = if control == app.float_controls.date || control == app.float_controls.progress {
+        MUTED_ON_DARK
+    } else if control == app.float_controls.heading {
+        TEXT_ON_DARK
+    } else {
+        PURPLE_LIGHT
+    };
+    SetTextColor(context, text);
+    SetBkColor(context, INK);
+    if message == WM_CTLCOLORSTATIC {
+        SetBkMode(context, TRANSPARENT);
+        app.theme.ink_brush as LRESULT
+    } else {
+        app.theme.ink_soft_brush as LRESULT
+    }
+}
+
+const fn rgb(red: u8, green: u8, blue: u8) -> COLORREF {
+    red as COLORREF | ((green as COLORREF) << 8) | ((blue as COLORREF) << 16)
 }
 
 fn now_millis() -> i64 {

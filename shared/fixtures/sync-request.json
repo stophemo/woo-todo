@@ -10,6 +10,14 @@
       "lamport": 12,
       "nonce": "AAECAwQFBgcICQoL",
       "ciphertext": "VGhpcy1pcy1hLXRlc3QtY2lwaGVydGV4dA"
+    },
+    {
+      "opId": "op_01JZ7X0B8E6V5P4N3M2R",
+      "entityId": "task_01JZ7WZX2WQ9A8B7C6D5",
+      "kind": "reopen",
+      "lamport": 13,
+      "nonce": "AQIDBAUGBwgJCgsM",
+      "ciphertext": "UmVvcGVuLXRlc3QtY2lwaGVydGV4dA"
     }
   ]
 }

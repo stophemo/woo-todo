@@ -11,7 +11,6 @@ import android.widget.RemoteViews
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.display.DayCounterPreferences
-import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskTimeType
 import com.wootodo.ui.EditTaskActivity
@@ -44,7 +43,7 @@ class TodayWidgetProvider : AppWidgetProvider() {
         if (intent.action != ACTION_COLLECTION_ITEM) return
         val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return
         when (intent.getStringExtra(EXTRA_COMMAND)) {
-            COMMAND_COMPLETE -> completeTask(context, taskId)
+            COMMAND_TOGGLE_COMPLETION -> toggleCompletion(context, taskId)
             COMMAND_EDIT -> context.startActivity(
                 Intent(context, EditTaskActivity::class.java).apply {
                     putExtra(EditTaskActivity.EXTRA_TASK_ID, taskId)
@@ -54,13 +53,13 @@ class TodayWidgetProvider : AppWidgetProvider() {
         }
     }
 
-    private fun completeTask(context: Context, taskId: String) {
+    private fun toggleCompletion(context: Context, taskId: String) {
         val pendingResult = goAsync()
         val appContext = context.applicationContext
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 val repository = (appContext as WooTodoApplication).taskRepository
-                if (repository.settle(taskId, TaskStatus.COMPLETED)) {
+                if (repository.toggleCompletion(taskId)) {
                     (appContext as WooTodoApplication).notifyLocalMutation()
                 }
                 TodayWidgetUpdater.updateAll(appContext)
@@ -74,7 +73,7 @@ class TodayWidgetProvider : AppWidgetProvider() {
         const val ACTION_COLLECTION_ITEM = "com.wootodo.action.WIDGET_ITEM"
         const val EXTRA_COMMAND = "widget_command"
         const val EXTRA_TASK_ID = "widget_task_id"
-        const val COMMAND_COMPLETE = "complete"
+        const val COMMAND_TOGGLE_COMPLETION = "toggle_completion"
         const val COMMAND_EDIT = "edit"
     }
 }

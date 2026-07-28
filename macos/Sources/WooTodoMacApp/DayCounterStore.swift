@@ -132,7 +132,7 @@ final class DayCounterStore: ObservableObject {
                 configuration = try Self.configuration(from: payload)
             } else {
                 let payload = try Self.payload(from: configuration)
-                try repository.saveDisplayConfiguration(payload)
+                try repository.seedDisplayConfiguration(payload)
                 configuration = try Self.configuration(from: payload)
             }
             persistenceErrorMessage = nil

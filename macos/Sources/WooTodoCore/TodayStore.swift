@@ -103,16 +103,26 @@ public final class TodayStore: ObservableObject {
     }
 
     public func toggleCompletion(id: UUID) {
-        guard tasks.first(where: { $0.id == id })?.status == .pending else { return }
+        guard let current = tasks.first(where: { $0.id == id }),
+              current.status != .pass else { return }
+        var didChange = false
         if perform({
-            guard var task = tasks.first(where: { $0.id == id }) else { return }
             let date = now()
-            task.status = .completed
-            task.completedAt = date
-            task.updatedAt = date
-            try repository.save(task)
-            reload()
-        }) {
+            switch current.status {
+            case .pending:
+                var task = current
+                task.status = .completed
+                task.completedAt = date
+                task.updatedAt = date
+                try repository.save(task)
+                didChange = true
+            case .completed:
+                didChange = try repository.reopenCompleted(id: id, at: date)
+            case .pass:
+                break
+            }
+            if didChange { reload() }
+        }), didChange {
             onTasksChanged?()
         }
     }

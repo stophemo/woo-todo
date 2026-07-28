@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import WooTodoCore
+import WooTodoSync
 @testable import WooTodoStorage
 
 @Suite("SQLite 本地仓储")
@@ -79,5 +80,59 @@ struct SQLiteTaskRepositoryTests {
         try repository.save(task)
 
         #expect(try repository.fetchTasks(scope: .anytime, in: nil) == [task])
+    }
+
+    @Test("当前周期完成项可以原子恢复，过期周期不能恢复")
+    func reopenCompletedTask() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
+        let now = ISO8601DateFormatter().date(from: "2026-07-15T12:00:00+08:00")!
+        var task = try TodoTask(
+            title: "误点完成",
+            timeScope: .daily,
+            tier: .mainline,
+            period: engine.period(containing: now, for: .daily),
+            createdAt: now.addingTimeInterval(-60)
+        )
+        task.status = .completed
+        task.completedAt = now.addingTimeInterval(-30)
+        task.updatedAt = now.addingTimeInterval(-30)
+        try repository.save(task)
+
+        #expect(try repository.reopenCompleted(id: task.id, at: now))
+        var reopened = try #require(try repository.fetchAll().first)
+        #expect(reopened.status == .pending)
+        #expect(reopened.completedAt == nil)
+        #expect(try repository.reopenCompleted(id: task.id, at: now) == false)
+
+        reopened.status = .completed
+        reopened.completedAt = now
+        reopened.updatedAt = now
+        try repository.save(reopened)
+        #expect(try repository.reopenCompleted(id: task.id, at: reopened.period!.end) == false)
+    }
+
+    @Test("显示配置在仓储关闭并重新打开后仍保留")
+    func displayConfigurationSurvivesRepositoryReopen() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("tasks.sqlite")
+        let payload = try WireDisplayConfigurationPayload(
+            headerTemplate: "{dateLong} · 今日任务",
+            subtitleTemplate: "坚持第 {elapsedDays} 天",
+            startDate: "2026-01-01",
+            deadlineDate: "2026-12-31"
+        )
+
+        do {
+            let repository = try SQLiteTaskRepository(databaseURL: databaseURL)
+            try repository.saveDisplayConfiguration(payload)
+            #expect(try repository.displayConfiguration() == payload)
+        }
+
+        let reopened = try SQLiteTaskRepository(databaseURL: databaseURL)
+        #expect(try reopened.displayConfiguration() == payload)
     }
 }

@@ -171,7 +171,7 @@ class MainActivity : AppCompatActivity() {
         dayCounterText.enableReadOnlyTextSelection()
 
         taskAdapter = TaskAdapter(
-            onComplete = { viewModel.settle(it.id, TaskStatus.COMPLETED) },
+            onComplete = { viewModel.toggleCompletion(it.id) },
             onPass = { viewModel.settle(it.id, TaskStatus.PASS) },
             onEdit = { openEditor(it.id) },
         )

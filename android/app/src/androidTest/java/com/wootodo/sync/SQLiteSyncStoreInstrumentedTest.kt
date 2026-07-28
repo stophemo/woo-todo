@@ -90,6 +90,36 @@ class SQLiteSyncStoreInstrumentedTest {
     }
 
     @Test
+    fun `撤销完成会写入明确的reopen操作`() = runBlocking {
+        val syncStore = SQLiteSyncStore(database, credentials)
+        val taskStore = SQLiteTaskStore(database)
+        val task = localTask("task-reopen-outbox", "误点完成")
+        taskStore.insert(task)
+        assertTrue(
+            taskStore.settleAndSchedule(
+                id = task.id,
+                status = TaskStatus.COMPLETED,
+                settledAt = 2_000,
+                nextTask = { null },
+            ),
+        )
+        assertTrue(taskStore.reopenCompleted(task.id, updatedAt = 3_000))
+
+        val operations = syncStore.pendingOperations(50)
+        assertEquals(
+            listOf(
+                SyncOperationKind.UPSERT,
+                SyncOperationKind.COMPLETE,
+                SyncOperationKind.REOPEN,
+            ),
+            operations.map { it.kind },
+        )
+        val payload = decrypt(operations.last()) as TaskInstancePayload
+        assertEquals(WireTaskState.PENDING, payload.state)
+        assertNull(payload.settledAt)
+    }
+
+    @Test
     fun `未绑定时删除会持久化并在首次绑定后只补录一次tombstone`() = runBlocking {
         val entityId = "task-deleted-before-binding"
         val taskStore = SQLiteTaskStore(database)
@@ -497,6 +527,21 @@ class SQLiteSyncStoreInstrumentedTest {
 
         SQLiteSyncStore(database, credentials)
         assertEquals(1, rowCount("sync_outbox"))
+    }
+
+    @Test
+    fun `新设备默认显示配置不会覆盖同步空间已有配置`() {
+        val localDefault = displayConfiguration("新设备默认值")
+        writeDisplayConfiguration(
+            database.writableDatabase,
+            localDefault,
+            isLocalOverride = false,
+        )
+
+        val store = SQLiteSyncStore(database, credentials)
+
+        assertTrue(store.pendingOperations(50).isEmpty())
+        assertEquals(false, readDisplayConfigurationLocalOverride(database.readableDatabase))
     }
 
     @Test

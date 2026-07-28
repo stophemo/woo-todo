@@ -28,6 +28,7 @@ enum class SyncOperationKind(val wireValue: String) {
     DELETE("delete"),
     COMPLETE("complete"),
     PASS("pass"),
+    REOPEN("reopen"),
     REORDER("reorder");
 
     companion object {

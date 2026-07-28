@@ -152,6 +152,7 @@ struct DashboardView: View {
                 save(input, request: request)
             }
         }
+        .tint(WooTodoTheme.purple)
         .onAppear { store.reload() }
     }
 
@@ -316,19 +317,22 @@ private struct DashboardTaskRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Button(action: toggle) {
-                Image(systemName: task.status == .completed ? "checkmark.circle.fill" : "circle")
+                Image(systemName: task.status == .completed ? "checkmark.square.fill" : "square")
                     .font(.title3)
-                    .foregroundStyle(task.status == .completed ? .green : .secondary)
+                    .foregroundStyle(
+                        task.status == .completed ? WooTodoTheme.green : Color.secondary
+                    )
             }
             .buttonStyle(.plain)
-            .disabled(task.status != .pending)
+            .disabled(task.status == .pass)
+            .help(task.status == .completed ? "撤销完成" : "标记完成")
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(task.title)
                     .strikethrough(task.status == .completed)
                     .foregroundStyle(task.status == .completed ? .secondary : .primary)
                 HStack(spacing: 6) {
-                    TaskBadge(text: task.tier.displayName)
+                    TaskBadge(text: task.tier.displayName, accent: task.tier.accentColor)
                     TaskBadge(text: TaskPeriodText.text(for: task))
                     if case .repeating = task.recurrence {
                         Image(systemName: "repeat")
@@ -361,6 +365,7 @@ private struct DashboardTaskRow: View {
 
 private struct TaskBadge: View {
     let text: String
+    var accent: Color? = nil
 
     var body: some View {
         Text(text)
@@ -368,7 +373,10 @@ private struct TaskBadge: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(.quaternary, in: Capsule())
+            .background(
+                (accent ?? Color.secondary).opacity(0.12),
+                in: RoundedRectangle(cornerRadius: 4)
+            )
     }
 }
 
@@ -386,7 +394,9 @@ private struct HistoryView: View {
             List(tasks) { task in
                 HStack(spacing: 12) {
                     Image(systemName: task.status == .completed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(task.status == .completed ? .green : .orange)
+                        .foregroundStyle(
+                            task.status == .completed ? WooTodoTheme.green : WooTodoTheme.orange
+                        )
                     VStack(alignment: .leading, spacing: 5) {
                         Text(task.title)
                         HStack(spacing: 6) {

@@ -8,7 +8,6 @@ final class FloatingPanelController: NSWindowController {
         static let minimum: CGFloat = 0.2
         static let maximum: CGFloat = 1
         static let defaultValue: CGFloat = 1
-        static let clickThroughValue: CGFloat = 0.2
 
         static func normalized(_ value: CGFloat) -> CGFloat {
             guard value.isFinite else { return defaultValue }
@@ -150,13 +149,14 @@ final class FloatingPanelController: NSWindowController {
     private func configureContent(store: TodayStore, dayCounterStore: DayCounterStore) {
         guard let panel = window else { return }
         contentContainer.wantsLayer = true
-        contentContainer.layer?.cornerRadius = 16
+        contentContainer.layer?.cornerRadius = 8
         contentContainer.layer?.masksToBounds = true
 
         solidBackgroundView.translatesAutoresizingMaskIntoConstraints = false
         effectView.blendingMode = .behindWindow
         effectView.material = .hudWindow
         effectView.state = .active
+        effectView.appearance = NSAppearance(named: .darkAqua)
         effectView.translatesAutoresizingMaskIntoConstraints = false
 
         let hostingView = NSHostingView(
@@ -187,8 +187,7 @@ final class FloatingPanelController: NSWindowController {
         guard let panel = window else { return }
         panel.level = isAlwaysOnTop ? .floating : .normal
         panel.ignoresMouseEvents = isClickThrough
-        // 穿透时强制最大透明，退出穿透后恢复用户设置的日常不透明度。
-        panel.alphaValue = isClickThrough ? OpacityPolicy.clickThroughValue : panelOpacity
+        panel.alphaValue = panelOpacity
         panel.backgroundColor = .clear
         effectView.isHidden = !isBlurEnabled
         solidBackgroundView.isHidden = isBlurEnabled
@@ -215,9 +214,12 @@ private final class AppearanceAwareBackgroundView: NSView {
     }
 
     func refreshColor() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        }
+        layer?.backgroundColor = NSColor(
+            srgbRed: 37 / 255,
+            green: 39 / 255,
+            blue: 37 / 255,
+            alpha: 1
+        ).cgColor
     }
 }
 

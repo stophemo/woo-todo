@@ -3,6 +3,7 @@ package com.wootodo.sync
 import java.time.LocalDate
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class TaskMergePolicyTest {
@@ -78,6 +79,61 @@ class TaskMergePolicyTest {
         assertEquals(completedThenPending, pendingThenCompleted)
         assertEquals(completed, completedThenPending.resolvedTask)
         assertEquals(newer, completedThenPending.resolvedVersion)
+    }
+
+    @Test
+    fun `显式reopen仅在版本较新且周期内时恢复pending`() {
+        val completed = task(
+            title = "已完成",
+            state = WireTaskState.COMPLETED,
+            settledAt = instant("2026-07-15", 20, 0),
+            updatedAt = instant("2026-07-15", 20, 0),
+        )
+        val reopened = task(
+            title = "已完成",
+            state = WireTaskState.PENDING,
+            settledAt = null,
+            updatedAt = instant("2026-07-15", 21, 0),
+        )
+
+        val accepted = TaskMergePolicy.resolve(
+            completed,
+            older,
+            reopened,
+            newer,
+            SyncOperationKind.REOPEN,
+        )
+        val ignored = TaskMergePolicy.resolve(
+            completed,
+            newer,
+            reopened,
+            older,
+            SyncOperationKind.REOPEN,
+        )
+
+        assertEquals(WireTaskState.PENDING, accepted.resolvedTask?.state)
+        assertEquals(null, accepted.resolvedTask?.settledAt)
+        assertEquals(completed, ignored.resolvedTask)
+    }
+
+    @Test
+    fun `无本地版本时仍拒绝超出周期的reopen`() {
+        val expiredReopen = task(
+            title = "过期恢复",
+            state = WireTaskState.PENDING,
+            settledAt = null,
+            updatedAt = periodEnd,
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            TaskMergePolicy.resolve(
+                currentTask = null,
+                currentVersion = null,
+                incomingTask = expiredReopen,
+                incomingVersion = newer,
+                incomingKind = SyncOperationKind.REOPEN,
+            )
+        }
     }
 
     private fun task(

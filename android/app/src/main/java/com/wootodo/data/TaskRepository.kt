@@ -113,6 +113,18 @@ class TaskRepository(
         }
     }
 
+    suspend fun toggleCompletion(
+        id: String,
+        referenceDate: LocalDate = LocalDate.now(clock),
+    ): Boolean {
+        val current = store.getById(id) ?: return false
+        return when (current.status) {
+            TaskStatus.PENDING -> settle(id, TaskStatus.COMPLETED)
+            TaskStatus.COMPLETED -> reopenCompleted(current, referenceDate)
+            TaskStatus.PASS -> false
+        }
+    }
+
     suspend fun tasksForToday(date: LocalDate = LocalDate.now(clock)): List<Task> =
         store.getForDay(date).map(TaskEntity::toDomain).sortedWith(TaskRules.ordering)
 
@@ -147,6 +159,14 @@ class TaskRepository(
     private fun normalizedTarget(timeType: TaskTimeType, date: LocalDate?): LocalDate? {
         if (timeType == TaskTimeType.LEISURE) return null
         return TaskDateRules.normalizeTargetDate(timeType, date ?: LocalDate.now(clock))
+    }
+
+    private suspend fun reopenCompleted(task: TaskEntity, referenceDate: LocalDate): Boolean {
+        val currentPeriod = TaskDateRules.normalizeTargetDate(task.timeType, referenceDate)
+        val expired = task.timeType != TaskTimeType.LEISURE &&
+            (task.targetDate == null || currentPeriod == null || task.targetDate.isBefore(currentPeriod))
+        if (expired) return false
+        return store.reopenCompleted(task.id, clock.millis())
     }
 
     private fun nextOccurrence(current: TaskEntity, now: Long): TaskEntity? {

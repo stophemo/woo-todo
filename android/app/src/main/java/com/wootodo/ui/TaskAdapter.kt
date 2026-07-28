@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
@@ -111,9 +112,16 @@ internal class TaskAdapter(
 
     private class HeaderViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val headerTitle: TextView = itemView.findViewById(R.id.header_title)
+        private val headerMarker: View = itemView.findViewById(R.id.header_marker)
 
         fun bind(line: QuestLine) {
             headerTitle.setText(line.labelRes())
+            val color = when (line) {
+                QuestLine.MAIN -> R.color.primary
+                QuestLine.SIDE -> R.color.green
+                QuestLine.EXTRA -> R.color.orange
+            }
+            headerMarker.background.mutate().setTint(ContextCompat.getColor(itemView.context, color))
         }
     }
 
@@ -130,9 +138,9 @@ internal class TaskAdapter(
             taskStatus.setText(task.status.labelRes())
             taskCheck.setOnCheckedChangeListener(null)
             taskCheck.isChecked = task.status == TaskStatus.COMPLETED
-            taskCheck.isEnabled = pending
+            taskCheck.isEnabled = task.status != TaskStatus.PASS
             taskCheck.setOnClickListener {
-                if (pending) onComplete(task)
+                if (task.status != TaskStatus.PASS) onComplete(task)
             }
             passButton.isVisible = pending
             passButton.setOnClickListener { onPass(task) }

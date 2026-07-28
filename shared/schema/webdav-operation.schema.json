@@ -37,7 +37,7 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["upsert", "delete", "complete", "pass", "reorder"]
+      "enum": ["upsert", "delete", "complete", "pass", "reopen", "reorder"]
     },
     "lamport": { "type": "integer", "minimum": 1 },
     "nonce": {

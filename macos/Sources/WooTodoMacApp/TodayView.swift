@@ -10,7 +10,7 @@ struct TodayView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().opacity(0.45)
+            progress
             if store.tasks.isEmpty {
                 emptyState
             } else {
@@ -26,7 +26,10 @@ struct TodayView: View {
             }
         }
         .frame(minWidth: 300, minHeight: 360)
+        .foregroundStyle(.white)
+        .tint(WooTodoTheme.purpleLight)
         .background(Color.clear)
+        .preferredColorScheme(.dark)
         .sheet(isPresented: $showingNewTask) {
             TaskEditorView(mode: .create) { title, tier, repeatsDaily, reminderTime in
                 store.add(
@@ -52,7 +55,10 @@ struct TodayView: View {
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("WOO TODO")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(WooTodoTheme.purpleLight)
                 if let title = dayCounterStore.configuration.headerText(
                     on: dayCounterStore.renderDate
                 ) {
@@ -66,7 +72,7 @@ struct TodayView: View {
                 ) {
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WooTodoTheme.mutedOnDark)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -82,8 +88,39 @@ struct TodayView: View {
             .buttonStyle(.borderless)
             .help("新增今日任务")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 11)
+    }
+
+    private var progress: some View {
+        let completed = store.tasks.filter { $0.status == .completed }.count
+        let total = store.tasks.count
+        let fraction = total == 0 ? 0 : CGFloat(completed) / CGFloat(total)
+        return VStack(spacing: 8) {
+            HStack {
+                Text("今日进度")
+                Spacer()
+                Text("\(completed) / \(total)")
+                    .foregroundStyle(.white)
+                    .fontWeight(.semibold)
+            }
+            .font(.caption)
+            .foregroundStyle(WooTodoTheme.mutedOnDark)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(WooTodoTheme.lineOnDark)
+                    Rectangle()
+                        .fill(WooTodoTheme.green)
+                        .frame(width: proxy.size.width * fraction)
+                }
+            }
+            .frame(height: 2)
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 8)
     }
 
     private var taskList: some View {
@@ -93,7 +130,7 @@ struct TodayView: View {
                 let pending = group.filter { $0.status == .pending }
                 let settled = group.filter { $0.status != .pending }
                 if !group.isEmpty {
-                    Section(tier.displayName) {
+                    Section {
                         ForEach(pending) { task in
                             TaskRow(
                                 task: task,
@@ -118,6 +155,15 @@ struct TodayView: View {
                             )
                             .moveDisabled(true)
                         }
+                    } header: {
+                        HStack(spacing: 7) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(tier.accentColor)
+                                .frame(width: 7, height: 7)
+                            Text(tier.displayName)
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(WooTodoTheme.mutedOnDark)
                     }
                 }
             }
@@ -131,12 +177,12 @@ struct TodayView: View {
             Spacer()
             Image(systemName: "moon.stars")
                 .font(.system(size: 34, weight: .light))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WooTodoTheme.purpleLight)
             Text("今天还没有任务")
                 .font(.headline)
             Text("今晚列好明日事项，明天直接开干。")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WooTodoTheme.mutedOnDark)
             Button("新增任务") {
                 showingNewTask = true
             }
@@ -163,25 +209,27 @@ private struct TaskRow: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
-            .disabled(task.status != .pending)
-            .help(task.status == .pending ? "标记完成" : "任务已结算")
+            .disabled(task.status == .pass)
+            .help(task.status == .completed ? "撤销完成" : "标记完成")
 
             Text(task.title)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .strikethrough(task.status == .completed)
-                .foregroundStyle(task.status == .completed ? .secondary : .primary)
+                .foregroundStyle(
+                    task.status == .completed ? WooTodoTheme.mutedOnDark : Color.white
+                )
             if case .repeating = task.recurrence {
                 Image(systemName: "repeat")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(WooTodoTheme.mutedOnDark)
                     .help("每日重复")
             }
             if task.reminderTime != nil {
                 Image(systemName: "bell")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(WooTodoTheme.mutedOnDark)
                     .help("已设置提醒")
             }
         }
@@ -196,24 +244,30 @@ private struct TaskRow: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.vertical, 6)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(WooTodoTheme.lineOnDark)
+                .frame(height: 1)
+        }
     }
 
     private var statusImage: String {
         switch task.status {
-        case .pending: "circle"
-        case .completed: "checkmark.circle.fill"
-        case .pass: "xmark.circle.fill"
+        case .pending: "square"
+        case .completed: "checkmark.square.fill"
+        case .pass: "xmark.square.fill"
         }
     }
 
     private var statusColor: Color {
         switch task.status {
-        case .pending: .secondary
-        case .completed: .green
-        case .pass: .orange
+        case .pending: WooTodoTheme.mutedOnDark
+        case .completed: WooTodoTheme.green
+        case .pass: WooTodoTheme.orange
         }
     }
 }

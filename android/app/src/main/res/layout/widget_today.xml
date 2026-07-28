@@ -21,7 +21,7 @@
             android:maxLines="1"
             android:text="@string/today_title"
             android:textColor="@color/widget_text"
-            android:textSize="18sp"
+            android:textSize="20sp"
             android:textStyle="bold" />
 
         <TextView
@@ -40,7 +40,7 @@
         android:layout_height="wrap_content"
         android:ellipsize="end"
         android:maxLines="1"
-        android:textColor="@color/widget_text"
+        android:textColor="@color/widget_muted"
         android:textSize="11sp"
         android:visibility="gone" />
 

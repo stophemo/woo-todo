@@ -82,9 +82,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         blurItem.state = panelController.isBlurEnabled ? .on : .off
         alwaysOnTopItem.state = panelController.isAlwaysOnTop ? .on : .off
         let percentage = Int((panelController.panelOpacity * 100).rounded())
-        opacityItem.title = panelController.isClickThrough
-            ? "日常不透明度（恢复后 \(percentage)%）"
-            : "日常不透明度（\(percentage)%）"
+        opacityItem.title = "不透明度（\(percentage)%）"
         quickAddItem.title = "快速新增任务"
         taskPanelItem.title = panelController.isVisible
             ? "隐藏任务板"
@@ -144,7 +142,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         blurItem.action = #selector(toggleBlur)
         menu.addItem(blurItem)
 
-        let opacityMenu = NSMenu(title: "日常不透明度")
+        let opacityMenu = NSMenu(title: "不透明度")
         OpacityPreset.allCases.forEach { preset in
             let item = NSMenuItem(
                 title: preset.title,

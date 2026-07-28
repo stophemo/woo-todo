@@ -61,6 +61,8 @@ interface TaskStore {
         nextTask: (TaskEntity) -> TaskEntity?,
     ): Boolean
 
+    suspend fun reopenCompleted(id: String, updatedAt: Long): Boolean
+
     suspend fun reorder(idsInOrder: List<String>, updatedAt: Long): Boolean
 }
 
@@ -293,6 +295,40 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         if (changed) invalidate()
         changed
     }
+
+    override suspend fun reopenCompleted(id: String, updatedAt: Long): Boolean =
+        withContext(Dispatchers.IO) {
+            val sqlite = database.writableDatabase
+            var changed = false
+            sqlite.beginTransaction()
+            try {
+                val values = ContentValues(3).apply {
+                    put("status", TaskStatus.PENDING.rawValue)
+                    putNull("settled_at")
+                    put("updated_at", updatedAt)
+                }
+                changed = sqlite.update(
+                    TABLE_TASKS,
+                    values,
+                    "id = ? AND status = ?",
+                    arrayOf(id, TaskStatus.COMPLETED.rawValue),
+                ) == 1
+                if (changed) {
+                    getById(sqlite, id)?.let { reopened ->
+                        SQLiteLocalMutationRecorder.recordTask(
+                            sqlite,
+                            reopened,
+                            SyncOperationKind.REOPEN,
+                        )
+                    }
+                }
+                sqlite.setTransactionSuccessful()
+            } finally {
+                sqlite.endTransaction()
+            }
+            if (changed) invalidate()
+            changed
+        }
 
     override suspend fun reorder(
         idsInOrder: List<String>,

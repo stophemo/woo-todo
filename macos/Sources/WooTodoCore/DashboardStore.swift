@@ -123,14 +123,22 @@ public final class DashboardStore: ObservableObject {
     }
 
     public func toggleCompletion(id: UUID) {
-        guard allTasks.first(where: { $0.id == id })?.status == .pending else { return }
+        guard let current = allTasks.first(where: { $0.id == id }),
+              current.status != .pass else { return }
         mutate {
-            guard var task = allTasks.first(where: { $0.id == id }) else { return }
             let date = now()
-            task.status = .completed
-            task.completedAt = date
-            task.updatedAt = date
-            try repository.save(task)
+            switch current.status {
+            case .pending:
+                var task = current
+                task.status = .completed
+                task.completedAt = date
+                task.updatedAt = date
+                try repository.save(task)
+            case .completed:
+                _ = try repository.reopenCompleted(id: id, at: date)
+            case .pass:
+                break
+            }
         }
     }
 

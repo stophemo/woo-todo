@@ -4,6 +4,7 @@ import android.content.Context
 import com.wootodo.sync.DisplayConfigurationPayload
 import com.wootodo.sync.SQLiteLocalMutationRecorder
 import com.wootodo.sync.readDisplayConfiguration
+import com.wootodo.sync.readDisplayConfigurationLocalOverride
 import com.wootodo.sync.writeDisplayConfiguration
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -196,8 +197,10 @@ object DayCounterPreferences {
             sqlite.beginTransaction()
             try {
                 val payload = toPayload(normalized)
-                if (readDisplayConfiguration(sqlite) != payload) {
-                    writeDisplayConfiguration(sqlite, payload)
+                if (readDisplayConfiguration(sqlite) != payload ||
+                    !readDisplayConfigurationLocalOverride(sqlite)
+                ) {
+                    writeDisplayConfiguration(sqlite, payload, isLocalOverride = true)
                     recordedForSync = SQLiteLocalMutationRecorder.recordDisplayConfiguration(
                         sqlite,
                         payload,

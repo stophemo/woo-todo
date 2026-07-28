@@ -270,17 +270,46 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                     guard sqlite3_step(statement) == SQLITE_DONE else {
                         throw statementError()
                     }
+                    let kind = operationKind(previous: existing, current: task)
                     if let configuration = syncConfiguration {
                         try enqueueLocalTask(
                             task,
-                            kind: operationKind(previous: existing, current: task),
+                            kind: kind,
                             configuration: configuration
                         )
                     } else if hasPersistedSyncIdentity {
-                        try recordDeferredUpsert(entityID: entityID)
+                        try recordDeferredUpsert(entityID: entityID, kind: kind)
                     }
                 }
                 try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    @discardableResult
+    public func reopenCompleted(id: UUID, at date: Date) throws -> Bool {
+        try withLock {
+            guard var task = try storedTask(id: id),
+                  task.status == .completed else { return false }
+            if let period = task.period, period.end <= date { return false }
+
+            task.status = .pending
+            task.completedAt = nil
+            task.updatedAt = date
+            let entityID = canonicalEntityID(id.uuidString)
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try upsertTaskRow(task)
+                if let configuration = syncConfiguration {
+                    try enqueueLocalTask(task, kind: .reopen, configuration: configuration)
+                } else if hasPersistedSyncIdentity {
+                    try recordDeferredUpsert(entityID: entityID, kind: .reopen)
+                }
+                try execute("COMMIT")
+                return true
             } catch {
                 try? execute("ROLLBACK")
                 throw error
@@ -450,10 +479,16 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         try execute(
             """
             CREATE TABLE IF NOT EXISTS sync_deferred_upserts (
-                entity_id TEXT PRIMARY KEY NOT NULL
+                entity_id TEXT PRIMARY KEY NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'upsert'
             )
             """
         )
+        if try !tableHasColumn("sync_deferred_upserts", columnName: "kind") {
+            try execute(
+                "ALTER TABLE sync_deferred_upserts ADD COLUMN kind TEXT NOT NULL DEFAULT 'upsert'"
+            )
+        }
         try execute(
             """
             CREATE TABLE IF NOT EXISTS sync_deferred_deletions (
@@ -477,11 +512,18 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 header_template TEXT NOT NULL,
                 subtitle_template TEXT NOT NULL,
                 start_date TEXT NOT NULL,
-                deadline_date TEXT NOT NULL
+                deadline_date TEXT NOT NULL,
+                is_local_override INTEGER NOT NULL DEFAULT 0
+                    CHECK (is_local_override IN (0, 1))
             )
             """
         )
-        try execute("PRAGMA user_version = 6")
+        if try !tableHasColumn("sync_display_configuration", columnName: "is_local_override") {
+            try execute(
+                "ALTER TABLE sync_display_configuration ADD COLUMN is_local_override INTEGER NOT NULL DEFAULT 1"
+            )
+        }
+        try execute("PRAGMA user_version = 7")
     }
 
     public func displayConfiguration() throws -> WireDisplayConfigurationPayload? {
@@ -513,10 +555,11 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     public func saveDisplayConfiguration(_ payload: WireDisplayConfigurationPayload) throws {
         try withLock {
             try payload.validate()
-            if try displayConfiguration() == payload { return }
+            if try displayConfiguration() == payload,
+               try displayConfigurationIsLocalOverride() { return }
             try execute("BEGIN IMMEDIATE TRANSACTION")
             do {
-                try upsertDisplayConfiguration(payload)
+                try upsertDisplayConfiguration(payload, isLocalOverride: true)
                 if let configuration = syncConfiguration {
                     try enqueueLocalDisplayConfiguration(payload, configuration: configuration)
                 } else if hasPersistedSyncIdentity {
@@ -527,6 +570,14 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 try? execute("ROLLBACK")
                 throw error
             }
+        }
+    }
+
+    public func seedDisplayConfiguration(_ payload: WireDisplayConfigurationPayload) throws {
+        try withLock {
+            try payload.validate()
+            guard try displayConfiguration() == nil else { return }
+            try upsertDisplayConfiguration(payload, isLocalOverride: false)
         }
     }
 
@@ -647,7 +698,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 ) {
                     try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
                 }
-                if let displayConfiguration = try displayConfiguration() {
+                if let displayConfiguration = try displayConfiguration(),
+                   try displayConfigurationIsLocalOverride() {
                     try enqueueLocalDisplayConfiguration(
                         displayConfiguration,
                         configuration: configuration
@@ -846,12 +898,22 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
-    private func recordDeferredUpsert(entityID: String) throws {
+    private func recordDeferredUpsert(
+        entityID: String,
+        kind: SyncOperationKind
+    ) throws {
         let statement = try prepare(
-            "INSERT OR IGNORE INTO sync_deferred_upserts(entity_id) VALUES (?)"
+            """
+            INSERT INTO sync_deferred_upserts(entity_id, kind) VALUES (?, ?)
+            ON CONFLICT(entity_id) DO UPDATE SET kind = CASE
+                WHEN sync_deferred_upserts.kind = 'reopen'
+                    AND excluded.kind IN ('upsert', 'reorder') THEN 'reopen'
+                ELSE excluded.kind
+            END
+            """
         )
         defer { sqlite3_finalize(statement) }
-        try bind([.text(entityID)], to: statement)
+        try bind([.text(entityID), .text(kind.rawValue)], to: statement)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
     }
 
@@ -934,6 +996,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         using configuration: SQLiteSyncConfiguration
     ) throws {
         guard try hasDeferredChanges() else { return }
+        let deferredKinds = try deferredUpsertKinds()
 
         try execute("BEGIN IMMEDIATE TRANSACTION")
         do {
@@ -950,7 +1013,11 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 ORDER BY tasks.created_at, tasks.id
                 """
             ) {
-                try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
+                try enqueueLocalTask(
+                    task,
+                    kind: deferredKinds[task.id] ?? .upsert,
+                    configuration: configuration
+                )
             }
 
             if try hasDeferredDisplayConfiguration() {
@@ -1039,6 +1106,25 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         return values
     }
 
+    private func deferredUpsertKinds() throws -> [UUID: SyncOperationKind] {
+        let statement = try prepare(
+            "SELECT entity_id, kind FROM sync_deferred_upserts ORDER BY entity_id"
+        )
+        defer { sqlite3_finalize(statement) }
+        var values: [UUID: SyncOperationKind] = [:]
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            guard let id = UUID(uuidString: text(at: 0, from: statement)),
+                  let kind = SyncOperationKind(rawValue: text(at: 1, from: statement)) else {
+                throw SQLiteRepositoryError.invalidRecord("待同步任务包含无效操作类型")
+            }
+            values[id] = kind
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else { throw statementError() }
+        return values
+    }
+
     private func backupTombstones() throws -> [WireTombstonePayload] {
         let statement = try prepare(
             """
@@ -1101,7 +1187,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             switch current.status {
             case .completed: return .complete
             case .pass: return .pass
-            case .pending: return .upsert
+            case .pending: return .reopen
             }
         }
         if previous.sortIndex != current.sortIndex {
@@ -1396,6 +1482,9 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             if operation.kind == .pass && payload.state != .pass {
                 throw SQLiteRepositoryError.invalidRemotePage("pass 操作正文不是 Pass 状态")
             }
+            if operation.kind == .reopen && payload.state != .pending {
+                throw SQLiteRepositoryError.invalidRemotePage("reopen 操作正文不是待办状态")
+            }
             // 同一实体 ID 的删除是终态；仍推进版本水位，但永不恢复任务正文。
             if let currentVersion, currentVersion.isDeleted {
                 if remoteVersionWins(
@@ -1420,6 +1509,22 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 deviceID: operation.deviceId,
                 over: currentVersion
             )
+
+            if operation.kind == .reopen {
+                guard isValidReopen(incomingTask) else {
+                    throw SQLiteRepositoryError.invalidRemotePage("reopen 操作超出可撤销周期")
+                }
+                guard incomingWins else { return }
+                try upsertTaskRow(incomingTask)
+                try upsertEntityVersion(EntityVersion(
+                    entityID: entityID,
+                    lamport: operation.lamport,
+                    deviceID: operation.deviceId,
+                    isDeleted: false,
+                    deletedAt: nil
+                ))
+                return
+            }
 
             if let currentTask,
                let merged = mergeCompletedOverPass(
@@ -1507,7 +1612,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 deviceID: operation.deviceId,
                 over: currentVersion
             ) else { return }
-            try upsertDisplayConfiguration(payload)
+            try upsertDisplayConfiguration(payload, isLocalOverride: false)
             try upsertEntityVersion(EntityVersion(
                 entityID: entityID,
                 lamport: operation.lamport,
@@ -1519,18 +1624,21 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     }
 
     private func upsertDisplayConfiguration(
-        _ payload: WireDisplayConfigurationPayload
+        _ payload: WireDisplayConfigurationPayload,
+        isLocalOverride: Bool
     ) throws {
         let statement = try prepare(
             """
             INSERT INTO sync_display_configuration(
-                entity_id, header_template, subtitle_template, start_date, deadline_date
-            ) VALUES (?, ?, ?, ?, ?)
+                entity_id, header_template, subtitle_template, start_date, deadline_date,
+                is_local_override
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(entity_id) DO UPDATE SET
                 header_template = excluded.header_template,
                 subtitle_template = excluded.subtitle_template,
                 start_date = excluded.start_date,
-                deadline_date = excluded.deadline_date
+                deadline_date = excluded.deadline_date,
+                is_local_override = excluded.is_local_override
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -1540,8 +1648,25 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             .text(payload.subtitleTemplate),
             .text(payload.startDate),
             .text(payload.deadlineDate),
+            .integer(isLocalOverride ? 1 : 0),
         ], to: statement)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    private func displayConfigurationIsLocalOverride() throws -> Bool {
+        let statement = try prepare(
+            "SELECT is_local_override FROM sync_display_configuration WHERE entity_id = ? LIMIT 1"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([.text(Self.displayConfigurationEntityID)], to: statement)
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW:
+            return sqlite3_column_int(statement, 0) == 1
+        case SQLITE_DONE:
+            return false
+        default:
+            throw statementError()
+        }
     }
 
     private func remoteVersionWins(
@@ -1601,6 +1726,12 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         if task.timeScope == .anytime { return true }
         guard let deadline = task.period?.end else { return false }
         return completedAt < deadline
+    }
+
+    private func isValidReopen(_ task: TodoTask) -> Bool {
+        guard task.status == .pending, task.completedAt == nil else { return false }
+        guard let deadline = task.period?.end else { return task.timeScope == .anytime }
+        return task.updatedAt < deadline
     }
 
     private func maximumVersion(
@@ -2068,7 +2199,11 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     }
 
     private func taskTableHasColumn(_ columnName: String) throws -> Bool {
-        let statement = try prepare("PRAGMA table_info(tasks)")
+        try tableHasColumn("tasks", columnName: columnName)
+    }
+
+    private func tableHasColumn(_ tableName: String, columnName: String) throws -> Bool {
+        let statement = try prepare("PRAGMA table_info(\(tableName))")
         defer { sqlite3_finalize(statement) }
         var result = sqlite3_step(statement)
         while result == SQLITE_ROW {

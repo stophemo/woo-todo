@@ -1,14 +1,14 @@
 <resources>
-    <color name="primary">#6B56C8</color>
-    <color name="on_primary">#FFFFFF</color>
+    <color name="primary">#A99AE8</color>
+    <color name="on_primary">#171817</color>
     <color name="ink">#171817</color>
     <color name="ink_soft">#252725</color>
-    <color name="paper">#F2F3EF</color>
-    <color name="paper_bright">#FAFBF8</color>
-    <color name="app_background">#FAFBF8</color>
-    <color name="task_text">#171817</color>
-    <color name="muted">#676B66</color>
-    <color name="line">#D6D8D2</color>
+    <color name="paper">#252725</color>
+    <color name="paper_bright">#171817</color>
+    <color name="app_background">#171817</color>
+    <color name="task_text">#F0F2EE</color>
+    <color name="muted">#AEB2AC</color>
+    <color name="line">#3A3D3A</color>
     <color name="purple_light">#A99AE8</color>
     <color name="green">#38B878</color>
     <color name="orange">#ED7043</color>

@@ -6,7 +6,7 @@
     "OperationKind": {
       "type": "string",
       "enum": [
-        "upsert", "delete", "complete", "pass", "reorder"
+        "upsert", "delete", "complete", "pass", "reopen", "reorder"
       ]
     },
     "PushOperation": {

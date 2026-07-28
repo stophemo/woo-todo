@@ -18,6 +18,7 @@ public enum SyncOperationKind: String, Codable, CaseIterable, Sendable {
     case delete
     case complete
     case pass
+    case reopen
     case reorder
 }
 

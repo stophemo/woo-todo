@@ -16,6 +16,7 @@ const OPERATION_KINDS = [
   "delete",
   "complete",
   "pass",
+  "reopen",
   "reorder",
 ] as const;
 

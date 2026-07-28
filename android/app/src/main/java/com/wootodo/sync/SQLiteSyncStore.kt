@@ -56,7 +56,11 @@ object TaskMergePolicy {
         currentVersion: EntityVersion?,
         incomingTask: TaskInstancePayload,
         incomingVersion: EntityVersion,
+        incomingKind: SyncOperationKind = SyncOperationKind.UPSERT,
     ): TaskMergeDecision {
+        if (incomingKind == SyncOperationKind.REOPEN) {
+            require(isValidReopen(incomingTask))
+        }
         if (currentVersion == null) {
             return TaskMergeDecision(incomingTask, incomingVersion)
         }
@@ -69,6 +73,13 @@ object TaskMergePolicy {
         }
         val horizon = maxOf(currentVersion, incomingVersion)
         val incomingWinsLww = incomingVersion > currentVersion
+        if (incomingKind == SyncOperationKind.REOPEN) {
+            return if (incomingWinsLww) {
+                TaskMergeDecision(incomingTask, incomingVersion)
+            } else {
+                TaskMergeDecision(currentTask, currentVersion)
+            }
+        }
         mergeCompletedOverPass(currentTask, incomingTask, incomingWinsLww)?.let {
             return TaskMergeDecision(it, horizon)
         }
@@ -125,6 +136,22 @@ object TaskMergePolicy {
             .toEpochMilli()
         return task.settledAt < endMillis
     }
+
+    fun isValidReopen(task: TaskInstancePayload): Boolean {
+        if (task.state != WireTaskState.PENDING || task.settledAt != null) return false
+        if (task.timeType == WireTimeType.SOMEDAY) return true
+        val periodStart = task.periodStart?.let(LocalDate::parse) ?: return false
+        val periodEnd = when (task.timeType) {
+            WireTimeType.DAY -> periodStart.plusDays(1)
+            WireTimeType.WEEK -> periodStart.plusWeeks(1)
+            WireTimeType.MONTH -> periodStart.plusMonths(1)
+            WireTimeType.SOMEDAY -> return true
+        }
+        val endMillis = periodEnd.atStartOfDay(ZoneId.of(task.timezone))
+            .toInstant()
+            .toEpochMilli()
+        return task.updatedAt < endMillis
+    }
 }
 
 /** 仓储层独立校验拉取页，避免绕过 Coordinator 时推进错误 cursor。 */
@@ -165,6 +192,7 @@ object SQLiteLocalMutationRecorder {
                 SyncOperationKind.UPSERT,
                 SyncOperationKind.COMPLETE,
                 SyncOperationKind.PASS,
+                SyncOperationKind.REOPEN,
                 SyncOperationKind.REORDER,
             ),
         )
@@ -546,7 +574,9 @@ class SQLiteSyncStore(
                 deferredDeletions.forEach { (entityId, deletedAt) ->
                     SQLiteLocalMutationRecorder.recordDeletion(sqlite, entityId, deletedAt)
                 }
-                displayConfiguration?.let { payload ->
+                displayConfiguration
+                    ?.takeIf { readDisplayConfigurationLocalOverride(sqlite) }
+                    ?.let { payload ->
                     SQLiteLocalMutationRecorder.recordDisplayConfiguration(sqlite, payload)
                 }
             }
@@ -628,7 +658,7 @@ class SQLiteSyncStore(
         }
         val resolved = decision.resolvedConfiguration
         if (resolved == null || resolved == currentConfiguration) return null
-        writeDisplayConfiguration(sqlite, resolved)
+        writeDisplayConfiguration(sqlite, resolved, isLocalOverride = false)
         return resolved
     }
 
@@ -659,6 +689,7 @@ class SQLiteSyncStore(
             currentVersion?.version,
             normalizedPayload,
             incomingVersion,
+            operation.kind,
         )
         val resolvedTask = decision.resolvedTask?.withCanonicalEntityId()
         val changed = resolvedTask != null && resolvedTask != currentTask
@@ -895,18 +926,32 @@ fun readDisplayConfiguration(database: SQLiteDatabase): DisplayConfigurationPayl
         ).also { SyncJsonCodec.encodeTaskPayload(it) }
     }
 
+fun readDisplayConfigurationLocalOverride(database: SQLiteDatabase): Boolean =
+    database.query(
+        TABLE_DISPLAY_CONFIGURATION,
+        arrayOf("is_local_override"),
+        "id = ?",
+        arrayOf(DISPLAY_CONFIGURATION_ENTITY_ID),
+        null,
+        null,
+        null,
+        "1",
+    ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) == 1 }
+
 fun writeDisplayConfiguration(
     database: SQLiteDatabase,
     payload: DisplayConfigurationPayload,
+    isLocalOverride: Boolean = true,
 ) {
     // 通过 codec 校验长度、日期和固定实体 ID，避免旁路写入无效共享配置。
     SyncJsonCodec.encodeTaskPayload(payload)
-    val values = ContentValues(5).apply {
+    val values = ContentValues(6).apply {
         put("id", payload.id)
         put("header_template", payload.headerTemplate)
         put("subtitle_template", payload.subtitleTemplate)
         put("start_date", payload.startDate)
         put("deadline_date", payload.deadlineDate)
+        put("is_local_override", if (isLocalOverride) 1 else 0)
     }
     check(
         database.insertWithOnConflict(
@@ -1005,6 +1050,7 @@ private fun requireKindMatchesTask(kind: SyncOperationKind, payload: TaskInstanc
     when (kind) {
         SyncOperationKind.COMPLETE -> require(payload.state == WireTaskState.COMPLETED)
         SyncOperationKind.PASS -> require(payload.state == WireTaskState.PASS)
+        SyncOperationKind.REOPEN -> require(TaskMergePolicy.isValidReopen(payload))
         SyncOperationKind.UPSERT, SyncOperationKind.REORDER -> Unit
         SyncOperationKind.DELETE -> error("delete 必须携带 tombstone")
     }

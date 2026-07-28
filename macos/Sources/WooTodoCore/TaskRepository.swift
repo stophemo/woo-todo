@@ -5,6 +5,8 @@ public protocol TaskRepository: AnyObject {
     func fetchTasks(scope: TimeScope, in period: TaskPeriod?) throws -> [TodoTask]
     func deletedTaskIDs() throws -> Set<UUID>
     func save(_ tasks: [TodoTask]) throws
+    @discardableResult
+    func reopenCompleted(id: UUID, at date: Date) throws -> Bool
     func delete(id: UUID) throws
 }
 

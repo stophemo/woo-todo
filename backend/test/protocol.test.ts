@@ -85,6 +85,12 @@ test("同步请求使用 cursor 作为默认 ack，并校验密文操作", () =>
   assert.equal(input.pullLimit, LIMITS.pullOperations);
   assert.equal(input.push[0].kind, "upsert");
 
+  const reopen = parseSyncRequest({
+    cursor: 9,
+    push: [validOperation({ kind: "reopen" })],
+  });
+  assert.equal(reopen.push[0].kind, "reopen");
+
   assert.throws(
     () => parseSyncRequest({ cursor: 0, push: [], vaultId: "不应由正文传入" }),
     (error: unknown) =>

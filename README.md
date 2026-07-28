@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://woo-todo.vercel.app/">产品主页</a> ·
-  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.14">下载 v0.1.14</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.15">下载 v0.1.15</a> ·
   <a href="docs/INSTALLATION.md">安装指南</a> ·
   <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
 </p>
@@ -45,31 +45,31 @@ macOS 的原生悬浮任务板常驻桌面，可置顶、毛玻璃或鼠标穿�
 - **适合真实生活的周期**：支持日、周、月、闲时，一次性或重复任务，以及主线、支线、外传。
 - **看见真实结果，也允许纠错**：完成、`Pass`、历史与履约统计都会保留；当前周期内误点完成时，再点一次即可撤销。
 - **设置跟着设备走**：macOS 与 Android 的今日标题、副标题、起始日和截止日可随任务一起加密同步，更新应用后不用重设。
-- **升级不再来回下载**：从 `v0.1.14` 起三端都可在应用内完成后续更新；Android 仍保留系统安装确认。
+- **升级不再来回下载**：Android 与 Windows 从 `v0.1.14` 起、macOS 从 `v0.1.15` 起可在应用内完成后续更新；Android 仍保留系统安装确认。
 - **数据边界清楚**：默认只保存在设备上；启用同步时，任务正文以 AES-256-GCM 密文离开设备。
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.1.14`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.14)，提供 macOS ZIP、Android APK 与 Windows 免安装 ZIP。macOS ZIP 内是可直接运行的 `Woo Todo.app`，不是 DMG；Windows ZIP 内只有原生 `WooTodo.exe`，没有安装器。三端都坚持原生、轻量和本地优先，但 Windows 当前的功能范围与 macOS/Android 不完全相同。
+当前稳定版是 [`v0.1.15`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.15)，提供 macOS ZIP、Android APK 与 Windows 免安装 ZIP。macOS ZIP 内是可直接运行的 `Woo Todo.app`，不是 DMG；Windows ZIP 内只有原生 `WooTodo.exe`，没有安装器。三端都坚持原生、轻量和本地优先，但 Windows 当前的功能范围与 macOS/Android 不完全相同。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | 工作时常驻桌面的悬浮任务板、完整任务管理与统计 | `v0.1.14` 可下载 |
-| Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.1.14` 可下载 |
-| Windows 10 build 19041+ / Windows 11（仅 x64） | 本地任务、历史统计、系统托盘与可置顶/穿透的悬浮任务板 | `v0.1.14` 可下载 |
+| macOS 15+、Apple Silicon | 工作时常驻桌面的悬浮任务板、完整任务管理与统计 | `v0.1.15` 可下载 |
+| Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.1.15` 可下载 |
+| Windows 10 build 19041+ / Windows 11（仅 x64） | 本地任务、历史统计、系统托盘与可置顶/穿透的悬浮任务板 | `v0.1.15` 可下载 |
 
 Windows 当前聚焦本地任务闭环和系统任务提醒，不包含现有 macOS/Android 的同步与加密备份。
 
-## 下载 v0.1.14
+## 下载 v0.1.15
 
 | 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.1.14-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/Woo-Todo-v0.1.14-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
-| Android | [Woo-Todo-v0.1.14-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/Woo-Todo-v0.1.14-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| Windows | [Woo-Todo-v0.1.14-windows-x64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/Woo-Todo-v0.1.14-windows-x64.zip) | ZIP 内只有 `WooTodo.exe`；解压后直接运行，无需安装、管理员权限、.NET 或 Visual C++ Runtime。当前程序未签名，SmartScreen 可能提示来源未知。 |
-| 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/SHA256SUMS.txt) | 下载后用 `shasum -a 256 <文件>` 或系统等价工具核对。 |
+| macOS | [Woo-Todo-v0.1.15-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.1.15-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| Windows | [Woo-Todo-v0.1.15-windows-x64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-windows-x64.zip) | ZIP 内只有 `WooTodo.exe`；解压后直接运行，无需安装、管理员权限、.NET 或 Visual C++ Runtime。当前程序未签名，SmartScreen 可能提示来源未知。 |
+| 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/SHA256SUMS.txt) | 下载后用 `shasum -a 256 <文件>` 或系统等价工具核对。 |
 
-`v0.1.13` 没有内置更新器，所以升级到 `v0.1.14` 仍需最后一次手动下载。装好 `v0.1.14` 后，macOS 可通过 Sparkle 下载、校验、替换并重启；Android 会在应用内下载并验签，再交给系统安装器确认；Windows 会从托盘下载并校验 ZIP，替换当前 EXE 后重启。三端更新都会保留任务和设置，macOS/Android 也会保留同步身份与配对状态。
+Android 与 Windows 的 `v0.1.14` 可在应用内升级到 `v0.1.15`。macOS `v0.1.14` 因 Sparkle 框架打包路径错误而无法启动，也无法执行应用内更新，需手动下载 `v0.1.15` 并覆盖旧应用一次；安装 `v0.1.15` 后，后续版本可恢复通过 Sparkle 下载、校验、替换并重启。三端更新都会保留任务和设置，macOS/Android 也会保留同步身份与配对状态。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名，更新后的代码身份仍可能导致 Keychain 再次请求授权；Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -89,7 +89,7 @@ Windows 当前聚焦本地任务闭环和系统任务提醒，不包含现有 ma
 
 ### Windows
 
-1. 解压 `Woo-Todo-v0.1.14-windows-x64.zip`，运行其中的 `WooTodo.exe`；若 SmartScreen 拦截，请先确认文件来自本仓库 Release 并核对校验和。
+1. 解压 `Woo-Todo-v0.1.15-windows-x64.zip`，运行其中的 `WooTodo.exe`；若 SmartScreen 拦截，请先确认文件来自本仓库 Release 并核对校验和。
 2. 在悬浮任务板快速新增、完成或编辑任务；选中已完成任务后可“取消完成”，右键也可 `Pass` 或删除。
 3. 托盘菜单负责完整窗口、任务板显隐、穿透恢复和检查更新；默认全局快捷键为 `Ctrl + Alt + 1` 至 `Ctrl + Alt + 4`。任务提醒由 Windows 系统调度，应用退出后仍可触发。
 

@@ -1,14 +1,14 @@
 # 下载与首次使用
 
-woo-todo 不依赖应用商店，也不要求先部署服务器。可从 [GitHub Releases](https://github.com/stophemo/woo-todo/releases/tag/v0.1.14) 下载 `v0.1.14` 的 macOS ZIP、Android APK 与 Windows 免安装 ZIP。只有 Android 需要执行系统安装；macOS ZIP 内是可直接运行的 `Woo Todo.app`，Windows ZIP 内只有 `WooTodo.exe`。Windows 当前专注本地任务闭环，暂不支持同步与加密备份。
+woo-todo 不依赖应用商店，也不要求先部署服务器。可从 [GitHub Releases](https://github.com/stophemo/woo-todo/releases/tag/v0.1.15) 下载 `v0.1.15` 的 macOS ZIP、Android APK 与 Windows 免安装 ZIP。只有 Android 需要执行系统安装；macOS ZIP 内是可直接运行的 `Woo Todo.app`，Windows ZIP 内只有 `WooTodo.exe`。Windows 当前专注本地任务闭环，暂不支持同步与加密备份。
 
-`v0.1.13` 尚未内置更新器，因此升级到 `v0.1.14` 仍需最后一次手动下载。安装 `v0.1.14` 后，三端后续都可在应用内完成下载和校验；macOS 自动替换并重启，Android 交给系统安装器确认，Windows 替换当前 EXE 后重启。
+Android 与 Windows 的 `v0.1.14` 可在应用内升级到 `v0.1.15`。macOS `v0.1.14` 因 Sparkle 框架打包路径错误而无法启动，也无法执行应用内更新，必须手动下载并覆盖安装 `v0.1.15` 一次。安装 `v0.1.15` 后，macOS 后续可恢复通过 Sparkle 更新；Android 仍交给系统安装器确认，Windows 会替换当前 EXE 后重启。
 
 ## 1. 使用 macOS 客户端
 
-下载 [Woo-Todo-v0.1.14-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/Woo-Todo-v0.1.14-macos-arm64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/SHA256SUMS.txt) 校验后解压，直接运行其中的 `Woo Todo.app`；需要固定入口时可自行移入“应用程序”。ZIP 内不是 DMG。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
+下载 [Woo-Todo-v0.1.15-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-macos-arm64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/SHA256SUMS.txt) 校验后解压，直接运行其中的 `Woo Todo.app`；需要固定入口时可自行移入“应用程序”。ZIP 内不是 DMG。该产物只支持 Apple Silicon Mac，使用 ad-hoc 签名且没有 Apple 公证；若 Gatekeeper 阻止，进入“系统设置 → 隐私与安全性”确认本次个人启动。
 
-安装 `v0.1.14` 后可从菜单栏选择“检查更新…”。Sparkle 会下载带 Ed25519 签名的更新 ZIP，校验后替换应用并重启。更新签名只能证明下载包来自本项目，不能替代稳定的 Apple Developer ID 代码签名；当前 ad-hoc 构建更新后，Keychain 仍可能把它视为新的代码身份并再次请求授权。
+安装 `v0.1.15` 后可从菜单栏选择“检查更新…”。Sparkle 会下载带 Ed25519 签名的更新 ZIP，校验后替换应用并重启。更新签名只能证明下载包来自本项目，不能替代稳定的 Apple Developer ID 代码签名；当前 ad-hoc 构建更新后，Keychain 仍可能把它视为新的代码身份并再次请求授权。
 
 需要自行构建时，要求完整 Xcode 与当前 macOS SDK/Swift 编译器匹配。仅有版本不匹配的 Command Line Tools 时不能作为 Release 构建环境：
 
@@ -30,13 +30,13 @@ cd macos
 
 ## 2. 安装 Android 客户端
 
-下载 [Woo-Todo-v0.1.14-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/Woo-Todo-v0.1.14-android.apk)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/SHA256SUMS.txt) 校验后从三星“我的文件”打开，并允许本次来源安装。连接 ADB 时也可执行：
+下载 [Woo-Todo-v0.1.15-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-android.apk)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/SHA256SUMS.txt) 校验后从三星“我的文件”打开，并允许本次来源安装。连接 ADB 时也可执行：
 
 ```bash
-adb install -r Woo-Todo-v0.1.14-android.apk
+adb install -r Woo-Todo-v0.1.15-android.apk
 ```
 
-正式 APK 使用项目专用 Release 密钥签名，后续 GitHub Release 可直接覆盖升级。安装 `v0.1.14` 后，应用会下载新 APK，确认包名、版本、`versionCode` 和正式签名完全匹配后，再交给 Android 系统安装器。首次使用需要允许 Woo Todo“安装未知应用”，每次升级仍会保留系统安装确认。Debug 包与正式包签名不同，不能相互覆盖；切换前先导出加密恢复备份，再卸载旧包。
+正式 APK 使用项目专用 Release 密钥签名，后续 GitHub Release 可直接覆盖升级。`v0.1.14` 可在应用内下载 `v0.1.15`；应用确认包名、版本、`versionCode` 和正式签名完全匹配后，再交给 Android 系统安装器。首次使用需要允许 Woo Todo“安装未知应用”，每次升级仍会保留系统安装确认。Debug 包与正式包签名不同，不能相互覆盖；切换前先导出加密恢复备份，再卸载旧包。
 
 使用同一正式签名覆盖升级时，Android 会保留本地 SQLite、Keystore 和加密同步凭据，已配对设备无需重新配对；只有卸载应用、清除数据或更换签名后才需要恢复或重新配置。
 
@@ -62,11 +62,11 @@ cd android
 
 ## 3. 使用 Windows 客户端
 
-Windows 客户端支持 Windows 10 build 19041 及以上版本和 Windows 11，仅限 x64。下载 [Woo-Todo-v0.1.14-windows-x64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/Woo-Todo-v0.1.14-windows-x64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.14/SHA256SUMS.txt) 校验后解压，直接运行根目录中的 `WooTodo.exe`。客户端使用 Rust + Win32，并静态链接 MSVC CRT，不需要安装 .NET、Visual C++ Runtime、开发环境或 Woo Todo 安装器。
+Windows 客户端支持 Windows 10 build 19041 及以上版本和 Windows 11，仅限 x64。下载 [Woo-Todo-v0.1.15-windows-x64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-windows-x64.zip)，对照 [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.15/SHA256SUMS.txt) 校验后解压，直接运行根目录中的 `WooTodo.exe`。客户端使用 Rust + Win32，并静态链接 MSVC CRT，不需要安装 .NET、Visual C++ Runtime、开发环境或 Woo Todo 安装器。
 
 当前 `WooTodo.exe` 未做代码签名，SmartScreen 可能提示来源未知；请只从本仓库 Release 下载并先核对 `SHA256SUMS.txt`。任务与设置位于 `%LOCALAPPDATA%\Woo Todo`，不在解压目录中，因此替换或移动程序不会清空数据。
 
-安装 `v0.1.14` 后可从托盘选择“检查更新…”。应用会在后台下载精确匹配版本的免安装 ZIP，核对 GitHub Release 提供的 SHA-256 digest；临时 helper 等待主程序退出后复核 ZIP 只含根目录 `WooTodo.exe`，备份并替换当前 EXE，再启动新版本。新程序无法启动时会回滚旧 EXE。仍需手动更新时，也可以先退出程序，再从新 ZIP 取出 `WooTodo.exe` 覆盖旧文件。
+`v0.1.14` 可从托盘选择“检查更新…”升级到 `v0.1.15`。应用会在后台下载精确匹配版本的免安装 ZIP，核对 GitHub Release 提供的 SHA-256 digest；临时 helper 等待主程序退出后复核 ZIP 只含根目录 `WooTodo.exe`，备份并替换当前 EXE，再启动新版本。新程序无法启动时会回滚旧 EXE。仍需手动更新时，也可以先退出程序，再从新 ZIP 取出 `WooTodo.exe` 覆盖旧文件。
 
 如果已经使用过早期 Windows 安装器，请先退出并通过系统“已安装的应用”卸载旧程序，再运行 ZIP 中的新版本；旧卸载器不会删除 `%LOCALAPPDATA%\Woo Todo` 的任务与设置。顺序不要反过来，否则旧卸载器会移除新便携版刚写入的通知身份和协议注册；重新运行一次新版本可恢复。
 

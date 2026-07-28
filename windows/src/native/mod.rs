@@ -178,11 +178,11 @@ impl ThemeResources {
                 0,
                 0,
                 0,
-                DEFAULT_CHARSET,
-                OUT_DEFAULT_PRECIS,
-                CLIP_DEFAULT_PRECIS,
-                CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE,
+                u32::from(DEFAULT_CHARSET),
+                u32::from(OUT_DEFAULT_PRECIS),
+                u32::from(CLIP_DEFAULT_PRECIS),
+                u32::from(CLEARTYPE_QUALITY),
+                u32::from(DEFAULT_PITCH | FF_DONTCARE),
                 face.as_ptr(),
             ),
             subheading_font: CreateFontW(
@@ -194,11 +194,11 @@ impl ThemeResources {
                 0,
                 0,
                 0,
-                DEFAULT_CHARSET,
-                OUT_DEFAULT_PRECIS,
-                CLIP_DEFAULT_PRECIS,
-                CLEARTYPE_QUALITY,
-                DEFAULT_PITCH | FF_DONTCARE,
+                u32::from(DEFAULT_CHARSET),
+                u32::from(OUT_DEFAULT_PRECIS),
+                u32::from(CLIP_DEFAULT_PRECIS),
+                u32::from(CLEARTYPE_QUALITY),
+                u32::from(DEFAULT_PITCH | FF_DONTCARE),
                 face.as_ptr(),
             ),
         }
@@ -2589,7 +2589,7 @@ unsafe fn paint_main_control(app: &App, message: u32, wparam: WPARAM) -> LRESULT
     SetTextColor(context, TEXT_ON_LIGHT);
     SetBkColor(context, PAPER_BRIGHT);
     if message == WM_CTLCOLORSTATIC {
-        SetBkMode(context, TRANSPARENT);
+        SetBkMode(context, TRANSPARENT as i32);
     }
     app.theme.paper_brush as LRESULT
 }
@@ -2617,7 +2617,7 @@ unsafe fn paint_floating_control(
     SetTextColor(context, text);
     SetBkColor(context, INK);
     if message == WM_CTLCOLORSTATIC {
-        SetBkMode(context, TRANSPARENT);
+        SetBkMode(context, TRANSPARENT as i32);
         app.theme.ink_brush as LRESULT
     } else {
         app.theme.ink_soft_brush as LRESULT

@@ -167,6 +167,10 @@ jobs:
           test -d "$APP"
           test -f "$ZIP"
           test "$(lipo -archs "$APP/Contents/MacOS/woo-todo-mac")" = "arm64"
+          otool -l "$APP/Contents/MacOS/woo-todo-mac" | \
+            awk '$1 == "cmd" && $2 == "LC_RPATH" { reading = 1; next } reading && $1 == "path" { print $2; reading = 0 }' | \
+            grep -Fx '@executable_path/../Frameworks'
+          test -f "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
           codesign --verify --deep --strict --verbose=2 "$APP"
           mkdir -p release
           mv "$ZIP" "release/Woo-Todo-${GITHUB_REF_NAME}-macos-arm64.zip"

@@ -30,6 +30,15 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "缺少系统命令：$1"
 }
 
+has_framework_rpath() {
+    /usr/bin/otool -l "$1" \
+        | /usr/bin/awk '
+            $1 == "cmd" && $2 == "LC_RPATH" { reading_rpath = 1; next }
+            reading_rpath && $1 == "path" { print $2; reading_rpath = 0 }
+        ' \
+        | /usr/bin/grep -Fxq '@executable_path/../Frameworks'
+}
+
 CREATE_ZIP=0
 while (( $# > 0 )); do
     case "$1" in
@@ -73,6 +82,7 @@ require_command swift
 require_command /usr/bin/codesign
 require_command /usr/bin/ditto
 require_command /usr/bin/iconutil
+require_command /usr/bin/install_name_tool
 require_command /usr/bin/plutil
 require_command /usr/bin/otool
 require_command /usr/libexec/PlistBuddy
@@ -101,6 +111,12 @@ STAGED_APP="$STAGING_DIR/$APP_NAME.app"
 CONTENTS_DIR="$STAGED_APP/Contents"
 mkdir -p -- "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources"
 /usr/bin/install -m 0755 "$BUILT_EXECUTABLE" "$CONTENTS_DIR/MacOS/$EXECUTABLE_NAME"
+APP_EXECUTABLE="$CONTENTS_DIR/MacOS/$EXECUTABLE_NAME"
+if ! has_framework_rpath "$APP_EXECUTABLE"; then
+    /usr/bin/install_name_tool \
+        -add_rpath '@executable_path/../Frameworks' \
+        "$APP_EXECUTABLE"
+fi
 /usr/bin/install -m 0644 "$TEMPLATE_PLIST" "$CONTENTS_DIR/Info.plist"
 /usr/bin/install -m 0644 "$ICON_RESOURCE" "$CONTENTS_DIR/Resources/$ICON_FILE_NAME"
 
@@ -173,9 +189,13 @@ SPARKLE_AUTOUPDATE="$CONTENTS_DIR/Frameworks/Sparkle.framework/Versions/B/Autoup
     | /usr/bin/grep -Fq "org.sparkle-project.Sparkle.Autoupdate" \
     || fail "Sparkle Autoupdate entitlement 未保留"
 
-SPARKLE_LINK="$(/usr/bin/otool -L "$CONTENTS_DIR/MacOS/$EXECUTABLE_NAME" | awk '/Sparkle.framework/ { print $1; exit }')"
+SPARKLE_LINK="$(/usr/bin/otool -L "$APP_EXECUTABLE" | awk '/Sparkle.framework/ { print $1; exit }')"
 [[ "$SPARKLE_LINK" == "@rpath/Sparkle.framework/Versions/B/Sparkle" ]] \
     || fail "主程序没有通过 @rpath 链接 Sparkle.framework"
+has_framework_rpath "$APP_EXECUTABLE" \
+    || fail "主程序缺少指向 Contents/Frameworks 的运行时搜索路径"
+[[ -f "$CONTENTS_DIR/Frameworks/Sparkle.framework/Versions/B/Sparkle" ]] \
+    || fail "Sparkle.framework 主程序不完整"
 
 # 输出路径固定在当前 Package 的 dist 下，避免环境变量造成越界删除。
 rm -rf -- "$APP_BUNDLE"

@@ -93,6 +93,10 @@ jobs:
           test -d "$APP/Contents/Frameworks/Sparkle.framework"
           otool -L "$APP/Contents/MacOS/woo-todo-mac" | \
             grep -F '@rpath/Sparkle.framework/Versions/B/Sparkle'
+          otool -l "$APP/Contents/MacOS/woo-todo-mac" | \
+            awk '$1 == "cmd" && $2 == "LC_RPATH" { reading = 1; next } reading && $1 == "path" { print $2; reading = 0 }' | \
+            grep -Fx '@executable_path/../Frameworks'
+          test -f "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
           codesign -d --entitlements :- \
             "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate" \
             2>/dev/null | grep -F 'org.sparkle-project.Sparkle.Autoupdate'

@@ -156,7 +156,7 @@ class AppUpdateTest {
     }
 
     @Test
-    fun `自动检查每24小时一次`() {
+    fun `成功检查后十二小时内限频且失败十五分钟后可重试`() {
         val now = 200_000_000L
         assertTrue(AppUpdatePolicy.shouldAutomaticallyCheck(0L, 0L, now))
         assertFalse(

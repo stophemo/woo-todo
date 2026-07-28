@@ -7,8 +7,27 @@ use std::path::PathBuf;
 
 const REPOSITORY: &str = "stophemo/woo-todo";
 const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
+pub(crate) const AUTOMATIC_CHECK_INTERVAL_MILLIS: i64 = 12 * 60 * 60 * 1_000;
+pub(crate) const FAILED_CHECK_RETRY_INTERVAL_MILLIS: i64 = 15 * 60 * 1_000;
 #[cfg(windows)]
 const MAX_UPDATE_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
+
+pub(crate) fn should_automatically_check(
+    last_successful_check_at: i64,
+    last_attempt_at: i64,
+    now: i64,
+) -> bool {
+    elapsed(last_successful_check_at, now) >= AUTOMATIC_CHECK_INTERVAL_MILLIS
+        && elapsed(last_attempt_at, now) >= FAILED_CHECK_RETRY_INTERVAL_MILLIS
+}
+
+fn elapsed(previous: i64, now: i64) -> i64 {
+    if previous <= 0 || now < previous {
+        i64::MAX
+    } else {
+        now - previous
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct AppVersion {
@@ -509,6 +528,28 @@ mod tests {
         for invalid in ["1.2", "1.2.3.4", "01.2.3", "1.2.3-beta", "V1.2.3"] {
             assert!(AppVersion::parse(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn automatic_checks_use_twelve_hour_success_and_fifteen_minute_retry_boundaries() {
+        let now = 200_000_000;
+        assert!(should_automatically_check(0, 0, now));
+        assert!(!should_automatically_check(
+            now - AUTOMATIC_CHECK_INTERVAL_MILLIS + 1,
+            now - FAILED_CHECK_RETRY_INTERVAL_MILLIS,
+            now,
+        ));
+        assert!(should_automatically_check(
+            now - AUTOMATIC_CHECK_INTERVAL_MILLIS,
+            now - FAILED_CHECK_RETRY_INTERVAL_MILLIS,
+            now,
+        ));
+        assert!(!should_automatically_check(
+            0,
+            now - FAILED_CHECK_RETRY_INTERVAL_MILLIS + 1,
+            now,
+        ));
+        assert!(should_automatically_check(now + 1, now + 1, now));
     }
 
     #[test]

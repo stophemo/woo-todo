@@ -55,32 +55,34 @@ struct AppUpdatePolicyTests {
         #expect(AppVersion("1.0.0+one") == AppVersion("1.0.0+two"))
     }
 
-    @Test("自动检查以二十四小时为边界且不会被时钟回拨永久阻塞")
+    @Test("成功检查以十二小时为边界且失败尝试十五分钟后可重试")
     func throttlesAutomaticChecks() {
         let now = Date(timeIntervalSince1970: 2_000_000)
 
-        #expect(AppUpdatePolicy.shouldPerformAutomaticCheck(lastCheckedAt: nil, now: now))
-        #expect(!AppUpdatePolicy.shouldPerformAutomaticCheck(
-            lastCheckedAt: now.addingTimeInterval(-86_399),
-            now: now
-        ))
         #expect(AppUpdatePolicy.shouldPerformAutomaticCheck(
-            lastCheckedAt: now.addingTimeInterval(-86_400),
-            now: now
-        ))
-        #expect(AppUpdatePolicy.shouldPerformAutomaticCheck(
-            lastCheckedAt: now.addingTimeInterval(60),
+            lastSuccessfulCheckAt: nil,
+            lastAttemptAt: nil,
             now: now
         ))
         #expect(!AppUpdatePolicy.shouldPerformAutomaticCheck(
-            lastCheckedAt: now.addingTimeInterval(-899),
-            now: now,
-            minimumInterval: AppUpdatePolicy.failedCheckRetryInterval
+            lastSuccessfulCheckAt: now.addingTimeInterval(-43_199),
+            lastAttemptAt: now.addingTimeInterval(-900),
+            now: now
         ))
         #expect(AppUpdatePolicy.shouldPerformAutomaticCheck(
-            lastCheckedAt: now.addingTimeInterval(-900),
-            now: now,
-            minimumInterval: AppUpdatePolicy.failedCheckRetryInterval
+            lastSuccessfulCheckAt: now.addingTimeInterval(-43_200),
+            lastAttemptAt: now.addingTimeInterval(-900),
+            now: now
+        ))
+        #expect(!AppUpdatePolicy.shouldPerformAutomaticCheck(
+            lastSuccessfulCheckAt: nil,
+            lastAttemptAt: now.addingTimeInterval(-899),
+            now: now
+        ))
+        #expect(AppUpdatePolicy.shouldPerformAutomaticCheck(
+            lastSuccessfulCheckAt: now.addingTimeInterval(60),
+            lastAttemptAt: now.addingTimeInterval(60),
+            now: now
         ))
     }
 
@@ -91,14 +93,16 @@ struct AppUpdatePolicyTests {
 
         while elapsed < AppUpdatePolicy.automaticCheckInterval {
             #expect(!AppUpdatePolicy.shouldPerformAutomaticCheck(
-                lastCheckedAt: checkedAt,
+                lastSuccessfulCheckAt: checkedAt,
+                lastAttemptAt: checkedAt,
                 now: checkedAt.addingTimeInterval(elapsed)
             ))
             elapsed += AppUpdatePolicy.automaticCheckPollingInterval
         }
 
         #expect(AppUpdatePolicy.shouldPerformAutomaticCheck(
-            lastCheckedAt: checkedAt,
+            lastSuccessfulCheckAt: checkedAt,
+            lastAttemptAt: checkedAt,
             now: checkedAt.addingTimeInterval(AppUpdatePolicy.automaticCheckInterval)
         ))
     }

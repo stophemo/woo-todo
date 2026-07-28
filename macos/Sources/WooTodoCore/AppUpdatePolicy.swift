@@ -167,20 +167,34 @@ public struct AppVersion: Comparable, CustomStringConvertible, Hashable, Sendabl
 }
 
 public enum AppUpdatePolicy {
-    public static let automaticCheckInterval: TimeInterval = 24 * 60 * 60
+    public static let automaticCheckInterval: TimeInterval = 12 * 60 * 60
     public static let failedCheckRetryInterval: TimeInterval = 15 * 60
     public static let automaticCheckPollingInterval: TimeInterval = failedCheckRetryInterval
 
     public static func shouldPerformAutomaticCheck(
-        lastCheckedAt: Date?,
-        now: Date,
-        minimumInterval: TimeInterval = automaticCheckInterval
+        lastSuccessfulCheckAt: Date?,
+        lastAttemptAt: Date?,
+        now: Date
     ) -> Bool {
-        guard let lastCheckedAt else { return true }
-        let elapsed = now.timeIntervalSince(lastCheckedAt)
-        if !elapsed.isFinite || elapsed < 0 { return true }
-        if minimumInterval <= 0 { return true }
-        return elapsed >= minimumInterval
+        hasElapsed(
+            since: lastSuccessfulCheckAt,
+            now: now,
+            minimumInterval: automaticCheckInterval
+        ) && hasElapsed(
+            since: lastAttemptAt,
+            now: now,
+            minimumInterval: failedCheckRetryInterval
+        )
+    }
+
+    private static func hasElapsed(
+        since previous: Date?,
+        now: Date,
+        minimumInterval: TimeInterval
+    ) -> Bool {
+        guard let previous else { return true }
+        let elapsed = now.timeIntervalSince(previous)
+        return !elapsed.isFinite || elapsed < 0 || elapsed >= minimumInterval
     }
 
     public static func stableReleaseVersion(fromGitHubTag tag: String) -> AppVersion? {

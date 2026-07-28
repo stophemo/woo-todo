@@ -40,7 +40,7 @@ const MUTEX_NAME: &str = "Local\\WooTodo.WindowsApp";
 const WM_TRAY: u32 = WM_APP + 1;
 const WM_UPDATE_EVENT: u32 = WM_APP + 3;
 const UPDATE_CHECK_TIMER_ID: usize = 1;
-const UPDATE_CHECK_INTERVAL_MILLIS: u32 = 24 * 60 * 60 * 1_000;
+const UPDATE_CHECK_POLL_INTERVAL_MILLIS: u32 = update::FAILED_CHECK_RETRY_INTERVAL_MILLIS as u32;
 const STATIC_LEFT: u32 = 0;
 const STATIC_RIGHT: u32 = 2;
 const TRACKBAR_GET_POSITION: u32 = WM_USER;
@@ -437,11 +437,11 @@ pub fn run() -> Result<(), String> {
         UpdateWindow(app.floating);
         handle_activation_args(&mut app);
         if std::env::var_os("WOO_TODO_SKIP_UPDATE_CHECK").is_none() {
-            begin_update_check(&mut app, false);
+            begin_automatic_update_check(&mut app);
             SetTimer(
                 app.main,
                 UPDATE_CHECK_TIMER_ID,
-                UPDATE_CHECK_INTERVAL_MILLIS,
+                UPDATE_CHECK_POLL_INTERVAL_MILLIS,
                 None,
             );
         }
@@ -1544,6 +1544,7 @@ unsafe fn show_main(app: &mut App) {
     refresh_main(app);
     ShowWindow(app.main, SW_RESTORE);
     SetForegroundWindow(app.main);
+    begin_automatic_update_check(app);
 }
 
 unsafe fn toggle_board(app: &App) {
@@ -1780,6 +1781,8 @@ unsafe fn begin_update_check(app: &mut App, manual: bool) {
         }
         return;
     }
+    app.settings.last_update_attempt_at = now_millis();
+    let _ = app.settings.save();
     app.update_state = UpdateState::Checking;
     let sender = app.update_sender.clone();
     let window = app.main as usize;
@@ -1792,6 +1795,23 @@ unsafe fn begin_update_check(app: &mut App, manual: bool) {
             PostMessageW(window as HWND, WM_UPDATE_EVENT, 0, 0);
         }
     });
+}
+
+unsafe fn begin_automatic_update_check(app: &mut App) {
+    if std::env::var_os("WOO_TODO_SKIP_UPDATE_CHECK").is_some()
+        || app.main.is_null()
+        || app.update_state != UpdateState::Idle
+    {
+        return;
+    }
+    let now = now_millis();
+    if update::should_automatically_check(
+        app.settings.last_update_successful_check_at,
+        app.settings.last_update_attempt_at,
+        now,
+    ) {
+        begin_update_check(app, false);
+    }
 }
 
 unsafe fn begin_update_download(app: &mut App, release: UpdateRelease) {
@@ -1816,6 +1836,10 @@ unsafe fn handle_update_events(app: &mut App) {
         match event {
             UpdateEvent::Checked { manual, result } => {
                 app.update_state = UpdateState::Idle;
+                if result.is_ok() {
+                    app.settings.last_update_successful_check_at = now_millis();
+                    let _ = app.settings.save();
+                }
                 match result {
                     Ok(Some(release)) => {
                         let message = format!(
@@ -2107,9 +2131,21 @@ unsafe extern "system" fn main_window_proc(
         }
         WM_TIMER => {
             if wparam == UPDATE_CHECK_TIMER_ID {
-                begin_update_check(app, false);
+                begin_automatic_update_check(app);
             }
             0
+        }
+        WM_ACTIVATEAPP => {
+            if wparam != 0 {
+                begin_automatic_update_check(app);
+            }
+            0
+        }
+        WM_POWERBROADCAST => {
+            if matches!(wparam as u32, PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND) {
+                begin_automatic_update_check(app);
+            }
+            1
         }
         WM_TRAY => {
             match loword(lparam as usize) as u32 {
@@ -2699,6 +2735,8 @@ fn is_main_app_message(message: u32) -> bool {
             | WM_NOTIFY
             | WM_HOTKEY
             | WM_TIMER
+            | WM_ACTIVATEAPP
+            | WM_POWERBROADCAST
             | WM_TRAY
             | WM_COPYDATA
     ) || matches!(message, value if value == WM_APP + 2 || value == WM_UPDATE_EVENT)

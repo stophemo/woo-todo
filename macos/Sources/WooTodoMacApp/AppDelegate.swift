@@ -115,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.quickAddPanelController = quickAddPanelController
             self.statusMenuController = statusMenuController
             self.appUpdateController = appUpdateController
+            appUpdateController.checkAutomatically()
             wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.didWakeNotification,
                 object: nil,
@@ -122,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.dayCounterStore?.refreshDate()
+                    self?.appUpdateController?.checkAutomatically()
                 }
             }
             panelController.onStateChange = { [weak statusMenuController] in
@@ -171,11 +173,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        appUpdateController?.checkAutomatically()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
             self.wakeObserver = nil
         }
+        appUpdateController?.stop()
         syncSettingsStore?.stop()
         webDavSettingsStore?.stop()
     }

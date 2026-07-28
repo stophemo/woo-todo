@@ -19,6 +19,8 @@ pub struct AppSettings {
     pub opacity: f64,
     pub topmost: bool,
     pub click_through: bool,
+    pub last_update_successful_check_at: i64,
+    pub last_update_attempt_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +33,8 @@ struct PersistedSettings {
     opacity: f64,
     topmost: bool,
     click_through: bool,
+    last_update_successful_check_at: i64,
+    last_update_attempt_at: i64,
 }
 
 impl Default for PersistedSettings {
@@ -43,6 +47,8 @@ impl Default for PersistedSettings {
             opacity: DEFAULT_OPACITY,
             topmost: true,
             click_through: false,
+            last_update_successful_check_at: 0,
+            last_update_attempt_at: 0,
         }
     }
 }
@@ -64,6 +70,8 @@ impl AppSettings {
             opacity: loaded.opacity.clamp(0.35, 1.0),
             topmost: loaded.topmost,
             click_through: loaded.click_through,
+            last_update_successful_check_at: loaded.last_update_successful_check_at,
+            last_update_attempt_at: loaded.last_update_attempt_at,
         }
     }
 
@@ -76,6 +84,8 @@ impl AppSettings {
             opacity: self.opacity,
             topmost: self.topmost,
             click_through: self.click_through,
+            last_update_successful_check_at: self.last_update_successful_check_at,
+            last_update_attempt_at: self.last_update_attempt_at,
         };
         let source = serde_json::to_string_pretty(&value)
             .map_err(|error| format!("无法编码设置：{error}"))?;
@@ -122,6 +132,8 @@ mod tests {
         assert_eq!(settings.opacity, 0.35);
         assert!(!settings.topmost);
         assert!(settings.click_through);
+        assert_eq!(settings.last_update_successful_check_at, 0);
+        assert_eq!(settings.last_update_attempt_at, 0);
     }
 
     #[test]
@@ -130,10 +142,14 @@ mod tests {
         let mut settings = AppSettings::load(directory.path());
         settings.opacity = 0.73;
         settings.click_through = true;
+        settings.last_update_successful_check_at = 123_000;
+        settings.last_update_attempt_at = 124_000;
         settings.save().unwrap();
 
         let restored = AppSettings::load(directory.path());
         assert_eq!(restored.opacity_percent(), 73);
         assert!(restored.click_through);
+        assert_eq!(restored.last_update_successful_check_at, 123_000);
+        assert_eq!(restored.last_update_attempt_at, 124_000);
     }
 }

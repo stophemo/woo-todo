@@ -11,9 +11,18 @@ mod integration;
 mod native;
 #[cfg(windows)]
 mod notifications;
+#[cfg(any(windows, test))]
+mod update;
 
 #[cfg(windows)]
 fn main() {
+    if let Some(result) = update::run_helper_from_args() {
+        if let Err(error) = result {
+            native::show_fatal_error(&error);
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Err(error) = native::run() {
         native::show_fatal_error(&error);
     }

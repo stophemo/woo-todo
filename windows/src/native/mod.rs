@@ -8,6 +8,7 @@ use std::mem::{size_of, zeroed};
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 
 use chrono::{Days, NaiveDate, Utc};
 use windows_sys::Win32::Foundation::*;
@@ -29,6 +30,7 @@ use woo_todo_core::{
 use crate::notifications;
 use crate::settings::AppSettings;
 use crate::ui_text::{period_label, quest_line_label, state_label, time_type_label};
+use crate::update::{self, PreparedUpdate, UpdateRelease};
 
 const APP_ID: &str = "stophemo.WooTodo";
 const MAIN_CLASS: &str = "WooTodo.Native.Main.v1";
@@ -36,6 +38,9 @@ const FLOAT_CLASS: &str = "WooTodo.Native.Float.v1";
 const EDITOR_CLASS: &str = "WooTodo.Native.Editor.v1";
 const MUTEX_NAME: &str = "Local\\WooTodo.WindowsApp";
 const WM_TRAY: u32 = WM_APP + 1;
+const WM_UPDATE_EVENT: u32 = WM_APP + 3;
+const UPDATE_CHECK_TIMER_ID: usize = 1;
+const UPDATE_CHECK_INTERVAL_MILLIS: u32 = 24 * 60 * 60 * 1_000;
 const STATIC_LEFT: u32 = 0;
 const STATIC_RIGHT: u32 = 2;
 const TRACKBAR_GET_POSITION: u32 = WM_USER;
@@ -86,6 +91,7 @@ const ID_TRAY_QUICK_ADD: i32 = 402;
 const ID_TRAY_TOPMOST: i32 = 403;
 const ID_TRAY_RESTORE: i32 = 404;
 const ID_TRAY_EXIT: i32 = 405;
+const ID_TRAY_CHECK_UPDATE: i32 = 406;
 
 const HOTKEY_QUICK_ADD: i32 = 1;
 const HOTKEY_TOGGLE_BOARD: i32 = 2;
@@ -234,6 +240,24 @@ struct App {
     tray_added: bool,
     mutex: HANDLE,
     theme: ThemeResources,
+    update_sender: Sender<UpdateEvent>,
+    update_receiver: Receiver<UpdateEvent>,
+    update_state: UpdateState,
+}
+
+enum UpdateEvent {
+    Checked {
+        manual: bool,
+        result: Result<Option<UpdateRelease>, String>,
+    },
+    Downloaded(Result<PreparedUpdate, String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateState {
+    Idle,
+    Checking,
+    Downloading,
 }
 
 #[derive(Debug, Clone)]
@@ -329,6 +353,7 @@ pub fn run() -> Result<(), String> {
             .map_err(|error| format!("无法结算已结束周期：{error}"))?;
 
         let settings = AppSettings::load(&data_directory);
+        let (update_sender, update_receiver) = mpsc::channel();
         let mut app = Box::new(App {
             instance,
             main: null_mut(),
@@ -346,6 +371,9 @@ pub fn run() -> Result<(), String> {
             tray_added: false,
             mutex,
             theme,
+            update_sender,
+            update_receiver,
+            update_state: UpdateState::Idle,
         });
         let app_pointer = (&mut *app) as *mut App;
 
@@ -408,6 +436,15 @@ pub fn run() -> Result<(), String> {
         );
         UpdateWindow(app.floating);
         handle_activation_args(&mut app);
+        if std::env::var_os("WOO_TODO_SKIP_UPDATE_CHECK").is_none() {
+            begin_update_check(&mut app, false);
+            SetTimer(
+                app.main,
+                UPDATE_CHECK_TIMER_ID,
+                UPDATE_CHECK_INTERVAL_MILLIS,
+                None,
+            );
+        }
 
         let mut message: MSG = zeroed();
         loop {
@@ -1460,6 +1497,7 @@ unsafe fn handle_main_command(app: &mut App, id: i32, notification: u16) {
         ID_TRAY_QUICK_ADD => show_quick_add(app),
         ID_TRAY_TOPMOST => toggle_topmost(app),
         ID_TRAY_RESTORE => restore_interaction(app),
+        ID_TRAY_CHECK_UPDATE => begin_update_check(app, true),
         ID_TRAY_EXIT => exit_application(app),
         _ => {}
     }
@@ -1714,6 +1752,126 @@ unsafe fn show_tray_warning(app: &App, title: &str, message: &str) {
     Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
+unsafe fn show_tray_information(app: &App, title: &str, message: &str) {
+    if !app.tray_added {
+        return;
+    }
+    let mut data = tray_data(app);
+    data.uFlags = NIF_INFO;
+    data.dwInfoFlags = NIIF_INFO;
+    copy_wide(&mut data.szInfoTitle, title);
+    copy_wide(&mut data.szInfo, message);
+    Shell_NotifyIconW(NIM_MODIFY, &data);
+}
+
+unsafe fn begin_update_check(app: &mut App, manual: bool) {
+    if app.update_state != UpdateState::Idle {
+        if manual {
+            show_message(
+                app.main,
+                "Woo Todo 更新",
+                match app.update_state {
+                    UpdateState::Checking => "正在检查更新，请稍候。",
+                    UpdateState::Downloading => "正在下载更新，请稍候。",
+                    UpdateState::Idle => "",
+                },
+                MB_OK | MB_ICONINFORMATION,
+            );
+        }
+        return;
+    }
+    app.update_state = UpdateState::Checking;
+    let sender = app.update_sender.clone();
+    let window = app.main as usize;
+    std::thread::spawn(move || {
+        let _ = sender.send(UpdateEvent::Checked {
+            manual,
+            result: update::check_latest(),
+        });
+        unsafe {
+            PostMessageW(window as HWND, WM_UPDATE_EVENT, 0, 0);
+        }
+    });
+}
+
+unsafe fn begin_update_download(app: &mut App, release: UpdateRelease) {
+    app.update_state = UpdateState::Downloading;
+    show_tray_information(
+        app,
+        "Woo Todo 正在更新",
+        &format!("正在后台下载 v{}，完成后会自动重启。", release.version),
+    );
+    let sender = app.update_sender.clone();
+    let window = app.main as usize;
+    std::thread::spawn(move || {
+        let _ = sender.send(UpdateEvent::Downloaded(update::download(release)));
+        unsafe {
+            PostMessageW(window as HWND, WM_UPDATE_EVENT, 0, 0);
+        }
+    });
+}
+
+unsafe fn handle_update_events(app: &mut App) {
+    while let Ok(event) = app.update_receiver.try_recv() {
+        match event {
+            UpdateEvent::Checked { manual, result } => {
+                app.update_state = UpdateState::Idle;
+                match result {
+                    Ok(Some(release)) => {
+                        let message = format!(
+                            "发现 Woo Todo v{}。\n\n是否立即下载、替换当前程序并重启？任务和设置不会受影响。",
+                            release.version
+                        );
+                        if show_message(
+                            app.main,
+                            "Woo Todo 有新版本",
+                            &message,
+                            MB_YESNO | MB_ICONINFORMATION,
+                        ) == IDYES
+                        {
+                            begin_update_download(app, release);
+                        }
+                    }
+                    Ok(None) if manual => {
+                        show_message(
+                            app.main,
+                            "Woo Todo 更新",
+                            &format!("当前已是最新版本（v{}）。", env!("CARGO_PKG_VERSION")),
+                            MB_OK | MB_ICONINFORMATION,
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(error) if manual => {
+                        show_message(app.main, "无法检查更新", &error, MB_OK | MB_ICONWARNING);
+                    }
+                    Err(_) => {}
+                }
+            }
+            UpdateEvent::Downloaded(result) => {
+                app.update_state = UpdateState::Idle;
+                match result {
+                    Ok(prepared) => {
+                        if let Err(error) = update::launch_helper(&prepared) {
+                            show_message(app.main, "无法安装更新", &error, MB_OK | MB_ICONWARNING);
+                        } else {
+                            exit_application(app);
+                        }
+                    }
+                    Err(error) => {
+                        show_message(app.main, "更新下载失败", &error, MB_OK | MB_ICONWARNING);
+                    }
+                }
+            }
+        }
+    }
+}
+
+unsafe fn show_message(window: HWND, title: &str, message: &str, style: MESSAGEBOX_STYLE) -> i32 {
+    let title = wide(title);
+    let message = wide(message);
+    MessageBoxW(window, message.as_ptr(), title.as_ptr(), style)
+}
+
 unsafe fn show_tray_menu(app: &mut App) {
     let menu = CreatePopupMenu();
     if menu.is_null() {
@@ -1741,6 +1899,15 @@ unsafe fn show_tray_menu(app: &mut App) {
     );
     append_menu(menu, ID_TRAY_RESTORE, "恢复可交互");
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
+    append_menu(
+        menu,
+        ID_TRAY_CHECK_UPDATE,
+        match app.update_state {
+            UpdateState::Checking => "正在检查更新...",
+            UpdateState::Downloading => "正在下载更新...",
+            UpdateState::Idle => "检查更新...",
+        },
+    );
     append_menu(menu, ID_TRAY_EXIT, "退出 Woo Todo");
     let mut point: POINT = zeroed();
     GetCursorPos(&mut point);
@@ -1938,6 +2105,12 @@ unsafe extern "system" fn main_window_proc(
             handle_hotkey(app, wparam as i32);
             0
         }
+        WM_TIMER => {
+            if wparam == UPDATE_CHECK_TIMER_ID {
+                begin_update_check(app, false);
+            }
+            0
+        }
         WM_TRAY => {
             match loword(lparam as usize) as u32 {
                 WM_LBUTTONDBLCLK | NIN_SELECT => show_main(app),
@@ -1964,6 +2137,10 @@ unsafe extern "system" fn main_window_proc(
         }
         value if value == WM_APP + 2 => {
             show_main(app);
+            0
+        }
+        WM_UPDATE_EVENT => {
+            handle_update_events(app);
             0
         }
         _ => DefWindowProcW(hwnd, message, wparam, lparam),
@@ -2521,9 +2698,10 @@ fn is_main_app_message(message: u32) -> bool {
             | WM_HSCROLL
             | WM_NOTIFY
             | WM_HOTKEY
+            | WM_TIMER
             | WM_TRAY
             | WM_COPYDATA
-    ) || message == WM_APP + 2
+    ) || matches!(message, value if value == WM_APP + 2 || value == WM_UPDATE_EVENT)
 }
 
 fn is_float_app_message(message: u32) -> bool {

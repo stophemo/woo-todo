@@ -85,6 +85,20 @@ jobs:
       - name: 运行 Swift 测试
         run: swift test --package-path macos
 
+      - name: 组装并验证 Sparkle 应用包
+        run: |
+          set -euo pipefail
+          ./macos/scripts/package-app.sh --zip
+          APP="macos/dist/Woo Todo.app"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework"
+          otool -L "$APP/Contents/MacOS/woo-todo-mac" | \
+            grep -F '@rpath/Sparkle.framework/Versions/B/Sparkle'
+          codesign -d --entitlements :- \
+            "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate" \
+            2>/dev/null | grep -F 'org.sparkle-project.Sparkle.Autoupdate'
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          test -f "macos/dist/Woo Todo-0.1.14-macos.zip"
+
   windows:
     name: Windows 原生测试与发布验证
     runs-on: windows-latest

@@ -68,6 +68,7 @@ import com.wootodo.update.AppUpdateEvent
 import com.wootodo.update.AppUpdatePolicy
 import com.wootodo.update.AppUpdatePreferences
 import com.wootodo.update.AppUpdateViewModel
+import com.wootodo.update.ApkUpdateInstaller
 import com.wootodo.update.GitHubRelease
 import com.wootodo.widget.TodayWidgetUpdater
 import java.io.ByteArrayOutputStream
@@ -75,6 +76,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -94,8 +96,12 @@ class MainActivity : AppCompatActivity() {
     private var pairingCodeView: TextView? = null
     private var deepLinkIntentConsumed = false
     private var backupProgressDialog: AlertDialog? = null
+    private var updateProgressDialog: AlertDialog? = null
+    private var updateDownloadJob: Job? = null
+    private var pendingUpdatePermissionRelease: GitHubRelease? = null
     private var availableUpdateRelease: GitHubRelease? = null
     private val updatePreferences by lazy { AppUpdatePreferences(this) }
+    private val apkUpdateInstaller by lazy { ApkUpdateInstaller(this) }
     private val dayCounterChangeListener: (DayCounterSettings) -> Unit = {
         runOnUiThread { renderDayCounter() }
     }
@@ -137,6 +143,19 @@ class MainActivity : AppCompatActivity() {
             backupFileViewModel.clearImport()
         } else {
             readBackupForImport(uri)
+        }
+    }
+
+    private val requestUpdateInstallPermission = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        val release = pendingUpdatePermissionRelease
+        pendingUpdatePermissionRelease = null
+        if (release == null) return@registerForActivityResult
+        if (apkUpdateInstaller.canRequestPackageInstalls()) {
+            downloadAndInstallUpdate(release)
+        } else {
+            Toast.makeText(this, R.string.update_install_permission_denied, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -306,6 +325,7 @@ class MainActivity : AppCompatActivity() {
         pairingDialog?.dismiss()
         pairingTerminalDialog?.dismiss()
         backupProgressDialog?.dismiss()
+        updateProgressDialog?.dismiss()
         super.onDestroy()
     }
 
@@ -452,7 +472,7 @@ class MainActivity : AppCompatActivity() {
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     MENU_AVAILABLE_UPDATE -> {
-                        release?.let { openUpdateUrl(it.downloadUrl) }
+                        release?.let(::beginUpdate)
                     }
                     MENU_DAY_COUNTER -> showDayCounterSettings()
                     MENU_REMINDER -> showReminderSettings()
@@ -1043,6 +1063,68 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    private fun beginUpdate(release: GitHubRelease) {
+        if (release.apkUrl == null) {
+            openUpdateUrl(release.pageUrl)
+            return
+        }
+        if (!apkUpdateInstaller.canRequestPackageInstalls()) {
+            pendingUpdatePermissionRelease = release
+            try {
+                requestUpdateInstallPermission.launch(apkUpdateInstaller.unknownSourcesSettingsIntent())
+            } catch (_: ActivityNotFoundException) {
+                pendingUpdatePermissionRelease = null
+                Toast.makeText(this, R.string.update_install_permission_unavailable, Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        downloadAndInstallUpdate(release)
+    }
+
+    private fun downloadAndInstallUpdate(release: GitHubRelease) {
+        if (updateDownloadJob?.isActive == true) return
+        val progress = ProgressBar(this).apply {
+            isIndeterminate = true
+            val padding = (24 * resources.displayMetrics.density).toInt()
+            setPadding(padding, padding, padding, padding)
+        }
+        updateProgressDialog = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_downloading, release.versionLabel))
+            .setView(progress)
+            .setNegativeButton(R.string.cancel) { _, _ -> updateDownloadJob?.cancel() }
+            .setCancelable(false)
+            .show()
+        updateDownloadJob = lifecycleScope.launch {
+            runCatching { apkUpdateInstaller.downloadAndVerify(release) }
+                .onSuccess { apk ->
+                    updateProgressDialog?.dismiss()
+                    updateProgressDialog = null
+                    try {
+                        startActivity(apkUpdateInstaller.installIntent(apk))
+                    } catch (_: ActivityNotFoundException) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            R.string.update_installer_unavailable,
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+                .onFailure { error ->
+                    updateProgressDialog?.dismiss()
+                    updateProgressDialog = null
+                    if (error !is kotlinx.coroutines.CancellationException) {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle(R.string.update_download_failed_title)
+                            .setMessage(error.localizedMessage ?: getString(R.string.update_download_failed))
+                            .setPositiveButton(R.string.confirm, null)
+                            .show()
+                            .enableMessageSelection()
+                    }
+                }
+            updateDownloadJob = null
+        }
     }
 
     private fun openUpdateUrl(url: String) {

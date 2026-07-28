@@ -19,7 +19,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dashboardWindowController: DashboardWindowController?
     private var statusMenuController: StatusMenuController?
     private var appUpdateController: AppUpdateController?
-    private var updateCheckTimer: Timer?
     private var wakeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -102,15 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 },
                 checkForUpdates: { [weak appUpdateController] in
                     appUpdateController?.checkManually()
-                },
-                openAvailableUpdate: { [weak appUpdateController] in
-                    appUpdateController?.openAvailableUpdate()
                 }
             )
-
-            appUpdateController.onAvailableUpdateChanged = { [weak statusMenuController] update in
-                statusMenuController?.setAvailableUpdate(update)
-            }
 
             self.repository = repository
             todayStore = store
@@ -130,7 +122,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.dayCounterStore?.refreshDate()
-                    self?.appUpdateController?.checkAutomatically()
                 }
             }
             panelController.onStateChange = { [weak statusMenuController] in
@@ -168,7 +159,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let syncActivationError {
                 showSyncCredentialsWarning(syncActivationError)
             }
-            startPeriodicUpdateChecks()
             logger.info("Woo Todo 已启动，本地任务面板准备完成")
         } catch {
             logger.error("启动失败：\(error.localizedDescription, privacy: .public)")
@@ -181,39 +171,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
-    func applicationDidBecomeActive(_ notification: Notification) {
-        appUpdateController?.checkAutomatically()
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
-        updateCheckTimer?.invalidate()
-        updateCheckTimer = nil
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
             self.wakeObserver = nil
         }
         syncSettingsStore?.stop()
         webDavSettingsStore?.stop()
-        appUpdateController?.stop()
-    }
-
-    private func startPeriodicUpdateChecks() {
-        guard updateCheckTimer == nil else { return }
-        appUpdateController?.checkAutomatically()
-        let timer = Timer(
-            timeInterval: AppUpdatePolicy.automaticCheckPollingInterval,
-            target: self,
-            selector: #selector(runAutomaticUpdateCheck),
-            userInfo: nil,
-            repeats: true
-        )
-        timer.tolerance = 60
-        RunLoop.main.add(timer, forMode: .common)
-        updateCheckTimer = timer
-    }
-
-    @objc private func runAutomaticUpdateCheck() {
-        appUpdateController?.checkAutomatically()
     }
 
     private func configureMainMenu() {

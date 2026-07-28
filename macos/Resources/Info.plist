@@ -19,9 +19,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.13</string>
+    <string>0.1.14</string>
     <key>CFBundleVersion</key>
-    <string>14</string>
+    <string>15</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
     <key>LSMinimumSystemVersion</key>
@@ -45,5 +45,17 @@
     </array>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/stophemo/woo-todo/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>7SH23fMtp0tlKo3yj2m60cCOg0WydZp/72LSO0gsXMs=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUAllowsAutomaticUpdates</key>
+    <true/>
+    <key>SUAutomaticallyUpdate</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
 </dict>
 </plist>

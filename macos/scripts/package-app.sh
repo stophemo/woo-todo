@@ -6,7 +6,7 @@ usage() {
     cat <<'EOF'
 用法：package-app.sh [--zip]
 
-构建 Release SwiftPM 可执行文件，组装并 ad-hoc 签名：
+构建 Release SwiftPM 可执行文件，组装并签名：
   dist/Woo Todo.app
 
 选项：
@@ -15,8 +15,9 @@ usage() {
 
 可选环境变量：
   BUNDLE_ID          Bundle Identifier，默认 io.github.stophemo.woo-todo
-  MARKETING_VERSION  显示版本，默认 0.1.13
-  BUILD_NUMBER       构建号，仅允许数字，默认 14
+  MARKETING_VERSION  显示版本，默认 0.1.14
+  BUILD_NUMBER       构建号，仅允许数字，默认 15
+  CODE_SIGN_IDENTITY 签名身份；默认 -（ad-hoc），正式 Developer ID 可保持 Keychain 授权
 EOF
 }
 
@@ -57,8 +58,9 @@ EXECUTABLE_NAME="woo-todo-mac"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 
 BUNDLE_ID="${BUNDLE_ID:-io.github.stophemo.woo-todo}"
-MARKETING_VERSION="${MARKETING_VERSION:-0.1.13}"
-BUILD_NUMBER="${BUILD_NUMBER:-14}"
+MARKETING_VERSION="${MARKETING_VERSION:-0.1.14}"
+BUILD_NUMBER="${BUILD_NUMBER:-15}"
+CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 
 [[ "$BUNDLE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] \
     || fail "BUNDLE_ID 只能包含字母、数字、点和连字符"
@@ -72,6 +74,7 @@ require_command /usr/bin/codesign
 require_command /usr/bin/ditto
 require_command /usr/bin/iconutil
 require_command /usr/bin/plutil
+require_command /usr/bin/otool
 require_command /usr/libexec/PlistBuddy
 [[ -f "$TEMPLATE_PLIST" ]] || fail "找不到 Info.plist 模板：$TEMPLATE_PLIST"
 [[ -s "$ICON_RESOURCE" ]] || fail "找不到 App 图标：$ICON_RESOURCE"
@@ -100,6 +103,16 @@ mkdir -p -- "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources"
 /usr/bin/install -m 0755 "$BUILT_EXECUTABLE" "$CONTENTS_DIR/MacOS/$EXECUTABLE_NAME"
 /usr/bin/install -m 0644 "$TEMPLATE_PLIST" "$CONTENTS_DIR/Info.plist"
 /usr/bin/install -m 0644 "$ICON_RESOURCE" "$CONTENTS_DIR/Resources/$ICON_FILE_NAME"
+
+SPARKLE_FRAMEWORK="$(find \
+    "$MACOS_DIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework" \
+    -path '*/macos-arm64_x86_64/Sparkle.framework' \
+    -type d \
+    -print \
+    -quit)"
+[[ -d "$SPARKLE_FRAMEWORK" ]] || fail "没有找到 Sparkle.framework"
+mkdir -p -- "$CONTENTS_DIR/Frameworks"
+/usr/bin/ditto "$SPARKLE_FRAMEWORK" "$CONTENTS_DIR/Frameworks/Sparkle.framework"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$CONTENTS_DIR/Info.plist"
@@ -135,13 +148,34 @@ for icon_file in "${EXPECTED_ICON_FILES[@]}"; do
         || fail "$ICON_FILE_NAME 缺少标准尺寸：$icon_file"
 done
 
-printf '正在执行 ad-hoc 签名…\n'
-/usr/bin/codesign \
-    --force \
-    --sign - \
-    --timestamp=none \
-    "$STAGED_APP"
+if [[ "$CODE_SIGN_IDENTITY" == "-" ]]; then
+    printf '正在执行 ad-hoc 签名…\n'
+    /usr/bin/codesign \
+        --force \
+        --sign - \
+        --timestamp=none \
+        "$STAGED_APP"
+else
+    printf '正在使用稳定身份签名：%s\n' "$CODE_SIGN_IDENTITY"
+    /usr/bin/codesign \
+        --force \
+        --deep \
+        --preserve-metadata=identifier,entitlements,requirements \
+        --sign "$CODE_SIGN_IDENTITY" \
+        --options runtime \
+        --timestamp \
+        "$STAGED_APP"
+fi
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$STAGED_APP"
+
+SPARKLE_AUTOUPDATE="$CONTENTS_DIR/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+/usr/bin/codesign -d --entitlements :- "$SPARKLE_AUTOUPDATE" 2>/dev/null \
+    | /usr/bin/grep -Fq "org.sparkle-project.Sparkle.Autoupdate" \
+    || fail "Sparkle Autoupdate entitlement 未保留"
+
+SPARKLE_LINK="$(/usr/bin/otool -L "$CONTENTS_DIR/MacOS/$EXECUTABLE_NAME" | awk '/Sparkle.framework/ { print $1; exit }')"
+[[ "$SPARKLE_LINK" == "@rpath/Sparkle.framework/Versions/B/Sparkle" ]] \
+    || fail "主程序没有通过 @rpath 链接 Sparkle.framework"
 
 # 输出路径固定在当前 Package 的 dist 下，避免环境变量造成越界删除。
 rm -rf -- "$APP_BUNDLE"

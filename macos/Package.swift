@@ -14,6 +14,12 @@ let package = Package(
         .library(name: "WooTodoSync", targets: ["WooTodoSync"]),
         .executable(name: "woo-todo-mac", targets: ["WooTodoMacApp"])
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/sparkle-project/Sparkle.git",
+            exact: "2.9.4"
+        )
+    ],
     targets: [
         .systemLibrary(
             name: "CSQLite",
@@ -37,7 +43,12 @@ let package = Package(
         ),
         .executableTarget(
             name: "WooTodoMacApp",
-            dependencies: ["WooTodoCore", "WooTodoStorage", "WooTodoSync"],
+            dependencies: [
+                "WooTodoCore",
+                "WooTodoStorage",
+                "WooTodoSync",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
             path: "Sources/WooTodoMacApp"
         ),
         .testTarget(

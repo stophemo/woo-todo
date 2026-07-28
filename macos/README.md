@@ -41,4 +41,4 @@ swift run woo-todo-mac
 - `WooTodoMacApp`：AppKit 生命周期、悬浮面板、按需管理窗口、菜单栏、全局快捷键、同步运行时和 SwiftUI 界面。
 - 三组测试覆盖周期边界、重复补齐、确定性 ID、统计、持久化、加密协议、同步分页与配对状态机。
 
-任务始终先保存到本地，不需要部署服务即可使用。跨端自动同步可直接使用坚果云 WebDAV；自建 Cloudflare Workers + D1 是另一项可选方案。GitHub Release 产物使用 ad-hoc 签名且没有 Apple 公证；macOS 与 Android 都会为设置了提醒时间的待办安排各自的本地通知。
+任务始终先保存到本地，不需要部署服务即可使用。跨端自动同步可直接使用坚果云 WebDAV；自建 Cloudflare Workers + D1 是另一项可选方案。macOS 通过 Sparkle 的 Ed25519 签名源完成应用内更新；GitHub Release 在未配置 Developer ID 时仍使用 ad-hoc 签名且没有 Apple 公证，因此更新后 Keychain 可能再次请求授权。macOS 与 Android 都会为设置了提醒时间的待办安排各自的本地通知。

@@ -264,6 +264,34 @@ class AppUpdateTest {
         assertEquals(null, AppUpdateCache.migrateLegacy("0.1.7", "latest"))
     }
 
+    @Test
+    fun `安装更新只接受同包名同签名且版本递增的APK`() {
+        val signer = setOf(listOf<Byte>(1, 2, 3))
+        val installed = ApkIdentity("com.wootodo", "0.1.13", 14, signer)
+        val valid = ApkIdentity("com.wootodo", "0.1.14", 15, signer)
+
+        ApkUpdateIdentityPolicy.validate(
+            installed,
+            valid,
+            requireNotNull(AppVersion.parse("0.1.14")),
+        )
+        listOf(
+            valid.copy(packageName = "example.invalid"),
+            valid.copy(versionName = "0.1.15"),
+            valid.copy(versionCode = 14),
+            valid.copy(signerCertificates = setOf(listOf<Byte>(9))),
+            valid.copy(signerCertificates = emptySet()),
+        ).forEach { invalid ->
+            assertThrows(IllegalArgumentException::class.java) {
+                ApkUpdateIdentityPolicy.validate(
+                    installed,
+                    invalid,
+                    requireNotNull(AppVersion.parse("0.1.14")),
+                )
+            }
+        }
+    }
+
     private fun release(tag: String): GitHubRelease = GitHubRelease(
         version = requireNotNull(AppVersion.parse(tag)),
         pageUrl = "https://github.com/stophemo/woo-todo/releases/tag/$tag",

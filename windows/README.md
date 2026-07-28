@@ -16,7 +16,7 @@ GitHub Release 提供 x64 免安装 ZIP，解压后直接运行根目录的 `Woo
 - SQLite：`%LOCALAPPDATA%\Woo Todo\woo-todo.sqlite3`
 - 设置：`%LOCALAPPDATA%\Woo Todo\settings.json`
 
-退出 Woo Todo 后替换或移动 `WooTodo.exe` 不会删除本地任务和设置；Rust 版本继续兼容旧客户端的数据库路径和 PascalCase 设置字段。
+托盘菜单可直接检查更新。发现新版本后，应用会下载免安装 ZIP、核对 GitHub Release 的 SHA-256 digest，再由临时 helper 在主进程退出后替换 `WooTodo.exe` 并重启；失败时保留当前程序。手动替换或移动 `WooTodo.exe` 也不会删除本地任务和设置；Rust 版本继续兼容旧客户端的数据库路径和 PascalCase 设置字段。
 
 ## 构建与测试
 
@@ -35,13 +35,13 @@ cargo run --manifest-path windows/Cargo.toml
 
 ```powershell
 pwsh -NoProfile -File windows/scripts/package.ps1
-pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.13
+pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.14
 ```
 
 输出文件为：
 
 ```text
-windows/dist/Woo-Todo-v0.1.13-windows-x64.zip
+windows/dist/Woo-Todo-v0.1.14-windows-x64.zip
 ```
 
 正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和 Release 构建，再对最终 ZIP 执行真实 Win32 交互烟测，覆盖 AMD64 PE、启动、原生窗口、单实例、开始菜单身份、协议激活、快速新增、完成/取消完成、透明度与穿透独立变化、托盘退出及重启持久化。通过烟测的同一份 ZIP 会与 Android APK、macOS ZIP 一起发布；无论成功或失败，Runner 都会上传诊断日志、桌面截图、Windows Application 事件、隔离 SQLite 与设置文件。
@@ -59,6 +59,7 @@ Windows 首版提供本地 SQLite 任务、日/周/月/闲时、重复与 Pass�
 - `windows/src/notifications.rs`：WinRT Toast 调度队列对齐。
 - `windows/src/settings.rs`：兼容旧版 `settings.json` 的本机设置持久化。
 - `windows/src/integration.rs`：免安装程序的当前用户通知身份与 `wootodo://` 协议注册。
+- `windows/src/update.rs`：Release 解析、WinHTTP 下载、SHA-256 校验和免安装自替换 helper。
 - `windows/scripts`：可复现的 ZIP 打包与 Windows Runner 烟测入口。
 
 首次运行会为当前用户创建带 `stophemo.WooTodo` AppUserModelID 的开始菜单身份，并注册 `wootodo://` 协议；它不会复制程序、创建卸载项或请求管理员权限。移动程序后重新运行一次即可刷新路径。系统提醒被点击时，协议参数会转发给已经运行的单实例应用。

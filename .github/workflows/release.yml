@@ -112,6 +112,11 @@ jobs:
     needs: validate-tag
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
+      MACOS_DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+      MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+      MACOS_DEVELOPER_ID_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_IDENTITY }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -121,6 +126,33 @@ jobs:
 
       - name: 运行 Swift 全量测试
         run: swift test --package-path macos
+
+      - name: 恢复可选 Developer ID 签名身份
+        if: env.MACOS_DEVELOPER_ID_CERTIFICATE_BASE64 != ''
+        run: |
+          set -euo pipefail
+          test -n "$MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD"
+          test -n "$MACOS_DEVELOPER_ID_IDENTITY"
+          CERTIFICATE="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN="$RUNNER_TEMP/woo-todo-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          printf '%s' "$MACOS_DEVELOPER_ID_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERTIFICATE" \
+            -k "$KEYCHAIN" \
+            -P "$MACOS_DEVELOPER_ID_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "$MACOS_DEVELOPER_ID_IDENTITY"
+          echo "CODE_SIGN_IDENTITY=$MACOS_DEVELOPER_ID_IDENTITY" >> "$GITHUB_ENV"
+          echo "MACOS_SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
 
       - name: 打包并验证应用
         run: |
@@ -139,13 +171,41 @@ jobs:
           mkdir -p release
           mv "$ZIP" "release/Woo-Todo-${GITHUB_REF_NAME}-macos-arm64.zip"
 
+      - name: 生成并校验 Sparkle 更新源
+        run: |
+          set -euo pipefail
+          test -n "$SPARKLE_ED25519_PRIVATE_KEY"
+          ARCHIVE="Woo-Todo-${GITHUB_REF_NAME}-macos-arm64.zip"
+          APPCAST_DIR="$RUNNER_TEMP/woo-todo-appcast"
+          mkdir -p "$APPCAST_DIR"
+          cp "release/$ARCHIVE" "$APPCAST_DIR/$ARCHIVE"
+          printf '%s' "$SPARKLE_ED25519_PRIVATE_KEY" | \
+            macos/.build/artifacts/sparkle/Sparkle/bin/generate_appcast \
+              --ed-key-file - \
+              --download-url-prefix "https://github.com/stophemo/woo-todo/releases/download/${GITHUB_REF_NAME}/" \
+              --link "https://woo-todo.vercel.app" \
+              --maximum-versions 1 \
+              --maximum-deltas 0 \
+              -o "$APPCAST_DIR/appcast.xml" \
+              "$APPCAST_DIR"
+          grep -F "sparkle:edSignature=" "$APPCAST_DIR/appcast.xml"
+          grep -F "url=\"https://github.com/stophemo/woo-todo/releases/download/${GITHUB_REF_NAME}/$ARCHIVE\"" \
+            "$APPCAST_DIR/appcast.xml"
+          cp "$APPCAST_DIR/appcast.xml" release/appcast.xml
+
       - name: 上传 macOS 产物
         uses: actions/upload-artifact@v4
         with:
           name: macos-release
-          path: release/*.zip
+          path: |
+            release/*.zip
+            release/appcast.xml
           if-no-files-found: error
           retention-days: 7
+
+      - name: 清理 macOS 签名钥匙串
+        if: always() && env.MACOS_SIGNING_KEYCHAIN != ''
+        run: security delete-keychain "$MACOS_SIGNING_KEYCHAIN"
 
   windows:
     name: 构建 Windows x64 原生包

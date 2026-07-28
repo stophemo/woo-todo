@@ -321,6 +321,7 @@ $primary = $null
 $secondary = $null
 $dataDirectory = $null
 $previousSkipIntegration = $env:WOO_TODO_SKIP_PORTABLE_INTEGRATION
+$previousSkipUpdateCheck = $env:WOO_TODO_SKIP_UPDATE_CHECK
 $previousSmokeTrace = $env:WOO_TODO_SMOKE_TRACE
 $previousLocalAppData = $env:LOCALAPPDATA
 
@@ -331,6 +332,7 @@ try {
     $database = Join-Path $dataDirectory "woo-todo.sqlite3"
     $settingsPath = Join-Path $dataDirectory "settings.json"
     $env:WOO_TODO_SMOKE_TRACE = Join-Path $ArtifactDirectory "app-trace.txt"
+    $env:WOO_TODO_SKIP_UPDATE_CHECK = "1"
     Expand-Archive -LiteralPath $resolvedArchive -DestinationPath $temporaryDirectory
 
     $files = @(Get-ChildItem -LiteralPath $temporaryDirectory -File -Recurse)
@@ -383,6 +385,46 @@ try {
         throw "悬浮任务板启动后不可见"
     }
     Add-Diagnostic "原生窗口创建成功：main=$main, floating=$floating"
+
+    $helperTestDirectory = Join-Path $temporaryDirectory "update-helper"
+    $helperInputDirectory = Join-Path $helperTestDirectory "input"
+    New-Item -ItemType Directory -Path $helperInputDirectory -Force | Out-Null
+    $helperExecutable = Join-Path $helperTestDirectory "WooTodoUpdater.exe"
+    $helperTarget = Join-Path $helperTestDirectory "WooTodoTarget.exe"
+    $helperArchive = Join-Path $helperTestDirectory "update.zip"
+    Copy-Item -LiteralPath $executable -Destination $helperExecutable
+    Copy-Item -LiteralPath $executable -Destination $helperTarget
+    Copy-Item -LiteralPath $executable -Destination (Join-Path $helperInputDirectory "WooTodo.exe")
+    Compress-Archive `
+        -LiteralPath (Join-Path $helperInputDirectory "WooTodo.exe") `
+        -DestinationPath $helperArchive `
+        -CompressionLevel Optimal
+    $helperDigest = (Get-FileHash -LiteralPath $helperArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $helperProcess = Start-Process `
+        -FilePath $helperExecutable `
+        -ArgumentList @(
+            "--woo-todo-apply-update",
+            $helperArchive,
+            $helperTarget,
+            "4294967295",
+            "0.1.14",
+            $helperDigest
+        ) `
+        -PassThru
+    if (-not $helperProcess.WaitForExit(60000)) {
+        throw "更新 helper 在 60 秒内没有结束"
+    }
+    if ($helperProcess.ExitCode -ne 0) {
+        throw "更新 helper 失败，退出码：$($helperProcess.ExitCode)"
+    }
+    if ((Get-FileHash -LiteralPath $helperTarget -Algorithm SHA256).Hash -ne `
+        (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash) {
+        throw "更新 helper 替换后的 WooTodo.exe 与 ZIP 内容不一致"
+    }
+    if (Test-Path -LiteralPath $helperArchive) {
+        throw "更新 helper 成功后没有清理已使用的 ZIP"
+    }
+    Add-Diagnostic "免安装更新 helper 的复核、替换与重启验证通过"
 
     $secondary = Start-Process -FilePath $executable -PassThru
     if (-not $secondary.WaitForExit(10000)) {
@@ -534,6 +576,12 @@ finally {
         Remove-Item Env:WOO_TODO_SKIP_PORTABLE_INTEGRATION -ErrorAction SilentlyContinue
     } else {
         $env:WOO_TODO_SKIP_PORTABLE_INTEGRATION = $previousSkipIntegration
+    }
+    if ($null -eq $previousSkipUpdateCheck) {
+        Remove-Item Env:WOO_TODO_SKIP_UPDATE_CHECK -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:WOO_TODO_SKIP_UPDATE_CHECK = $previousSkipUpdateCheck
     }
     if ($null -eq $previousSmokeTrace) {
         Remove-Item Env:WOO_TODO_SMOKE_TRACE -ErrorAction SilentlyContinue

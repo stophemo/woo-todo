@@ -29,7 +29,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let openDashboardAction: () -> Void
     private let openSettingsAction: () -> Void
     private let checkForUpdatesAction: () -> Void
-    private let openAvailableUpdateAction: () -> Void
     private let statusItem: NSStatusItem
     private let quickAddItem: NSMenuItem
     private let taskPanelItem: NSMenuItem
@@ -38,7 +37,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let blurItem: NSMenuItem
     private let alwaysOnTopItem: NSMenuItem
     private let opacityItem: NSMenuItem
-    private let availableUpdateItem: NSMenuItem
     private var opacityPresetItems: [NSMenuItem] = []
 
     init(
@@ -47,8 +45,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         quickAdd: @escaping () -> Void,
         openDashboard: @escaping () -> Void,
         openSettings: @escaping () -> Void,
-        checkForUpdates: @escaping () -> Void,
-        openAvailableUpdate: @escaping () -> Void
+        checkForUpdates: @escaping () -> Void
     ) {
         self.panelController = panelController
         self.shortcutSettingsStore = shortcutSettingsStore
@@ -56,7 +53,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         openDashboardAction = openDashboard
         openSettingsAction = openSettings
         checkForUpdatesAction = checkForUpdates
-        openAvailableUpdateAction = openAvailableUpdate
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         quickAddItem = NSMenuItem(title: "快速新增任务", action: nil, keyEquivalent: "")
         taskPanelItem = NSMenuItem(title: "显示任务板", action: nil, keyEquivalent: "")
@@ -65,7 +61,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         blurItem = NSMenuItem(title: "毛玻璃", action: nil, keyEquivalent: "")
         alwaysOnTopItem = NSMenuItem(title: "始终置顶", action: nil, keyEquivalent: "")
         opacityItem = NSMenuItem(title: "日常不透明度", action: nil, keyEquivalent: "")
-        availableUpdateItem = NSMenuItem(title: "有新版本可用", action: nil, keyEquivalent: "")
         super.init()
 
         statusItem.button?.image = NSImage(
@@ -99,18 +94,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         opacityPresetItems.forEach { item in
             guard let rawValue = item.representedObject as? Int else { return }
             item.state = rawValue == percentage ? .on : .off
-        }
-    }
-
-    func setAvailableUpdate(_ update: AvailableAppUpdate?) {
-        if let update {
-            availableUpdateItem.title = "有新版本可用：v\(update.version)"
-            availableUpdateItem.toolTip = "点击打开下载页"
-            availableUpdateItem.isHidden = false
-        } else {
-            availableUpdateItem.title = "有新版本可用"
-            availableUpdateItem.toolTip = nil
-            availableUpdateItem.isHidden = true
         }
     }
 
@@ -161,10 +144,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         alwaysOnTopItem.action = #selector(toggleAlwaysOnTop)
         menu.addItem(alwaysOnTopItem)
         menu.addItem(.separator())
-        availableUpdateItem.target = self
-        availableUpdateItem.action = #selector(openAvailableUpdate)
-        availableUpdateItem.isHidden = true
-        menu.addItem(availableUpdateItem)
         menu.addItem(item("检查更新…", action: #selector(checkForUpdates)))
         menu.addItem(item("退出 Woo Todo", action: #selector(quit)))
         return menu
@@ -259,10 +238,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func checkForUpdates() {
         checkForUpdatesAction()
-    }
-
-    @objc private func openAvailableUpdate() {
-        openAvailableUpdateAction()
     }
 
     @objc private func setOpacity(_ sender: NSMenuItem) {

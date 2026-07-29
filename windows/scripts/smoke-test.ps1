@@ -681,6 +681,9 @@ function Submit-FileDialog {
     if (-not [WooTodoSmokeNative]::SetFileDialogPath($dialog, $Path)) {
         throw "无法向 $Title 文件对话框写入路径"
     }
+    Wait-ForCondition -Description "初始化 $Title 文件对话框确认按钮" -Condition {
+        [WooTodoSmokeNative]::GetDlgItem($dialog, 1) -ne [IntPtr]::Zero
+    }
     $accept = Require-ChildWindow -Parent $dialog -Id 1
     if (-not [WooTodoSmokeNative]::PostMessageW(
             $accept,
@@ -706,6 +709,9 @@ function Dismiss-AppDialog {
         (Find-AppDialog -Process $Process -Title $Title) -ne [IntPtr]::Zero
     }
     $dialog = Find-AppDialog -Process $Process -Title $Title
+    Wait-ForCondition -Description "初始化 $Title 对话框确认按钮" -Condition {
+        [WooTodoSmokeNative]::GetDlgItem($dialog, 1) -ne [IntPtr]::Zero
+    }
     $accept = Require-ChildWindow -Parent $dialog -Id 1
     if (-not [WooTodoSmokeNative]::PostMessageW(
             $accept,

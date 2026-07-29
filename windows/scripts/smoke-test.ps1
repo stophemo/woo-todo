@@ -155,10 +155,6 @@ public static class WooTodoSmokeNative
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int GetWindowTextW(IntPtr window, StringBuilder text, int maximum);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SetWindowTextW(IntPtr window, string text);
-
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr SendMessageW(IntPtr window, uint message, IntPtr wparam, IntPtr lparam);
 
@@ -168,6 +164,14 @@ public static class WooTodoSmokeNative
         uint message,
         IntPtr wparam,
         StringBuilder lparam
+    );
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessageString(
+        IntPtr window,
+        uint message,
+        IntPtr wparam,
+        string lparam
     );
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -326,6 +330,11 @@ public static class WooTodoSmokeNative
         return text.ToString();
     }
 
+    public static bool SetText(IntPtr window, string text)
+    {
+        return SendMessageString(window, 0x000C, IntPtr.Zero, text) != IntPtr.Zero;
+    }
+
     public static string GetListBoxItemText(IntPtr list, int index)
     {
         int length = SendMessageW(list, 0x018A, new IntPtr(index), IntPtr.Zero).ToInt32();
@@ -476,7 +485,7 @@ public static class WooTodoSmokeNative
             }, IntPtr.Zero);
             edit = preferred != IntPtr.Zero ? preferred : fallback;
         }
-        return edit != IntPtr.Zero && SetWindowTextW(edit, path);
+        return edit != IntPtr.Zero && SetText(edit, path);
     }
 
     public static string ReadClipboardUnicodeText()
@@ -633,7 +642,7 @@ function Set-ControlText {
         [Parameter(Mandatory = $true)][AllowEmptyString()][string] $Text
     )
 
-    if (-not [WooTodoSmokeNative]::SetWindowTextW($Control, $Text)) {
+    if (-not [WooTodoSmokeNative]::SetText($Control, $Text)) {
         throw "无法写入 Win32 控件文本"
     }
 }
@@ -886,8 +895,8 @@ function Save-DisplayTemplate {
 
     $headerEdit = Require-ChildWindow -Parent $Main -Id 130
     $subtitleEdit = Require-ChildWindow -Parent $Main -Id 131
-    $headerWritten = [WooTodoSmokeNative]::SetWindowTextW($headerEdit, $Header)
-    $subtitleWritten = [WooTodoSmokeNative]::SetWindowTextW($subtitleEdit, $Subtitle)
+    $headerWritten = [WooTodoSmokeNative]::SetText($headerEdit, $Header)
+    $subtitleWritten = [WooTodoSmokeNative]::SetText($subtitleEdit, $Subtitle)
     if (-not $headerWritten -or -not $subtitleWritten) {
         throw "无法写入显示模板"
     }

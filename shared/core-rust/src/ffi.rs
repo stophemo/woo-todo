@@ -90,6 +90,8 @@ enum RepositoryRequest {
         quest_line: QuestLine,
         repeats: bool,
         reminder_time: Option<ReminderTime>,
+        #[serde(default)]
+        deadline_date: Option<NaiveDate>,
         now: i64,
     },
     Update {
@@ -100,6 +102,8 @@ enum RepositoryRequest {
         quest_line: QuestLine,
         repeats: bool,
         reminder_time: Option<ReminderTime>,
+        #[serde(default)]
+        deadline_date: Option<NaiveDate>,
         now: i64,
     },
     Complete {
@@ -259,6 +263,7 @@ fn call_repository(
             quest_line,
             repeats,
             reminder_time,
+            deadline_date,
             now,
         } => serialize(repository.create(
             &title,
@@ -267,6 +272,7 @@ fn call_repository(
             quest_line,
             repeats,
             reminder_time,
+            deadline_date,
             now,
         )?),
         RepositoryRequest::Update {
@@ -277,6 +283,7 @@ fn call_repository(
             quest_line,
             repeats,
             reminder_time,
+            deadline_date,
             now,
         } => serialize(repository.update(
             &id,
@@ -286,6 +293,7 @@ fn call_repository(
             quest_line,
             repeats,
             reminder_time,
+            deadline_date,
             now,
         )?),
         RepositoryRequest::Complete { id, now } => serialize(repository.complete(&id, now)?),
@@ -406,6 +414,18 @@ mod tests {
         let response = decode(woo_todo_repository_call(handle, request.as_ptr()));
         assert_eq!(response["ok"], true);
         assert_eq!(response["value"], json!([]));
+
+        let request = CString::new(
+            r#"{"action":"create","title":"带截止日期","timeType":"day","targetDate":"2026-07-24","questLine":"main","repeats":false,"reminderTime":null,"deadlineDate":"2026-08-05","now":1}"#,
+        )
+        .expect("仓储创建请求");
+        let created = decode(woo_todo_repository_call(handle, request.as_ptr()));
+        let id = created["value"].as_str().expect("新任务 ID");
+        let request =
+            CString::new(format!(r#"{{"action":"find","id":"{id}"}}"#)).expect("仓储查找请求");
+        let found = decode(woo_todo_repository_call(handle, request.as_ptr()));
+        assert_eq!(found["value"]["deadlineDate"], "2026-08-05");
+
         let closed = decode(woo_todo_repository_close(handle));
         assert_eq!(closed["value"], true);
     }

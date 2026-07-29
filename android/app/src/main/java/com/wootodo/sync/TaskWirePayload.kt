@@ -55,6 +55,7 @@ data class TaskInstancePayload(
     val title: String,
     val timeType: WireTimeType,
     val periodStart: String?,
+    val deadlineDate: String? = null,
     val timezone: String,
     val questLine: WireQuestLine,
     val state: WireTaskState,

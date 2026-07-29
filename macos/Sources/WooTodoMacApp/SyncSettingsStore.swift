@@ -115,6 +115,9 @@ final class SyncSettingsStore: ObservableObject {
 
     var onRemoteChanges: (() -> Void)?
     var onLifecycleRefresh: (() -> Void)?
+    var onWillSwitchFromWebDav: (() async -> Void)?
+    var onDidSwitchFromWebDav: (() -> Void)?
+    var onSwitchFromWebDavFailed: (() -> Void)?
 
     private let logger = Logger(
         subsystem: "io.github.stophemo.woo-todo",
@@ -122,6 +125,8 @@ final class SyncSettingsStore: ObservableObject {
     )
     private let repository: SQLiteTaskRepository
     private let credentialsStore: any SyncCredentialsStoring
+    private let webDavCredentialsStore: any WebDavCredentialsStoring
+    private let defaults: UserDefaults
     private var credentials: SyncCredentials?
     private var apiClient: SyncAPIClient?
     private var coordinator: SyncCoordinator?
@@ -149,12 +154,16 @@ final class SyncSettingsStore: ObservableObject {
     init(
         repository: SQLiteTaskRepository,
         credentialsStore: any SyncCredentialsStoring,
-        credentials: SyncCredentials?
+        webDavCredentialsStore: any WebDavCredentialsStoring,
+        credentials: SyncCredentials?,
+        defaults: UserDefaults = .standard
     ) throws {
         self.repository = repository
         self.credentialsStore = credentialsStore
+        self.webDavCredentialsStore = webDavCredentialsStore
         self.credentials = credentials
-        let savedSuccessTimestamp = UserDefaults.standard.object(
+        self.defaults = defaults
+        let savedSuccessTimestamp = defaults.object(
             forKey: Self.lastSuccessfulSyncDefaultsKey
         ) as? Double
         let initialRuntimeMachine = SyncRuntimeStateMachine(
@@ -166,7 +175,7 @@ final class SyncSettingsStore: ObservableObject {
         self.runtimeMachine = initialRuntimeMachine
         self.runtimeSnapshot = initialRuntimeMachine.snapshot
         self.endpointText = credentials?.endpoint.absoluteString
-            ?? UserDefaults.standard.string(forKey: Self.endpointDefaultsKey)
+            ?? defaults.string(forKey: Self.endpointDefaultsKey)
             ?? "https://"
         if let credentials {
             try activate(credentials)
@@ -239,15 +248,25 @@ final class SyncSettingsStore: ObservableObject {
         hasStarted = false
     }
 
-    func enableLocalNetworkSync() async {
+    func enableLocalNetworkSync(replacingWebDav: Bool = false) async {
         guard connection == nil, localNetworkServer == nil else { return }
         actionErrorMessage = nil
         localNetworkHostState = .starting
 
         var createdStateURL: URL?
         var server: LocalNetworkSyncHTTPServer?
+        var previousWebDavCredentials: WebDavCredentials?
+        var switchWasPrepared = false
         do {
             guard try credentialsStore.load() == nil else {
+                throw SyncSetupError.credentialsAlreadyStored
+            }
+            previousWebDavCredentials = try webDavCredentialsStore.load()
+            if replacingWebDav {
+                guard previousWebDavCredentials != nil else {
+                    throw SyncSetupError.credentialsAlreadyStored
+                }
+            } else if previousWebDavCredentials != nil {
                 throw SyncSetupError.credentialsAlreadyStored
             }
             let endpoint = try LocalNetworkSyncEndpointResolver.preferredEndpoint()
@@ -260,10 +279,13 @@ final class SyncSettingsStore: ObservableObject {
                 vaultKey: try SecureRandom.bytes(count: AES256GCM.keyByteCount)
             )
             try newCredentials.validate()
-            try repository.validateSyncBinding(
-                vaultId: newCredentials.vaultId,
-                deviceId: newCredentials.deviceId
-            )
+            let preparedClient = try SyncAPIClient(endpoint: newCredentials.endpoint)
+            if !replacingWebDav {
+                try repository.validateSyncBinding(
+                    vaultId: newCredentials.vaultId,
+                    deviceId: newCredentials.deviceId
+                )
+            }
 
             let stateURL = try Self.localNetworkStateURL()
             guard !FileManager.default.fileExists(atPath: stateURL.path) else {
@@ -282,24 +304,48 @@ final class SyncSettingsStore: ObservableObject {
             server = localServer
             try await localServer.start()
 
+            if replacingWebDav {
+                await onWillSwitchFromWebDav?()
+                switchWasPrepared = true
+                try webDavCredentialsStore.delete()
+            }
             try credentialsStore.save(newCredentials)
             do {
-                try repository.configureSync(Self.sqliteConfiguration(for: newCredentials))
+                if replacingWebDav {
+                    try repository.replaceSyncBinding(
+                        with: Self.sqliteConfiguration(for: newCredentials)
+                    )
+                } else {
+                    try repository.configureSync(Self.sqliteConfiguration(for: newCredentials))
+                }
             } catch {
                 try? credentialsStore.delete()
+                if let previousWebDavCredentials {
+                    try? webDavCredentialsStore.save(previousWebDavCredentials)
+                }
                 throw error
             }
-            try activate(newCredentials)
+            activate(newCredentials, client: preparedClient)
             localNetworkServer = localServer
             localNetworkHostState = .ready(endpoint)
             runtimeMachine.setConfigured(true)
             publishRuntimeState()
-            UserDefaults.standard.set(endpoint.absoluteString, forKey: Self.endpointDefaultsKey)
+            defaults.set(endpoint.absoluteString, forKey: Self.endpointDefaultsKey)
+            if replacingWebDav {
+                onDidSwitchFromWebDav?()
+            }
             requestSync(.localChange)
         } catch {
             server?.stop()
             if let createdStateURL {
                 try? FileManager.default.removeItem(at: createdStateURL)
+            }
+            if switchWasPrepared {
+                try? credentialsStore.delete()
+                if let previousWebDavCredentials {
+                    try? webDavCredentialsStore.save(previousWebDavCredentials)
+                }
+                onSwitchFromWebDavFailed?()
             }
             localNetworkHostState = .failed(error.localizedDescription)
             actionErrorMessage = error.localizedDescription
@@ -382,7 +428,7 @@ final class SyncSettingsStore: ObservableObject {
                 throw error
             }
             try activate(newCredentials)
-            UserDefaults.standard.set(endpoint.absoluteString, forKey: Self.endpointDefaultsKey)
+            defaults.set(endpoint.absoluteString, forKey: Self.endpointDefaultsKey)
             runtimeMachine.setConfigured(true)
             publishRuntimeState()
             requestSync(.localChange)
@@ -490,7 +536,7 @@ final class SyncSettingsStore: ObservableObject {
                     try activate(restoredCredentials)
                     runtimeMachine.setConfigured(true)
                     publishRuntimeState()
-                    UserDefaults.standard.set(
+                    defaults.set(
                         restoredCredentials.endpoint.absoluteString,
                         forKey: Self.endpointDefaultsKey
                     )
@@ -659,6 +705,10 @@ final class SyncSettingsStore: ObservableObject {
 
     private func activate(_ credentials: SyncCredentials) throws {
         let client = try SyncAPIClient(endpoint: credentials.endpoint)
+        activate(credentials, client: client)
+    }
+
+    private func activate(_ credentials: SyncCredentials, client: SyncAPIClient) {
         self.credentials = credentials
         self.apiClient = client
         self.coordinator = SyncCoordinator(
@@ -673,6 +723,43 @@ final class SyncSettingsStore: ObservableObject {
             deviceId: credentials.deviceId
         )
         endpointText = credentials.endpoint.absoluteString
+    }
+
+    func prepareForReplacement() async {
+        let runningSync = syncTask
+        stop()
+        await runningSync?.value
+    }
+
+    func finishReplacement() {
+        let wasLocalNetworkConnection = isLocalNetworkConnection
+        credentials = nil
+        apiClient = nil
+        coordinator = nil
+        connection = nil
+        devices = []
+        localNetworkServer?.stop()
+        localNetworkServer = nil
+        localNetworkHostState = .disabled
+        if wasLocalNetworkConnection,
+           let stateURL = try? Self.localNetworkStateURL() {
+            try? FileManager.default.removeItem(at: stateURL)
+        }
+        runtimeMachine = SyncRuntimeStateMachine(isConfigured: false)
+        publishRuntimeState()
+    }
+
+    func resumeAfterFailedReplacement() {
+        do {
+            if let stored = try credentialsStore.load() {
+                try activate(stored)
+                runtimeMachine.setConfigured(true)
+                publishRuntimeState()
+            }
+            start()
+        } catch {
+            actionErrorMessage = "同步身份暂时不可用：\(error.localizedDescription)"
+        }
     }
 
     private func startLocalNetworkHost(
@@ -715,7 +802,7 @@ final class SyncSettingsStore: ObservableObject {
                 let summary = try await coordinator.synchronize()
                 lastRunSummary = summary
                 let successfulAt = Date()
-                UserDefaults.standard.set(
+                defaults.set(
                     successfulAt.timeIntervalSince1970,
                     forKey: Self.lastSuccessfulSyncDefaultsKey
                 )

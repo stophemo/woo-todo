@@ -1,0 +1,655 @@
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use woo_todo_core::{
+    EncryptedEnvelope, SyncData, SyncRequest, base64url_decode, base64url_encode, random_bytes,
+};
+
+use crate::credentials::{SyncCredentials, SyncMode};
+use crate::http::{EndpointScope, HttpRequest, HttpResponse, HttpTransport, ValidatedEndpoint};
+
+const MAXIMUM_RESPONSE_BYTES: usize = 3 * 1_024 * 1_024;
+const MAXIMUM_DEVICE_NAME_CHARACTERS: usize = 80;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DevicePlatform {
+    Macos,
+    Android,
+    Windows,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub platform: DevicePlatform,
+    pub public_key: Option<String>,
+    pub created_at: i64,
+    pub last_seen_at: Option<i64>,
+    pub revoked_at: Option<i64>,
+    pub is_current: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PairingStatus {
+    Open,
+    Claimed,
+    Confirmed,
+    Expired,
+    Canceled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreatedPairing {
+    pub pairing_id: String,
+    pub pairing_secret: String,
+    pub initiator_public_key: String,
+    pub expires_at: i64,
+    pub server_time: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PairingClaimInfo {
+    pub device_id: String,
+    pub name: String,
+    pub platform: DevicePlatform,
+    pub public_key: String,
+    pub claimed_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PairingState {
+    pub pairing_id: String,
+    pub status: PairingStatus,
+    pub expires_at: i64,
+    pub claim: Option<PairingClaimInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreatedVault {
+    pub endpoint: String,
+    pub vault_id: String,
+    pub device_id: String,
+    pub device_token: String,
+    pub vault_key: String,
+}
+
+impl CreatedVault {
+    pub fn into_credentials(self) -> SyncCredentials {
+        SyncCredentials::Worker {
+            endpoint: self.endpoint,
+            vault_id: self.vault_id,
+            device_id: self.device_id,
+            device_token: self.device_token,
+            vault_key: self.vault_key,
+        }
+    }
+}
+
+pub struct WorkerClient<T: HttpTransport> {
+    endpoint: ValidatedEndpoint,
+    token: String,
+    transport: T,
+}
+
+impl<T: HttpTransport> WorkerClient<T> {
+    pub fn new(credentials: &SyncCredentials, transport: T) -> Result<Self, String> {
+        credentials.validate()?;
+        let scope = match credentials.mode() {
+            SyncMode::Worker => EndpointScope::Worker,
+            SyncMode::LocalNetwork => EndpointScope::LocalNetwork,
+            SyncMode::WebDav => return Err("当前安全凭据不是 Worker 或同一网络同步".to_owned()),
+        };
+        let endpoint = ValidatedEndpoint::parse(
+            credentials
+                .endpoint()
+                .ok_or_else(|| "同步凭据缺少服务地址".to_owned())?,
+            scope,
+        )?;
+        Ok(Self {
+            endpoint,
+            token: credentials
+                .device_token()
+                .ok_or_else(|| "同步凭据缺少设备令牌".to_owned())?
+                .to_owned(),
+            transport,
+        })
+    }
+
+    pub fn create_vault(
+        endpoint: &str,
+        invite_code: &str,
+        device_name: &str,
+        transport: T,
+    ) -> Result<CreatedVault, String> {
+        let endpoint = ValidatedEndpoint::parse(endpoint, EndpointScope::Worker)?;
+        validate_invite_code(invite_code)?;
+        validate_device_name(device_name)?;
+        let request = CreateVaultRequest {
+            device: DeviceRegistration {
+                name: device_name.to_owned(),
+                platform: DevicePlatform::Windows,
+                public_key: None,
+            },
+            recovery_envelope: None,
+        };
+        let body = serde_json::to_vec(&request)
+            .map_err(|error| format!("无法编码创建同步空间请求：{error}"))?;
+        let response = transport.execute(HttpRequest {
+            method: "POST",
+            url: endpoint.append_path(&["v1", "vaults"])?,
+            headers: vec![
+                ("Content-Type".to_owned(), "application/json".to_owned()),
+                ("X-Woo-Todo-Invite-Code".to_owned(), invite_code.to_owned()),
+            ],
+            body,
+            maximum_response_bytes: MAXIMUM_RESPONSE_BYTES,
+        })?;
+        let data: CreateVaultData = decode_response(response, &[201])?;
+        validate_identifier(&data.vault_id, "vaultId")?;
+        validate_identifier(&data.device.id, "device.id")?;
+        validate_device_name(&data.device.name)?;
+        if data.device.platform != DevicePlatform::Windows
+            || base64url_decode(&data.device.token).map_or(true, |value| value.len() != 32)
+            || data.server_time < 0
+        {
+            return Err("创建同步空间响应字段无效".to_owned());
+        }
+        let vault_key = base64url_encode(
+            &random_bytes::<32>().map_err(|error| format!("无法生成同步密钥：{error}"))?,
+        );
+        Ok(CreatedVault {
+            endpoint: endpoint.as_str().to_owned(),
+            vault_id: data.vault_id,
+            device_id: data.device.id,
+            device_token: data.device.token,
+            vault_key,
+        })
+    }
+
+    pub fn synchronize(&self, request: &SyncRequest) -> Result<SyncData, String> {
+        request
+            .validate()
+            .map_err(|error| format!("同步请求无效：{error}"))?;
+        let response: SyncData = self.send_json("POST", &["v1", "sync"], request, &[200])?;
+        response
+            .validate()
+            .map_err(|error| format!("同步响应无效：{error}"))?;
+        Ok(response)
+    }
+
+    pub fn list_devices(&self) -> Result<Vec<DeviceInfo>, String> {
+        let response = self.send("GET", &["v1", "devices"], Vec::new(), &[200])?;
+        let data: DeviceListData = decode_response(response, &[200])?;
+        for device in &data.devices {
+            validate_identifier(&device.id, "device.id")?;
+            validate_device_name(&device.name)?;
+            if device.created_at < 0
+                || device.last_seen_at.is_some_and(|value| value < 0)
+                || device.revoked_at.is_some_and(|value| value < 0)
+            {
+                return Err("设备列表包含无效时间戳".to_owned());
+            }
+        }
+        Ok(data.devices)
+    }
+
+    pub fn revoke_device(&self, device_id: &str) -> Result<i64, String> {
+        validate_identifier(device_id, "deviceId")?;
+        let data: RevokeDeviceData = self.send_json(
+            "POST",
+            &["v1", "devices", device_id, "revoke"],
+            &EmptyObject {},
+            &[200],
+        )?;
+        if data.device_id != device_id || data.revoked_at < 0 {
+            return Err("撤销设备响应无效".to_owned());
+        }
+        Ok(data.revoked_at)
+    }
+
+    pub fn create_pairing(&self, public_key: &str) -> Result<CreatedPairing, String> {
+        if base64url_decode(public_key).map_or(true, |value| value.len() != 32) {
+            return Err("发起方 X25519 公钥无效".to_owned());
+        }
+        let data: CreatedPairing = self.send_json(
+            "POST",
+            &["v1", "pairings"],
+            &CreatePairingRequest {
+                public_key: public_key.to_owned(),
+            },
+            &[201],
+        )?;
+        validate_pairing_identifier(&data.pairing_id)?;
+        if data.initiator_public_key != public_key
+            || base64url_decode(&data.pairing_secret).map_or(true, |value| value.len() != 32)
+            || data.expires_at <= data.server_time
+            || data.server_time < 0
+        {
+            return Err("创建配对会话响应无效".to_owned());
+        }
+        Ok(data)
+    }
+
+    pub fn pairing_status(&self, pairing_id: &str) -> Result<PairingState, String> {
+        validate_pairing_identifier(pairing_id)?;
+        let response = self.send("GET", &["v1", "pairings", pairing_id], Vec::new(), &[200])?;
+        let data: PairingState = decode_response(response, &[200])?;
+        validate_pairing_state(pairing_id, &data)?;
+        Ok(data)
+    }
+
+    pub fn confirm_pairing(
+        &self,
+        pairing_id: &str,
+        claimed_device_id: &str,
+        vault_key_envelope: EncryptedEnvelope,
+    ) -> Result<(), String> {
+        validate_pairing_identifier(pairing_id)?;
+        validate_identifier(claimed_device_id, "deviceId")?;
+        if base64url_decode(&vault_key_envelope.nonce).map_or(true, |value| value.len() != 12)
+            || base64url_decode(&vault_key_envelope.ciphertext)
+                .map_or(true, |value| value.len() < 16)
+        {
+            return Err("配对密钥信封无效".to_owned());
+        }
+        let data: PairingConfirmData = self.send_json(
+            "POST",
+            &["v1", "pairings", pairing_id, "confirm"],
+            &PairingConfirmRequest { vault_key_envelope },
+            &[200],
+        )?;
+        if data.pairing_id != pairing_id
+            || data.status != PairingStatus::Confirmed
+            || data.device_id != claimed_device_id
+        {
+            return Err("确认配对响应与当前会话不一致".to_owned());
+        }
+        Ok(())
+    }
+
+    fn send_json<Input: Serialize, Output: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        path: &[&str],
+        input: &Input,
+        accepted: &[u16],
+    ) -> Result<Output, String> {
+        let body =
+            serde_json::to_vec(input).map_err(|error| format!("无法编码同步请求：{error}"))?;
+        decode_response(self.send(method, path, body, accepted)?, accepted)
+    }
+
+    fn send(
+        &self,
+        method: &'static str,
+        path: &[&str],
+        body: Vec<u8>,
+        _accepted: &[u16],
+    ) -> Result<HttpResponse, String> {
+        self.transport.execute(HttpRequest {
+            method,
+            url: self.endpoint.append_path(path)?,
+            headers: vec![
+                ("Authorization".to_owned(), format!("Bearer {}", self.token)),
+                ("Content-Type".to_owned(), "application/json".to_owned()),
+            ],
+            body,
+            maximum_response_bytes: MAXIMUM_RESPONSE_BYTES,
+        })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateVaultRequest {
+    device: DeviceRegistration,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery_envelope: Option<woo_todo_core::EncryptedEnvelope>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreatePairingRequest {
+    public_key: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PairingConfirmRequest {
+    vault_key_envelope: EncryptedEnvelope,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PairingConfirmData {
+    pairing_id: String,
+    status: PairingStatus,
+    device_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceRegistration {
+    name: String,
+    platform: DevicePlatform,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    public_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateVaultData {
+    vault_id: String,
+    device: CreatedDevice,
+    server_time: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreatedDevice {
+    id: String,
+    name: String,
+    platform: DevicePlatform,
+    token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeviceListData {
+    devices: Vec<DeviceInfo>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RevokeDeviceData {
+    device_id: String,
+    revoked_at: i64,
+}
+
+#[derive(Serialize)]
+struct EmptyObject {}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SuccessEnvelope<T> {
+    ok: bool,
+    data: T,
+    request_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FailureEnvelope {
+    ok: bool,
+    error: FailurePayload,
+    #[serde(default)]
+    request_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FailurePayload {
+    code: String,
+    message: String,
+    #[serde(default)]
+    details: Option<Value>,
+}
+
+fn decode_response<T: DeserializeOwned>(
+    response: HttpResponse,
+    accepted: &[u16],
+) -> Result<T, String> {
+    if !accepted.contains(&response.status) {
+        let failure: FailureEnvelope = serde_json::from_slice(&response.body)
+            .map_err(|_| format!("同步服务返回 HTTP {}", response.status))?;
+        if failure.ok
+            || failure.error.code.is_empty()
+            || failure.error.message.is_empty()
+            || failure
+                .request_id
+                .as_ref()
+                .is_some_and(|value| value.is_empty())
+        {
+            return Err(format!("同步服务返回 HTTP {}", response.status));
+        }
+        let _ = failure.error.details;
+        return Err(format!("{}：{}", failure.error.code, failure.error.message));
+    }
+    let envelope: SuccessEnvelope<T> = serde_json::from_slice(&response.body)
+        .map_err(|_| "同步服务成功响应 JSON 格式无效".to_owned())?;
+    if !envelope.ok || envelope.request_id.is_empty() {
+        return Err("同步服务成功响应包络无效".to_owned());
+    }
+    Ok(envelope.data)
+}
+
+fn validate_invite_code(value: &str) -> Result<(), String> {
+    if !(16..=256).contains(&value.len())
+        || !value
+            .bytes()
+            .all(|value| value.is_ascii_graphic() && !value.is_ascii_whitespace())
+    {
+        return Err("创建空间邀请码须为 16 到 256 位无空格可打印 ASCII 字符".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_device_name(value: &str) -> Result<(), String> {
+    let normalized = value.trim();
+    if normalized.is_empty()
+        || normalized.chars().count() > MAXIMUM_DEVICE_NAME_CHARACTERS
+        || normalized.chars().any(char::is_control)
+    {
+        return Err("设备名称长度或字符无效".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_identifier(value: &str, field: &str) -> Result<(), String> {
+    if !(8..=128).contains(&value.len())
+        || !value.bytes().enumerate().all(|(index, value)| {
+            value.is_ascii_alphanumeric()
+                || (index > 0 && matches!(value, b'.' | b'_' | b':' | b'-'))
+        })
+    {
+        return Err(format!("{field} 标识符无效"));
+    }
+    Ok(())
+}
+
+fn validate_pairing_identifier(value: &str) -> Result<(), String> {
+    validate_identifier(value, "pairingId")
+}
+
+fn validate_pairing_state(pairing_id: &str, value: &PairingState) -> Result<(), String> {
+    if value.pairing_id != pairing_id || value.expires_at <= 0 {
+        return Err("配对状态与当前会话不一致".to_owned());
+    }
+    match (&value.status, &value.claim) {
+        (PairingStatus::Open, None)
+        | (PairingStatus::Expired, None)
+        | (PairingStatus::Canceled, None) => {}
+        (PairingStatus::Claimed | PairingStatus::Confirmed, Some(claim)) => {
+            validate_identifier(&claim.device_id, "claim.deviceId")?;
+            validate_device_name(&claim.name)?;
+            if base64url_decode(&claim.public_key).map_or(true, |decoded| decoded.len() != 32)
+                || claim.claimed_at < 0
+            {
+                return Err("配对认领信息无效".to_owned());
+            }
+        }
+        _ => return Err("配对状态字段组合无效".to_owned()),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    use super::*;
+
+    struct MockTransport {
+        responses: Mutex<VecDeque<HttpResponse>>,
+        requests: Mutex<Vec<HttpRequest>>,
+    }
+
+    impl MockTransport {
+        fn new(response: HttpResponse) -> Self {
+            Self {
+                responses: Mutex::new(VecDeque::from([response])),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl HttpTransport for MockTransport {
+        fn execute(&self, request: HttpRequest) -> Result<HttpResponse, String> {
+            request.validate()?;
+            self.requests.lock().unwrap().push(request);
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or_else(|| "测试响应不足".to_owned())
+        }
+    }
+
+    fn response(status: u16, body: &str) -> HttpResponse {
+        HttpResponse {
+            status,
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    fn credentials() -> SyncCredentials {
+        SyncCredentials::Worker {
+            endpoint: "https://sync.example.com".to_owned(),
+            vault_id: "vault-windows".to_owned(),
+            device_id: "device-windows-1".to_owned(),
+            device_token: base64url_encode(&[7; 32]),
+            vault_key: base64url_encode(&[8; 32]),
+        }
+    }
+
+    #[test]
+    fn create_vault_registers_windows_and_keeps_key_client_side() {
+        let token = base64url_encode(&[7; 32]);
+        let transport = MockTransport::new(response(
+            201,
+            &format!(
+                r#"{{"ok":true,"data":{{"vaultId":"vault-windows","device":{{"id":"device-windows-1","name":"Windows PC","platform":"windows","token":"{token}"}},"serverTime":1000}},"requestId":"request-1"}}"#
+            ),
+        ));
+        let created = WorkerClient::create_vault(
+            "https://sync.example.com",
+            "1234567890abcdef",
+            "Windows PC",
+            transport,
+        )
+        .unwrap();
+        assert_eq!(created.device_token, token);
+        assert_eq!(base64url_decode(&created.vault_key).unwrap().len(), 32);
+        assert_eq!(created.into_credentials().mode(), SyncMode::Worker);
+    }
+
+    #[test]
+    fn server_failure_is_decoded_without_echoing_request_secrets() {
+        let error = decode_response::<Value>(
+            response(
+                401,
+                r#"{"ok":false,"error":{"code":"UNAUTHORIZED","message":"设备令牌无效"},"requestId":"request-2"}"#,
+            ),
+            &[200],
+        )
+        .unwrap_err();
+        assert_eq!(error, "UNAUTHORIZED：设备令牌无效");
+    }
+
+    #[test]
+    fn success_and_failure_envelopes_are_strict() {
+        assert!(
+            decode_response::<Value>(
+                response(
+                    200,
+                    r#"{"ok":true,"data":{},"requestId":"request-3","extra":1}"#,
+                ),
+                &[200],
+            )
+            .is_err()
+        );
+        assert!(
+            decode_response::<Value>(
+                response(
+                    400,
+                    r#"{"ok":false,"error":{"code":"BAD","message":"bad","extra":1}}"#,
+                ),
+                &[200],
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn pairing_creation_validates_echoed_public_key_and_expiry() {
+        let public_key = base64url_encode(&[3; 32]);
+        let secret = base64url_encode(&[4; 32]);
+        let transport = MockTransport::new(response(
+            201,
+            &format!(
+                r#"{{"ok":true,"data":{{"pairingId":"pair-windows-1","pairingSecret":"{secret}","initiatorPublicKey":"{public_key}","expiresAt":601000,"serverTime":1000}},"requestId":"request-pair-1"}}"#
+            ),
+        ));
+        let created = WorkerClient::new(&credentials(), transport)
+            .unwrap()
+            .create_pairing(&public_key)
+            .unwrap();
+        assert_eq!(created.pairing_id, "pair-windows-1");
+        assert_eq!(created.pairing_secret, secret);
+    }
+
+    #[test]
+    fn pairing_status_requires_a_valid_claim() {
+        let claim_key = base64url_encode(&[5; 32]);
+        let transport = MockTransport::new(response(
+            200,
+            &format!(
+                r#"{{"ok":true,"data":{{"pairingId":"pair-windows-1","status":"claimed","expiresAt":601000,"claim":{{"deviceId":"device-android-1","name":"Android","platform":"android","publicKey":"{claim_key}","claimedAt":2000}}}},"requestId":"request-pair-2"}}"#
+            ),
+        ));
+        let state = WorkerClient::new(&credentials(), transport)
+            .unwrap()
+            .pairing_status("pair-windows-1")
+            .unwrap();
+        assert_eq!(state.status, PairingStatus::Claimed);
+        assert_eq!(state.claim.unwrap().device_id, "device-android-1");
+    }
+
+    #[test]
+    fn pairing_confirmation_rejects_a_mismatched_device() {
+        let transport = MockTransport::new(response(
+            200,
+            r#"{"ok":true,"data":{"pairingId":"pair-windows-1","status":"confirmed","deviceId":"device-other-1"},"requestId":"request-pair-3"}"#,
+        ));
+        let error = WorkerClient::new(&credentials(), transport)
+            .unwrap()
+            .confirm_pairing(
+                "pair-windows-1",
+                "device-android-1",
+                EncryptedEnvelope {
+                    nonce: base64url_encode(&[1; 12]),
+                    ciphertext: base64url_encode(&[2; 48]),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error, "确认配对响应与当前会话不一致");
+    }
+}

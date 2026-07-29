@@ -15,6 +15,7 @@ import {
   LIMITS,
   paginateOperations,
   type PairingStatus,
+  type Platform,
   parseCreatePairingRequest,
   parseCreateVaultRequest,
   parsePairingClaimRequest,
@@ -37,7 +38,7 @@ import {
 } from "./sync-guards.ts";
 import { assertVaultCreationInvite } from "./vault-creation-auth.ts";
 
-const SERVICE_VERSION = "0.1.15";
+const SERVICE_VERSION = "0.1.16";
 
 interface PairingRow {
   id: string;
@@ -48,7 +49,7 @@ interface PairingRow {
   status: PairingStatus;
   claimed_device_id: string | null;
   claimed_device_name: string | null;
-  claimed_platform: "macos" | "android" | null;
+  claimed_platform: Platform | null;
   claimed_public_key: string | null;
   claimed_token_hash: string | null;
   confirmed_ciphertext: string | null;
@@ -74,7 +75,7 @@ interface ChangeRow {
 interface DeviceListRow {
   id: string;
   name: string;
-  platform: "macos" | "android";
+  platform: Platform;
   public_key: string | null;
   created_at: number;
   last_seen_at: number | null;

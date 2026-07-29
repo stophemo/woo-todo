@@ -198,6 +198,39 @@ struct SyncAPIClientTests {
         }
     }
 
+    @Test("设备列表可解析 Windows 客户端")
+    func test设备列表可解析Windows客户端() async throws {
+        defer { MockURLProtocol.handler = nil }
+        MockURLProtocol.handler = { request in
+            MockURLProtocol.response(
+                for: request,
+                status: 200,
+                json: """
+                {
+                  "ok": true,
+                  "data": {
+                    "devices": [{
+                      "id": "device-windows",
+                      "name": "工作站",
+                      "platform": "windows",
+                      "publicKey": null,
+                      "createdAt": 100,
+                      "lastSeenAt": 200,
+                      "revokedAt": null,
+                      "isCurrent": false
+                    }]
+                  },
+                  "requestId": "req-devices"
+                }
+                """
+            )
+        }
+
+        let result = try await makeClient().listDevices(deviceToken: "token")
+
+        #expect(result.devices.first?.platform == .windows)
+    }
+
     private func makeClient() throws -> SyncAPIClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

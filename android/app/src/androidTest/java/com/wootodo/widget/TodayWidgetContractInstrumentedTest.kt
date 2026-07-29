@@ -14,6 +14,7 @@ import com.wootodo.domain.Recurrence
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
+import com.wootodo.ui.labelRes
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -51,6 +52,19 @@ class TodayWidgetContractInstrumentedTest {
         assertFalse(pendingView.findViewById<CheckBox>(R.id.widget_task_check).isChecked)
         assertEquals("completed", completedView.findViewById<TextView>(R.id.widget_task_title).text.toString())
         assertTrue(completedView.findViewById<CheckBox>(R.id.widget_task_check).isChecked)
+    }
+
+    @Test
+    fun `三种任务线标题可由RemoteViews安全应用`() {
+        QuestLine.entries.forEach { questLine ->
+            val view = TodayWidgetHeaderViews.create(context, questLine)
+                .apply(context, FrameLayout(context))
+
+            assertEquals(
+                context.getString(questLine.labelRes()),
+                view.findViewById<TextView>(R.id.widget_group_title).text.toString(),
+            )
+        }
     }
 
     private fun task(id: String, status: TaskStatus) = Task(

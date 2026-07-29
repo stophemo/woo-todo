@@ -1,7 +1,19 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(any(windows, test))]
+mod credentials;
+#[cfg(any(windows, test))]
+mod display;
+#[cfg(any(windows, test))]
+mod http;
+#[cfg(any(windows, test))]
+mod local_server;
+#[cfg(any(windows, test))]
 mod settings;
+#[cfg(any(windows, test))]
+mod shortcut;
+#[cfg(any(windows, test))]
+mod sync_runtime;
 #[cfg(any(windows, test))]
 mod ui_text;
 
@@ -13,6 +25,10 @@ mod native;
 mod notifications;
 #[cfg(any(windows, test))]
 mod update;
+#[cfg(any(windows, test))]
+mod webdav;
+#[cfg(any(windows, test))]
+mod worker;
 
 #[cfg(windows)]
 fn main() {

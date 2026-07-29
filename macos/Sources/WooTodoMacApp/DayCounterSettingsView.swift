@@ -9,6 +9,28 @@ struct DayCounterSettingsView: View {
         var id: String { token }
     }
 
+    private struct CounterTemplateVariable: Identifiable, Sendable {
+        let title: String
+        let dateLabel: String
+        let variable: DayCounterConfiguration.CounterVariable
+
+        var id: String { variable.rawValue }
+    }
+
+    private enum TemplateField: String, Sendable {
+        case header
+        case subtitle
+    }
+
+    private struct PendingCounterInsertion: Identifiable, Sendable {
+        let field: TemplateField
+        let title: String
+        let dateLabel: String
+        let variable: DayCounterConfiguration.CounterVariable
+
+        var id: String { "\(field.rawValue).\(variable.rawValue)" }
+    }
+
     private static let weekdayVariables = [
         TemplateVariable(title: "星期几", token: DayCounterConfiguration.weekdayToken),
         TemplateVariable(title: "星期简称", token: DayCounterConfiguration.weekdayShortToken),
@@ -22,15 +44,29 @@ struct DayCounterSettingsView: View {
         TemplateVariable(title: "月份", token: DayCounterConfiguration.monthToken),
         TemplateVariable(title: "两位月份", token: DayCounterConfiguration.monthPaddedToken),
         TemplateVariable(title: "日", token: DayCounterConfiguration.dayToken),
-        TemplateVariable(title: "两位日", token: DayCounterConfiguration.dayPaddedToken),
-        TemplateVariable(title: "起始日期", token: DayCounterConfiguration.startDateToken),
-        TemplateVariable(title: "截止日期", token: DayCounterConfiguration.deadlineDateToken)
+        TemplateVariable(title: "两位日", token: DayCounterConfiguration.dayPaddedToken)
     ]
     private static let counterVariables = [
-        TemplateVariable(title: "耗时天数", token: DayCounterConfiguration.elapsedDaysToken),
-        TemplateVariable(title: "截止天数", token: DayCounterConfiguration.deadlineDaysToken),
-        TemplateVariable(title: "耗时（月+天）", token: DayCounterConfiguration.elapsedMonthsDaysToken),
-        TemplateVariable(title: "截止（月+天）", token: DayCounterConfiguration.deadlineMonthsDaysToken)
+        CounterTemplateVariable(
+            title: "耗时天数",
+            dateLabel: "起始日期",
+            variable: .elapsedDays
+        ),
+        CounterTemplateVariable(
+            title: "截止天数",
+            dateLabel: "截止日期",
+            variable: .deadlineDays
+        ),
+        CounterTemplateVariable(
+            title: "耗时（月+天）",
+            dateLabel: "起始日期",
+            variable: .elapsedMonthsDays
+        ),
+        CounterTemplateVariable(
+            title: "截止（月+天）",
+            dateLabel: "截止日期",
+            variable: .deadlineMonthsDays
+        )
     ]
 
     @ObservedObject var store: DayCounterStore
@@ -40,6 +76,8 @@ struct DayCounterSettingsView: View {
     @State private var deadlineDate: Date
     @State private var headerSelection: TextSelection?
     @State private var subtitleSelection: TextSelection?
+    @State private var counterDate = Date()
+    @State private var pendingCounterInsertion: PendingCounterInsertion?
 
     init(store: DayCounterStore) {
         self.store = store
@@ -53,6 +91,7 @@ struct DayCounterSettingsView: View {
         Form {
             Section("标题模板") {
                 templateField(
+                    field: .header,
                     accessibilityLabel: "标题模板内容",
                     placeholder: "今日任务",
                     value: $headerTemplate,
@@ -63,17 +102,13 @@ struct DayCounterSettingsView: View {
 
             Section("副标题模板") {
                 templateField(
+                    field: .subtitle,
                     accessibilityLabel: "副标题模板内容",
                     placeholder: "留空则隐藏副标题",
                     value: $subtitleTemplate,
                     selection: $subtitleSelection,
                     limit: 160
                 )
-            }
-
-            Section("变量日期") {
-                DatePicker("起始日期", selection: $startDate, displayedComponents: .date)
-                DatePicker("截止日期", selection: $deadlineDate, displayedComponents: .date)
             }
 
             Section("实时预览") {
@@ -133,6 +168,30 @@ struct DayCounterSettingsView: View {
         .onDisappear {
             saveDraftIfNeeded()
         }
+        .sheet(item: $pendingCounterInsertion) { insertion in
+            VStack(alignment: .leading, spacing: 18) {
+                Text("插入\(insertion.title)")
+                    .font(.headline)
+                DatePicker(
+                    insertion.dateLabel,
+                    selection: $counterDate,
+                    displayedComponents: .date
+                )
+                HStack {
+                    Spacer()
+                    Button("取消") {
+                        pendingCounterInsertion = nil
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    Button("插入") {
+                        insertCounterVariable(insertion)
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(20)
+            .frame(width: 360)
+        }
     }
 
     private var preview: DayCounterConfiguration {
@@ -156,6 +215,7 @@ struct DayCounterSettingsView: View {
 
     @ViewBuilder
     private func templateField(
+        field: TemplateField,
         accessibilityLabel: String,
         placeholder: String,
         value: Binding<String>,
@@ -196,11 +256,9 @@ struct DayCounterSettingsView: View {
                     )
                 }
                 Section("计时") {
-                    variableButtons(
+                    counterVariableButtons(
                         Self.counterVariables,
-                        value: value,
-                        selection: selection,
-                        limit: limit
+                        field: field
                     )
                 }
             } label: {
@@ -211,6 +269,38 @@ struct DayCounterSettingsView: View {
             .fixedSize()
             .help("插入动态变量")
         }
+    }
+
+    @ViewBuilder
+    private func counterVariableButtons(
+        _ variables: [CounterTemplateVariable],
+        field: TemplateField
+    ) -> some View {
+        ForEach(variables) { variable in
+            Button(variable.title) {
+                counterDate = store.renderDate
+                pendingCounterInsertion = PendingCounterInsertion(
+                    field: field,
+                    title: variable.title,
+                    dateLabel: variable.dateLabel,
+                    variable: variable.variable
+                )
+            }
+        }
+    }
+
+    private func insertCounterVariable(_ insertion: PendingCounterInsertion) {
+        let token = DayCounterConfiguration.counterToken(
+            for: insertion.variable,
+            date: counterDate
+        )
+        switch insertion.field {
+        case .header:
+            insert(token, into: $headerTemplate, selection: $headerSelection, limit: 80)
+        case .subtitle:
+            insert(token, into: $subtitleTemplate, selection: $subtitleSelection, limit: 160)
+        }
+        pendingCounterInsertion = nil
     }
 
     @ViewBuilder
@@ -266,5 +356,6 @@ struct DayCounterSettingsView: View {
         deadlineDate = configuration.deadlineDate
         headerSelection = nil
         subtitleSelection = nil
+        pendingCounterInsertion = nil
     }
 }

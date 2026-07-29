@@ -6,8 +6,8 @@ import Testing
 struct PeriodEngineTests {
     private let timeZone = TimeZone(identifier: "Asia/Shanghai")!
 
-    @Test("每日一次性任务跨日后自动 Pass")
-    func oneTimeDailyTaskPassesAfterDeadline() throws {
+    @Test("每日一次性任务跨日后保持待办")
+    func oneTimeDailyTaskRemainsPendingAfterPeriod() throws {
         let engine = PeriodEngine(timeZone: timeZone)
         let task = try makeTask(
             title: "提交日报",
@@ -20,9 +20,9 @@ struct PeriodEngineTests {
         let result = engine.settle([task], at: settledAt)
 
         #expect(result.tasks.count == 1)
-        #expect(result.tasks.first?.status == .pass)
-        #expect(result.tasks.first?.completedAt == settledAt)
-        #expect(result.changedTaskIDs == Set([task.id]))
+        #expect(result.tasks.first?.status == .pending)
+        #expect(result.tasks.first?.completedAt == nil)
+        #expect(result.changedTaskIDs.isEmpty)
         #expect(result.generatedTaskIDs.isEmpty)
     }
 
@@ -125,8 +125,8 @@ struct PeriodEngineTests {
         #expect(period?.end == date("2026-07-20T00:00:00+08:00"))
     }
 
-    @Test("月任务在下月边界结算")
-    func monthlyTaskPassesAtNextMonth() throws {
+    @Test("一次性月任务跨月后保持待办")
+    func oneTimeMonthlyTaskRemainsPendingAtNextMonth() throws {
         let engine = PeriodEngine(timeZone: timeZone)
         let task = try makeTask(
             title: "月度复盘",
@@ -137,7 +137,28 @@ struct PeriodEngineTests {
         )
 
         #expect(engine.settle([task], at: date("2026-07-31T23:59:59+08:00")).tasks.first?.status == .pending)
-        #expect(engine.settle([task], at: date("2026-08-01T00:00:00+08:00")).tasks.first?.status == .pass)
+        #expect(engine.settle([task], at: date("2026-08-01T00:00:00+08:00")).tasks.first?.status == .pending)
+    }
+
+    @Test("重复月任务跨月仍结算并幂等生成下一实例")
+    func repeatingMonthlyTaskStillSettlesAtNextMonth() throws {
+        let engine = PeriodEngine(timeZone: timeZone)
+        let task = try makeTask(
+            title: "月度复盘",
+            scope: .monthly,
+            recurrence: .repeating(RepeatRule(frequency: .monthly)),
+            containing: date("2026-07-31T20:00:00+08:00"),
+            engine: engine
+        )
+        let now = date("2026-08-01T00:00:00+08:00")
+
+        let first = engine.settle([task], at: now)
+        let second = engine.settle(first.tasks, at: now)
+
+        #expect(first.tasks.map(\.status).sorted { $0.rawValue < $1.rawValue } == [.pass, .pending])
+        #expect(first.generatedTaskIDs.count == 1)
+        #expect(second.tasks == first.tasks)
+        #expect(second.generatedTaskIDs.isEmpty)
     }
 
     @Test("闲时任务永不过期")

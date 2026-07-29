@@ -7,6 +7,7 @@
     "title": "整理明日工作",
     "timeType": "day",
     "periodStart": "2026-07-16",
+    "deadlineDate": "2026-07-20",
     "timezone": "Asia/Shanghai",
     "questLine": "main",
     "state": "pending",

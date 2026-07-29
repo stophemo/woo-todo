@@ -22,6 +22,7 @@ data class TaskEntity(
     val updatedAt: Long,
     val settledAt: Long?,
     val reminderTime: LocalTime? = null,
+    val deadlineDate: LocalDate? = null,
 )
 
 fun TaskEntity.toDomain(): Task =
@@ -39,4 +40,5 @@ fun TaskEntity.toDomain(): Task =
         updatedAt = updatedAt,
         settledAt = settledAt,
         reminderTime = reminderTime,
+        deadlineDate = deadlineDate,
     )

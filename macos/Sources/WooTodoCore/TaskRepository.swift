@@ -2,7 +2,11 @@ import Foundation
 
 public protocol TaskRepository: AnyObject {
     func fetchAll() throws -> [TodoTask]
-    func fetchTasks(scope: TimeScope, in period: TaskPeriod?) throws -> [TodoTask]
+    func fetchTasks(
+        scope: TimeScope,
+        in period: TaskPeriod?,
+        includeOverdueOnce: Bool
+    ) throws -> [TodoTask]
     func deletedTaskIDs() throws -> Set<UUID>
     func save(_ tasks: [TodoTask]) throws
     @discardableResult
@@ -11,6 +15,10 @@ public protocol TaskRepository: AnyObject {
 }
 
 public extension TaskRepository {
+    func fetchTasks(scope: TimeScope, in period: TaskPeriod?) throws -> [TodoTask] {
+        try fetchTasks(scope: scope, in: period, includeOverdueOnce: false)
+    }
+
     func deletedTaskIDs() throws -> Set<UUID> { [] }
 
     func save(_ task: TodoTask) throws {

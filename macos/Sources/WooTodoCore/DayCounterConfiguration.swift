@@ -2,6 +2,13 @@ import Foundation
 
 /// 今日面板的可编辑标题模板。模板中的动态变量由本地日期计算，不参与任务同步。
 public struct DayCounterConfiguration: Equatable, Sendable {
+    public enum CounterVariable: String, Sendable {
+        case elapsedDays
+        case deadlineDays
+        case elapsedMonthsDays
+        case deadlineMonthsDays
+    }
+
     public static let defaultHeaderTemplate = "今日任务"
     public static let weekdayToken = "{weekday}"
     public static let weekdayShortToken = "{weekdayShort}"
@@ -20,6 +27,14 @@ public struct DayCounterConfiguration: Equatable, Sendable {
     public static let deadlineDaysToken = "{deadlineDays}"
     public static let elapsedMonthsDaysToken = "{elapsedMonthsDays}"
     public static let deadlineMonthsDaysToken = "{deadlineMonthsDays}"
+
+    public static func counterToken(
+        for variable: CounterVariable,
+        date: Date,
+        calendar: Calendar = .current
+    ) -> String {
+        "{\(variable.rawValue):\(parameterDateKey(date, timeZone: calendar.timeZone))}"
+    }
 
     public var headerTemplate: String
     public var subtitleTemplate: String
@@ -122,8 +137,81 @@ public struct DayCounterConfiguration: Equatable, Sendable {
             (Self.deadlineMonthsDaysToken, deadlineMonthsDays)
         ]
 
-        return variables.reduce(normalizedTemplate) { rendered, variable in
+        let parameterized = Self.renderParameterizedCounters(
+            in: normalizedTemplate,
+            current: current,
+            calendar: calendar
+        )
+        return variables.reduce(parameterized) { rendered, variable in
             rendered.replacingOccurrences(of: variable.0, with: variable.1)
+        }
+    }
+
+    private static func renderParameterizedCounters(
+        in source: String,
+        current: Date,
+        calendar: Calendar
+    ) -> String {
+        let pattern = #"\{(elapsedDays|deadlineDays|elapsedMonthsDays|deadlineMonthsDays):(\d{4}-\d{2}-\d{2})\}"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return source }
+        let matches = expression.matches(
+            in: source,
+            range: NSRange(source.startIndex..<source.endIndex, in: source)
+        )
+        guard !matches.isEmpty else { return source }
+
+        var rendered = ""
+        var cursor = source.startIndex
+        for match in matches {
+            guard let tokenRange = Range(match.range(at: 0), in: source),
+                  let variableRange = Range(match.range(at: 1), in: source),
+                  let dateRange = Range(match.range(at: 2), in: source) else {
+                continue
+            }
+            rendered.append(contentsOf: source[cursor..<tokenRange.lowerBound])
+            let variable = CounterVariable(rawValue: String(source[variableRange]))
+            let referenceDate = parameterDate(
+                from: String(source[dateRange]),
+                timeZone: calendar.timeZone
+            )
+            if let variable, let referenceDate {
+                rendered += counterValue(
+                    for: variable,
+                    referenceDate: referenceDate,
+                    current: current,
+                    calendar: calendar
+                )
+            } else {
+                rendered.append(contentsOf: source[tokenRange])
+            }
+            cursor = tokenRange.upperBound
+        }
+        rendered.append(contentsOf: source[cursor...])
+        return rendered
+    }
+
+    private static func counterValue(
+        for variable: CounterVariable,
+        referenceDate: Date,
+        current: Date,
+        calendar: Calendar
+    ) -> String {
+        let reference = calendar.startOfDay(for: referenceDate)
+        switch variable {
+        case .elapsedDays:
+            let elapsed = calendar.dateComponents([.day], from: reference, to: current).day ?? 0
+            return String(max(0, elapsed + 1))
+        case .deadlineDays:
+            let remaining = calendar.dateComponents([.day], from: current, to: reference).day ?? 0
+            return String(remaining)
+        case .elapsedMonthsDays:
+            guard current >= reference,
+                  let elapsedEnd = calendar.date(byAdding: .day, value: 1, to: current) else {
+                return zeroMonthsDays
+            }
+            return monthsDays(from: reference, to: elapsedEnd, calendar: calendar)
+        case .deadlineMonthsDays:
+            return monthsDays(from: current, to: reference, calendar: calendar)
         }
     }
 
@@ -141,6 +229,33 @@ public struct DayCounterConfiguration: Equatable, Sendable {
         let month = calendar.component(.month, from: date)
         let day = calendar.component(.day, from: date)
         return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
+    private static func parameterDateKey(_ date: Date, timeZone: TimeZone) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return isoDate(date, calendar: calendar)
+    }
+
+    private static func parameterDate(from value: String, timeZone: TimeZone) -> Date? {
+        let values = value.split(separator: "-").compactMap { Int($0) }
+        guard values.count == 3 else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = timeZone
+        components.year = values[0]
+        components.month = values[1]
+        components.day = values[2]
+        guard let date = calendar.date(from: components) else { return nil }
+        let validated = calendar.dateComponents([.year, .month, .day], from: date)
+        guard validated.year == values[0],
+              validated.month == values[1],
+              validated.day == values[2] else {
+            return nil
+        }
+        return date
     }
 
     private static let zeroMonthsDays = "0个月零0天"

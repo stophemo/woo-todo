@@ -49,7 +49,8 @@ public final class DashboardStore: ObservableObject {
                 let tasks = loaded.filter { task in
                     guard task.timeScope == scope else { return false }
                     if scope == .anytime { return true }
-                    return task.period.map { $0.end > date } ?? false
+                    if task.period.map({ $0.end > date }) ?? false { return true }
+                    return task.status == .pending && task.recurrence == .once
                 }
                 sections[scope] = tasks.sorted(by: dashboardOrder)
             }
@@ -65,7 +66,8 @@ public final class DashboardStore: ObservableObject {
         targetDate: Date,
         tier: QuestTier,
         repeats: Bool,
-        reminderTime: TaskReminderTime? = nil
+        reminderTime: TaskReminderTime? = nil,
+        deadlineDate: Date? = nil
     ) {
         mutate {
             let date = now()
@@ -78,7 +80,8 @@ public final class DashboardStore: ObservableObject {
                 period: period,
                 sortIndex: nextSortIndex(scope: scope, tier: tier, period: period),
                 createdAt: date,
-                reminderTime: reminderTime
+                reminderTime: reminderTime,
+                deadlineDate: repeats ? nil : deadlineDate
             )
             try repository.save(task)
         }
@@ -91,7 +94,8 @@ public final class DashboardStore: ObservableObject {
         targetDate: Date,
         tier: QuestTier,
         repeats: Bool,
-        reminderTime: TaskReminderTime? = nil
+        reminderTime: TaskReminderTime? = nil,
+        deadlineDate: Date? = nil
     ) {
         guard allTasks.first(where: { $0.id == id })?.status == .pending else { return }
         mutate {
@@ -116,6 +120,7 @@ public final class DashboardStore: ObservableObject {
                 createdAt: existing.createdAt,
                 updatedAt: date,
                 reminderTime: reminderTime,
+                deadlineDate: repeats ? nil : deadlineDate,
                 completedAt: existing.completedAt
             )
             try repository.save(replacement)
@@ -146,6 +151,19 @@ public final class DashboardStore: ObservableObject {
         guard allTasks.first(where: { $0.id == id })?.status == .pending else { return }
         mutate {
             try repository.delete(id: id)
+        }
+    }
+
+    public func pass(id: UUID) {
+        guard var task = allTasks.first(where: { $0.id == id }), task.status == .pending else {
+            return
+        }
+        mutate {
+            let date = now()
+            task.status = .pass
+            task.completedAt = date
+            task.updatedAt = date
+            try repository.save(task)
         }
     }
 

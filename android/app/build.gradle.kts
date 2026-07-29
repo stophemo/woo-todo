@@ -35,8 +35,8 @@ android {
         applicationId = "com.wootodo"
         minSdk = 33
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.1.15"
+        versionCode = 17
+        versionName = "0.1.16"
 
         testInstrumentationRunner = "com.wootodo.WooTodoTestRunner"
     }
@@ -62,6 +62,11 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            resValue("string", "app_name", "Woo Todo Dev")
+        }
+
         getByName("release") {
             signingConfigs.findByName("release")?.let { signingConfig = it }
             isMinifyEnabled = true

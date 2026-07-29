@@ -1,6 +1,6 @@
 {
   "name": "woo-todo",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "private": true,
   "description": "无我待办：macOS、Android 与 Windows 原生 local-first 待办应用",
   "scripts": {

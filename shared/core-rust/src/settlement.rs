@@ -44,6 +44,10 @@ pub fn settle(
         if !is_expired(&task, reference_date) {
             continue;
         }
+        if task.recurrence != Recurrence::Repeat {
+            // 一次性任务由用户主动完成或 Pass，跨周期后仍保持原状态。
+            continue;
+        }
         if task.state == TaskState::Pending {
             task.state = TaskState::Pass;
             task.updated_at = now;
@@ -54,9 +58,6 @@ pub fn settle(
         let Some(current_start) = task.period_start else {
             continue;
         };
-        if task.recurrence != Recurrence::Repeat {
-            continue;
-        }
         let Some(next_period_start) = next_start(task.time_type, current_start) else {
             continue;
         };
@@ -75,6 +76,7 @@ pub fn settle(
             created_at: now,
             updated_at: now,
             settled_at: None,
+            deadline_date: None,
             ..task
         };
         tasks.insert(next_id.clone(), next_task.clone());

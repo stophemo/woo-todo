@@ -119,7 +119,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 """
                 SELECT id, series_id, title, time_scope, tier, status,
                        recurrence_json, period_start, period_end, sort_index,
-                       created_at, updated_at, completed_at, reminder_time
+                       created_at, updated_at, completed_at, reminder_time, deadline_date
                 FROM tasks
                 ORDER BY CASE tier
                     WHEN 'main' THEN 0
@@ -131,37 +131,42 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
-    public func fetchTasks(scope: TimeScope, in period: TaskPeriod?) throws -> [TodoTask] {
+    public func fetchTasks(
+        scope: TimeScope,
+        in period: TaskPeriod?,
+        includeOverdueOnce: Bool
+    ) throws -> [TodoTask] {
         try withLock {
             if let period {
-                return try query(
+                let scoped = try query(
                     """
                     SELECT id, series_id, title, time_scope, tier, status,
                            recurrence_json, period_start, period_end, sort_index,
-                           created_at, updated_at, completed_at, reminder_time
+                           created_at, updated_at, completed_at, reminder_time, deadline_date
                     FROM tasks
                     WHERE time_scope = ?
-                      AND period_start < ?
-                      AND period_end > ?
                     ORDER BY CASE tier
                         WHEN 'main' THEN 0
                         WHEN 'side' THEN 1
                         ELSE 2
                     END, sort_index, created_at
                     """,
-                    bindings: [
-                        .text(scope.rawValue),
-                        .double(period.end.timeIntervalSince1970),
-                        .double(period.start.timeIntervalSince1970)
-                    ]
+                    bindings: [.text(scope.rawValue)]
                 )
+                return scoped.filter { task in
+                    guard let taskPeriod = task.period else { return false }
+                    let overlaps = taskPeriod.start < period.end && taskPeriod.end > period.start
+                    let overdueOnce = includeOverdueOnce && task.status == .pending &&
+                        task.recurrence == .once && taskPeriod.end <= period.start
+                    return overlaps || overdueOnce
+                }
             }
 
             return try query(
                 """
                 SELECT id, series_id, title, time_scope, tier, status,
                        recurrence_json, period_start, period_end, sort_index,
-                       created_at, updated_at, completed_at, reminder_time
+                       created_at, updated_at, completed_at, reminder_time, deadline_date
                 FROM tasks
                 WHERE time_scope = ?
                 ORDER BY CASE tier
@@ -208,8 +213,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                     INSERT INTO tasks (
                         id, series_id, title, time_scope, tier, status,
                         recurrence_json, period_start, period_end, sort_index,
-                        created_at, updated_at, completed_at, reminder_time
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        created_at, updated_at, completed_at, reminder_time, deadline_date
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         series_id = excluded.series_id,
                         title = excluded.title,
@@ -222,7 +227,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                         sort_index = excluded.sort_index,
                         updated_at = excluded.updated_at,
                         completed_at = excluded.completed_at,
-                        reminder_time = excluded.reminder_time
+                        reminder_time = excluded.reminder_time,
+                        deadline_date = excluded.deadline_date
                     """
                 let statement = try prepare(sql)
                 defer { sqlite3_finalize(statement) }
@@ -264,7 +270,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                         .double(task.createdAt.timeIntervalSince1970),
                         .double(task.updatedAt.timeIntervalSince1970),
                         task.completedAt.map { .double($0.timeIntervalSince1970) } ?? .null,
-                        task.reminderTime.map { .text($0.wireValue) } ?? .null
+                        task.reminderTime.map { .text($0.wireValue) } ?? .null,
+                        task.deadlineDate.map { .double($0.timeIntervalSince1970) } ?? .null
                     ]
                     try bind(values, to: statement)
                     guard sqlite3_step(statement) == SQLITE_DONE else {
@@ -294,7 +301,9 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         try withLock {
             guard var task = try storedTask(id: id),
                   task.status == .completed else { return false }
-            if let period = task.period, period.end <= date { return false }
+            if let period = task.period,
+               period.end <= date,
+               case .repeating = task.recurrence { return false }
 
             task.status = .pending
             task.completedAt = nil
@@ -368,12 +377,16 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
                 completed_at REAL,
-                reminder_time TEXT
+                reminder_time TEXT,
+                deadline_date REAL
             )
             """
         )
         if try !taskTableHasColumn("reminder_time") {
             try execute("ALTER TABLE tasks ADD COLUMN reminder_time TEXT")
+        }
+        if try !taskTableHasColumn("deadline_date") {
+            try execute("ALTER TABLE tasks ADD COLUMN deadline_date REAL")
         }
         try execute(
             "CREATE INDEX IF NOT EXISTS idx_tasks_period ON tasks(time_scope, period_start, period_end)"
@@ -677,45 +690,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
 
             try execute("BEGIN IMMEDIATE TRANSACTION")
             do {
-                let statement = try prepare(
-                    "UPDATE sync_state SET vault_id = ?, device_id = ? WHERE singleton = 1"
-                )
-                defer { sqlite3_finalize(statement) }
-                try bind(
-                    [.text(configuration.vaultId), .text(configuration.deviceId)],
-                    to: statement
-                )
-                guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
-
-                for task in try query(
-                    """
-                    SELECT id, series_id, title, time_scope, tier, status,
-                           recurrence_json, period_start, period_end, sort_index,
-                           created_at, updated_at, completed_at, reminder_time
-                    FROM tasks
-                    ORDER BY created_at, id
-                    """
-                ) {
-                    try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
-                }
-                if let displayConfiguration = try displayConfiguration(),
-                   try displayConfigurationIsLocalOverride() {
-                    try enqueueLocalDisplayConfiguration(
-                        displayConfiguration,
-                        configuration: configuration
-                    )
-                }
-                for deletion in try deferredDeletions() {
-                    try deleteTaskRow(entityID: deletion.entityID)
-                    try enqueueLocalTombstone(
-                        entityID: deletion.entityID,
-                        deletedAtMilliseconds: deletion.deletedAtMilliseconds,
-                        configuration: configuration
-                    )
-                }
-                try execute("DELETE FROM sync_deferred_upserts")
-                try execute("DELETE FROM sync_deferred_deletions")
-                try execute("DELETE FROM sync_deferred_display_configuration")
+                try bindUnboundSync(configuration)
                 try execute("COMMIT")
                 syncConfiguration = configuration
                 hasPersistedSyncIdentity = true
@@ -724,6 +699,103 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 throw error
             }
         }
+    }
+
+    /// 清除当前同步空间的本地元数据，但保留任务与显示配置。
+    /// 下次 configureSync 会把保留的数据作为新空间的本地快照重新入队。
+    public func resetSyncBinding() throws {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try resetSyncMetadata()
+                try execute("COMMIT")
+                syncConfiguration = nil
+                hasPersistedSyncIdentity = false
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    /// 切换同步方式时在同一事务中清理旧空间并绑定新空间，避免留下半重置状态。
+    public func replaceSyncBinding(with configuration: SQLiteSyncConfiguration) throws {
+        try withLock {
+            try validate(configuration)
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try resetSyncMetadata()
+                try bindUnboundSync(configuration)
+                try execute("COMMIT")
+                syncConfiguration = configuration
+                hasPersistedSyncIdentity = true
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    private func resetSyncMetadata() throws {
+        try execute("DELETE FROM sync_outbox")
+        try execute("DELETE FROM sync_entity_versions")
+        try execute("DELETE FROM sync_applied_operations")
+        try execute("DELETE FROM sync_webdav_applied_operations")
+        try execute("DELETE FROM sync_deferred_upserts")
+        try execute("DELETE FROM sync_deferred_deletions")
+        try execute("DELETE FROM sync_deferred_display_configuration")
+        try execute(
+            """
+            UPDATE sync_state
+            SET vault_id = NULL, device_id = NULL, cursor = 0, lamport = 0
+            WHERE singleton = 1
+            """
+        )
+        try execute(
+            "UPDATE sync_display_configuration SET is_local_override = 1"
+        )
+    }
+
+    private func bindUnboundSync(_ configuration: SQLiteSyncConfiguration) throws {
+        let statement = try prepare(
+            "UPDATE sync_state SET vault_id = ?, device_id = ? WHERE singleton = 1"
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind(
+            [.text(configuration.vaultId), .text(configuration.deviceId)],
+            to: statement
+        )
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+
+        for task in try query(
+            """
+            SELECT id, series_id, title, time_scope, tier, status,
+                   recurrence_json, period_start, period_end, sort_index,
+                   created_at, updated_at, completed_at, reminder_time, deadline_date
+            FROM tasks
+            ORDER BY created_at, id
+            """
+        ) {
+            try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
+        }
+        if let displayConfiguration = try displayConfiguration(),
+           try displayConfigurationIsLocalOverride() {
+            try enqueueLocalDisplayConfiguration(
+                displayConfiguration,
+                configuration: configuration
+            )
+        }
+        for deletion in try deferredDeletions() {
+            try deleteTaskRow(entityID: deletion.entityID)
+            try enqueueLocalTombstone(
+                entityID: deletion.entityID,
+                deletedAtMilliseconds: deletion.deletedAtMilliseconds,
+                configuration: configuration
+            )
+        }
+        try execute("DELETE FROM sync_deferred_upserts")
+        try execute("DELETE FROM sync_deferred_deletions")
+        try execute("DELETE FROM sync_deferred_display_configuration")
     }
 
     public func pendingOperations(limit: Int) async throws -> [SyncPushOperation] {
@@ -1006,7 +1078,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                        tasks.tier, tasks.status, tasks.recurrence_json,
                        tasks.period_start, tasks.period_end, tasks.sort_index,
                        tasks.created_at, tasks.updated_at, tasks.completed_at,
-                       tasks.reminder_time
+                       tasks.reminder_time, tasks.deadline_date
                 FROM tasks
                 INNER JOIN sync_deferred_upserts
                     ON sync_deferred_upserts.entity_id = lower(tasks.id)
@@ -1366,6 +1438,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             title: task.title,
             timeType: timeType,
             periodStart: task.period.map { dateKey($0.start, timeZone: timeZone) },
+            deadlineDate: task.deadlineDate.map { dateKey($0, timeZone: timeZone) },
             timezone: timeZone.identifier,
             questLine: questLine,
             state: state,
@@ -1821,6 +1894,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             createdAt: date(fromMilliseconds: payload.createdAt),
             updatedAt: date(fromMilliseconds: payload.updatedAt),
             reminderTime: payload.reminderTime.flatMap(TaskReminderTime.init(wireValue:)),
+            deadlineDate: payload.deadlineDate.flatMap { date(fromKey: $0, timeZone: timeZone) },
             completedAt: status == .pending ? nil : settledDate
         )
     }
@@ -1835,8 +1909,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             INSERT INTO tasks (
                 id, series_id, title, time_scope, tier, status,
                 recurrence_json, period_start, period_end, sort_index,
-                created_at, updated_at, completed_at, reminder_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, completed_at, reminder_time, deadline_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 series_id = excluded.series_id,
                 title = excluded.title,
@@ -1849,7 +1923,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 sort_index = excluded.sort_index,
                 updated_at = excluded.updated_at,
                 completed_at = excluded.completed_at,
-                reminder_time = excluded.reminder_time
+                reminder_time = excluded.reminder_time,
+                deadline_date = excluded.deadline_date
             """
         )
         defer { sqlite3_finalize(statement) }
@@ -1868,6 +1943,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             .double(task.updatedAt.timeIntervalSince1970),
             task.completedAt.map { .double($0.timeIntervalSince1970) } ?? .null,
             task.reminderTime.map { .text($0.wireValue) } ?? .null,
+            task.deadlineDate.map { .double($0.timeIntervalSince1970) } ?? .null,
         ], to: statement)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
     }
@@ -1884,7 +1960,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             """
             SELECT id, series_id, title, time_scope, tier, status,
                    recurrence_json, period_start, period_end, sort_index,
-                   created_at, updated_at, completed_at, reminder_time
+                   created_at, updated_at, completed_at, reminder_time, deadline_date
             FROM tasks WHERE id = ? LIMIT 1
             """,
             bindings: [.text(id.uuidString)]
@@ -2173,6 +2249,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 10)),
             updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 11)),
             reminderTime: try reminderTime(at: 13, from: statement),
+            deadlineDate: optionalDate(at: 14, from: statement),
             completedAt: optionalDate(at: 12, from: statement)
         )
     }

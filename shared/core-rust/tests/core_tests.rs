@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use chrono::NaiveDate;
+use rusqlite::Connection;
 use tempfile::tempdir;
 use woo_todo_core::{
     QuestLine, Recurrence, ReminderTime, TaskRepository, TaskState, TimeType, TodoTask,
@@ -21,6 +22,7 @@ fn task(id: &str, start: &str, repeats: bool, now: i64) -> TodoTask {
         0,
         now,
         Some(ReminderTime::new(9, 30).expect("测试提醒时间应有效")),
+        None,
         Some(id.to_owned()),
     )
     .expect("测试任务应有效")
@@ -40,12 +42,13 @@ fn occurrence_id_matches_existing_clients() {
 
 #[test]
 fn settlement_catches_up_and_is_idempotent_across_periods() {
-    let original = task(
+    let mut original = task(
         "00000000-0000-4000-8000-000000000001",
         "2026-07-20",
         true,
         1,
     );
+    original.deadline_date = Some(date("2026-07-21"));
     let first = settle(&[original], date("2026-07-24"), 2, &HashSet::new());
     assert_eq!(first.tasks.len(), 5);
     assert_eq!(first.changed_task_ids.len(), 4);
@@ -53,6 +56,13 @@ fn settlement_catches_up_and_is_idempotent_across_periods() {
     assert!(first.tasks.iter().any(|task| {
         task.period_start == Some(date("2026-07-24")) && task.state == TaskState::Pending
     }));
+    assert!(
+        first
+            .tasks
+            .iter()
+            .filter(|task| task.period_start != Some(date("2026-07-20")))
+            .all(|task| task.deadline_date.is_none())
+    );
 
     let second = settle(&first.tasks, date("2026-07-24"), 3, &HashSet::new());
     assert_eq!(second.tasks, first.tasks);
@@ -73,6 +83,27 @@ fn settlement_does_not_restore_deleted_occurrence() {
     let result = settle(&[original], date("2026-07-24"), 2, &reserved);
     assert_eq!(result.tasks.len(), 1);
     assert!(result.tasks.iter().all(|task| task.id != deleted));
+}
+
+#[test]
+fn overdue_once_task_stays_pending_until_user_settles_it() {
+    let original = task(
+        "00000000-0000-4000-8000-000000000098",
+        "2026-07-20",
+        false,
+        1,
+    );
+
+    let result = settle(
+        std::slice::from_ref(&original),
+        date("2026-07-24"),
+        2,
+        &HashSet::new(),
+    );
+
+    assert_eq!(result.tasks, vec![original]);
+    assert!(result.changed_task_ids.is_empty());
+    assert!(result.generated_task_ids.is_empty());
 }
 
 #[test]
@@ -117,6 +148,7 @@ fn repository_round_trips_and_settles_idempotently() {
             QuestLine::Main,
             true,
             None,
+            None,
             1,
         )
         .expect("应创建任务");
@@ -134,6 +166,172 @@ fn repository_round_trips_and_settles_idempotently() {
         .expect("重复结算应成功");
     assert!(second.changed_task_ids.is_empty());
     assert!(second.generated_task_ids.is_empty());
+}
+
+#[test]
+fn repository_round_trips_optional_deadline() {
+    let directory = tempdir().expect("应创建临时目录");
+    let database = directory.path().join("deadline.sqlite3");
+    let mut repository = TaskRepository::open(&database).expect("应打开数据库");
+    let deadline = date("2026-08-05");
+
+    let once_id = repository
+        .create(
+            "带截止日期的任务",
+            TimeType::Day,
+            date("2026-07-28"),
+            QuestLine::Main,
+            false,
+            None,
+            Some(deadline),
+            1,
+        )
+        .expect("应创建一次性任务");
+    assert_eq!(
+        repository.find(&once_id).unwrap().unwrap().deadline_date,
+        Some(deadline)
+    );
+
+    drop(repository);
+    let reopened = TaskRepository::open(&database).expect("应重新打开数据库");
+    assert_eq!(
+        reopened.find(&once_id).unwrap().unwrap().deadline_date,
+        Some(deadline)
+    );
+}
+
+#[test]
+fn repository_keeps_overdue_once_tasks_in_current_scope() {
+    let directory = tempdir().expect("应创建临时目录");
+    let database = directory.path().join("overdue-once.sqlite3");
+    let mut repository = TaskRepository::open(&database).expect("应打开数据库");
+    let today = woo_todo_core::today_shanghai();
+    let yesterday = today.pred_opt().expect("今天应有前一天");
+    let once_id = repository
+        .create(
+            "跨日后仍待办",
+            TimeType::Day,
+            yesterday,
+            QuestLine::Main,
+            false,
+            None,
+            None,
+            1,
+        )
+        .unwrap();
+    let repeat_id = repository
+        .create(
+            "跨日重复任务",
+            TimeType::Day,
+            yesterday,
+            QuestLine::Side,
+            true,
+            None,
+            None,
+            1,
+        )
+        .unwrap();
+
+    let first = repository.settle_expired(today, 2).unwrap();
+    assert_eq!(
+        first.changed_task_ids,
+        HashSet::from([repeat_id]).into_iter().collect()
+    );
+    assert_eq!(
+        repository.find(&once_id).unwrap().unwrap().state,
+        TaskState::Pending
+    );
+    let visible = repository
+        .fetch_scope(TimeType::Day, today, false)
+        .expect("应读取今日任务");
+    assert!(visible.iter().any(|task| task.id == once_id));
+
+    let second = repository.settle_expired(today, 3).unwrap();
+    assert!(second.changed_task_ids.is_empty());
+    assert!(second.generated_task_ids.is_empty());
+
+    assert!(repository.complete(&once_id, 4).unwrap());
+    assert!(repository.reopen_completed(&once_id, today, 5).unwrap());
+    assert!(repository.pass(&once_id, 6).unwrap());
+    let visible = repository
+        .fetch_scope(TimeType::Day, today, false)
+        .expect("应重新读取今日任务");
+    assert!(visible.iter().all(|task| task.id != once_id));
+}
+
+#[test]
+fn repository_migrates_v1_database_without_losing_tasks() {
+    let directory = tempdir().expect("应创建临时目录");
+    let database = directory.path().join("legacy.sqlite3");
+    let connection = Connection::open(&database).expect("应创建旧数据库");
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE tasks(
+              id TEXT NOT NULL PRIMARY KEY, series_id TEXT NOT NULL, title TEXT NOT NULL,
+              time_type TEXT NOT NULL, period_start TEXT, quest_line TEXT NOT NULL,
+              status TEXT NOT NULL, recurrence TEXT NOT NULL, sort_order INTEGER NOT NULL,
+              created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, settled_at INTEGER,
+              reminder_time TEXT
+            );
+            CREATE TABLE deleted_tasks(
+              id TEXT NOT NULL PRIMARY KEY, deleted_at INTEGER NOT NULL
+            );
+            INSERT INTO tasks VALUES(
+              '00000000-0000-4000-8000-000000000088',
+              '00000000-0000-4000-8000-000000000088',
+              '旧版任务', 'day', '2026-07-28', 'main', 'pending', 'once',
+              0, 1, 1, NULL, NULL
+            );
+            PRAGMA user_version = 1;
+            "#,
+        )
+        .expect("应写入旧数据库");
+    drop(connection);
+
+    let repository = TaskRepository::open(&database).expect("应迁移旧数据库");
+    let restored = repository.fetch_all().expect("应读取迁移后的任务");
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].title, "旧版任务");
+    assert_eq!(restored[0].deadline_date, None);
+    drop(repository);
+
+    let connection = Connection::open(&database).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 3);
+}
+
+#[test]
+fn task_json_accepts_missing_deadline_and_round_trips_present_deadline() {
+    let without_deadline = task(
+        "00000000-0000-4000-8000-000000000087",
+        "2026-07-28",
+        false,
+        1,
+    );
+    let mut legacy_json = serde_json::to_value(&without_deadline).unwrap();
+    legacy_json
+        .as_object_mut()
+        .expect("任务 JSON 应为对象")
+        .remove("deadlineDate");
+    let decoded: TodoTask = serde_json::from_value(legacy_json).expect("应兼容旧正文");
+    assert_eq!(decoded.deadline_date, None);
+
+    let mut with_deadline = without_deadline;
+    with_deadline.deadline_date = Some(date("2026-08-05"));
+    let encoded = serde_json::to_value(&with_deadline).expect("应编码任务");
+    assert_eq!(encoded["deadlineDate"], "2026-08-05");
+    assert_eq!(
+        serde_json::from_value::<TodoTask>(encoded)
+            .unwrap()
+            .deadline_date,
+        with_deadline.deadline_date
+    );
+
+    with_deadline.deadline_date = NaiveDate::from_ymd_opt(0, 1, 1);
+    assert!(with_deadline.validate().is_err());
 }
 
 #[test]
@@ -158,6 +356,7 @@ fn repository_rejects_deleted_and_mutated_settled_tasks_transactionally() {
             date("2026-07-24"),
             QuestLine::Main,
             false,
+            None,
             None,
             3,
         )
@@ -191,6 +390,7 @@ fn repository_reopens_only_current_completed_tasks_and_resettles_idempotently() 
             date("2026-07-24"),
             QuestLine::Main,
             true,
+            None,
             None,
             1,
         )
@@ -249,6 +449,7 @@ fn someday_task_cannot_repeat_or_schedule_notification() {
         0,
         1,
         Some(ReminderTime::new(8, 0).unwrap()),
+        None,
         Some("00000000-0000-4000-8000-000000000090".to_owned()),
     )
     .unwrap();

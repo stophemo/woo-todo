@@ -16,6 +16,7 @@ struct TaskWirePayloadTests {
         }
         #expect(first.seriesId == "550e8400-e29b-41d4-a716-446655440000")
         #expect(first.periodStart == "2026-07-16")
+        #expect(first.deadlineDate == "2026-07-20")
         #expect(first.recurrence == .repeatRule)
         #expect(first.reminderTime == "23:10")
         #expect(first.settledAt == nil)

@@ -101,7 +101,7 @@ jobs:
             "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate" \
             2>/dev/null | grep -F 'org.sparkle-project.Sparkle.Autoupdate'
           codesign --verify --deep --strict --verbose=2 "$APP"
-          test -f "macos/dist/Woo Todo-0.1.15-macos.zip"
+          test -f "macos/dist/Woo Todo-0.1.16-macos.zip"
 
   windows:
     name: Windows 原生测试与发布验证

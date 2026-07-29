@@ -50,6 +50,13 @@ test("创建 vault 时会清理设备名并保留密文恢复包", () => {
   assert.equal(result.recoveryEnvelope?.ciphertext, encodedBytes(48));
 });
 
+test("Windows 客户端可创建同步空间", () => {
+  const result = parseCreateVaultRequest({
+    device: { name: "Windows 工作站", platform: "windows" },
+  });
+  assert.equal(result.device.platform, "windows");
+});
+
 test("认领配对必须携带 32 字节令牌和 X25519 公钥", () => {
   const input = parsePairingClaimRequest({
     pairingSecret: encodedBytes(32, 1),

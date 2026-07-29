@@ -41,6 +41,8 @@ class EditTaskActivity : AppCompatActivity() {
     private lateinit var timeSpinner: Spinner
     private lateinit var dateButton: Button
     private lateinit var recurrenceSpinner: Spinner
+    private lateinit var deadlineSwitch: SwitchCompat
+    private lateinit var deadlineDateButton: Button
     private lateinit var reminderSwitch: SwitchCompat
     private lateinit var reminderTimeButton: Button
     private lateinit var saveButton: Button
@@ -49,6 +51,7 @@ class EditTaskActivity : AppCompatActivity() {
     private val timeTypes = TaskTimeType.entries
     private var recurrenceOptions: List<Recurrence> = Recurrence.entries
     private var selectedDate: LocalDate = TaskDateRules.today()
+    private var selectedDeadlineDate: LocalDate = TaskDateRules.today()
     private var reminderTime: LocalTime = LocalTime.of(9, 0)
     private var editingTask: Task? = null
     private var isLoadingTask = false
@@ -64,6 +67,8 @@ class EditTaskActivity : AppCompatActivity() {
         timeSpinner = findViewById(R.id.time_spinner)
         dateButton = findViewById(R.id.date_button)
         recurrenceSpinner = findViewById(R.id.recurrence_spinner)
+        deadlineSwitch = findViewById(R.id.deadline_switch)
+        deadlineDateButton = findViewById(R.id.deadline_date_button)
         reminderSwitch = findViewById(R.id.reminder_switch)
         reminderTimeButton = findViewById(R.id.reminder_time_button)
         saveButton = findViewById(R.id.save_button)
@@ -74,8 +79,11 @@ class EditTaskActivity : AppCompatActivity() {
         (restoredDate ?: intent.getStringExtra(EXTRA_TARGET_DATE))?.let { encoded ->
             runCatching { LocalDate.parse(encoded) }.getOrNull()?.let { selectedDate = it }
         }
+        selectedDeadlineDate = selectedDate
         setupSpinners()
         dateButton.setOnClickListener { showDatePicker() }
+        deadlineSwitch.setOnCheckedChangeListener { _, _ -> updateDeadlineControls() }
+        deadlineDateButton.setOnClickListener { showDeadlineDatePicker() }
         reminderSwitch.setOnCheckedChangeListener { _, _ -> updateReminderControls() }
         reminderTimeButton.setOnClickListener { showReminderTimePicker() }
         saveButton.setOnClickListener { saveTask() }
@@ -107,6 +115,8 @@ class EditTaskActivity : AppCompatActivity() {
             outState.putString(STATE_TIME_TYPE, it.rawValue)
         }
         outState.putString(STATE_RECURRENCE, selectedRecurrenceOrOnce().rawValue)
+        outState.putBoolean(STATE_DEADLINE_ENABLED, deadlineSwitch.isChecked)
+        outState.putString(STATE_DEADLINE_DATE, selectedDeadlineDate.toString())
         outState.putBoolean(STATE_REMINDER_ENABLED, reminderSwitch.isChecked)
         outState.putString(STATE_REMINDER_TIME, reminderTime.toString())
         super.onSaveInstanceState(outState)
@@ -121,6 +131,14 @@ class EditTaskActivity : AppCompatActivity() {
                 updateRecurrenceOptions(type, selectedRecurrenceOrOnce())
                 updateDateButton(type)
                 updateReminderControls()
+                updateDeadlineControls()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        recurrenceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                updateDeadlineControls()
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -160,7 +178,10 @@ class EditTaskActivity : AppCompatActivity() {
                 updateDateButton(task.timeType)
                 reminderTime = task.reminderTime ?: reminderTime
                 reminderSwitch.isChecked = task.reminderTime != null
+                selectedDeadlineDate = task.deadlineDate ?: selectedDate
+                deadlineSwitch.isChecked = task.deadlineDate != null
                 updateReminderControls()
+                updateDeadlineControls()
             } else {
                 // 旋转后的异步数据库读取只恢复实体身份，不能覆盖用户尚未保存的草稿。
                 restoreDraftState(restoredState, fallback = task)
@@ -189,6 +210,10 @@ class EditTaskActivity : AppCompatActivity() {
             ?.let { runCatching { Recurrence.fromRaw(it) }.getOrNull() }
             ?: fallback?.recurrence
             ?: Recurrence.ONCE
+        selectedDeadlineDate = state.getString(STATE_DEADLINE_DATE)
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: fallback?.deadlineDate
+            ?: selectedDate
         reminderTime = state.getString(STATE_REMINDER_TIME)
             ?.let { runCatching { LocalTime.parse(it) }.getOrNull() }
             ?: fallback?.reminderTime
@@ -197,11 +222,16 @@ class EditTaskActivity : AppCompatActivity() {
             STATE_REMINDER_ENABLED,
             fallback?.reminderTime != null,
         )
+        deadlineSwitch.isChecked = state.getBoolean(
+            STATE_DEADLINE_ENABLED,
+            fallback?.deadlineDate != null,
+        )
         questSpinner.setSelection(questLines.indexOf(questLine))
         timeSpinner.setSelection(timeTypes.indexOf(timeType))
         updateRecurrenceOptions(timeType, recurrence)
         updateDateButton(timeType)
         updateReminderControls()
+        updateDeadlineControls()
     }
 
     private fun saveTask() {
@@ -218,6 +248,9 @@ class EditTaskActivity : AppCompatActivity() {
             targetDate = if (type == TaskTimeType.LEISURE) null else selectedDate,
             questLine = questLines[questSpinner.selectedItemPosition],
             recurrence = selectedRecurrenceOrOnce(),
+            deadlineDate = selectedDeadlineDate.takeIf {
+                deadlineSwitch.isChecked && selectedRecurrenceOrOnce() == Recurrence.ONCE
+            },
             reminderTime = reminderTime.takeIf {
                 reminderSwitch.isChecked && type != TaskTimeType.LEISURE
             },
@@ -247,6 +280,7 @@ class EditTaskActivity : AppCompatActivity() {
             this,
             { _, year, month, day ->
                 selectedDate = LocalDate.of(year, month + 1, day)
+                if (!deadlineSwitch.isChecked) selectedDeadlineDate = selectedDate
                 updateDateButton(timeTypes[timeSpinner.selectedItemPosition])
             },
             selectedDate.year,
@@ -267,6 +301,32 @@ class EditTaskActivity : AppCompatActivity() {
             reminderTime.minute,
             true,
         ).show()
+    }
+
+    private fun showDeadlineDatePicker() {
+        DatePickerDialog(
+            this,
+            { _, year, month, day ->
+                selectedDeadlineDate = LocalDate.of(year, month + 1, day)
+                deadlineSwitch.isChecked = true
+                updateDeadlineControls()
+            },
+            selectedDeadlineDate.year,
+            selectedDeadlineDate.monthValue - 1,
+            selectedDeadlineDate.dayOfMonth,
+        ).show()
+    }
+
+    private fun updateDeadlineControls() {
+        val available = selectedRecurrenceOrOnce() == Recurrence.ONCE
+        deadlineSwitch.isEnabled = available
+        if (!available) deadlineSwitch.isChecked = false
+        deadlineDateButton.isEnabled = available && deadlineSwitch.isChecked
+        deadlineDateButton.text = if (deadlineSwitch.isChecked && available) {
+            getString(R.string.task_deadline_date, selectedDeadlineDate)
+        } else {
+            getString(R.string.task_deadline_not_set)
+        }
     }
 
     private fun updateReminderControls() {
@@ -332,6 +392,8 @@ class EditTaskActivity : AppCompatActivity() {
         private const val STATE_QUEST_LINE = "editor_quest_line"
         private const val STATE_TIME_TYPE = "editor_time_type"
         private const val STATE_RECURRENCE = "editor_recurrence"
+        private const val STATE_DEADLINE_ENABLED = "editor_deadline_enabled"
+        private const val STATE_DEADLINE_DATE = "editor_deadline_date"
         private const val STATE_REMINDER_ENABLED = "editor_reminder_enabled"
         private const val STATE_REMINDER_TIME = "editor_reminder_time"
     }

@@ -31,7 +31,15 @@ class TaskRepository(
             store.observeLeisure()
         } else {
             val targetDate = requireNotNull(TaskDateRules.targetForScope(timeType, referenceDate))
-            store.observeForPeriod(timeType, targetDate)
+            val currentTarget = TaskDateRules.targetForScope(
+                timeType,
+                LocalDate.now(clock),
+            )
+            store.observeForPeriod(
+                timeType,
+                targetDate,
+                includeOverdueOnce = currentTarget == targetDate,
+            )
         }
         return source.map { entities ->
             entities.map(TaskEntity::toDomain).sortedWith(TaskRules.ordering)
@@ -67,6 +75,7 @@ class TaskRepository(
                 updatedAt = now,
                 settledAt = null,
                 reminderTime = if (draft.timeType == TaskTimeType.LEISURE) null else draft.reminderTime,
+                deadlineDate = draft.deadlineDate.takeIf { recurrence == Recurrence.ONCE },
             ),
         )
         return id
@@ -97,6 +106,9 @@ class TaskRepository(
                 questLine = draft.questLine,
                 recurrence = TaskRules.sanitizeRecurrence(draft.timeType, draft.recurrence),
                 reminderTime = if (draft.timeType == TaskTimeType.LEISURE) null else draft.reminderTime,
+                deadlineDate = draft.deadlineDate.takeIf {
+                    TaskRules.sanitizeRecurrence(draft.timeType, draft.recurrence) == Recurrence.ONCE
+                },
                 sortOrder = sortOrder,
                 updatedAt = clock.millis(),
             ),
@@ -163,7 +175,8 @@ class TaskRepository(
 
     private suspend fun reopenCompleted(task: TaskEntity, referenceDate: LocalDate): Boolean {
         val currentPeriod = TaskDateRules.normalizeTargetDate(task.timeType, referenceDate)
-        val expired = task.timeType != TaskTimeType.LEISURE &&
+        val expired = task.recurrence != Recurrence.ONCE &&
+            task.timeType != TaskTimeType.LEISURE &&
             (task.targetDate == null || currentPeriod == null || task.targetDate.isBefore(currentPeriod))
         if (expired) return false
         return store.reopenCompleted(task.id, clock.millis())
@@ -185,6 +198,7 @@ class TaskRepository(
             createdAt = now,
             updatedAt = now,
             settledAt = null,
+            deadlineDate = null,
         )
     }
 }

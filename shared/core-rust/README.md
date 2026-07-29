@@ -43,5 +43,3 @@ C 调用约定见 [`include/woo_todo_core.h`](include/woo_todo_core.h)。所有�
 
 - Windows：`windows` Rust crate 直接依赖共享核心，以 Rust 类型在同一进程内调用，不经过 C ABI 或动态库复制。
 - macOS、Android：采用能力切片的渐进迁移；现有原生 UI、通知调度、同步与安全存储不重写。切换每项领域能力前，先用跨端 fixture 验证与现有实现等价。
-
-架构边界与迁移顺序见 [ADR-0004](../../docs/adr/0004-rust-core-native-shells.md)。

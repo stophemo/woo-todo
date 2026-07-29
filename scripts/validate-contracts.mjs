@@ -320,6 +320,9 @@ function validateTaskPayload(payload) {
   ) {
     throw new Error("任务 reminderTime 格式无效");
   }
+  if (payload.deadlineDate !== undefined && payload.deadlineDate !== null) {
+    parseDateKey(payload.deadlineDate);
+  }
   if (payload.timeType === "someday") {
     if (
       payload.periodStart !== null

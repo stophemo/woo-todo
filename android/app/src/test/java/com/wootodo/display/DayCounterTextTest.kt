@@ -52,6 +52,44 @@ class DayCounterTextTest {
     }
 
     @Test
+    fun `参数化计时变量跨年时各自使用独立日期`() {
+        val settings = DayCounterSettings(
+            headerTemplate = "{elapsedDays:2026-12-31}|{elapsedDays:2027-01-02}|" +
+                "{deadlineDays:2027-01-01}|{deadlineDays:2027-02-02}",
+            subtitleTemplate = "{elapsedMonthsDays:2026-11-02}|" +
+                "{elapsedMonthsDays:2026-12-31}|{deadlineMonthsDays:2026-12-02}|" +
+                "{deadlineMonthsDays:2027-02-02}",
+            startDate = LocalDate.of(2020, 1, 1),
+            deadlineDate = LocalDate.of(2030, 1, 1),
+        )
+
+        val rendered = DayCounterText.render(settings, LocalDate.of(2027, 1, 2))
+
+        assertEquals("3|1|-1|31", rendered.header)
+        assertEquals(
+            "2个月零1天|0个月零3天|-1个月零0天|1个月零0天",
+            rendered.subtitle,
+        )
+        assertEquals(
+            "{elapsedDays:2026-12-31}",
+            DayCounterText.counterToken(
+                DayCounterText.CounterVariable.ELAPSED_DAYS,
+                LocalDate.of(2026, 12, 31),
+            ),
+        )
+    }
+
+    @Test
+    fun `非法参数日期保持原样`() {
+        val rendered = DayCounterText.render(
+            DayCounterSettings(headerTemplate = "{elapsedDays:2026-02-30}"),
+            LocalDate.of(2026, 3, 1),
+        )
+
+        assertEquals("{elapsedDays:2026-02-30}", rendered.header)
+    }
+
+    @Test
     fun `月末闰日和同日边界使用自然月收敛规则`() {
         val vectors = listOf(
             Triple(LocalDate.of(2026, 1, 31), LocalDate.of(2026, 2, 28), "1个月零0天"),

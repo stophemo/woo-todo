@@ -1,6 +1,6 @@
 import { hashCredential } from "./crypto.ts";
 import { ApiError } from "./http.ts";
-import { isBase64UrlBytes } from "./protocol.ts";
+import { isBase64UrlBytes, type Platform } from "./protocol.ts";
 
 export type D1Value = string | number | null | ArrayBuffer | Uint8Array;
 
@@ -39,7 +39,7 @@ export interface AuthenticatedDevice {
   id: string;
   vaultId: string;
   name: string;
-  platform: "macos" | "android";
+  platform: Platform;
   createdAt: number;
 }
 
@@ -47,7 +47,7 @@ interface DeviceAuthRow {
   id: string;
   vault_id: string;
   name: string;
-  platform: "macos" | "android";
+  platform: Platform;
   created_at: number;
   revoked_at: number | null;
 }

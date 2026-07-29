@@ -353,6 +353,7 @@ object SyncJsonCodec {
             .put("title", task.title)
             .put("timeType", task.timeType.value)
             .put("periodStart", task.periodStart ?: JSONObject.NULL)
+            .apply { task.deadlineDate?.let { put("deadlineDate", it) } }
             .put("timezone", task.timezone)
             .put("questLine", task.questLine.value)
             .put("state", task.state.value)
@@ -371,7 +372,7 @@ object SyncJsonCodec {
                 "periodStart", "timezone", "questLine", "state", "recurrence", "sortOrder",
                 "createdAt", "updatedAt", "settledAt",
             ),
-            setOf("reminderTime"),
+            setOf("reminderTime", "deadlineDate"),
         )
         return TaskInstancePayload(
             protocolVersion = value.nonNegativeInt("protocolVersion"),
@@ -381,6 +382,7 @@ object SyncJsonCodec {
             title = value.string("title"),
             timeType = WireTimeType.fromWire(value.string("timeType")),
             periodStart = value.nullableString("periodStart"),
+            deadlineDate = value.nullableString("deadlineDate"),
             timezone = value.string("timezone"),
             questLine = WireQuestLine.fromWire(value.string("questLine")),
             state = WireTaskState.fromWire(value.string("state")),
@@ -479,6 +481,7 @@ object SyncJsonCodec {
         require(task.createdAt in 0..WIRE_MAXIMUM_SAFE_INTEGER)
         require(task.updatedAt in 0..WIRE_MAXIMUM_SAFE_INTEGER)
         task.settledAt?.let { require(it in 0..WIRE_MAXIMUM_SAFE_INTEGER) }
+        task.deadlineDate?.let(::validateDisplayDate)
         task.reminderTime?.let { require(REMINDER_TIME.matches(it)) }
         if (task.timeType == WireTimeType.SOMEDAY) {
             require(

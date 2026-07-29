@@ -3,6 +3,7 @@ import Foundation
 public enum DevicePlatform: String, Codable, Sendable {
     case macos
     case android
+    case windows
 }
 
 public enum PairingStatus: String, Codable, Sendable {

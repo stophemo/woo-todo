@@ -156,6 +156,106 @@ async function callApi(
   return { status: response.status, payload: await response.json() };
 }
 
+test("Windows 平台迁移保留既有设备、日志、游标与快照", (context) => {
+  const db = new MemoryD1("0004_reopen_operation.sql");
+  context.after(() => db.close());
+  db.database.exec(`
+    INSERT INTO vaults(id, created_at) VALUES ('vault-existing', 100);
+    INSERT INTO devices(
+      id, vault_id, token_hash, name, platform, public_key,
+      created_by_device_id, created_at, last_seen_at, revoked_at
+    ) VALUES (
+      'device-mac', 'vault-existing', 'token-mac', 'Mac', 'macos',
+      'public-mac', NULL, 101, 102, NULL
+    );
+    INSERT INTO devices(
+      id, vault_id, token_hash, name, platform, public_key,
+      created_by_device_id, created_at, last_seen_at, revoked_at
+    ) VALUES (
+      'device-android', 'vault-existing', 'token-android', 'Android', 'android',
+      'public-android', 'device-mac', 103, 104, NULL
+    );
+    INSERT INTO pairing_sessions(
+      id, vault_id, initiator_device_id, secret_hash, initiator_public_key,
+      status, created_at, expires_at
+    ) VALUES (
+      'pair-existing', 'vault-existing', 'device-mac', 'pair-secret',
+      'pair-public', 'OPEN', 105, 999
+    );
+    INSERT INTO change_log(
+      vault_id, op_id, device_id, entity_id, kind, lamport,
+      ciphertext, nonce, created_at
+    ) VALUES (
+      'vault-existing', 'op-existing', 'device-mac', 'task-existing',
+      'reopen', 7, 'aaaa', 'bbbb', 106
+    );
+    INSERT INTO device_cursors(device_id, vault_id, cursor, updated_at)
+    VALUES ('device-android', 'vault-existing', 1, 107);
+    INSERT INTO encrypted_snapshots(
+      id, vault_id, cursor, ciphertext, nonce, created_by_device_id, created_at
+    ) VALUES (
+      'snapshot-existing', 'vault-existing', 1, 'cccc', 'dddd',
+      'device-mac', 108
+    );
+  `);
+  const usageBefore = db.database.prepare(`
+    SELECT operation_count, ciphertext_bytes
+    FROM vault_usage WHERE vault_id = 'vault-existing'
+  `).get() as { operation_count: number; ciphertext_bytes: number };
+
+  db.applyMigration("0005_windows_platform.sql");
+
+  const linkedDevice = db.database.prepare(`
+    SELECT platform, created_by_device_id
+    FROM devices WHERE id = 'device-android'
+  `).get() as { platform: string; created_by_device_id: string };
+  assert.equal(linkedDevice.platform, "android");
+  assert.equal(linkedDevice.created_by_device_id, "device-mac");
+  assert.equal(
+    db.database.prepare("SELECT COUNT(*) AS count FROM pairing_sessions")
+      .get().count,
+    1,
+  );
+  assert.equal(
+    db.database.prepare("SELECT kind FROM change_log").get().kind,
+    "reopen",
+  );
+  assert.equal(
+    db.database.prepare("SELECT cursor FROM device_cursors").get().cursor,
+    1,
+  );
+  assert.equal(
+    db.database.prepare("SELECT id FROM encrypted_snapshots").get().id,
+    "snapshot-existing",
+  );
+  assert.deepEqual(
+    db.database.prepare(`
+      SELECT operation_count, ciphertext_bytes
+      FROM vault_usage WHERE vault_id = 'vault-existing'
+    `).get(),
+    usageBefore,
+  );
+  assert.deepEqual(db.database.prepare("PRAGMA foreign_key_check").all(), []);
+
+  db.database.prepare(`
+    INSERT INTO devices(
+      id, vault_id, token_hash, name, platform, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    "device-windows",
+    "vault-existing",
+    "token-windows",
+    "Windows",
+    "windows",
+    109,
+  );
+  assert.equal(
+    db.database.prepare("SELECT platform FROM devices WHERE id = ?")
+      .get("device-windows").platform,
+    "windows",
+  );
+});
+
 test("创建同步空间必须提供部署者邀请码且非法请求不消耗额度", async (context) => {
   const db = new MemoryD1();
   context.after(() => db.close());
@@ -235,7 +335,7 @@ test("vault、配对、密文同步、幂等与撤销形成完整闭环", async 
 
   const health = await callApi(env, "GET", "/health");
   assert.equal(health.status, 200);
-  assert.equal(health.payload.data.version, "0.1.15");
+  assert.equal(health.payload.data.version, "0.1.16");
   assert.equal(health.payload.data.database, "ok");
 
   const created = await callApi(env, "POST", "/v1/vaults", {

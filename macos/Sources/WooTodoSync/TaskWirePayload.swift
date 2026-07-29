@@ -53,6 +53,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         case title
         case timeType
         case periodStart
+        case deadlineDate
         case timezone
         case questLine
         case state
@@ -71,6 +72,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
     public let title: String
     public let timeType: WireTaskTimeType
     public let periodStart: String?
+    public let deadlineDate: String?
     public let timezone: String
     public let questLine: WireQuestLine
     public let state: WireTaskState
@@ -87,6 +89,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         title: String,
         timeType: WireTaskTimeType,
         periodStart: String?,
+        deadlineDate: String? = nil,
         timezone: String,
         questLine: WireQuestLine,
         state: WireTaskState,
@@ -104,6 +107,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         self.title = title
         self.timeType = timeType
         self.periodStart = periodStart
+        self.deadlineDate = deadlineDate
         self.timezone = timezone
         self.questLine = questLine
         self.state = state
@@ -124,7 +128,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
                 "timeType", "periodStart", "timezone", "questLine", "state",
                 "recurrence", "sortOrder", "createdAt", "updatedAt", "settledAt",
             ],
-            optional: ["reminderTime"]
+            optional: ["reminderTime", "deadlineDate"]
         )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         guard container.contains(.periodStart), container.contains(.settledAt) else {
@@ -144,6 +148,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         self.title = try container.decode(String.self, forKey: .title)
         self.timeType = try container.decode(WireTaskTimeType.self, forKey: .timeType)
         self.periodStart = try container.decodeIfPresent(String.self, forKey: .periodStart)
+        self.deadlineDate = try container.decodeIfPresent(String.self, forKey: .deadlineDate)
         self.timezone = try container.decode(String.self, forKey: .timezone)
         self.questLine = try container.decode(WireQuestLine.self, forKey: .questLine)
         self.state = try container.decode(WireTaskState.self, forKey: .state)
@@ -168,6 +173,9 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
             try container.encode(periodStart, forKey: .periodStart)
         } else {
             try container.encodeNil(forKey: .periodStart)
+        }
+        if let deadlineDate {
+            try container.encode(deadlineDate, forKey: .deadlineDate)
         }
         try container.encode(timezone, forKey: .timezone)
         try container.encode(questLine, forKey: .questLine)
@@ -206,6 +214,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
               (0...Self.maximumSortOrder).contains(sortOrder),
               (0...Self.maximumSafeInteger).contains(createdAt),
               (0...Self.maximumSafeInteger).contains(updatedAt),
+              deadlineDate.map({ Self.isValidPeriodStart($0, for: .day) }) ?? true,
               reminderTime.map(Self.isValidReminderTime) ?? true,
               settledAt.map({ (0...Self.maximumSafeInteger).contains($0) }) ?? true else {
             throw TaskPayloadValidationError.invalidField("range")

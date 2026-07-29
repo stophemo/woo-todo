@@ -22,7 +22,10 @@ final class WebDavSettingsStore: ObservableObject {
     @Published private(set) var isSaving = false
 
     var onRemoteChanges: (() -> Void)?
-    let workerSyncConfigured: Bool
+    var onWillReplaceWorkerSync: (() async -> Void)?
+    var onDidReplaceWorkerSync: (() -> Void)?
+    var onReplaceWorkerSyncFailed: (() -> Void)?
+    @Published private(set) var workerSyncConfigured: Bool
 
     var setupLinkURL: URL? {
         guard let credentials else { return nil }
@@ -39,7 +42,9 @@ final class WebDavSettingsStore: ObservableObject {
         category: "坚果云同步"
     )
     private let repository: SQLiteTaskRepository
-    private let credentialsStore: WebDavCredentialsStore
+    private let credentialsStore: any WebDavCredentialsStoring
+    private let workerCredentialsStore: any SyncCredentialsStoring
+    private let defaults: UserDefaults
     private var credentials: WebDavCredentials?
     private var runner: WebDavSyncRunner?
     private var runtimeMachine: SyncRuntimeStateMachine
@@ -53,14 +58,18 @@ final class WebDavSettingsStore: ObservableObject {
 
     init(
         repository: SQLiteTaskRepository,
-        credentialsStore: WebDavCredentialsStore = WebDavCredentialsStore(),
-        workerSyncConfigured: Bool
+        credentialsStore: any WebDavCredentialsStoring = WebDavCredentialsStore(),
+        workerCredentialsStore: any SyncCredentialsStoring,
+        workerSyncConfigured: Bool,
+        defaults: UserDefaults = .standard
     ) {
         self.repository = repository
         self.credentialsStore = credentialsStore
+        self.workerCredentialsStore = workerCredentialsStore
         self.workerSyncConfigured = workerSyncConfigured
+        self.defaults = defaults
         self.draftDeviceId = UUID().uuidString.lowercased()
-        let savedSuccess = UserDefaults.standard.object(
+        let savedSuccess = defaults.object(
             forKey: Self.lastSuccessfulDefaultsKey
         ) as? Double
         let machine = SyncRuntimeStateMachine(
@@ -111,12 +120,15 @@ final class WebDavSettingsStore: ObservableObject {
         hasStarted = false
     }
 
-    func configure() async {
-        guard !workerSyncConfigured, !isSaving else { return }
+    func configure(replacingWorkerSync: Bool = false) async {
+        guard (!workerSyncConfigured || replacingWorkerSync), !isSaving else { return }
         isSaving = true
         actionErrorMessage = nil
         defer { isSaving = false }
 
+        var previous: WebDavCredentials?
+        var previousWorkerCredentials: SyncCredentials?
+        var replacementPrepared = false
         do {
             let key = try Base64URL.decode(
                 vaultKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -129,23 +141,51 @@ final class WebDavSettingsStore: ObservableObject {
                 vaultKey: key
             )
             try newCredentials.validate()
-            let previous = try credentialsStore.load()
-            try credentialsStore.save(newCredentials)
-            do {
-                try repository.configureSync(Self.sqliteConfiguration(for: newCredentials))
-                try activate(newCredentials)
-            } catch {
-                if let previous {
-                    try? credentialsStore.save(previous)
-                } else {
-                    try? credentialsStore.delete()
+            let preparedClient = try WebDavClient(credentials: newCredentials)
+            previous = try credentialsStore.load()
+            previousWorkerCredentials = try workerCredentialsStore.load()
+            if replacingWorkerSync {
+                guard previousWorkerCredentials != nil else {
+                    throw WebDavError.invalidCredentials
                 }
+                await onWillReplaceWorkerSync?()
+                replacementPrepared = true
+            }
+            try credentialsStore.save(newCredentials)
+            if replacingWorkerSync {
+                try workerCredentialsStore.delete()
+            }
+            do {
+                if replacingWorkerSync {
+                    try repository.replaceSyncBinding(
+                        with: Self.sqliteConfiguration(for: newCredentials)
+                    )
+                } else {
+                    try repository.configureSync(Self.sqliteConfiguration(for: newCredentials))
+                }
+                activate(newCredentials, client: preparedClient)
+            } catch {
                 throw error
             }
+            workerSyncConfigured = false
             runtimeMachine.setConfigured(true)
             publishRuntimeState()
+            if replacingWorkerSync {
+                onDidReplaceWorkerSync?()
+            }
             requestSync(.localChange)
         } catch {
+            if let previous {
+                try? credentialsStore.save(previous)
+            } else {
+                try? credentialsStore.delete()
+            }
+            if replacementPrepared {
+                if let previousWorkerCredentials {
+                    try? workerCredentialsStore.save(previousWorkerCredentials)
+                }
+                onReplaceWorkerSyncFailed?()
+            }
             actionErrorMessage = error.localizedDescription
         }
     }
@@ -163,6 +203,10 @@ final class WebDavSettingsStore: ObservableObject {
 
     private func activate(_ credentials: WebDavCredentials) throws {
         let client = try WebDavClient(credentials: credentials)
+        activate(credentials, client: client)
+    }
+
+    private func activate(_ credentials: WebDavCredentials, client: WebDavClient) {
         self.credentials = credentials
         self.runner = WebDavSyncRunner(client: client, outbox: repository, local: repository)
         self.connection = WebDavConnectionSummary(
@@ -174,6 +218,36 @@ final class WebDavSettingsStore: ObservableObject {
         appPassword = credentials.appPassword
         vaultId = credentials.vaultId
         vaultKeyText = Base64URL.encode(credentials.vaultKey)
+    }
+
+    func prepareForReplacement() async {
+        let runningSync = syncTask
+        stop()
+        await runningSync?.value
+    }
+
+    func finishReplacement() {
+        credentials = nil
+        runner = nil
+        connection = nil
+        workerSyncConfigured = true
+        runtimeMachine = SyncRuntimeStateMachine(isConfigured: false)
+        publishRuntimeState()
+        appPassword = ""
+        makeFreshDraft()
+    }
+
+    func resumeAfterFailedReplacement() {
+        do {
+            if let stored = try credentialsStore.load() {
+                try activate(stored)
+                runtimeMachine.setConfigured(true)
+                publishRuntimeState()
+            }
+            start()
+        } catch {
+            actionErrorMessage = "坚果云同步身份暂时不可用：\(error.localizedDescription)"
+        }
     }
 
     private func runSyncLoop(startingWith initialTrigger: SyncTrigger) async {
@@ -188,7 +262,7 @@ final class WebDavSettingsStore: ObservableObject {
                 let summary = try await runner.synchronize()
                 lastRunSummary = summary
                 let successfulAt = Date()
-                UserDefaults.standard.set(
+                defaults.set(
                     successfulAt.timeIntervalSince1970,
                     forKey: Self.lastSuccessfulDefaultsKey
                 )

@@ -10,7 +10,7 @@ export const LIMITS = Object.freeze({
   pairingLifetimeMs: 10 * 60 * 1000,
 });
 
-const PLATFORMS = ["macos", "android"] as const;
+const PLATFORMS = ["macos", "android", "windows"] as const;
 const OPERATION_KINDS = [
   "upsert",
   "delete",
@@ -204,7 +204,7 @@ function deviceRegistration(value: unknown, field: string): DeviceRegistration {
     typeof parsed.platform !== "string" ||
     !PLATFORMS.includes(parsed.platform as Platform)
   ) {
-    fail(`${field}.platform`, "仅支持 macos 或 android");
+    fail(`${field}.platform`, "仅支持 macos、android 或 windows");
   }
 
   let publicKey: string | undefined;

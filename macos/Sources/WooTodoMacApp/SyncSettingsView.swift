@@ -3,6 +3,11 @@ import CoreImage
 import SwiftUI
 import WooTodoSync
 
+private enum SyncSwitchTarget {
+    case localNetwork
+    case webDav
+}
+
 struct SyncSettingsView: View {
     @ObservedObject var store: SyncSettingsStore
     @ObservedObject var webDavStore: WebDavSettingsStore
@@ -14,6 +19,7 @@ struct SyncSettingsView: View {
     @State private var webDavSetupLinkCopied = false
     @State private var webDavSetupLinkRevealed = false
     @State private var vaultCreationInviteCode = ""
+    @State private var syncSwitchTarget: SyncSwitchTarget?
 
     var body: some View {
         Group {
@@ -51,6 +57,34 @@ struct SyncSettingsView: View {
             }
         } message: {
             Text("撤销后，该设备的同步凭据会立即失效；设备上的本地任务不会被远程删除。")
+        }
+        .confirmationDialog(
+            "确认切换同步方式？",
+            isPresented: Binding(
+                get: { syncSwitchTarget != nil },
+                set: { if !$0 { syncSwitchTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            switch syncSwitchTarget {
+            case .localNetwork:
+                Button("切换到同一网络同步") {
+                    syncSwitchTarget = nil
+                    Task { await store.enableLocalNetworkSync(replacingWebDav: true) }
+                }
+            case .webDav:
+                Button("切换到坚果云同步") {
+                    syncSwitchTarget = nil
+                    Task { await webDavStore.configure(replacingWorkerSync: true) }
+                }
+            case nil:
+                EmptyView()
+            }
+            Button("取消", role: .cancel) {
+                syncSwitchTarget = nil
+            }
+        } message: {
+            Text("本地任务和显示配置会保留并重新同步；旧方式的本机凭据与同步记录会清除，旧同步空间中的远端数据不会被删除。")
         }
     }
 
@@ -160,9 +194,16 @@ struct SyncSettingsView: View {
             switch store.localNetworkHostState {
             case .disabled:
                 if webDavStore.connection != nil {
-                    Label("当前任务库正在使用坚果云同步，不能同时开启局域网同步。", systemImage: "info.circle")
+                    Label("当前正在使用坚果云同步。切换后会保留本地任务，并用新的局域网空间重新同步。", systemImage: "arrow.left.arrow.right")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.orange)
+                    Button {
+                        syncSwitchTarget = .localNetwork
+                    } label: {
+                        Label("切换到同一网络同步", systemImage: "wifi")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(webDavStore.isSaving || store.isCreatingVault)
                 } else if store.connection == nil {
                     Button {
                         Task { await store.enableLocalNetworkSync() }
@@ -216,17 +257,23 @@ struct SyncSettingsView: View {
     private var webDavCard: some View {
         SettingsCard(title: "坚果云自动同步", systemImage: "externaldrive.connected.to.line.below") {
             LabeledContent("WebDAV 地址", value: WebDavEndpointPolicy.endpoint.absoluteString)
-            if webDavStore.workerSyncConfigured
-                || store.connection != nil
-                || store.isCreatingVault
+            if store.isCreatingVault
                 || store.localNetworkHostState == .starting {
                 Label(
-                    "当前任务库已连接 Worker 或局域网同步，不能同时启用坚果云同步。",
+                    "另一种同步方式正在配置，请稍候。",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.caption)
                 .foregroundStyle(.orange)
             } else {
+                if hasWorkerOrLocalSync {
+                    Label(
+                        "当前正在使用\(store.isLocalNetworkConnection ? "同一网络" : "Worker")同步。填写坚果云配置后可以直接切换。",
+                        systemImage: "arrow.left.arrow.right"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
                 TextField("坚果云账号邮箱", text: $webDavStore.username)
                     .textFieldStyle(.roundedBorder)
                 SecureField("坚果云应用密码", text: $webDavStore.appPassword)
@@ -324,12 +371,19 @@ struct SyncSettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
                     Button {
-                        Task { await webDavStore.configure() }
+                        if hasWorkerOrLocalSync {
+                            syncSwitchTarget = .webDav
+                        } else {
+                            Task { await webDavStore.configure() }
+                        }
                     } label: {
                         if webDavStore.isSaving {
                             ProgressView().controlSize(.small)
                         } else {
-                            Label("保存并连接", systemImage: "link")
+                            Label(
+                                hasWorkerOrLocalSync ? "切换到坚果云同步" : "保存并连接",
+                                systemImage: hasWorkerOrLocalSync ? "arrow.left.arrow.right" : "link"
+                            )
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -352,6 +406,10 @@ struct SyncSettingsView: View {
                 }
             }
         }
+    }
+
+    private var hasWorkerOrLocalSync: Bool {
+        webDavStore.workerSyncConfigured || store.connection != nil
     }
 
     private func connectionCard(_ connection: SyncConnectionSummary) -> some View {

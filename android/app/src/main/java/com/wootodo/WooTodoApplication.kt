@@ -131,42 +131,114 @@ class WooTodoApplication : Application() {
         }
     }
 
-    suspend fun configureWebDav(credentials: WebDavCredentials) = withContext(Dispatchers.IO) {
-        if (syncCredentialsStore.load() != null) {
-            throw IllegalStateException("当前已配置 Worker 同步，请先使用现有同步方式")
+    suspend fun configureWebDav(
+        credentials: WebDavCredentials,
+        replacingWorkerSync: Boolean = false,
+    ) = syncRuntime.withExclusiveConfiguration {
+        withContext(Dispatchers.IO) {
+            val previousWorker = syncCredentialsStore.load()
+            if (previousWorker != null && !replacingWorkerSync) {
+                throw IllegalStateException("当前已配置其他同步方式，请先确认切换")
+            }
+            if (replacingWorkerSync && previousWorker == null) {
+                throw IllegalStateException("当前没有可替换的 Worker 或同一网络同步")
+            }
+            val previous = webDavCredentialsStore.load()
+            try {
+                if (replacingWorkerSync) SyncJobScheduler.cancel(this@WooTodoApplication)
+                webDavCredentialsStore.save(credentials)
+                if (replacingWorkerSync) syncCredentialsStore.delete()
+                ensureDisplayConfigurationStored()
+                if (replacingWorkerSync) {
+                    SQLiteSyncStore.replaceSyncBinding(
+                        database = database,
+                        credentials = credentials.syncIdentity(),
+                        onTasksChanged = { onRemoteTasksChanged() },
+                        onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
+                    )
+                } else {
+                    SQLiteSyncStore(database, credentials.syncIdentity())
+                }
+            } catch (error: Exception) {
+                if (previous == null) {
+                    webDavCredentialsStore.delete()
+                } else {
+                    webDavCredentialsStore.save(previous)
+                }
+                if (previousWorker != null) {
+                    syncCredentialsStore.save(previousWorker)
+                    syncRuntime.refreshConfiguration(configured = true)
+                    SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
+                    SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
+                }
+                throw error
+            }
+            syncRuntime.refreshConfiguration(configured = true)
+            SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
+            SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
         }
-        val previous = webDavCredentialsStore.load()
-        webDavCredentialsStore.save(credentials)
-        try {
-            ensureDisplayConfigurationStored()
-            SQLiteSyncStore(database, credentials.syncIdentity())
-        } catch (error: Exception) {
-            if (previous == null) webDavCredentialsStore.delete() else webDavCredentialsStore.save(previous)
-            throw error
-        }
-        syncRuntime.refreshConfiguration(configured = true)
-        SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
-        SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
     }
 
     suspend fun finalizePairing(completion: PairingCompletion) {
         check(completion.deviceId.isNotBlank() && completion.vaultId.isNotBlank())
-        try {
-            withContext(Dispatchers.IO) {
-                checkNotNull(createSyncCoordinator()) { "同步凭据未完成保存" }
+        syncRuntime.withExclusiveConfiguration {
+            try {
+                withContext(Dispatchers.IO) {
+                    val credentials = checkNotNull(syncCredentialsStore.load()) {
+                        "同步凭据未完成保存"
+                    }
+                    check(
+                        credentials.deviceId == completion.deviceId &&
+                            credentials.vaultId == completion.vaultId
+                    ) { "配对结果与本地同步凭据不一致" }
+                    // 在修改任何旧身份前先验证新端点，确保重绑后不会再因客户端构造失败回滚。
+                    SyncApiClient(credentials.endpoint)
+                    ensureDisplayConfigurationStored()
+                    val previousWebDav = webDavCredentialsStore.load()
+                    if (previousWebDav == null) {
+                        SQLiteSyncStore(
+                            database = database,
+                            credentials = credentials,
+                            onTasksChanged = { onRemoteTasksChanged() },
+                            onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
+                        )
+                    } else {
+                        SyncJobScheduler.cancel(this@WooTodoApplication)
+                        webDavCredentialsStore.delete()
+                        try {
+                            SQLiteSyncStore.replaceSyncBinding(
+                                database = database,
+                                credentials = credentials,
+                                onTasksChanged = { onRemoteTasksChanged() },
+                                onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
+                            )
+                        } catch (error: Exception) {
+                            webDavCredentialsStore.save(previousWebDav)
+                            throw error
+                        }
+                    }
+                }
+            } catch (error: CancellationException) {
+                // 凭据已完整落盘时保留它；下次启动会继续完成数据库绑定。
+                throw error
+            } catch (error: Exception) {
+                runCatching { syncCredentialsStore.delete() }
+                val fallbackConfigured = withContext(Dispatchers.IO) {
+                    runCatching { webDavCredentialsStore.load() != null }.getOrDefault(false)
+                }
+                syncRuntime.refreshConfiguration(configured = fallbackConfigured)
+                if (fallbackConfigured) {
+                    SyncJobScheduler.ensurePeriodic(this)
+                    SyncJobScheduler.enqueueImmediate(this)
+                } else {
+                    SyncJobScheduler.cancel(this)
+                }
+                throw PairingException.LocalBindingFailed
             }
-        } catch (error: CancellationException) {
-            // 凭据已完整落盘时保留它；下次启动会继续完成数据库绑定。
-            throw error
-        } catch (error: Exception) {
-            runCatching { syncCredentialsStore.delete() }
-            syncRuntime.refreshConfiguration(configured = false)
-            SyncJobScheduler.cancel(this)
-            throw PairingException.LocalBindingFailed
+            syncRuntime.refreshConfiguration(configured = true)
+            SyncJobScheduler.ensurePeriodic(this)
+            SyncJobScheduler.enqueueImmediate(this)
         }
-        syncRuntime.refreshConfiguration(configured = true)
-        SyncJobScheduler.ensurePeriodic(this)
-        SyncJobScheduler.enqueueImmediate(this)
         applicationScope.launch { syncRuntime.synchronize() }
     }
 

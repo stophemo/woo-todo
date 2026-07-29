@@ -24,13 +24,4 @@
         android:textColor="@color/widget_text"
         android:textSize="15sp" />
 
-    <TextView
-        android:id="@+id/widget_task_line"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:paddingStart="6dp"
-        android:paddingEnd="0dp"
-        android:textColor="@color/widget_muted"
-        android:textSize="11sp" />
-
 </LinearLayout>

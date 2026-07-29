@@ -46,6 +46,12 @@
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
           "description": "day 使用合法公历日期；week 必须为周一；month 必须为每月 1 日。week 的星期语义由客户端与共享 fixture 校验。"
         },
+        "deadlineDate": {
+          "type": ["string", "null"],
+          "format": "date",
+          "pattern": "^(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "可选任务截止日，仅用于提示；到期不会自动完成或 Pass。旧正文缺少该字段时等同 null。"
+        },
         "timezone": { "const": "Asia/Shanghai" },
         "questLine": { "$ref": "#/$defs/QuestLine" },
         "state": { "$ref": "#/$defs/TaskState" },

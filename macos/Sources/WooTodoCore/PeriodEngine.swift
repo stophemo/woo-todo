@@ -76,6 +76,11 @@ public struct PeriodEngine: Sendable {
 
             guard let period = task.period, period.end <= now else { continue }
 
+            guard case let .repeating(rule) = task.recurrence else {
+                // 一次性任务由用户主动完成或 Pass；跨周期后继续保留为待办。
+                continue
+            }
+
             if task.status == .pending {
                 task.status = .pass
                 task.completedAt = now
@@ -84,8 +89,7 @@ public struct PeriodEngine: Sendable {
                 changed.insert(task.id)
             }
 
-            guard case let .repeating(rule) = task.recurrence,
-                  let nextPeriod = nextPeriod(after: period, rule: rule) else {
+            guard let nextPeriod = nextPeriod(after: period, rule: rule) else {
                 continue
             }
 

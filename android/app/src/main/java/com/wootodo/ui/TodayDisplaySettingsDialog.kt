@@ -21,6 +21,11 @@ import java.time.LocalDate
 
 internal object TodayDisplaySettingsDialog {
     private data class TemplateVariable(val labelRes: Int, val token: String)
+    private data class CounterTemplateVariable(
+        val labelRes: Int,
+        val dateTitleRes: Int,
+        val variable: DayCounterText.CounterVariable,
+    )
 
     private val weekdayVariables = listOf(
         TemplateVariable(R.string.display_variable_weekday, DayCounterText.WEEKDAY_TOKEN),
@@ -39,19 +44,27 @@ internal object TodayDisplaySettingsDialog {
         TemplateVariable(R.string.display_variable_month_padded, DayCounterText.MONTH_PADDED_TOKEN),
         TemplateVariable(R.string.display_variable_day, DayCounterText.DAY_TOKEN),
         TemplateVariable(R.string.display_variable_day_padded, DayCounterText.DAY_PADDED_TOKEN),
-        TemplateVariable(R.string.display_variable_start_date, DayCounterText.START_DATE_TOKEN),
-        TemplateVariable(R.string.display_variable_deadline_date, DayCounterText.DEADLINE_DATE_TOKEN),
     )
     private val counterVariables = listOf(
-        TemplateVariable(R.string.display_variable_elapsed_days, DayCounterText.ELAPSED_DAYS_TOKEN),
-        TemplateVariable(R.string.display_variable_deadline_days, DayCounterText.DEADLINE_DAYS_TOKEN),
-        TemplateVariable(
-            R.string.display_variable_elapsed_months_days,
-            DayCounterText.ELAPSED_MONTHS_DAYS_TOKEN,
+        CounterTemplateVariable(
+            R.string.display_variable_elapsed_days,
+            R.string.display_select_start_date,
+            DayCounterText.CounterVariable.ELAPSED_DAYS,
         ),
-        TemplateVariable(
+        CounterTemplateVariable(
+            R.string.display_variable_deadline_days,
+            R.string.display_select_deadline_date,
+            DayCounterText.CounterVariable.DEADLINE_DAYS,
+        ),
+        CounterTemplateVariable(
+            R.string.display_variable_elapsed_months_days,
+            R.string.display_select_start_date,
+            DayCounterText.CounterVariable.ELAPSED_MONTHS_DAYS,
+        ),
+        CounterTemplateVariable(
             R.string.display_variable_deadline_months_days,
-            DayCounterText.DEADLINE_MONTHS_DAYS_TOKEN,
+            R.string.display_select_deadline_date,
+            DayCounterText.CounterVariable.DEADLINE_MONTHS_DAYS,
         ),
     )
 
@@ -78,6 +91,7 @@ internal object TodayDisplaySettingsDialog {
             value = initial.headerTemplate,
             limit = 80,
             spacing = spacing,
+            today = today,
         )
         val subtitleInput = templateEditor(
             activity = activity,
@@ -87,11 +101,8 @@ internal object TodayDisplaySettingsDialog {
             value = initial.subtitleTemplate,
             limit = 160,
             spacing = spacing,
+            today = today,
         )
-        val startDateButton = Button(activity).apply { isAllCaps = false }
-        val deadlineDateButton = Button(activity).apply { isAllCaps = false }
-        container.addView(startDateButton)
-        container.addView(deadlineDateButton)
 
         val previewLabel = TextView(activity).apply {
             setText(R.string.display_preview)
@@ -121,8 +132,6 @@ internal object TodayDisplaySettingsDialog {
         )
 
         fun renderPreview() {
-            startDateButton.text = activity.getString(R.string.display_start_date, startDate)
-            deadlineDateButton.text = activity.getString(R.string.display_deadline_date, deadlineDate)
             val rendered = DayCounterText.render(currentSettings(), today)
             previewHeader.text = rendered.header.orEmpty()
             previewHeader.isVisible = rendered.header != null
@@ -133,18 +142,6 @@ internal object TodayDisplaySettingsDialog {
 
         headerInput.doAfterTextChanged { renderPreview() }
         subtitleInput.doAfterTextChanged { renderPreview() }
-        startDateButton.setOnClickListener {
-            pickDate(activity, startDate) { selected ->
-                startDate = selected
-                renderPreview()
-            }
-        }
-        deadlineDateButton.setOnClickListener {
-            pickDate(activity, deadlineDate) { selected ->
-                deadlineDate = selected
-                renderPreview()
-            }
-        }
         renderPreview()
 
         val scrollView = ScrollView(activity).apply {
@@ -179,6 +176,7 @@ internal object TodayDisplaySettingsDialog {
         value: String,
         limit: Int,
         spacing: Int,
+        today: LocalDate,
     ): EditText {
         container.addView(TextView(activity).apply {
             setText(labelRes)
@@ -202,7 +200,9 @@ internal object TodayDisplaySettingsDialog {
             setText(R.string.display_insert_variable)
             isAllCaps = false
             minWidth = 0
-            setOnClickListener { anchor -> showVariableMenu(activity, anchor, input) }
+            setOnClickListener { anchor ->
+                showVariableMenu(activity, anchor, input, today, limit)
+            }
         }
         row.addView(insertButton)
         container.addView(row)
@@ -213,15 +213,38 @@ internal object TodayDisplaySettingsDialog {
         activity: AppCompatActivity,
         anchor: View,
         input: EditText,
+        today: LocalDate,
+        limit: Int,
     ) {
         PopupMenu(activity, anchor).apply {
             menu.addSubMenu(R.string.display_variable_group_weekday)
-                .addVariables(activity, input, weekdayVariables)
+                .addVariables(activity, input, weekdayVariables, limit)
             menu.addSubMenu(R.string.display_variable_group_date)
-                .addVariables(activity, input, dateVariables)
+                .addVariables(activity, input, dateVariables, limit)
             menu.addSubMenu(R.string.display_variable_group_counter)
-                .addVariables(activity, input, counterVariables)
+                .addCounterVariables(activity, input, counterVariables, today, limit)
             show()
+        }
+    }
+
+    private fun Menu.addCounterVariables(
+        activity: AppCompatActivity,
+        input: EditText,
+        variables: List<CounterTemplateVariable>,
+        today: LocalDate,
+        limit: Int,
+    ) {
+        variables.forEach { variable ->
+            add(activity.getString(variable.labelRes)).setOnMenuItemClickListener {
+                pickDate(activity, today, variable.dateTitleRes) { selected ->
+                    insertToken(
+                        input,
+                        DayCounterText.counterToken(variable.variable, selected),
+                        limit,
+                    )
+                }
+                true
+            }
         }
     }
 
@@ -229,25 +252,31 @@ internal object TodayDisplaySettingsDialog {
         activity: AppCompatActivity,
         input: EditText,
         variables: List<TemplateVariable>,
+        limit: Int,
     ) {
         variables.forEach { variable ->
             add(activity.getString(variable.labelRes)).setOnMenuItemClickListener {
-                insertToken(input, variable.token)
+                insertToken(input, variable.token, limit)
                 true
             }
         }
     }
 
-    private fun insertToken(input: EditText, token: String) {
-        val position = input.selectionStart.coerceIn(0, input.text.length)
-        input.text.insert(position, token)
+    private fun insertToken(input: EditText, token: String, limit: Int) {
+        val selectionStart = input.selectionStart.coerceIn(0, input.text.length)
+        val selectionEnd = input.selectionEnd.coerceIn(0, input.text.length)
+        val start = minOf(selectionStart, selectionEnd)
+        val end = maxOf(selectionStart, selectionEnd)
+        if (input.text.length - (end - start) + token.length > limit) return
+        input.text.replace(start, end, token)
         input.requestFocus()
-        input.setSelection((position + token.length).coerceAtMost(input.text.length))
+        input.setSelection((start + token.length).coerceAtMost(input.text.length))
     }
 
     private fun pickDate(
         activity: AppCompatActivity,
         initial: LocalDate,
+        titleRes: Int,
         onSelected: (LocalDate) -> Unit,
     ) {
         DatePickerDialog(
@@ -256,6 +285,8 @@ internal object TodayDisplaySettingsDialog {
             initial.year,
             initial.monthValue - 1,
             initial.dayOfMonth,
-        ).show()
+        ).apply {
+            setTitle(titleRes)
+        }.show()
     }
 }

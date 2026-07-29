@@ -24,9 +24,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
         do {
+            let runtime = try AppRuntimeConfiguration.current()
             // 本地任务库是启动的唯一硬依赖；同步身份即使损坏或不匹配也不能阻塞本地使用。
-            let repository = try SQLiteTaskRepository(databaseURL: databaseURL())
-            let credentialsStore = KeychainCredentialsStore()
+            let repository = try SQLiteTaskRepository(databaseURL: runtime.databaseURL)
+            if runtime.shouldSeedUITestFixtures {
+                try UITestFixtureSeeder.seedIfNeeded(repository: repository)
+            }
+            let credentialsStore = runtime.syncCredentialsStore
+            let webDavCredentialsStore = runtime.webDavCredentialsStore
             let activeCredentials: SyncCredentials?
             let syncActivationError: Error?
             do {
@@ -50,15 +55,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let syncSettingsStore = try SyncSettingsStore(
                 repository: repository,
                 credentialsStore: credentialsStore,
-                credentials: activeCredentials
+                webDavCredentialsStore: webDavCredentialsStore,
+                credentials: activeCredentials,
+                defaults: runtime.defaults
             )
             let webDavSettingsStore = WebDavSettingsStore(
                 repository: repository,
-                workerSyncConfigured: activeCredentials != nil
+                credentialsStore: webDavCredentialsStore,
+                workerCredentialsStore: credentialsStore,
+                workerSyncConfigured: activeCredentials != nil,
+                defaults: runtime.defaults
             )
             let store = TodayStore(repository: repository)
-            let dayCounterStore = DayCounterStore(repository: repository)
-            let taskNotificationScheduler = TaskNotificationScheduler()
+            let dayCounterStore = DayCounterStore(
+                defaults: runtime.defaults,
+                repository: repository
+            )
+            let taskNotificationScheduler: TaskNotificationScheduler? = runtime.allowsExternalServices
+                ? TaskNotificationScheduler()
+                : nil
             store.reload()
             store.onTasksChanged = { [weak self] in
                 self?.dashboardWindowController?.reload()
@@ -69,40 +84,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let panelController = FloatingPanelController(
                 store: store,
-                dayCounterStore: dayCounterStore
+                dayCounterStore: dayCounterStore,
+                defaults: runtime.defaults
             )
             let quickAddPanelController = QuickAddPanelController(store: store)
-            let appUpdateController = AppUpdateController()
-            let shortcutSettingsStore = ShortcutSettingsStore(actions: [
-                .quickAdd: { [weak quickAddPanelController] in
-                    quickAddPanelController?.show()
-                },
-                .toggleTaskPanel: { [weak panelController] in
-                    panelController?.toggleVisibility()
-                },
-                .toggleAlwaysOnTop: { [weak panelController] in
-                    panelController?.toggleAlwaysOnTop()
-                },
-                .toggleClickThrough: { [weak panelController] in
-                    panelController?.toggleClickThrough()
-                },
-            ])
-            let statusMenuController = StatusMenuController(
-                panelController: panelController,
-                shortcutSettingsStore: shortcutSettingsStore,
-                quickAdd: { [weak quickAddPanelController] in
-                    quickAddPanelController?.show()
-                },
-                openDashboard: { [weak self] in
-                    self?.showDashboard()
-                },
-                openSettings: { [weak self] in
-                    self?.showDashboard(section: .display)
-                },
-                checkForUpdates: { [weak appUpdateController] in
-                    appUpdateController?.checkManually()
-                }
+            let appUpdateController: AppUpdateController? = runtime.allowsExternalServices
+                ? AppUpdateController(defaults: runtime.defaults)
+                : nil
+            let shortcutSettingsStore = ShortcutSettingsStore(
+                defaults: runtime.defaults,
+                actions: [
+                    .quickAdd: { [weak quickAddPanelController] in
+                        quickAddPanelController?.show()
+                    },
+                    .toggleTaskPanel: { [weak panelController] in
+                        panelController?.toggleVisibility()
+                    },
+                    .toggleAlwaysOnTop: { [weak panelController] in
+                        panelController?.toggleAlwaysOnTop()
+                    },
+                    .toggleClickThrough: { [weak panelController] in
+                        panelController?.toggleClickThrough()
+                    },
+                ]
             )
+            let statusMenuController: StatusMenuController?
+            if runtime.allowsExternalServices {
+                statusMenuController = StatusMenuController(
+                    panelController: panelController,
+                    shortcutSettingsStore: shortcutSettingsStore,
+                    quickAdd: { [weak quickAddPanelController] in
+                        quickAddPanelController?.show()
+                    },
+                    openDashboard: { [weak self] in
+                        self?.showDashboard()
+                    },
+                    openSettings: { [weak self] in
+                        self?.showDashboard(section: .display)
+                    },
+                    checkForUpdates: { [weak appUpdateController] in
+                        appUpdateController?.checkManually()
+                    }
+                )
+            } else {
+                statusMenuController = nil
+            }
 
             self.repository = repository
             todayStore = store
@@ -115,15 +141,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.quickAddPanelController = quickAddPanelController
             self.statusMenuController = statusMenuController
             self.appUpdateController = appUpdateController
-            appUpdateController.checkAutomatically()
-            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-                forName: NSWorkspace.didWakeNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.dayCounterStore?.refreshDate()
-                    self?.appUpdateController?.checkAutomatically()
+            appUpdateController?.checkAutomatically()
+            if runtime.allowsExternalServices {
+                wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                    forName: NSWorkspace.didWakeNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        self?.dayCounterStore?.refreshDate()
+                        self?.appUpdateController?.checkAutomatically()
+                    }
                 }
             }
             panelController.onStateChange = { [weak statusMenuController] in
@@ -136,7 +164,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.syncSettingsStore?.requestSync(.localChange)
                 self?.webDavSettingsStore?.requestSync(.localChange)
             }
-            shortcutSettingsStore.start()
+            if runtime.allowsExternalServices {
+                shortcutSettingsStore.start()
+            }
             syncSettingsStore.onRemoteChanges = { [weak self] in
                 self?.todayStore?.reload()
                 self?.dayCounterStore?.reloadFromRepository()
@@ -154,10 +184,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.dashboardWindowController?.reload()
                 self?.refreshTaskNotifications()
             }
-            syncSettingsStore.start()
-            webDavSettingsStore.start()
-            panelController.show()
-            refreshTaskNotifications()
+            syncSettingsStore.onWillSwitchFromWebDav = { [weak webDavSettingsStore] in
+                await webDavSettingsStore?.prepareForReplacement()
+            }
+            syncSettingsStore.onDidSwitchFromWebDav = { [weak webDavSettingsStore] in
+                webDavSettingsStore?.finishReplacement()
+            }
+            syncSettingsStore.onSwitchFromWebDavFailed = { [weak webDavSettingsStore] in
+                webDavSettingsStore?.resumeAfterFailedReplacement()
+            }
+            webDavSettingsStore.onWillReplaceWorkerSync = { [weak syncSettingsStore] in
+                await syncSettingsStore?.prepareForReplacement()
+            }
+            webDavSettingsStore.onDidReplaceWorkerSync = { [weak syncSettingsStore] in
+                syncSettingsStore?.finishReplacement()
+            }
+            webDavSettingsStore.onReplaceWorkerSyncFailed = { [weak syncSettingsStore] in
+                syncSettingsStore?.resumeAfterFailedReplacement()
+            }
+            if runtime.allowsExternalServices {
+                syncSettingsStore.start()
+                webDavSettingsStore.start()
+                refreshTaskNotifications()
+            }
+            if let section = runtime.initialDashboardSection {
+                showDashboard(section: section)
+                scheduleUITestSnapshot(
+                    window: dashboardWindowController?.window,
+                    runtime: runtime
+                )
+            } else {
+                panelController.show()
+                scheduleUITestSnapshot(window: panelController.window, runtime: runtime)
+            }
             if let syncActivationError {
                 showSyncCredentialsWarning(syncActivationError)
             }
@@ -260,18 +319,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    private func databaseURL() throws -> URL {
-        let root = try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        return root
-            .appendingPathComponent("WooTodo", isDirectory: true)
-            .appendingPathComponent("tasks.sqlite")
-    }
-
     private func showDashboard(section: DashboardSection = .today) {
         if let dashboardWindowController {
             dashboardWindowController.show(section: section)
@@ -314,6 +361,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             logger.error(
                 "刷新任务提醒失败：\(error.localizedDescription, privacy: .public)"
             )
+        }
+    }
+
+    private func scheduleUITestSnapshot(
+        window: NSWindow?,
+        runtime: AppRuntimeConfiguration
+    ) {
+        guard let window,
+              let directory = runtime.uiTestArtifactDirectory,
+              let screenName = runtime.uiTestScreenName else { return }
+        let destination = directory.appendingPathComponent("\(screenName).png")
+        Task { @MainActor [weak window] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let view = window?.contentView else { return }
+            view.layoutSubtreeIfNeeded()
+            view.displayIfNeeded()
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                return
+            }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            guard let data = bitmap.representation(using: .png, properties: [:]) else {
+                return
+            }
+            do {
+                try data.write(to: destination, options: .atomic)
+            } catch {
+                logger.error(
+                    "UI 测试截图写入失败：\(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
     }
 

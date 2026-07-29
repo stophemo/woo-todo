@@ -54,6 +54,7 @@ class TaskDatabaseInstrumentedTest {
             createdAt = 1_000,
             updatedAt = 1_000,
             settledAt = null,
+            deadlineDate = LocalDate.of(2026, 7, 20),
         )
         store.insert(task)
 
@@ -215,6 +216,53 @@ class TaskDatabaseInstrumentedTest {
                 cursor.getInt(0)
             },
         )
+    }
+
+    @Test
+    fun `版本八升级会保留任务并新增截止日期`() = runBlocking {
+        database.close()
+        context.deleteDatabase(DATABASE_NAME)
+        context.openOrCreateDatabase(DATABASE_NAME, Context.MODE_PRIVATE, null).use { legacy ->
+            legacy.execSQL(
+                """
+                CREATE TABLE tasks (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    series_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    time_type TEXT NOT NULL,
+                    target_date TEXT,
+                    quest_line TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    recurrence TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    settled_at INTEGER,
+                    reminder_time TEXT
+                )
+                """.trimIndent(),
+            )
+            legacy.execSQL(
+                """
+                INSERT INTO tasks VALUES (
+                    'task-v8-upgrade', 'task-v8-upgrade', '升级后截止日期',
+                    'day', '2026-07-21', 'main', 'pending', 'once', 0,
+                    4000, 4000, NULL, '08:30'
+                )
+                """.trimIndent(),
+            )
+            legacy.version = 8
+        }
+
+        database = TaskDatabase(context)
+        database.writableDatabase
+        val store = SQLiteTaskStore(database)
+        val restored = requireNotNull(store.getById("task-v8-upgrade"))
+        assertEquals(null, restored.deadlineDate)
+
+        val deadline = LocalDate.of(2026, 7, 30)
+        assertEquals(true, store.update(restored.copy(deadlineDate = deadline)))
+        assertEquals(deadline, store.getById(restored.id)?.deadlineDate)
     }
 
     private companion object {

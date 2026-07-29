@@ -2,7 +2,8 @@ package com.wootodo.sync
 
 enum class DevicePlatform(val wireValue: String) {
     MACOS("macos"),
-    ANDROID("android");
+    ANDROID("android"),
+    WINDOWS("windows");
 
     companion object {
         fun fromWire(value: String): DevicePlatform = entries.firstOrNull { it.wireValue == value }

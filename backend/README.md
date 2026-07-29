@@ -1,6 +1,6 @@
 # woo-todo 同步后端
 
-这是一个运行在 Cloudflare Workers + D1 上的 local-first 增量同步服务。macOS 与 Android 客户端始终先写各自的本地 SQLite；服务端只负责保存客户端产生的 AES-256-GCM 密文、分配递增游标和转发变更，不读取任务正文。
+这是一个运行在 Cloudflare Workers + D1 上的 local-first 增量同步服务。macOS、Android 与 Windows 客户端始终先写各自的本地 SQLite；服务端只负责保存客户端产生的 AES-256-GCM 密文、分配递增游标和转发变更，不读取任务正文。
 
 ## 安全边界
 
@@ -31,7 +31,7 @@ npx wrangler dev
 
 ## 面向个人的 Cloudflare 免费部署
 
-这是一条自托管的可选路径，坚果云用户不需要执行本节。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人双端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
+这是一条自托管的可选路径，坚果云用户不需要执行本节。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人多端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
 
 ### 1. 准备账号和工具
 
@@ -88,7 +88,19 @@ npx wrangler deploy
 
 迁移必须在 `wrangler.toml` 写入真实 `database_id` 后执行。不要用 `--local` 代替 `--remote`，也不要跳过仓库中的迁移文件。`wrangler deploy` 成功后会打印 Worker URL，通常形如 `https://woo-todo-sync.<你的 workers 子域>.workers.dev`；如果命令提示选择或创建 `workers.dev` 子域名，按 Cloudflare 提示完成一次启用。自定义域名不是本项目必需项。
 
-### 5. 验证并连接双端
+#### 从旧版本升级已有部署
+
+升级到 `v0.1.16` 时，必须先在原 D1 上应用 `0005_windows_platform.sql`，再部署新版 Worker，Windows 才能创建同步空间或加入既有空间：
+
+```bash
+cd backend
+npx wrangler d1 migrations apply woo-todo --remote
+npx wrangler deploy
+```
+
+继续使用原来的真实 `database_id`、`TOKEN_PEPPER` 和 `VAULT_CREATION_INVITE_CODE`。尤其不要重建 D1 或更换 `TOKEN_PEPPER`，否则既有设备令牌将无法认证。执行前可在 Cloudflare Dashboard 导出 D1 备份；迁移完成后应先验证 `/health`，再让 Windows 客户端连接。
+
+### 5. 验证并连接多端
 
 把部署输出的根地址（不要附加 `/v1`）保存到密码管理器或私密笔记，并先检查健康接口：
 
@@ -96,7 +108,7 @@ npx wrangler deploy
 curl -fsS 'https://woo-todo-sync.example.workers.dev/health'
 ```
 
-把示例地址替换为部署命令输出的实际 URL；响应应包含 `"ok": true`。随后按 [macOS 与 Android 可选在线配对同步](../docs/PAIRING.md) 操作：在 Mac 的“同步”页填写 Worker 根地址和 `VAULT_CREATION_INVITE_CODE`，创建同步空间；再生成二维码，让 Android 用系统二维码扫描器加入，逐位核对六位码后确认。邀请码只随创建请求发送，客户端不会保存；二维码和配对 secret 只通过自己的私密渠道传递。
+把示例地址替换为部署命令输出的实际 URL；响应应包含 `"ok": true`。随后可在 Mac 的“同步”页或 Windows 的“同步与备份”页填写 Worker 根地址和 `VAULT_CREATION_INVITE_CODE`，创建同步空间；再生成二维码，让 Android 用应用内扫码入口加入，逐位核对六位码后确认。邀请码只随创建请求发送，客户端不会保存；二维码和配对 secret 只通过自己的私密渠道传递。
 
 ### 免费层和数据边界
 

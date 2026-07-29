@@ -101,6 +101,12 @@ class SyncRuntime(
         mutableState.value = if (configured) SyncRuntimeState.Idle else SyncRuntimeState.Unpaired
     }
 
+    /**
+     * 与同步共用单飞锁执行凭据和 SQLite 身份重绑，避免运行中的旧同步与切换互相覆盖。
+     */
+    suspend fun <T> withExclusiveConfiguration(block: suspend () -> T): T =
+        mutex.withLock { block() }
+
     suspend fun synchronize(): SyncExecutionResult = mutex.withLock {
         val runner = try {
             withContext(ioDispatcher) { runnerFactory() }

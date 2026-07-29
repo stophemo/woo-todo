@@ -150,6 +150,8 @@ public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
     public let createdAt: Date
     public var updatedAt: Date
     public var reminderTime: TaskReminderTime?
+    /// 用户可选的任务截止日；不会自动改变任务状态。
+    public var deadlineDate: Date?
     /// completed 与 Pass 共用的结算时间；沿用字段名以兼容现有本地数据库。
     public var completedAt: Date?
 
@@ -166,6 +168,7 @@ public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
         createdAt: Date = Date(),
         updatedAt: Date? = nil,
         reminderTime: TaskReminderTime? = nil,
+        deadlineDate: Date? = nil,
         completedAt: Date? = nil
     ) throws {
         let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -195,6 +198,7 @@ public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt ?? createdAt
         self.reminderTime = timeScope == .anytime ? nil : reminderTime
+        self.deadlineDate = deadlineDate
         self.completedAt = completedAt
     }
 

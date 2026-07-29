@@ -28,7 +28,7 @@ public final class TodayStore: ObservableObject {
             try LazySettlementService(repository: repository, engine: engine).settle(at: date)
             let period = engine.period(containing: date, for: .daily)!
             tasks = try repository
-                .fetchTasks(scope: .daily, in: period)
+                .fetchTasks(scope: .daily, in: period, includeOverdueOnce: true)
                 .sorted(by: TodoTask.displayOrder)
         }
     }
@@ -39,13 +39,14 @@ public final class TodayStore: ObservableObject {
         title: String,
         tier: QuestTier,
         repeatsDaily: Bool,
-        reminderTime: TaskReminderTime? = nil
+        reminderTime: TaskReminderTime? = nil,
+        deadlineDate: Date? = nil
     ) -> Bool {
         let didAdd = perform {
             let date = now()
             let period = engine.period(containing: date, for: .daily)
             let maxIndex = try repository
-                .fetchTasks(scope: .daily, in: period)
+                .fetchTasks(scope: .daily, in: period, includeOverdueOnce: true)
                 .filter { $0.tier == tier }
                 .map(\.sortIndex)
                 .max() ?? -1
@@ -59,7 +60,8 @@ public final class TodayStore: ObservableObject {
                 period: period,
                 sortIndex: maxIndex + 1,
                 createdAt: date,
-                reminderTime: reminderTime
+                reminderTime: reminderTime,
+                deadlineDate: repeatsDaily ? nil : deadlineDate
             )
             try repository.save(task)
         }
@@ -75,7 +77,8 @@ public final class TodayStore: ObservableObject {
         title: String,
         tier: QuestTier,
         repeatsDaily: Bool,
-        reminderTime: TaskReminderTime? = nil
+        reminderTime: TaskReminderTime? = nil,
+        deadlineDate: Date? = nil
     ) {
         guard tasks.first(where: { $0.id == id })?.status == .pending else { return }
         if perform({
@@ -94,6 +97,7 @@ public final class TodayStore: ObservableObject {
                 ? .repeating(RepeatRule(frequency: .daily))
                 : .once
             task.reminderTime = reminderTime
+            task.deadlineDate = repeatsDaily ? nil : deadlineDate
             task.updatedAt = now()
             try repository.save(task)
             reload()
@@ -123,6 +127,22 @@ public final class TodayStore: ObservableObject {
             }
             if didChange { reload() }
         }), didChange {
+            onTasksChanged?()
+        }
+    }
+
+    public func pass(id: UUID) {
+        guard var task = tasks.first(where: { $0.id == id }), task.status == .pending else {
+            return
+        }
+        if perform({
+            let date = now()
+            task.status = .pass
+            task.completedAt = date
+            task.updatedAt = date
+            try repository.save(task)
+            reload()
+        }) {
             onTasksChanged?()
         }
     }

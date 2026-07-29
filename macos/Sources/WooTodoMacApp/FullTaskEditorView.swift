@@ -8,6 +8,7 @@ struct FullTaskInput {
     let tier: QuestTier
     let repeats: Bool
     let reminderTime: TaskReminderTime?
+    let deadlineDate: Date?
 }
 
 enum FullTaskEditorMode {
@@ -24,6 +25,8 @@ struct FullTaskEditorView: View {
     @State private var repeats: Bool
     @State private var reminderEnabled: Bool
     @State private var reminderDate: Date
+    @State private var deadlineEnabled: Bool
+    @State private var deadlineDate: Date
 
     let mode: FullTaskEditorMode
     let save: (FullTaskInput) -> Void
@@ -40,6 +43,8 @@ struct FullTaskEditorView: View {
             _repeats = State(initialValue: false)
             _reminderEnabled = State(initialValue: false)
             _reminderDate = State(initialValue: Self.defaultReminderDate)
+            _deadlineEnabled = State(initialValue: false)
+            _deadlineDate = State(initialValue: targetDate)
         case let .edit(task):
             _title = State(initialValue: task.title)
             _scope = State(initialValue: task.timeScope)
@@ -47,6 +52,8 @@ struct FullTaskEditorView: View {
             _tier = State(initialValue: task.tier)
             _reminderEnabled = State(initialValue: task.reminderTime != nil)
             _reminderDate = State(initialValue: Self.date(for: task.reminderTime))
+            _deadlineEnabled = State(initialValue: task.deadlineDate != nil)
+            _deadlineDate = State(initialValue: task.deadlineDate ?? task.period?.start ?? Date())
             if case .repeating = task.recurrence {
                 _repeats = State(initialValue: true)
             } else {
@@ -98,9 +105,19 @@ struct FullTaskEditorView: View {
                     )
                 }
             } else {
-                Text("闲时任务没有截止周期，也不会自动 Pass。")
+                Text("闲时任务没有目标周期，也不会自动 Pass。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Toggle("设置截止日期", isOn: $deadlineEnabled)
+                .disabled(repeats)
+            if deadlineEnabled && !repeats {
+                DatePicker(
+                    "截止日期",
+                    selection: $deadlineDate,
+                    displayedComponents: .date
+                )
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -132,6 +149,12 @@ struct FullTaskEditorView: View {
                 repeats = false
                 reminderEnabled = false
             }
+        }
+        .onChange(of: repeats) { _, enabled in
+            if enabled { deadlineEnabled = false }
+        }
+        .onChange(of: targetDate) { _, selected in
+            if !deadlineEnabled { deadlineDate = selected }
         }
     }
 
@@ -177,7 +200,10 @@ struct FullTaskEditorView: View {
             targetDate: targetDate,
             tier: tier,
             repeats: repeats && scope != .anytime,
-            reminderTime: reminderEnabled && scope != .anytime ? selectedReminderTime : nil
+            reminderTime: reminderEnabled && scope != .anytime ? selectedReminderTime : nil,
+            deadlineDate: deadlineEnabled && !repeats
+                ? Calendar.current.startOfDay(for: deadlineDate)
+                : nil
         ))
         dismiss()
     }

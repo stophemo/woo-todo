@@ -67,6 +67,7 @@ data class Task(
     val updatedAt: Long,
     val settledAt: Long?,
     val reminderTime: LocalTime? = null,
+    val deadlineDate: LocalDate? = null,
 )
 
 data class TaskDraft(
@@ -77,4 +78,5 @@ data class TaskDraft(
     val recurrence: Recurrence = Recurrence.ONCE,
     val sortOrder: Int? = null,
     val reminderTime: LocalTime? = null,
+    val deadlineDate: LocalDate? = null,
 )

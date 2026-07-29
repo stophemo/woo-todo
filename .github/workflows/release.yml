@@ -23,17 +23,6 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 校验发布说明
-        shell: bash
-        run: |
-          set -euo pipefail
-          NOTES_FILE="docs/releases/${GITHUB_REF_NAME}.md"
-          test -f "$NOTES_FILE"
-          if head -n 1 "$NOTES_FILE" | grep -Eq '^# '; then
-            echo "Release 正文不要重复一级标题；GitHub Release 标题由工作流单独生成。" >&2
-            exit 1
-          fi
-
   android:
     name: 构建 Android 正式安装包
     needs: validate-tag
@@ -330,16 +319,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          NOTES_FILE="docs/releases/${GITHUB_REF_NAME}.md"
-          test -f "$NOTES_FILE"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" release/* --clobber
             gh release edit "$GITHUB_REF_NAME" \
-              --title "Woo Todo $GITHUB_REF_NAME" \
-              --notes-file "$NOTES_FILE"
+              --title "Woo Todo $GITHUB_REF_NAME"
           else
             gh release create "$GITHUB_REF_NAME" release/* \
               --verify-tag \
               --title "Woo Todo $GITHUB_REF_NAME" \
-              --notes-file "$NOTES_FILE"
+              --generate-notes
           fi

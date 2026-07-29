@@ -55,6 +55,7 @@ class SyncJsonCodecTest {
               "id":"550e8400-e29b-41d4-a716-446655440000",
               "seriesId":"550e8400-e29b-41d4-a716-446655440000",
               "title":"整理明日工作","timeType":"day","periodStart":"2026-07-16",
+              "deadlineDate":"2026-07-20",
               "timezone":"Asia/Shanghai","questLine":"main","state":"pending",
               "recurrence":"repeat","sortOrder":0,"createdAt":1,"updatedAt":1,"settledAt":null
             }
@@ -63,8 +64,16 @@ class SyncJsonCodecTest {
 
         assertEquals("550e8400-e29b-41d4-a716-446655440000", payload.seriesId)
         assertEquals("2026-07-16", payload.periodStart)
+        assertEquals("2026-07-20", payload.deadlineDate)
         assertEquals(WireRecurrence.REPEAT, payload.recurrence)
-        assertTrue(SyncJsonCodec.encodeTaskPayload(payload).contains("\"entityType\":\"task\""))
+        val encodedTask = SyncJsonCodec.encodeTaskPayload(payload)
+        assertTrue(encodedTask.contains("\"entityType\":\"task\""))
+        assertTrue(encodedTask.contains("\"deadlineDate\":\"2026-07-20\""))
+
+        val legacyPayload = SyncJsonCodec.decodeTaskPayload(
+            JSONObject(taskSource).apply { remove("deadlineDate") }.toString(),
+        ) as TaskInstancePayload
+        assertEquals(null, legacyPayload.deadlineDate)
 
         val tombstone = SyncJsonCodec.decodeTaskPayload(
             """{"protocolVersion":1,"entityType":"tombstone","id":"task_12345678","deletedAt":2}""",

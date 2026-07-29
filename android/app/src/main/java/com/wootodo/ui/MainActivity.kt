@@ -464,8 +464,7 @@ class MainActivity : AppCompatActivity() {
             }
             menu.add(0, MENU_DAY_COUNTER, order++, R.string.day_counter_settings_title)
             menu.add(0, MENU_REMINDER, order++, R.string.reminder_settings_title)
-            menu.add(0, MENU_SCAN_MAC_WEBDAV, order++, R.string.scan_mac_webdav_qr)
-            menu.add(0, MENU_WEBDAV, order++, R.string.webdav_settings_title)
+            menu.add(0, MENU_SYNC_METHOD, order++, R.string.sync_method_settings)
             menu.add(0, MENU_CHECK_UPDATE, order++, R.string.check_for_updates)
             menu.add(0, MENU_EXPORT_BACKUP, order++, R.string.backup_export)
             menu.add(0, MENU_IMPORT_BACKUP, order, R.string.backup_import)
@@ -476,8 +475,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     MENU_DAY_COUNTER -> showDayCounterSettings()
                     MENU_REMINDER -> showReminderSettings()
-                    MENU_SCAN_MAC_WEBDAV -> scanMacConfiguration()
-                    MENU_WEBDAV -> showWebDavSettings()
+                    MENU_SYNC_METHOD -> showPairingMethodMenu(anchor)
                     MENU_CHECK_UPDATE -> checkForAppUpdate(manual = true)
                     MENU_EXPORT_BACKUP -> prepareBackupExport()
                     MENU_IMPORT_BACKUP -> prepareBackupImport()
@@ -538,8 +536,7 @@ class MainActivity : AppCompatActivity() {
         }.getOrNull()) {
             is ScannedConfiguration.WebDav -> showWebDavSettings(configuration.setupLink)
             is ScannedConfiguration.WorkerPairing -> {
-                Toast.makeText(this, R.string.pairing_link_received, Toast.LENGTH_SHORT).show()
-                pairingViewModel.begin(configuration.pairingLink, deviceDisplayName())
+                beginWorkerPairing(configuration.pairingLink)
             }
             null -> Toast.makeText(this, invalidMessageRes, Toast.LENGTH_LONG).show()
         }
@@ -557,6 +554,9 @@ class MainActivity : AppCompatActivity() {
             val app = application as WooTodoApplication
             val existing = withContext(Dispatchers.IO) {
                 runCatching { app.webDavCredentialsStore.load() }.getOrNull()
+            }
+            val workerSyncConfigured = withContext(Dispatchers.IO) {
+                runCatching { app.syncCredentialsStore.load() != null }.getOrDefault(false)
             }
             val generatedIdentity = newWebDavIdentity()
             val generatedKey = Base64Url.encode(SecureBytes.generate(32))
@@ -612,7 +612,9 @@ class MainActivity : AppCompatActivity() {
             AlertDialog.Builder(this@MainActivity)
                 .setTitle(R.string.webdav_settings_title)
                 .setMessage(
-                    if (setupLink == null) {
+                    if (workerSyncConfigured) {
+                        R.string.webdav_switch_message
+                    } else if (setupLink == null) {
                         R.string.webdav_settings_message
                     } else {
                         R.string.webdav_setup_link_message
@@ -620,40 +622,57 @@ class MainActivity : AppCompatActivity() {
                 )
                 .setView(scrollView)
                 .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(R.string.save) { _, _ ->
-                    lifecycleScope.launch {
-                        val result = runCatching {
-                            val credentials = WebDavCredentials(
-                                username = username.text.toString().trim(),
-                                appPassword = appPassword.text.toString(),
-                                vaultId = vaultId.text.toString().trim(),
-                                deviceId = existing?.deviceId ?: generatedIdentity.second,
-                                vaultKey = Base64Url.decode(vaultKey.text.toString().trim()),
-                            )
-                            credentials.validate()
-                            app.configureWebDav(credentials)
-                            when (val syncResult = app.synchronizeManually()) {
-                                is SyncExecutionResult.Succeeded ->
-                                    getString(R.string.webdav_saved_and_synced)
+                .setPositiveButton(
+                    if (workerSyncConfigured) R.string.sync_switch_to_webdav else R.string.save,
+                ) { _, _ ->
+                    val configure: () -> Unit = {
+                        lifecycleScope.launch {
+                            val result = runCatching {
+                                val credentials = WebDavCredentials(
+                                    username = username.text.toString().trim(),
+                                    appPassword = appPassword.text.toString(),
+                                    vaultId = vaultId.text.toString().trim(),
+                                    deviceId = existing?.deviceId ?: generatedIdentity.second,
+                                    vaultKey = Base64Url.decode(vaultKey.text.toString().trim()),
+                                )
+                                credentials.validate()
+                                app.configureWebDav(
+                                    credentials,
+                                    replacingWorkerSync = workerSyncConfigured,
+                                )
+                                when (val syncResult = app.synchronizeManually()) {
+                                    is SyncExecutionResult.Succeeded ->
+                                        getString(R.string.webdav_saved_and_synced)
 
-                                is SyncExecutionResult.Failed -> if (syncResult.retryable) {
-                                    getString(R.string.webdav_saved_sync_retrying)
-                                } else {
-                                    getString(R.string.webdav_saved_sync_failed)
+                                    is SyncExecutionResult.Failed -> if (syncResult.retryable) {
+                                        getString(R.string.webdav_saved_sync_retrying)
+                                    } else {
+                                        getString(R.string.webdav_saved_sync_failed)
+                                    }
+
+                                    SyncExecutionResult.NotConfigured ->
+                                        getString(R.string.webdav_saved_sync_pending)
                                 }
-
-                                SyncExecutionResult.NotConfigured ->
-                                    getString(R.string.webdav_saved_sync_pending)
                             }
+                            Toast.makeText(
+                                this@MainActivity,
+                                result.fold(
+                                    onSuccess = { it },
+                                    onFailure = {
+                                        it.localizedMessage ?: getString(R.string.webdav_invalid)
+                                    },
+                                ),
+                                Toast.LENGTH_LONG,
+                            ).show()
                         }
-                        Toast.makeText(
-                            this@MainActivity,
-                            result.fold(
-                                onSuccess = { it },
-                                onFailure = { it.localizedMessage ?: getString(R.string.webdav_invalid) },
-                            ),
-                            Toast.LENGTH_LONG,
-                        ).show()
+                    }
+                    if (workerSyncConfigured) {
+                        showSyncSwitchConfirmation(
+                            messageRes = R.string.sync_switch_to_webdav_message,
+                            onConfirm = configure,
+                        )
+                    } else {
+                        configure()
                     }
                 }
                 .show()
@@ -1161,16 +1180,50 @@ class MainActivity : AppCompatActivity() {
         val pairingLink = runCatching {
             PairingDeepLink.parse(source)
         }.getOrNull()
-        Toast.makeText(
-            this,
-            if (pairingLink != null) {
-                R.string.pairing_link_received
+        if (pairingLink == null) {
+            Toast.makeText(this, R.string.pairing_link_invalid, Toast.LENGTH_SHORT).show()
+        } else {
+            beginWorkerPairing(pairingLink)
+        }
+    }
+
+    private fun beginWorkerPairing(link: PairingDeepLink) {
+        lifecycleScope.launch {
+            val replacingWebDav = withContext(Dispatchers.IO) {
+                runCatching {
+                    (application as WooTodoApplication).webDavCredentialsStore.load() != null
+                }.getOrDefault(false)
+            }
+            val begin = {
+                Toast.makeText(
+                    this@MainActivity,
+                    R.string.pairing_link_received,
+                    Toast.LENGTH_SHORT,
+                ).show()
+                pairingViewModel.begin(link, deviceDisplayName())
+            }
+            if (replacingWebDav) {
+                showSyncSwitchConfirmation(
+                    messageRes = R.string.sync_switch_to_worker_message,
+                    onConfirm = begin,
+                )
             } else {
-                R.string.pairing_link_invalid
-            },
-            Toast.LENGTH_SHORT,
-        ).show()
-        pairingLink?.let { pairingViewModel.begin(it, deviceDisplayName()) }
+                begin()
+            }
+        }
+    }
+
+    private fun showSyncSwitchConfirmation(
+        @StringRes messageRes: Int,
+        onConfirm: () -> Unit,
+    ) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.sync_switch_title)
+            .setMessage(messageRes)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.sync_switch_confirm) { _, _ -> onConfirm() }
+            .show()
+            .enableMessageSelection()
     }
 
     private fun handleWebDavSetupLink(source: String) {
@@ -1375,9 +1428,8 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_EXPORT_BACKUP = 2
         private const val MENU_IMPORT_BACKUP = 3
         private const val MENU_DAY_COUNTER = 4
-        private const val MENU_WEBDAV = 5
+        private const val MENU_SYNC_METHOD = 5
         private const val MENU_CHECK_UPDATE = 6
-        private const val MENU_SCAN_MAC_WEBDAV = 7
         private const val MENU_AVAILABLE_UPDATE = 8
         private const val BACKUP_MIME_TYPE = "application/octet-stream"
         val BACKUP_MIME_TYPES = arrayOf(

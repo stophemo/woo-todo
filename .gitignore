@@ -20,6 +20,9 @@ Thumbs.db
 [Aa][Gg][Ee][Nn][Tt][Ss].md
 [Cc][Ll][Aa][Uu][Dd][Ee].md
 
+# 本地过程文档
+/docs/
+
 # 本地环境、凭据与用户数据
 .env
 .env.*

@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
@@ -116,6 +116,8 @@ pub struct TodoTask {
     pub settled_at: Option<i64>,
     #[serde(default)]
     pub reminder_time: Option<ReminderTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline_date: Option<NaiveDate>,
 }
 
 impl TodoTask {
@@ -129,6 +131,7 @@ impl TodoTask {
         sort_order: i32,
         now: i64,
         reminder_time: Option<ReminderTime>,
+        deadline_date: Option<NaiveDate>,
         id: Option<String>,
     ) -> CoreResult<Self> {
         let id = id.unwrap_or_else(|| Uuid::new_v4().hyphenated().to_string());
@@ -155,6 +158,7 @@ impl TodoTask {
             } else {
                 reminder_time
             },
+            deadline_date,
         };
         task.validate()?;
         Ok(task)
@@ -181,6 +185,14 @@ impl TodoTask {
             && normalize_start(self.time_type, start) != Some(start)
         {
             return Err(CoreError::validation("任务周期起点未按日、周或月归一化"));
+        }
+        if self
+            .deadline_date
+            .is_some_and(|deadline| !(1..=9999).contains(&deadline.year()))
+        {
+            return Err(CoreError::validation(
+                "deadlineDate 必须是 0001-01-01 到 9999-12-31 之间的日期",
+            ));
         }
         if self.timezone != TIMEZONE {
             return Err(CoreError::validation("任务时区必须是 Asia/Shanghai"));

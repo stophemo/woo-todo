@@ -80,7 +80,13 @@ public struct WebDavCredentials: Codable, Equatable, Sendable {
 }
 
 /// 坚果云应用密码与同步密钥只进入 Keychain；WebDAV 服务端永远只看到密文对象。
-public final class WebDavCredentialsStore: @unchecked Sendable {
+public protocol WebDavCredentialsStoring: Sendable {
+    func save(_ credentials: WebDavCredentials) throws
+    func load() throws -> WebDavCredentials?
+    func delete() throws
+}
+
+public final class WebDavCredentialsStore: WebDavCredentialsStoring, @unchecked Sendable {
     private let service: String
     private let account: String
 

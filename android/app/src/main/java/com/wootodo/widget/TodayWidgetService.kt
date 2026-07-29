@@ -7,6 +7,7 @@ import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
+import com.wootodo.domain.QuestLine
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskStatus
 import com.wootodo.ui.labelRes
@@ -21,18 +22,20 @@ class TodayWidgetService : RemoteViewsService() {
 private class TodayWidgetFactory(
     private val context: Context,
 ) : RemoteViewsService.RemoteViewsFactory {
-    private var tasks: List<Task> = emptyList()
+    private var items: List<TodayWidgetListItem> = emptyList()
 
     override fun onCreate() = Unit
 
     override fun onDataSetChanged() {
-        tasks = try {
+        items = try {
             runBlocking(Dispatchers.IO) {
                 val application = context.applicationContext as WooTodoApplication
                 if (application.taskRepository.autoPassExpired() > 0) {
                     application.notifyLocalMutation()
                 }
-                application.taskRepository.tasksForToday().take(MAX_VISIBLE_TASKS)
+                TodayWidgetItems.from(
+                    application.taskRepository.tasksForToday().take(MAX_VISIBLE_TASKS),
+                )
             }
         } catch (error: Exception) {
             Log.e(TAG, "读取今日任务失败", error)
@@ -41,19 +44,22 @@ private class TodayWidgetFactory(
     }
 
     override fun onDestroy() {
-        tasks = emptyList()
+        items = emptyList()
     }
 
-    override fun getCount(): Int = tasks.size
+    override fun getCount(): Int = items.size
 
-    override fun getViewAt(position: Int): RemoteViews? =
-        tasks.getOrNull(position)?.let { TodayWidgetRowViews.create(context, it) }
+    override fun getViewAt(position: Int): RemoteViews? = when (val item = items.getOrNull(position)) {
+        is TodayWidgetListItem.Header -> TodayWidgetHeaderViews.create(context, item.questLine)
+        is TodayWidgetListItem.Row -> TodayWidgetRowViews.create(context, item.task)
+        null -> null
+    }
 
     override fun getLoadingView(): RemoteViews? = null
 
-    override fun getViewTypeCount(): Int = 1
+    override fun getViewTypeCount(): Int = TODAY_WIDGET_VIEW_TYPE_COUNT
 
-    override fun getItemId(position: Int): Long = tasks.getOrNull(position)?.id?.hashCode()?.toLong() ?: 0
+    override fun getItemId(position: Int): Long = items.getOrNull(position)?.stableId ?: 0
 
     override fun hasStableIds(): Boolean = true
 
@@ -63,12 +69,65 @@ private class TodayWidgetFactory(
     }
 }
 
+internal const val TODAY_WIDGET_VIEW_TYPE_HEADER = 0
+internal const val TODAY_WIDGET_VIEW_TYPE_TASK = 1
+private const val TODAY_WIDGET_VIEW_TYPE_COUNT = 2
+
+internal sealed interface TodayWidgetListItem {
+    val stableId: Long
+    val viewType: Int
+
+    data class Header(val questLine: QuestLine) : TodayWidgetListItem {
+        override val stableId: Long = Long.MIN_VALUE + questLine.ordinal
+        override val viewType: Int = TODAY_WIDGET_VIEW_TYPE_HEADER
+    }
+
+    data class Row(val task: Task) : TodayWidgetListItem {
+        override val stableId: Long = stableTaskId(task.id)
+        override val viewType: Int = TODAY_WIDGET_VIEW_TYPE_TASK
+    }
+}
+
+internal object TodayWidgetItems {
+    fun from(tasks: List<Task>): List<TodayWidgetListItem> = buildList {
+        QuestLine.entries.forEach { questLine ->
+            val group = tasks.filter { it.questLine == questLine }
+            if (group.isNotEmpty()) {
+                add(TodayWidgetListItem.Header(questLine))
+                group.forEach { add(TodayWidgetListItem.Row(it)) }
+            }
+        }
+    }
+}
+
+private fun stableTaskId(taskId: String): Long {
+    var hash = -3750763034362895579L
+    taskId.forEach { character ->
+        hash = hash xor character.code.toLong()
+        hash *= 1099511628211L
+    }
+    return hash and Long.MAX_VALUE
+}
+
+internal object TodayWidgetHeaderViews {
+    fun create(context: Context, questLine: QuestLine): RemoteViews =
+        RemoteViews(context.packageName, R.layout.item_widget_header).apply {
+            setTextViewText(R.id.widget_group_title, context.getString(questLine.labelRes()))
+            setImageViewResource(R.id.widget_group_marker, questLine.markerRes())
+        }
+
+    private fun QuestLine.markerRes(): Int = when (this) {
+        QuestLine.MAIN -> R.drawable.quest_marker
+        QuestLine.SIDE -> R.drawable.quest_marker_side
+        QuestLine.EXTRA -> R.drawable.quest_marker_extra
+    }
+}
+
 internal object TodayWidgetRowViews {
     fun create(context: Context, task: Task): RemoteViews =
         RemoteViews(context.packageName, R.layout.item_widget_task).apply {
             val completed = task.status == TaskStatus.COMPLETED
             setTextViewText(R.id.widget_task_title, task.title)
-            setTextViewText(R.id.widget_task_line, context.getString(task.questLine.labelRes()))
             setCompoundButtonChecked(R.id.widget_task_check, completed)
             if (task.status != TaskStatus.PASS) {
                 setOnClickFillInIntent(

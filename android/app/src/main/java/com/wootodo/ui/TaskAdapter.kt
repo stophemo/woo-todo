@@ -14,7 +14,10 @@ import androidx.recyclerview.widget.RecyclerView
 import com.wootodo.R
 import com.wootodo.domain.QuestLine
 import com.wootodo.domain.Task
+import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 private sealed interface TaskListItem {
     data class Header(val questLine: QuestLine) : TaskListItem
@@ -135,7 +138,32 @@ internal class TaskAdapter(
         fun bind(task: Task) {
             val pending = task.status == TaskStatus.PENDING
             taskTitle.text = task.title
-            taskStatus.setText(task.status.labelRes())
+            val statusLabel = itemView.context.getString(task.status.labelRes())
+            val deadline = taskDeadlineIndicator(task.status, task.deadlineDate, TaskDateRules.today())
+            val deadlineLabel = when (deadline) {
+                is TaskDeadlineIndicator.DateOnly -> itemView.context.getString(
+                    R.string.task_deadline_date,
+                    deadline.date,
+                )
+                is TaskDeadlineIndicator.DueToday -> itemView.context.getString(
+                    R.string.task_deadline_due_today,
+                )
+                is TaskDeadlineIndicator.Overdue -> itemView.context.getString(
+                    R.string.task_deadline_overdue,
+                    deadline.days,
+                    deadline.date,
+                )
+                null -> null
+            }
+            taskStatus.text = deadlineLabel?.let {
+                itemView.context.getString(R.string.task_status_with_detail, statusLabel, it)
+            } ?: statusLabel
+            taskStatus.setTextColor(
+                ContextCompat.getColor(
+                    itemView.context,
+                    if (deadline is TaskDeadlineIndicator.Overdue) R.color.orange else R.color.muted,
+                ),
+            )
             taskCheck.setOnCheckedChangeListener(null)
             taskCheck.isChecked = task.status == TaskStatus.COMPLETED
             taskCheck.isEnabled = task.status != TaskStatus.PASS
@@ -159,5 +187,30 @@ internal class TaskAdapter(
     private companion object {
         const val VIEW_TYPE_HEADER = 0
         const val VIEW_TYPE_TASK = 1
+    }
+}
+
+internal sealed interface TaskDeadlineIndicator {
+    val date: LocalDate
+
+    data class DateOnly(override val date: LocalDate) : TaskDeadlineIndicator
+    data class DueToday(override val date: LocalDate) : TaskDeadlineIndicator
+    data class Overdue(override val date: LocalDate, val days: Long) : TaskDeadlineIndicator
+}
+
+internal fun taskDeadlineIndicator(
+    status: TaskStatus,
+    deadlineDate: LocalDate?,
+    today: LocalDate,
+): TaskDeadlineIndicator? {
+    deadlineDate ?: return null
+    if (status != TaskStatus.PENDING) return TaskDeadlineIndicator.DateOnly(deadlineDate)
+    return when {
+        deadlineDate.isBefore(today) -> TaskDeadlineIndicator.Overdue(
+            deadlineDate,
+            ChronoUnit.DAYS.between(deadlineDate, today),
+        )
+        deadlineDate == today -> TaskDeadlineIndicator.DueToday(deadlineDate)
+        else -> TaskDeadlineIndicator.DateOnly(deadlineDate)
     }
 }

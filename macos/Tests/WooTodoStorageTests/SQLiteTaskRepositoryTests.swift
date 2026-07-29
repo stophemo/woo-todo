@@ -18,7 +18,8 @@ struct SQLiteTaskRepositoryTests {
             recurrence: .repeating(RepeatRule(frequency: .daily)),
             period: engine.period(containing: now, for: .daily),
             sortIndex: 3,
-            createdAt: now
+            createdAt: now,
+            deadlineDate: now.addingTimeInterval(5 * 86_400)
         )
 
         try repository.save(task)
@@ -82,7 +83,33 @@ struct SQLiteTaskRepositoryTests {
         #expect(try repository.fetchTasks(scope: .anytime, in: nil) == [task])
     }
 
-    @Test("当前周期完成项可以原子恢复，过期周期不能恢复")
+    @Test("只有显式请求当前列表时才带入过期一次性任务")
+    func overdueOnceRequiresExplicitInclusion() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
+        let yesterday = ISO8601DateFormatter().date(from: "2026-07-14T12:00:00+08:00")!
+        let today = ISO8601DateFormatter().date(from: "2026-07-15T12:00:00+08:00")!
+        let task = try TodoTask(
+            title: "昨日未完成",
+            timeScope: .daily,
+            tier: .mainline,
+            period: engine.period(containing: yesterday, for: .daily),
+            createdAt: yesterday
+        )
+        try repository.save(task)
+        let todayPeriod = try #require(engine.period(containing: today, for: .daily))
+
+        #expect(try repository.fetchTasks(scope: .daily, in: todayPeriod).isEmpty)
+        #expect(
+            try repository.fetchTasks(
+                scope: .daily,
+                in: todayPeriod,
+                includeOverdueOnce: true
+            ) == [task]
+        )
+    }
+
+    @Test("一次性完成项跨周期可恢复，过期重复周期不能恢复")
     func reopenCompletedTask() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
         let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
@@ -109,7 +136,30 @@ struct SQLiteTaskRepositoryTests {
         reopened.completedAt = now
         reopened.updatedAt = now
         try repository.save(reopened)
-        #expect(try repository.reopenCompleted(id: task.id, at: reopened.period!.end) == false)
+        let periodEnd = try #require(reopened.period?.end)
+        #expect(try repository.reopenCompleted(id: task.id, at: periodEnd))
+        reopened = try #require(try repository.fetchAll().first { $0.id == task.id })
+        #expect(reopened.status == .pending)
+        #expect(reopened.completedAt == nil)
+
+        var repeating = try TodoTask(
+            title: "昨日重复任务",
+            timeScope: .daily,
+            tier: .mainline,
+            recurrence: .repeating(RepeatRule(frequency: .daily)),
+            period: engine.period(containing: now, for: .daily),
+            createdAt: now.addingTimeInterval(-60)
+        )
+        repeating.status = .completed
+        repeating.completedAt = now
+        repeating.updatedAt = now
+        try repository.save(repeating)
+
+        #expect(try repository.reopenCompleted(id: repeating.id, at: periodEnd) == false)
+        let storedRepeating = try #require(
+            try repository.fetchAll().first { $0.id == repeating.id }
+        )
+        #expect(storedRepeating.status == .completed)
     }
 
     @Test("显示配置在仓储关闭并重新打开后仍保留")

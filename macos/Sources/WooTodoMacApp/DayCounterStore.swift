@@ -30,7 +30,8 @@ final class DayCounterStore: ObservableObject {
 
     init(
         defaults: UserDefaults = .standard,
-        repository: SQLiteTaskRepository
+        repository: SQLiteTaskRepository,
+        notificationCenter: NotificationCenter = .default
     ) {
         self.defaults = defaults
         self.repository = repository
@@ -78,9 +79,9 @@ final class DayCounterStore: ObservableObject {
         loadRepositoryConfiguration()
         persistDefaults()
 
-        NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
-            .merge(with: NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange))
-            .sink { [weak self] _ in
+        notificationCenter.publisher(for: .NSCalendarDayChanged)
+            .merge(with: notificationCenter.publisher(for: .NSSystemTimeZoneDidChange))
+            .sink { @Sendable [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.refreshDate()
                 }

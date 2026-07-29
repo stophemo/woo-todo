@@ -98,9 +98,13 @@ class TaskRepositoryTest {
     }
 
     @Test
-    fun `过期周期与Pass任务不能恢复为待办`() = runBlocking {
+    fun `过期重复周期与Pass任务不能恢复为待办`() = runBlocking {
         val expiredId = repository.create(
-            TaskDraft(title = "昨日完成", targetDate = date.minusDays(1)),
+            TaskDraft(
+                title = "昨日完成",
+                targetDate = date.minusDays(1),
+                recurrence = Recurrence.DAILY,
+            ),
         )
         assertTrue(repository.settle(expiredId, TaskStatus.COMPLETED))
         assertFalse(repository.toggleCompletion(expiredId, date))
@@ -131,6 +135,42 @@ class TaskRepositoryTest {
         repository.settle(todayId, TaskStatus.COMPLETED)
         assertEquals(listOf(TaskStatus.COMPLETED), repository.tasksForToday(date).map { it.status })
         assertEquals(1, repository.observeForScope(TaskTimeType.DAY, date).first().size)
+    }
+
+    @Test
+    fun `过期一次性任务会保留到当前周期直至手动Pass`() = runBlocking {
+        val overdueId = repository.create(
+            TaskDraft(title = "昨日未完成", targetDate = date.minusDays(1)),
+        )
+
+        assertEquals(0, repository.autoPassExpired(date))
+        assertEquals(
+            listOf(overdueId),
+            repository.observeForScope(TaskTimeType.DAY, date).first().map { it.id },
+        )
+        assertEquals(listOf(overdueId), repository.tasksForToday(date).map { it.id })
+
+        assertTrue(repository.settle(overdueId, TaskStatus.PASS))
+        assertTrue(repository.tasksForToday(date).isEmpty())
+    }
+
+    @Test
+    fun `一次性任务保留截止日期且重复任务会清除截止日期`() = runBlocking {
+        val deadline = date.plusDays(7)
+        val onceId = repository.create(
+            TaskDraft(title = "有截止日", targetDate = date, deadlineDate = deadline),
+        )
+        val repeatingId = repository.create(
+            TaskDraft(
+                title = "每日重复",
+                targetDate = date,
+                recurrence = Recurrence.DAILY,
+                deadlineDate = deadline,
+            ),
+        )
+
+        assertEquals(deadline, repository.get(onceId)?.deadlineDate)
+        assertEquals(null, repository.get(repeatingId)?.deadlineDate)
     }
 
     @Test
@@ -253,8 +293,14 @@ private class FakeTaskStore : TaskStore {
     override fun observeForPeriod(
         timeType: TaskTimeType,
         targetDate: LocalDate,
+        includeOverdueOnce: Boolean,
     ): Flow<List<TaskEntity>> = items.map { tasks ->
-        tasks.filter { it.timeType == timeType && it.targetDate == targetDate }
+        tasks.filter { task ->
+            task.timeType == timeType &&
+                (task.targetDate == targetDate ||
+                    (includeOverdueOnce && task.targetDate?.isBefore(targetDate) == true &&
+                        task.status == TaskStatus.PENDING && task.recurrence == Recurrence.ONCE))
+        }
     }
 
     override fun observeLeisure(): Flow<List<TaskEntity>> = items.map { tasks ->
@@ -264,8 +310,9 @@ private class FakeTaskStore : TaskStore {
     override suspend fun getForDay(date: LocalDate): List<TaskEntity> =
         items.value.filter {
             it.timeType == TaskTimeType.DAY &&
-                it.targetDate == date &&
-                it.status != TaskStatus.PASS
+                ((it.targetDate == date && it.status != TaskStatus.PASS) ||
+                    (it.targetDate?.isBefore(date) == true && it.status == TaskStatus.PENDING &&
+                        it.recurrence == Recurrence.ONCE))
         }
 
     override suspend fun getExpiredPending(
@@ -273,12 +320,13 @@ private class FakeTaskStore : TaskStore {
         weekCutoff: LocalDate,
         monthCutoff: LocalDate,
     ): List<TaskEntity> = items.value.filter { task ->
-        task.status == TaskStatus.PENDING && when (task.timeType) {
+        task.status == TaskStatus.PENDING && task.recurrence != Recurrence.ONCE &&
+            when (task.timeType) {
             TaskTimeType.DAY -> task.targetDate?.isBefore(dayCutoff) == true
             TaskTimeType.WEEK -> task.targetDate?.isBefore(weekCutoff) == true
             TaskTimeType.MONTH -> task.targetDate?.isBefore(monthCutoff) == true
             TaskTimeType.LEISURE -> false
-        }
+            }
     }
 
     override suspend fun countForDay(date: LocalDate): Int =

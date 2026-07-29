@@ -31,6 +31,13 @@ data class DayCounterRenderResult(
 )
 
 object DayCounterText {
+    enum class CounterVariable(val tokenName: String) {
+        ELAPSED_DAYS("elapsedDays"),
+        DEADLINE_DAYS("deadlineDays"),
+        ELAPSED_MONTHS_DAYS("elapsedMonthsDays"),
+        DEADLINE_MONTHS_DAYS("deadlineMonthsDays"),
+    }
+
     const val DEFAULT_HEADER_TEMPLATE = "今日任务"
     const val WEEKDAY_TOKEN = "{weekday}"
     const val WEEKDAY_SHORT_TOKEN = "{weekdayShort}"
@@ -49,6 +56,9 @@ object DayCounterText {
     const val DEADLINE_DAYS_TOKEN = "{deadlineDays}"
     const val ELAPSED_MONTHS_DAYS_TOKEN = "{elapsedMonthsDays}"
     const val DEADLINE_MONTHS_DAYS_TOKEN = "{deadlineMonthsDays}"
+
+    fun counterToken(variable: CounterVariable, date: LocalDate): String =
+        "{${variable.tokenName}:${date.format(DATE_FORMAT)}}"
 
     fun render(
         settings: DayCounterSettings,
@@ -89,7 +99,18 @@ object DayCounterText {
         fun renderTemplate(template: String): String? = template.trim()
             .takeIf(String::isNotEmpty)
             ?.let { source ->
-                values.entries.fold(source) { rendered, (token, value) ->
+                val parameterized = PARAMETERIZED_COUNTER_PATTERN.replace(source) { match ->
+                    val variable = COUNTER_VARIABLES_BY_NAME[match.groupValues[1]]
+                    val referenceDate = runCatching {
+                        LocalDate.parse(match.groupValues[2], DATE_FORMAT)
+                    }.getOrNull()
+                    if (variable == null || referenceDate == null) {
+                        match.value
+                    } else {
+                        counterValue(variable, referenceDate, today)
+                    }
+                }
+                values.entries.fold(parameterized) { rendered, (token, value) ->
                     rendered.replace(token, value)
                 }
             }
@@ -113,7 +134,28 @@ object DayCounterText {
     private val WEEKDAYS_EN_SHORT = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
     private val DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE
     private val DATE_LONG_FORMAT = DateTimeFormatter.ofPattern("yyyy年M月d日")
+    private val PARAMETERIZED_COUNTER_PATTERN = Regex(
+        """\{(elapsedDays|deadlineDays|elapsedMonthsDays|deadlineMonthsDays):(\d{4}-\d{2}-\d{2})\}""",
+    )
+    private val COUNTER_VARIABLES_BY_NAME = CounterVariable.entries.associateBy { it.tokenName }
     private const val ZERO_MONTHS_DAYS = "0个月零0天"
+
+    private fun counterValue(
+        variable: CounterVariable,
+        referenceDate: LocalDate,
+        today: LocalDate,
+    ): String = when (variable) {
+        CounterVariable.ELAPSED_DAYS ->
+            (ChronoUnit.DAYS.between(referenceDate, today) + 1).coerceAtLeast(0).toString()
+        CounterVariable.DEADLINE_DAYS ->
+            ChronoUnit.DAYS.between(today, referenceDate).toString()
+        CounterVariable.ELAPSED_MONTHS_DAYS -> if (today.isBefore(referenceDate)) {
+            ZERO_MONTHS_DAYS
+        } else {
+            monthsDays(referenceDate, today.plusDays(1))
+        }
+        CounterVariable.DEADLINE_MONTHS_DAYS -> monthsDays(today, referenceDate)
+    }
 
     private fun monthsDays(source: LocalDate, destination: LocalDate): String {
         if (source == destination) return ZERO_MONTHS_DAYS

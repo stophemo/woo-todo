@@ -348,12 +348,69 @@ object SQLiteLocalMutationRecorder {
 class SQLiteSyncStore(
     private val database: TaskDatabase,
     private val credentials: SyncCredentials,
+    private val bindOnInit: Boolean = true,
     private val onDisplayConfigurationChanged: (DisplayConfigurationPayload) -> Unit = {},
     private val onTasksChanged: () -> Unit = {},
 ) : OutboxStore, RemoteApplyStore, WebDavLocalApplying {
     init {
         credentials.validate()
-        bindDeviceIdentity()
+        if (bindOnInit) bindDeviceIdentity()
+    }
+
+    companion object {
+        /** 清理旧同步空间的元数据，但保留任务与显示配置。 */
+        fun resetSyncBinding(database: TaskDatabase) {
+            val sqlite = database.writableDatabase
+            sqlite.beginTransaction()
+            try {
+                resetSyncMetadata(sqlite)
+                sqlite.setTransactionSuccessful()
+            } finally {
+                sqlite.endTransaction()
+            }
+        }
+
+        /** 原子清理旧空间、绑定新空间，并把保留的本地数据重新写入 outbox。 */
+        fun replaceSyncBinding(
+            database: TaskDatabase,
+            credentials: SyncCredentials,
+            onDisplayConfigurationChanged: (DisplayConfigurationPayload) -> Unit = {},
+            onTasksChanged: () -> Unit = {},
+        ): SQLiteSyncStore {
+            val store = SQLiteSyncStore(
+                database = database,
+                credentials = credentials,
+                onDisplayConfigurationChanged = onDisplayConfigurationChanged,
+                onTasksChanged = onTasksChanged,
+                bindOnInit = false,
+            )
+            val sqlite = database.writableDatabase
+            sqlite.beginTransaction()
+            try {
+                resetSyncMetadata(sqlite)
+                store.bindDeviceIdentity(sqlite)
+                sqlite.setTransactionSuccessful()
+            } finally {
+                sqlite.endTransaction()
+            }
+            return store
+        }
+
+        private fun resetSyncMetadata(sqlite: SQLiteDatabase) {
+            sqlite.delete(TABLE_OUTBOX, null, null)
+            sqlite.delete(TABLE_VERSIONS, null, null)
+            sqlite.delete(TABLE_TOMBSTONES, null, null)
+            sqlite.delete(TABLE_APPLIED, null, null)
+            sqlite.delete(TABLE_WEBDAV_APPLIED, null, null)
+            sqlite.delete(TABLE_DEFERRED_DELETIONS, null, null)
+            sqlite.execSQL(
+                "UPDATE sync_state SET cursor = 0, lamport = 0, vault_id = '', device_id = '' " +
+                    "WHERE id = 1",
+            )
+            sqlite.execSQL(
+                "UPDATE $TABLE_DISPLAY_CONFIGURATION SET is_local_override = 1",
+            )
+        }
     }
 
     @Synchronized
@@ -515,75 +572,79 @@ class SQLiteSyncStore(
         val sqlite = database.writableDatabase
         sqlite.beginTransaction()
         try {
-            val current = sqlite.rawQuery(
-                "SELECT vault_id, device_id FROM sync_state WHERE id = 1",
-                null,
-            ).use { cursor ->
-                check(cursor.moveToFirst()) { "同步状态未初始化" }
-                cursor.getString(0) to cursor.getString(1)
-            }
-            val isUnbound = current.first.isEmpty() && current.second.isEmpty()
-            require(
-                isUnbound ||
-                    (current.first == credentials.vaultId && current.second == credentials.deviceId),
-            ) {
-                "本地数据库已绑定到其他同步空间或设备"
-            }
-            if (isUnbound) {
-                val values = ContentValues(2).apply {
-                    put("vault_id", credentials.vaultId)
-                    put("device_id", credentials.deviceId)
-                }
-                check(sqlite.update("sync_state", values, "id = 1", null) == 1)
-                val existingTasks = sqlite.query(
-                    "tasks",
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    "created_at ASC, id ASC",
-                ).use { cursor ->
-                    buildList {
-                        while (cursor.moveToNext()) add(cursor.toTaskEntity())
-                    }
-                }
-                val deferredDeletions = sqlite.query(
-                    TABLE_DEFERRED_DELETIONS,
-                    arrayOf("entity_id", "deleted_at"),
-                    null,
-                    null,
-                    null,
-                    null,
-                    "deleted_at ASC, entity_id ASC",
-                ).use { cursor ->
-                    buildList {
-                        while (cursor.moveToNext()) {
-                            add(cursor.getString(0) to cursor.getLong(1))
-                        }
-                    }
-                }
-                val displayConfiguration = readDisplayConfiguration(sqlite)
-                existingTasks.forEach { task ->
-                    SQLiteLocalMutationRecorder.recordTask(
-                        sqlite,
-                        task,
-                        SyncOperationKind.UPSERT,
-                    )
-                }
-                deferredDeletions.forEach { (entityId, deletedAt) ->
-                    SQLiteLocalMutationRecorder.recordDeletion(sqlite, entityId, deletedAt)
-                }
-                displayConfiguration
-                    ?.takeIf { readDisplayConfigurationLocalOverride(sqlite) }
-                    ?.let { payload ->
-                    SQLiteLocalMutationRecorder.recordDisplayConfiguration(sqlite, payload)
-                }
-            }
+            bindDeviceIdentity(sqlite)
             sqlite.setTransactionSuccessful()
         } finally {
             sqlite.endTransaction()
         }
+    }
+
+    private fun bindDeviceIdentity(sqlite: SQLiteDatabase) {
+        val current = sqlite.rawQuery(
+            "SELECT vault_id, device_id FROM sync_state WHERE id = 1",
+            null,
+        ).use { cursor ->
+            check(cursor.moveToFirst()) { "同步状态未初始化" }
+            cursor.getString(0) to cursor.getString(1)
+        }
+        val isUnbound = current.first.isEmpty() && current.second.isEmpty()
+        require(
+            isUnbound ||
+                (current.first == credentials.vaultId && current.second == credentials.deviceId),
+        ) {
+            "本地数据库已绑定到其他同步空间或设备"
+        }
+        if (!isUnbound) return
+
+        val values = ContentValues(2).apply {
+            put("vault_id", credentials.vaultId)
+            put("device_id", credentials.deviceId)
+        }
+        check(sqlite.update("sync_state", values, "id = 1", null) == 1)
+        val existingTasks = sqlite.query(
+            "tasks",
+            null,
+            null,
+            null,
+            null,
+            null,
+            "created_at ASC, id ASC",
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.toTaskEntity())
+            }
+        }
+        val deferredDeletions = sqlite.query(
+            TABLE_DEFERRED_DELETIONS,
+            arrayOf("entity_id", "deleted_at"),
+            null,
+            null,
+            null,
+            null,
+            "deleted_at ASC, entity_id ASC",
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(cursor.getString(0) to cursor.getLong(1))
+                }
+            }
+        }
+        val displayConfiguration = readDisplayConfiguration(sqlite)
+        existingTasks.forEach { task ->
+            SQLiteLocalMutationRecorder.recordTask(
+                sqlite,
+                task,
+                SyncOperationKind.UPSERT,
+            )
+        }
+        deferredDeletions.forEach { (entityId, deletedAt) ->
+            SQLiteLocalMutationRecorder.recordDeletion(sqlite, entityId, deletedAt)
+        }
+        displayConfiguration
+            ?.takeIf { readDisplayConfigurationLocalOverride(sqlite) }
+            ?.let { payload ->
+                SQLiteLocalMutationRecorder.recordDisplayConfiguration(sqlite, payload)
+            }
     }
 
     private fun materializeOperation(
@@ -983,9 +1044,12 @@ private fun Cursor.toTaskEntity(): TaskEntity = TaskEntity(
     reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
         if (isNull(index)) null else LocalTime.parse(getString(index))
     },
+    deadlineDate = getColumnIndexOrThrow("deadline_date").let { index ->
+        if (isNull(index)) null else LocalDate.parse(getString(index))
+    },
 )
 
-private fun TaskEntity.toContentValues(): ContentValues = ContentValues(13).apply {
+private fun TaskEntity.toContentValues(): ContentValues = ContentValues(14).apply {
     put("id", id)
     put("series_id", seriesId)
     put("title", title)
@@ -999,6 +1063,7 @@ private fun TaskEntity.toContentValues(): ContentValues = ContentValues(13).appl
     put("updated_at", updatedAt)
     if (settledAt == null) putNull("settled_at") else put("settled_at", settledAt)
     if (reminderTime == null) putNull("reminder_time") else put("reminder_time", reminderTime.toString())
+    if (deadlineDate == null) putNull("deadline_date") else put("deadline_date", deadlineDate.toString())
 }
 
 fun TaskEntity.toWirePayload(): TaskInstancePayload = TaskInstancePayload(
@@ -1007,6 +1072,7 @@ fun TaskEntity.toWirePayload(): TaskInstancePayload = TaskInstancePayload(
     title = title,
     timeType = timeType.toWire(),
     periodStart = targetDate?.toString(),
+    deadlineDate = deadlineDate?.toString(),
     timezone = TaskDateRules.zoneId.id,
     questLine = questLine.toWire(),
     state = status.toWire(),
@@ -1027,6 +1093,7 @@ fun TaskInstancePayload.toTaskEntity(): TaskEntity {
         title = title,
         timeType = timeType.toDomain(),
         targetDate = periodStart?.let(LocalDate::parse),
+        deadlineDate = deadlineDate?.let(LocalDate::parse),
         questLine = questLine.toDomain(),
         status = state.toDomain(),
         recurrence = when (recurrence) {

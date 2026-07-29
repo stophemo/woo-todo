@@ -37,6 +37,9 @@ class TaskDatabase(context: Context) :
                 )
             }
         }
+        if (oldVersion < 9 && !columnExists(database, "tasks", "deadline_date")) {
+            database.execSQL("ALTER TABLE tasks ADD COLUMN deadline_date TEXT")
+        }
         // 兼容曾经中断或裁剪过的旧升级：同步表均使用 IF NOT EXISTS，可安全幂等补齐。
         createSyncSchema(database)
     }
@@ -115,7 +118,8 @@ class TaskDatabase(context: Context) :
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 settled_at INTEGER,
-                reminder_time TEXT
+                reminder_time TEXT,
+                deadline_date TEXT
             )
             """.trimIndent(),
         )
@@ -256,6 +260,6 @@ class TaskDatabase(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 8
+        const val DATABASE_VERSION = 9
     }
 }

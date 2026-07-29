@@ -102,6 +102,25 @@ class SyncApiClientTest {
         assertEquals(JsonValue.Text("push[0].nonce"), error.payload.details?.get("field"))
         assertEquals("req-error", error.requestId)
     }
+
+    @Test
+    fun `设备列表可解析Windows客户端`() {
+        val connection = FakeConnection(
+            status = 200,
+            response = """
+                {"ok":true,"data":{"devices":[{"id":"device-windows","name":"工作站",
+                "platform":"windows","publicKey":null,"createdAt":100,"lastSeenAt":200,
+                "revokedAt":null,"isCurrent":false}]},"requestId":"req-devices"}
+            """.trimIndent(),
+        )
+        val client = SyncApiClient("https://sync.example.test") { url ->
+            connection.attach(url)
+        }
+
+        val result = client.listDevices(BearerCredential(Base64Url.encode(ByteArray(32) { 9 })))
+
+        assertEquals(DevicePlatform.WINDOWS, result.devices.single().platform)
+    }
 }
 
 private class FakeConnection(

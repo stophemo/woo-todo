@@ -26,7 +26,11 @@ interface TaskStore {
 
     suspend fun getAll(): List<TaskEntity> = observeAll().first()
 
-    fun observeForPeriod(timeType: TaskTimeType, targetDate: LocalDate): Flow<List<TaskEntity>>
+    fun observeForPeriod(
+        timeType: TaskTimeType,
+        targetDate: LocalDate,
+        includeOverdueOnce: Boolean = false,
+    ): Flow<List<TaskEntity>>
 
     fun observeLeisure(): Flow<List<TaskEntity>>
 
@@ -81,12 +85,25 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
     override fun observeForPeriod(
         timeType: TaskTimeType,
         targetDate: LocalDate,
+        includeOverdueOnce: Boolean,
     ): Flow<List<TaskEntity>> = invalidations
         .map {
-            queryTasks(
-                selection = "time_type = ? AND target_date = ?",
-                selectionArgs = arrayOf(timeType.rawValue, targetDate.toString()),
-            )
+            val selection = if (includeOverdueOnce) {
+                "time_type = ? AND (target_date = ? OR " +
+                    "(target_date < ? AND status = ? AND recurrence = ?))"
+            } else {
+                "time_type = ? AND target_date = ?"
+            }
+            val arguments = buildList {
+                add(timeType.rawValue)
+                add(targetDate.toString())
+                if (includeOverdueOnce) {
+                    add(targetDate.toString())
+                    add(TaskStatus.PENDING.rawValue)
+                    add(Recurrence.ONCE.rawValue)
+                }
+            }.toTypedArray()
+            queryTasks(selection = selection, selectionArgs = arguments)
         }
         .flowOn(Dispatchers.IO)
         .distinctUntilChanged()
@@ -104,12 +121,16 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
     override suspend fun getForDay(date: LocalDate): List<TaskEntity> =
         withContext(Dispatchers.IO) {
             queryTasks(
-                selection = "time_type = ? AND target_date = ? AND status IN (?, ?)",
+                selection = "time_type = ? AND ((target_date = ? AND status IN (?, ?)) OR " +
+                    "(target_date < ? AND status = ? AND recurrence = ?))",
                 selectionArgs = arrayOf(
                     TaskTimeType.DAY.rawValue,
                     date.toString(),
                     TaskStatus.PENDING.rawValue,
                     TaskStatus.COMPLETED.rawValue,
+                    date.toString(),
+                    TaskStatus.PENDING.rawValue,
+                    Recurrence.ONCE.rawValue,
                 ),
             )
         }
@@ -122,7 +143,7 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         val sql =
             """
             SELECT * FROM tasks
-            WHERE status = ? AND (
+            WHERE status = ? AND recurrence != ? AND (
                 (time_type = ? AND target_date < ?) OR
                 (time_type = ? AND target_date < ?) OR
                 (time_type = ? AND target_date < ?)
@@ -133,6 +154,7 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
             sql,
             arrayOf(
                 TaskStatus.PENDING.rawValue,
+                Recurrence.ONCE.rawValue,
                 TaskTimeType.DAY.rawValue,
                 dayCutoff.toString(),
                 TaskTimeType.WEEK.rawValue,
@@ -402,7 +424,7 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
 
     internal fun invalidateFromSync() = invalidate()
 
-    private fun TaskEntity.toContentValues(): ContentValues = ContentValues(14).apply {
+    private fun TaskEntity.toContentValues(): ContentValues = ContentValues(15).apply {
         put("id", id)
         put("series_id", seriesId)
         put("title", title)
@@ -416,6 +438,7 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         put("updated_at", updatedAt)
         if (settledAt == null) putNull("settled_at") else put("settled_at", settledAt)
         if (reminderTime == null) putNull("reminder_time") else put("reminder_time", reminderTime.toString())
+        if (deadlineDate == null) putNull("deadline_date") else put("deadline_date", deadlineDate.toString())
     }
 
     private fun Cursor.toTaskList(): List<TaskEntity> = buildList {
@@ -441,6 +464,9 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         },
         reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
             if (isNull(index)) null else LocalTime.parse(getString(index))
+        },
+        deadlineDate = getColumnIndexOrThrow("deadline_date").let { index ->
+            if (isNull(index)) null else LocalDate.parse(getString(index))
         },
     )
 

@@ -45,7 +45,11 @@ private final class MemoryTaskRepository: TaskRepository {
 
     func fetchAll() throws -> [TodoTask] { tasks }
 
-    func fetchTasks(scope: TimeScope, in period: TaskPeriod?) throws -> [TodoTask] {
+    func fetchTasks(
+        scope: TimeScope,
+        in period: TaskPeriod?,
+        includeOverdueOnce: Bool
+    ) throws -> [TodoTask] {
         tasks.filter { task in
             guard task.timeScope == scope else { return false }
             guard let period else { return true }

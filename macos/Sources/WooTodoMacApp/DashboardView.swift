@@ -166,6 +166,7 @@ struct DashboardView: View {
                 tasks: store.tasks(for: .daily),
                 referenceDate: store.referenceDate,
                 toggle: store.toggleCompletion,
+                pass: store.pass,
                 edit: edit,
                 delete: store.delete
             )
@@ -176,6 +177,7 @@ struct DashboardView: View {
                 tasks: store.tasks(for: .weekly),
                 referenceDate: store.referenceDate,
                 toggle: store.toggleCompletion,
+                pass: store.pass,
                 edit: edit,
                 delete: store.delete
             )
@@ -186,6 +188,7 @@ struct DashboardView: View {
                 tasks: store.tasks(for: .monthly),
                 referenceDate: store.referenceDate,
                 toggle: store.toggleCompletion,
+                pass: store.pass,
                 edit: edit,
                 delete: store.delete
             )
@@ -196,6 +199,7 @@ struct DashboardView: View {
                 tasks: store.tasks(for: .anytime),
                 referenceDate: store.referenceDate,
                 toggle: store.toggleCompletion,
+                pass: store.pass,
                 edit: edit,
                 delete: store.delete
             )
@@ -225,7 +229,8 @@ struct DashboardView: View {
                 targetDate: input.targetDate,
                 tier: input.tier,
                 repeats: input.repeats,
-                reminderTime: input.reminderTime
+                reminderTime: input.reminderTime,
+                deadlineDate: input.deadlineDate
             )
         case let .edit(task):
             store.edit(
@@ -235,7 +240,8 @@ struct DashboardView: View {
                 targetDate: input.targetDate,
                 tier: input.tier,
                 repeats: input.repeats,
-                reminderTime: input.reminderTime
+                reminderTime: input.reminderTime,
+                deadlineDate: input.deadlineDate
             )
         }
     }
@@ -247,6 +253,7 @@ private struct ScopedTasksView: View {
     let tasks: [TodoTask]
     let referenceDate: Date
     let toggle: (UUID) -> Void
+    let pass: (UUID) -> Void
     let edit: (TodoTask) -> Void
     let delete: (UUID) -> Void
 
@@ -269,10 +276,15 @@ private struct ScopedTasksView: View {
                         taskRows(tasks, title: "闲时任务")
                     } else {
                         let current = tasks.filter { $0.period?.contains(referenceDate) == true }
+                        let overdue = tasks.filter { task in
+                            task.status == .pending && task.recurrence == .once &&
+                                task.period.map { $0.end <= referenceDate } == true
+                        }
                         let upcoming = tasks.filter { task in
                             guard let period = task.period else { return false }
                             return period.start > referenceDate
                         }
+                        taskRows(overdue, title: "待处理")
                         taskRows(current, title: currentTitle)
                         taskRows(upcoming, title: "已规划")
                     }
@@ -299,6 +311,7 @@ private struct ScopedTasksView: View {
                     DashboardTaskRow(
                         task: task,
                         toggle: { toggle(task.id) },
+                        pass: { pass(task.id) },
                         edit: { edit(task) },
                         delete: { delete(task.id) }
                     )
@@ -311,6 +324,7 @@ private struct ScopedTasksView: View {
 private struct DashboardTaskRow: View {
     let task: TodoTask
     let toggle: () -> Void
+    let pass: () -> Void
     let edit: () -> Void
     let delete: () -> Void
 
@@ -339,6 +353,14 @@ private struct DashboardTaskRow: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                    if let deadline = task.deadlineDate {
+                        Label(
+                            deadline.formatted(.dateTime.year().month().day()),
+                            systemImage: "calendar.badge.exclamationmark"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(deadline < Calendar.current.startOfDay(for: Date()) ? .red : .secondary)
+                    }
                 }
             }
             Spacer()
@@ -357,6 +379,7 @@ private struct DashboardTaskRow: View {
         .contextMenu {
             if task.status == .pending {
                 Button("编辑", action: edit)
+                Button("Pass", action: pass)
                 Button("删除", role: .destructive, action: delete)
             }
         }

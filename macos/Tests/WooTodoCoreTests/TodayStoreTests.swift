@@ -13,13 +13,15 @@ struct TodayStoreTests {
         let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
         let repository = TodayMemoryTaskRepository(tasks: [])
         let store = TodayStore(repository: repository, engine: engine, now: { now })
+        let deadline = now.addingTimeInterval(3 * 86_400)
         var changeCount = 0
         store.onTasksChanged = { changeCount += 1 }
 
         let didAdd = store.add(
             title: "  写明日计划\n",
             tier: .mainline,
-            repeatsDaily: false
+            repeatsDaily: false,
+            deadlineDate: deadline
         )
 
         let task = try #require(repository.tasks.only)
@@ -29,6 +31,7 @@ struct TodayStoreTests {
         #expect(task.tier == .mainline)
         #expect(task.recurrence == .once)
         #expect(task.status == .pending)
+        #expect(task.deadlineDate == deadline)
         #expect(task.createdAt == now)
         #expect(changeCount == 1)
     }
@@ -197,7 +200,7 @@ struct TodayStoreTests {
         #expect(repository.tasks.first?.status == .pending)
     }
 
-    @Test("过期周期与Pass任务不能恢复为待办")
+    @Test("过期重复周期与Pass任务不能恢复为待办")
     func expiredAndPassedTasksCannotBeReopened() throws {
         let now = try #require(
             ISO8601DateFormatter().date(from: "2026-07-18T10:00:00+08:00")
@@ -210,6 +213,7 @@ struct TodayStoreTests {
             title: "昨日完成",
             timeScope: .daily,
             tier: .mainline,
+            recurrence: .repeating(RepeatRule(frequency: .daily)),
             period: yesterday,
             createdAt: yesterday.start
         )
@@ -229,6 +233,33 @@ struct TodayStoreTests {
         #expect(try repository.reopenCompleted(id: completed.id, at: now) == false)
         #expect(try repository.reopenCompleted(id: passed.id, at: now) == false)
     }
+
+    @Test("过期一次性任务会保留至手动 Pass")
+    func overdueOneTimeTaskRemainsUntilPassed() throws {
+        let now = try #require(
+            ISO8601DateFormatter().date(from: "2026-07-18T10:00:00+08:00")
+        )
+        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
+        let yesterday = try #require(
+            engine.period(containing: now.addingTimeInterval(-86_400), for: .daily)
+        )
+        let task = try TodoTask(
+            title: "昨日未完成",
+            timeScope: .daily,
+            tier: .mainline,
+            period: yesterday,
+            createdAt: yesterday.start
+        )
+        let repository = TodayMemoryTaskRepository(tasks: [task])
+        let store = TodayStore(repository: repository, engine: engine, now: { now })
+
+        store.reload()
+        #expect(store.tasks.map(\.id) == [task.id])
+
+        store.pass(id: task.id)
+        #expect(store.tasks.isEmpty)
+        #expect(repository.tasks.only?.status == .pass)
+    }
 }
 
 private extension Array {
@@ -244,12 +275,19 @@ private final class TodayMemoryTaskRepository: TaskRepository {
 
     func fetchAll() throws -> [TodoTask] { tasks }
 
-    func fetchTasks(scope: TimeScope, in period: TaskPeriod?) throws -> [TodoTask] {
+    func fetchTasks(
+        scope: TimeScope,
+        in period: TaskPeriod?,
+        includeOverdueOnce: Bool
+    ) throws -> [TodoTask] {
         tasks.filter { task in
             guard task.timeScope == scope else { return false }
             guard let period else { return true }
             guard let taskPeriod = task.period else { return false }
-            return taskPeriod.start < period.end && taskPeriod.end > period.start
+            let overlaps = taskPeriod.start < period.end && taskPeriod.end > period.start
+            let overdueOnce = includeOverdueOnce && task.status == .pending &&
+                task.recurrence == .once && taskPeriod.end <= period.start
+            return overlaps || overdueOnce
         }
     }
 
@@ -265,8 +303,9 @@ private final class TodayMemoryTaskRepository: TaskRepository {
 
     func reopenCompleted(id: UUID, at date: Date) throws -> Bool {
         guard let index = tasks.firstIndex(where: { $0.id == id }),
-              tasks[index].status == .completed,
-              (tasks[index].period?.end ?? .distantFuture) > date else { return false }
+              tasks[index].status == .completed else { return false }
+        if case .repeating = tasks[index].recurrence,
+           (tasks[index].period?.end ?? .distantFuture) <= date { return false }
         tasks[index].status = .pending
         tasks[index].completedAt = nil
         tasks[index].updatedAt = date

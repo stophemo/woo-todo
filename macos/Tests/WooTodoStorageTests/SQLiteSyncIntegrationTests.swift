@@ -15,6 +15,7 @@ struct SQLiteSyncIntegrationTests {
         )
         let start = date("2026-07-15T08:00:00+08:00")
         var first = try makeTask(title: "初始任务", createdAt: start)
+        first.deadlineDate = date("2026-07-20T00:00:00+08:00")
         try repository.save(first)
 
         first.title = "修改标题"
@@ -62,6 +63,7 @@ struct SQLiteSyncIntegrationTests {
             return
         }
         #expect(firstPayload.title == "初始任务")
+        #expect(firstPayload.deadlineDate == "2026-07-20")
         let deletedEntity = try open(operations[7], configuration: configuration)
         guard case .tombstone(let tombstone) = deletedEntity else {
             Issue.record("删除操作应为 tombstone")
@@ -157,6 +159,70 @@ struct SQLiteSyncIntegrationTests {
 
         try repository.configureSync(configuration)
         #expect(try await repository.pendingOperations(limit: 50) == baseline)
+    }
+
+    @Test("重置同步绑定保留任务与显示配置并为新空间重新生成快照")
+    func resetSyncBindingPreservesLocalSnapshot() async throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let task = try makeTask(
+            title: "切换同步方式后保留",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        let display = try displayConfiguration(header: "切换后保留显示配置")
+        try repository.save(task)
+        try repository.seedDisplayConfiguration(display)
+        let oldConfiguration = syncConfiguration()
+        try repository.configureSync(oldConfiguration)
+        let oldOperations = try await repository.pendingOperations(limit: 50)
+        try await repository.acknowledgeOperations(opIds: oldOperations.map(\.opId))
+
+        try repository.resetSyncBinding()
+
+        #expect(try repository.fetchAll().map(\.id) == [task.id])
+        #expect(try repository.displayConfiguration() == display)
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+
+        let replacement = SQLiteSyncConfiguration(
+            vaultId: "vault-replacement",
+            deviceId: "device-replacement",
+            vaultKey: Data((32..<64).map { UInt8($0) })
+        )
+        try repository.configureSync(replacement)
+        let replacementOperations = try await repository.pendingOperations(limit: 50)
+        #expect(Set(replacementOperations.map(\.entityId)) == Set([
+            task.id.uuidString.lowercased(),
+            SQLiteTaskRepository.displayConfigurationEntityID,
+        ]))
+    }
+
+    @Test("原子替换同步绑定会直接重绑并保留本地任务")
+    func replaceSyncBindingPreservesTasks() async throws {
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: syncConfiguration()
+        )
+        let task = try makeTask(
+            title: "原子切换同步方式",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        try repository.save(task)
+        let replacement = SQLiteSyncConfiguration(
+            vaultId: "vault-atomic-replacement",
+            deviceId: "device-atomic-replacement",
+            vaultKey: Data((64..<96).map { UInt8($0) })
+        )
+
+        try repository.replaceSyncBinding(with: replacement)
+
+        #expect(try repository.fetchAll().map(\.id) == [task.id])
+        let operations = try await repository.pendingOperations(limit: 50)
+        #expect(operations.map(\.entityId) == [task.id.uuidString.lowercased()])
+        guard let operation = operations.first,
+              case .task(let payload) = try open(operation, configuration: replacement) else {
+            Issue.record("新空间应收到使用新密钥加密的本地任务快照")
+            return
+        }
+        #expect(payload.title == task.title)
     }
 
     @Test("新设备默认显示配置不会覆盖同步空间已有配置")

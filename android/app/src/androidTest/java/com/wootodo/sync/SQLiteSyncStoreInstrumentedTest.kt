@@ -90,6 +90,74 @@ class SQLiteSyncStoreInstrumentedTest {
     }
 
     @Test
+    fun `重置同步绑定保留本地数据并为新空间重新生成快照`() = runBlocking {
+        val task = localTask("task-switch-binding", "切换同步方式后保留")
+        SQLiteTaskStore(database).insert(task)
+        val oldStore = SQLiteSyncStore(database, credentials)
+        oldStore.acknowledgeOperations(oldStore.pendingOperations(50).map { it.opId })
+        val display = displayConfiguration("切换后保留显示配置")
+        writeDisplayConfiguration(
+            database.writableDatabase,
+            display,
+            isLocalOverride = false,
+        )
+        database.writableDatabase.execSQL(
+            "INSERT INTO sync_applied_operations(op_id, server_seq) VALUES ('old-op', 1)",
+        )
+        database.writableDatabase.execSQL(
+            "INSERT INTO sync_webdav_applied_operations(op_id, applied_at) " +
+                "VALUES ('old-webdav-op', 1)",
+        )
+
+        SQLiteSyncStore.resetSyncBinding(database)
+
+        assertEquals("" to "", boundIdentity())
+        assertEquals(0, rowCount("sync_outbox"))
+        assertEquals(0, rowCount("sync_applied_operations"))
+        assertEquals(0, rowCount("sync_webdav_applied_operations"))
+        assertEquals(task.title, taskTitle(task.id))
+        assertEquals(display, readDisplayConfiguration(database.readableDatabase))
+        assertTrue(readDisplayConfigurationLocalOverride(database.readableDatabase))
+
+        val replacement = SyncCredentials(
+            endpoint = "https://replacement.example.test",
+            vaultId = "vault-replacement",
+            deviceId = "device-replacement",
+            deviceToken = Base64Url.encode(ByteArray(32) { 9 }),
+            vaultKey = ByteArray(32) { (it + 31).toByte() },
+        )
+        val replacementStore = SQLiteSyncStore(database, replacement)
+        assertEquals(replacement.vaultId to replacement.deviceId, boundIdentity())
+        assertEquals(
+            setOf(task.id, DISPLAY_CONFIGURATION_ENTITY_ID),
+            replacementStore.pendingOperations(50).map { it.entityId }.toSet(),
+        )
+    }
+
+    @Test
+    fun `原子替换同步绑定会直接重绑并保留任务`() = runBlocking {
+        val task = localTask("task-atomic-switch", "原子切换")
+        SQLiteTaskStore(database).insert(task)
+        SQLiteSyncStore(database, credentials)
+        val replacement = SyncCredentials(
+            endpoint = "https://replacement.example.test",
+            vaultId = "vault-atomic-replacement",
+            deviceId = "device-atomic-replacement",
+            deviceToken = Base64Url.encode(ByteArray(32) { 7 }),
+            vaultKey = ByteArray(32) { (it + 41).toByte() },
+        )
+
+        val replacementStore = SQLiteSyncStore.replaceSyncBinding(database, replacement)
+
+        assertEquals(replacement.vaultId to replacement.deviceId, boundIdentity())
+        assertEquals(task.title, taskTitle(task.id))
+        assertEquals(
+            listOf(task.id),
+            replacementStore.pendingOperations(50).map { it.entityId },
+        )
+    }
+
+    @Test
     fun `撤销完成会写入明确的reopen操作`() = runBlocking {
         val syncStore = SQLiteSyncStore(database, credentials)
         val taskStore = SQLiteTaskStore(database)

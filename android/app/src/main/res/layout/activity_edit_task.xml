@@ -72,6 +72,20 @@
             android:layout_width="match_parent"
             android:layout_height="48dp" />
 
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/deadline_switch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/task_deadline_enabled" />
+
+        <Button
+            android:id="@+id/deadline_date_button"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/task_deadline_not_set" />
+
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

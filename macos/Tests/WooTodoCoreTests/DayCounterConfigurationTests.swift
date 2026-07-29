@@ -75,6 +75,44 @@ struct DayCounterConfigurationTests {
         #expect(configuration.subtitleText(on: today, calendar: calendar) == "-1个月零21天")
     }
 
+    @Test func parameterizedCountersUseIndependentDatesAcrossYearBoundary() throws {
+        let today = try #require(calendar.date(from: DateComponents(
+            year: 2027, month: 1, day: 2
+        )))
+        let tokenDate = try #require(calendar.date(from: DateComponents(
+            year: 2026, month: 12, day: 31
+        )))
+        let legacyStart = try #require(calendar.date(from: DateComponents(
+            year: 2020, month: 1, day: 1
+        )))
+        let legacyDeadline = try #require(calendar.date(from: DateComponents(
+            year: 2030, month: 1, day: 1
+        )))
+        let configuration = DayCounterConfiguration(
+            headerTemplate: "{elapsedDays:2026-12-31}|{elapsedDays:2027-01-02}|{deadlineDays:2027-01-01}|{deadlineDays:2027-02-02}",
+            subtitleTemplate: "{elapsedMonthsDays:2026-11-02}|{elapsedMonthsDays:2026-12-31}|{deadlineMonthsDays:2026-12-02}|{deadlineMonthsDays:2027-02-02}",
+            startDate: legacyStart,
+            deadlineDate: legacyDeadline
+        )
+
+        #expect(configuration.headerText(on: today, calendar: calendar) == "3|1|-1|31")
+        #expect(configuration.subtitleText(on: today, calendar: calendar) ==
+            "2个月零1天|0个月零3天|-1个月零0天|1个月零0天")
+        #expect(DayCounterConfiguration.counterToken(
+            for: .elapsedDays,
+            date: tokenDate,
+            calendar: calendar
+        ) == "{elapsedDays:2026-12-31}")
+    }
+
+    @Test func invalidParameterizedDateRemainsLiteral() {
+        let configuration = DayCounterConfiguration(
+            headerTemplate: "{elapsedDays:2026-02-30}"
+        )
+
+        #expect(configuration.headerText(calendar: calendar) == "{elapsedDays:2026-02-30}")
+    }
+
     @Test func monthEndLeapDayAndSameDayUseNaturalMonthClamping() throws {
         let vectors = [
             (start: DateComponents(year: 2026, month: 1, day: 31),

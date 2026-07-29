@@ -1,9 +1,16 @@
 package com.wootodo.sync
 
 import java.io.IOException
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -63,6 +70,50 @@ class SyncRuntimeTest {
             assertEquals(2, executedThreads.size)
             assertTrue(executedThreads.all { it.startsWith("sync-io-test") })
         } finally {
+            dispatcher.close()
+        }
+    }
+
+    @Test
+    fun `同步方式重绑等待当前同步结束且下一轮使用新配置`() = runBlocking {
+        val dispatcher = Executors.newFixedThreadPool(2).asCoroutineDispatcher()
+        val firstRunStarted = CompletableDeferred<Unit>()
+        val releaseFirstRun = CountDownLatch(1)
+        val observedBindings = Collections.synchronizedList(mutableListOf<String>())
+        var binding = "旧空间"
+        val summary = SyncRunSummary(pushed = 0, pulled = 0, pages = 1, finalCursor = 0)
+        val runtime = SyncRuntime(
+            runnerFactory = {
+                val capturedBinding = binding
+                SyncRunner {
+                    observedBindings += capturedBinding
+                    if (capturedBinding == "旧空间") {
+                        firstRunStarted.complete(Unit)
+                        check(releaseFirstRun.await(5, TimeUnit.SECONDS)) { "测试同步等待超时" }
+                    }
+                    summary
+                }
+            },
+            ioDispatcher = dispatcher,
+        )
+
+        try {
+            val firstSync = async(start = CoroutineStart.UNDISPATCHED) { runtime.synchronize() }
+            withTimeout(5_000) { firstRunStarted.await() }
+            val rebind = async(start = CoroutineStart.UNDISPATCHED) {
+                runtime.withExclusiveConfiguration { binding = "新空间" }
+            }
+
+            assertFalse(rebind.isCompleted)
+            assertEquals("旧空间", binding)
+
+            releaseFirstRun.countDown()
+            assertEquals(SyncExecutionResult.Succeeded(summary), firstSync.await())
+            rebind.await()
+            assertEquals(SyncExecutionResult.Succeeded(summary), runtime.synchronize())
+            assertEquals(listOf("旧空间", "新空间"), observedBindings)
+        } finally {
+            releaseFirstRun.countDown()
             dispatcher.close()
         }
     }

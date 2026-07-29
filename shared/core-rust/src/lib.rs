@@ -1,3 +1,5 @@
+mod backup;
+mod crypto;
 mod error;
 mod ffi;
 mod model;
@@ -6,7 +8,11 @@ mod period;
 mod repository;
 mod settlement;
 mod statistics;
+mod sync;
+mod wire;
 
+pub use backup::*;
+pub use crypto::*;
 pub use error::{CoreError, CoreResult};
 pub use model::{QuestLine, Recurrence, ReminderTime, TIMEZONE, TaskState, TimeType, TodoTask};
 pub use notification::{NotificationPlan, notification_plans};
@@ -14,3 +20,5 @@ pub use period::{is_expired, next_start, normalize_start, occurrence_id, today_s
 pub use repository::TaskRepository;
 pub use settlement::{SettlementResult, settle};
 pub use statistics::{StatisticsSnapshot, calculate_statistics};
+pub use sync::*;
+pub use wire::*;

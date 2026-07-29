@@ -709,14 +709,12 @@ function Dismiss-AppDialog {
         (Find-AppDialog -Process $Process -Title $Title) -ne [IntPtr]::Zero
     }
     $dialog = Find-AppDialog -Process $Process -Title $Title
-    if (-not [WooTodoSmokeNative]::PostMessageW(
-            $dialog,
-            0x0111,
-            [IntPtr] 1,
-            [IntPtr]::Zero
-        )) {
-        throw "无法关闭 $Title 对话框"
-    }
+    [WooTodoSmokeNative]::SendMessageW(
+        $dialog,
+        0x0010,
+        [IntPtr]::Zero,
+        [IntPtr]::Zero
+    ) | Out-Null
     Wait-ForCondition -Description "关闭 $Title 对话框" -Condition {
         (Find-AppDialog -Process $Process -Title $Title) -eq [IntPtr]::Zero
     }

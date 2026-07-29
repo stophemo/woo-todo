@@ -533,49 +533,60 @@ public static class WooTodoSmokeNative
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "无法写入文件对话框进程内存");
             }
 
-            SendMessageW(dialog, 0x0468, new IntPtr(0x0480), remoteInput);
-            long returnedCharacters = SendMessageW(
-                dialog,
-                0x0465,
-                new IntPtr(characterCapacity),
-                remoteOutput
-            ).ToInt64();
-            if (returnedCharacters <= 0 || returnedCharacters > characterCapacity)
+            const uint cdmGetFilePath = 0x0465;
+            const uint cdmSetControlText = 0x0468;
+            // Explorer 风格对话框使用 cmb13，旧模板仍可能使用 edt1。
+            int[] fileNameControlIds = { 0x047C, 0x0480 };
+            foreach (int controlId in fileNameControlIds)
             {
-                return false;
-            }
+                SendMessageW(dialog, cdmSetControlText, new IntPtr(controlId), remoteInput);
+                long returnedCharacters = SendMessageW(
+                    dialog,
+                    cdmGetFilePath,
+                    new IntPtr(characterCapacity),
+                    remoteOutput
+                ).ToInt64();
+                if (returnedCharacters <= 0 || returnedCharacters > characterCapacity)
+                {
+                    continue;
+                }
 
-            int returnedBytes = checked((int)returnedCharacters * sizeof(char));
-            var destination = new byte[returnedBytes];
-            UIntPtr bytesRead;
-            if (!ReadProcessMemory(
-                    process,
-                    remoteOutput,
+                int returnedBytes = checked((int)returnedCharacters * sizeof(char));
+                var destination = new byte[returnedBytes];
+                UIntPtr bytesRead;
+                if (!ReadProcessMemory(
+                        process,
+                        remoteOutput,
+                        destination,
+                        new UIntPtr((uint)returnedBytes),
+                        out bytesRead
+                    ) || bytesRead.ToUInt64() != (ulong)returnedBytes)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取文件对话框进程内存");
+                }
+                if (destination[returnedBytes - 2] != 0 || destination[returnedBytes - 1] != 0)
+                {
+                    continue;
+                }
+                string selected = Encoding.Unicode.GetString(
                     destination,
-                    new UIntPtr((uint)returnedBytes),
-                    out bytesRead
-                ) || bytesRead.ToUInt64() != (ulong)returnedBytes)
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取文件对话框进程内存");
+                    0,
+                    returnedBytes - sizeof(char)
+                );
+                if (selected.IndexOf('\0') >= 0)
+                {
+                    continue;
+                }
+                if (string.Equals(
+                        System.IO.Path.GetFullPath(selected),
+                        System.IO.Path.GetFullPath(path),
+                        StringComparison.OrdinalIgnoreCase
+                    ))
+                {
+                    return true;
+                }
             }
-            if (destination[returnedBytes - 2] != 0 || destination[returnedBytes - 1] != 0)
-            {
-                return false;
-            }
-            string selected = Encoding.Unicode.GetString(
-                destination,
-                0,
-                returnedBytes - sizeof(char)
-            );
-            if (selected.IndexOf('\0') >= 0)
-            {
-                return false;
-            }
-            return string.Equals(
-                System.IO.Path.GetFullPath(selected),
-                System.IO.Path.GetFullPath(path),
-                StringComparison.OrdinalIgnoreCase
-            );
+            return false;
         }
         finally
         {

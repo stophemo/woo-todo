@@ -776,7 +776,7 @@ function Assert-ExtendedSettingsControls {
     }
     $visibleTexts = [WooTodoSmokeNative]::VisibleChildTexts($Main)
     if (($visibleTexts | Where-Object { $_ -match "变量日期" }).Count -ne 0) {
-        throw "显示设置仍包含已取消的“变量日期”入口"
+        throw "显示设置仍包含已取消的变量日期入口"
     }
     Add-Diagnostic "标题、副标题、独立日期变量和四项快捷键入口均可见"
 }

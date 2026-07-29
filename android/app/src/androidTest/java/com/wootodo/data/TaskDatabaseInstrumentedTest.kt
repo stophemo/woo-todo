@@ -1,6 +1,7 @@
 package com.wootodo.data
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteException
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -149,16 +150,19 @@ class TaskDatabaseInstrumentedTest {
     }
 
     @Test
-    fun `版本五升级会创建WebDAV幂等记录表`() {
+    fun `版本五升级会保留任务并创建WebDAV幂等记录表`() = runBlocking {
         database.close()
         context.deleteDatabase(DATABASE_NAME)
         context.openOrCreateDatabase(DATABASE_NAME, Context.MODE_PRIVATE, null).use { legacy ->
-            legacy.execSQL("CREATE TABLE migration_marker(id INTEGER PRIMARY KEY)")
+            createVersionFiveOrSixTasksTable(legacy, "task-v5-upgrade")
             legacy.version = 5
         }
 
         database = TaskDatabase(context)
         val sqlite = database.writableDatabase
+        val restored = requireNotNull(SQLiteTaskStore(database).getById("task-v5-upgrade"))
+        assertEquals(LocalTime.of(8, 30), restored.reminderTime)
+        assertEquals(null, restored.deadlineDate)
         assertEquals(
             1,
             sqlite.rawQuery(
@@ -187,10 +191,11 @@ class TaskDatabaseInstrumentedTest {
     }
 
     @Test
-    fun `版本六升级会创建显示配置表且不删除旧表`() {
+    fun `版本六升级会保留任务并创建显示配置表且不删除旧表`() = runBlocking {
         database.close()
         context.deleteDatabase(DATABASE_NAME)
         context.openOrCreateDatabase(DATABASE_NAME, Context.MODE_PRIVATE, null).use { legacy ->
+            createVersionFiveOrSixTasksTable(legacy, "task-v6-upgrade")
             legacy.execSQL("CREATE TABLE migration_marker(id INTEGER PRIMARY KEY)")
             legacy.execSQL("INSERT INTO migration_marker(id) VALUES (1)")
             legacy.version = 6
@@ -198,6 +203,9 @@ class TaskDatabaseInstrumentedTest {
 
         database = TaskDatabase(context)
         val sqlite = database.writableDatabase
+        val restored = requireNotNull(SQLiteTaskStore(database).getById("task-v6-upgrade"))
+        assertEquals(LocalTime.of(8, 30), restored.reminderTime)
+        assertEquals(null, restored.deadlineDate)
         assertEquals(
             1,
             sqlite.rawQuery(
@@ -263,6 +271,41 @@ class TaskDatabaseInstrumentedTest {
         val deadline = LocalDate.of(2026, 7, 30)
         assertEquals(true, store.update(restored.copy(deadlineDate = deadline)))
         assertEquals(deadline, store.getById(restored.id)?.deadlineDate)
+    }
+
+    private fun createVersionFiveOrSixTasksTable(
+        database: SQLiteDatabase,
+        taskId: String,
+    ) {
+        database.execSQL(
+            """
+            CREATE TABLE tasks (
+                id TEXT NOT NULL PRIMARY KEY,
+                series_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                time_type TEXT NOT NULL CHECK(time_type IN ('day', 'week', 'month', 'someday')),
+                target_date TEXT,
+                quest_line TEXT NOT NULL CHECK(quest_line IN ('main', 'side', 'extra')),
+                status TEXT NOT NULL CHECK(status IN ('pending', 'completed', 'pass')),
+                recurrence TEXT NOT NULL CHECK(recurrence IN ('once', 'daily', 'weekly', 'monthly')),
+                sort_order INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                settled_at INTEGER,
+                reminder_time TEXT
+            )
+            """.trimIndent(),
+        )
+        database.execSQL(
+            """
+            INSERT INTO tasks (
+                id, series_id, title, time_type, target_date, quest_line, status,
+                recurrence, sort_order, created_at, updated_at, settled_at, reminder_time
+            ) VALUES (?, ?, '升级保留任务', 'day', '2026-07-21', 'main', 'pending',
+                'once', 0, 3500, 3500, NULL, '08:30')
+            """.trimIndent(),
+            arrayOf(taskId, taskId),
+        )
     }
 
     private companion object {

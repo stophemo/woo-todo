@@ -107,6 +107,45 @@ public static class WooTodoSmokeNative
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(
+        uint desiredAccess,
+        [MarshalAs(UnmanagedType.Bool)] bool inheritHandle,
+        uint processId
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr VirtualAllocEx(
+        IntPtr process,
+        IntPtr address,
+        UIntPtr size,
+        uint allocationType,
+        uint protection
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WriteProcessMemory(
+        IntPtr process,
+        IntPtr address,
+        byte[] buffer,
+        UIntPtr size,
+        out UIntPtr bytesWritten
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool VirtualFreeEx(
+        IntPtr process,
+        IntPtr address,
+        UIntPtr size,
+        uint freeType
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int GetClassNameW(IntPtr window, StringBuilder text, int maximum);
 
@@ -129,14 +168,6 @@ public static class WooTodoSmokeNative
         uint message,
         IntPtr wparam,
         StringBuilder lparam
-    );
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
-    private static extern IntPtr SendMessageSystemTime(
-        IntPtr window,
-        uint message,
-        IntPtr wparam,
-        ref SystemTime lparam
     );
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -346,7 +377,67 @@ public static class WooTodoSmokeNative
             Month = checked((ushort)month),
             Day = checked((ushort)day)
         };
-        return SendMessageSystemTime(picker, 0x1002, IntPtr.Zero, ref value) != IntPtr.Zero;
+        uint processId;
+        if (GetWindowThreadProcessId(picker, out processId) == 0 || processId == 0)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法确定日期控件所属进程");
+        }
+
+        const uint processVmOperation = 0x0008;
+        const uint processVmWrite = 0x0020;
+        IntPtr process = OpenProcess(processVmOperation | processVmWrite, false, processId);
+        if (process == IntPtr.Zero)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法打开日期控件所属进程");
+        }
+
+        int size = Marshal.SizeOf(typeof(SystemTime));
+        IntPtr local = IntPtr.Zero;
+        IntPtr remote = IntPtr.Zero;
+        try
+        {
+            local = Marshal.AllocHGlobal(size);
+            Marshal.StructureToPtr(value, local, false);
+            var bytes = new byte[size];
+            Marshal.Copy(local, bytes, 0, size);
+
+            remote = VirtualAllocEx(
+                process,
+                IntPtr.Zero,
+                new UIntPtr((uint)size),
+                0x3000,
+                0x04
+            );
+            if (remote == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法分配日期控件进程内存");
+            }
+
+            UIntPtr bytesWritten;
+            if (!WriteProcessMemory(
+                    process,
+                    remote,
+                    bytes,
+                    new UIntPtr((uint)size),
+                    out bytesWritten
+                ) || bytesWritten.ToUInt64() != (ulong)size)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法写入日期控件进程内存");
+            }
+            return SendMessageW(picker, 0x1002, IntPtr.Zero, remote) != IntPtr.Zero;
+        }
+        finally
+        {
+            if (remote != IntPtr.Zero)
+            {
+                VirtualFreeEx(process, remote, UIntPtr.Zero, 0x8000);
+            }
+            if (local != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(local);
+            }
+            CloseHandle(process);
+        }
     }
 
     public static bool SetFileDialogPath(IntPtr dialog, string path)

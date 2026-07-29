@@ -791,13 +791,19 @@ function Submit-FileDialog {
     Wait-ForCondition -Description "打开 $Title 文件对话框" -TimeoutSeconds 15 -Condition {
         (Find-AppDialog -Process $Process -Title $Title) -ne [IntPtr]::Zero
     }
-    $dialog = Find-AppDialog -Process $Process -Title $Title
-    if (-not [WooTodoSmokeNative]::SetFileDialogPath($dialog, $Path)) {
-        throw "无法向 $Title 文件对话框写入路径"
-    }
     Wait-ForCondition -Description "初始化 $Title 文件对话框确认按钮" -Condition {
-        [WooTodoSmokeNative]::GetDlgItem($dialog, 1) -ne [IntPtr]::Zero
+        $candidate = Find-AppDialog -Process $Process -Title $Title
+        $candidate -ne [IntPtr]::Zero -and
+            [WooTodoSmokeNative]::GetDlgItem($candidate, 1) -ne [IntPtr]::Zero
     }
+    Wait-ForCondition -Description "向 $Title 文件对话框写入路径" -TimeoutSeconds 15 -Condition {
+        $candidate = Find-AppDialog -Process $Process -Title $Title
+        if ($candidate -eq [IntPtr]::Zero) {
+            return $false
+        }
+        return [WooTodoSmokeNative]::SetFileDialogPath($candidate, $Path)
+    }
+    $dialog = Find-AppDialog -Process $Process -Title $Title
     $accept = Require-ChildWindow -Parent $dialog -Id 1
     if (-not [WooTodoSmokeNative]::PostMessageW(
             $accept,

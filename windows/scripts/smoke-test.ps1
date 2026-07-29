@@ -456,36 +456,52 @@ public static class WooTodoSmokeNative
 
     public static bool SetFileDialogPath(IntPtr dialog, string path)
     {
-        IntPtr edit = GetDlgItem(dialog, 0x0480);
-        if (edit == IntPtr.Zero)
+        IntPtr preferred = IntPtr.Zero;
+        IntPtr legacy = IntPtr.Zero;
+        IntPtr modern = IntPtr.Zero;
+        EnumChildWindows(dialog, delegate(IntPtr window, IntPtr parameter)
         {
-            IntPtr preferred = IntPtr.Zero;
-            IntPtr fallback = IntPtr.Zero;
-            EnumChildWindows(dialog, delegate(IntPtr window, IntPtr parameter)
+            var className = new StringBuilder(64);
+            GetClassNameW(window, className, className.Capacity);
+            if (className.ToString() != "Edit" || !IsWindowVisible(window) || !IsWindowEnabled(window))
             {
-                var className = new StringBuilder(64);
-                GetClassNameW(window, className, className.Capacity);
-                if (className.ToString() != "Edit" || !IsWindowVisible(window) || !IsWindowEnabled(window))
-                {
-                    return true;
-                }
-                if (fallback == IntPtr.Zero)
-                {
-                    fallback = window;
-                }
-                int id = GetDlgCtrlID(window);
-                IntPtr parent = GetParent(window);
-                int parentId = parent == IntPtr.Zero ? 0 : GetDlgCtrlID(parent);
-                if (id == 0x0480 || id == 1001 || parentId == 0x047C)
-                {
-                    preferred = window;
-                    return false;
-                }
                 return true;
-            }, IntPtr.Zero);
-            edit = preferred != IntPtr.Zero ? preferred : fallback;
+            }
+            int id = GetDlgCtrlID(window);
+            bool inFileNameContainer = false;
+            for (IntPtr ancestor = GetParent(window);
+                ancestor != IntPtr.Zero && ancestor != dialog;
+                ancestor = GetParent(ancestor))
+            {
+                if (GetDlgCtrlID(ancestor) == 0x047C)
+                {
+                    inFileNameContainer = true;
+                    break;
+                }
+            }
+            if (inFileNameContainer)
+            {
+                preferred = window;
+                return false;
+            }
+            if (legacy == IntPtr.Zero && id == 0x0480)
+            {
+                legacy = window;
+            }
+            if (modern == IntPtr.Zero && id == 1001)
+            {
+                modern = window;
+            }
+            return true;
+        }, IntPtr.Zero);
+        IntPtr edit = preferred != IntPtr.Zero
+            ? preferred
+            : legacy != IntPtr.Zero ? legacy : modern;
+        if (edit == IntPtr.Zero || !SetText(edit, path))
+        {
+            return false;
         }
-        return edit != IntPtr.Zero && SetText(edit, path);
+        return string.Equals(GetText(edit), path, StringComparison.Ordinal);
     }
 
     public static string ReadClipboardUnicodeText()

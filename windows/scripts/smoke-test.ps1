@@ -752,7 +752,7 @@ function Assert-ExtendedSettingsControls {
         throw "耗时起始日与截止日期错误地复用了同一个控件"
     }
     $visibleTexts = [WooTodoSmokeNative]::VisibleChildTexts($Main)
-    if (($visibleTexts | Where-Object { $_ -match "变量日期" }).Count -ne 0) {
+    if (@($visibleTexts | Where-Object { $_ -match "变量日期" }).Count -ne 0) {
         throw "显示设置仍包含已取消的变量日期入口"
     }
     Add-Diagnostic "标题、副标题、独立日期变量和四项快捷键入口均可见"
@@ -1005,7 +1005,7 @@ function ConvertFrom-UriQuery {
     $result = @{}
     foreach ($component in $Uri.Query.TrimStart("?").Split("&", [StringSplitOptions]::RemoveEmptyEntries)) {
         $parts = $component.Split("=", 2)
-        if ($parts.Count -ne 2) {
+        if (@($parts).Count -ne 2) {
             throw "配对链接查询参数格式无效"
         }
         $name = [Uri]::UnescapeDataString($parts[0])
@@ -1077,7 +1077,7 @@ function Assert-PairingFlow {
     $query = ConvertFrom-UriQuery -Uri $pairingUri
     $expectedFields = @("endpoint", "pairingId", "pairingSecret", "initiatorPublicKey")
     if ($query.Count -ne $expectedFields.Count -or
-        ($expectedFields | Where-Object { -not $query.ContainsKey($_) }).Count -ne 0) {
+        @($expectedFields | Where-Object { -not $query.ContainsKey($_) }).Count -ne 0) {
         throw "配对深链字段不完整"
     }
     $claimBody = @{
@@ -1175,7 +1175,7 @@ function Assert-WebDavConfigurationQr {
     $query = ConvertFrom-UriQuery -Uri ([Uri] $configurationLink)
     $expectedFields = @("v", "username", "appPassword", "vaultId", "vaultKey")
     if ($query.Count -ne $expectedFields.Count -or
-        ($expectedFields | Where-Object { -not $query.ContainsKey($_) }).Count -ne 0 -or
+        @($expectedFields | Where-Object { -not $query.ContainsKey($_) }).Count -ne 0 -or
         [string] $query.v -ne "1" -or
         [string] $query.username -ne [string] $Credential.username -or
         [string] $query.appPassword -ne [string] $Credential.app_password -or

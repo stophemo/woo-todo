@@ -135,6 +135,16 @@ public static class WooTodoSmokeNative
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ReadProcessMemory(
+        IntPtr process,
+        IntPtr address,
+        [Out] byte[] buffer,
+        UIntPtr size,
+        out UIntPtr bytesRead
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool VirtualFreeEx(
         IntPtr process,
         IntPtr address,
@@ -456,52 +466,129 @@ public static class WooTodoSmokeNative
 
     public static bool SetFileDialogPath(IntPtr dialog, string path)
     {
-        IntPtr preferred = IntPtr.Zero;
-        IntPtr legacy = IntPtr.Zero;
-        IntPtr modern = IntPtr.Zero;
-        EnumChildWindows(dialog, delegate(IntPtr window, IntPtr parameter)
-        {
-            var className = new StringBuilder(64);
-            GetClassNameW(window, className, className.Capacity);
-            if (className.ToString() != "Edit" || !IsWindowVisible(window) || !IsWindowEnabled(window))
-            {
-                return true;
-            }
-            int id = GetDlgCtrlID(window);
-            bool inFileNameContainer = false;
-            for (IntPtr ancestor = GetParent(window);
-                ancestor != IntPtr.Zero && ancestor != dialog;
-                ancestor = GetParent(ancestor))
-            {
-                if (GetDlgCtrlID(ancestor) == 0x047C)
-                {
-                    inFileNameContainer = true;
-                    break;
-                }
-            }
-            if (inFileNameContainer)
-            {
-                preferred = window;
-                return false;
-            }
-            if (legacy == IntPtr.Zero && id == 0x0480)
-            {
-                legacy = window;
-            }
-            if (modern == IntPtr.Zero && id == 1001)
-            {
-                modern = window;
-            }
-            return true;
-        }, IntPtr.Zero);
-        IntPtr edit = preferred != IntPtr.Zero
-            ? preferred
-            : legacy != IntPtr.Zero ? legacy : modern;
-        if (edit == IntPtr.Zero || !SetText(edit, path))
+        const int characterCapacity = 32768;
+        if (string.IsNullOrEmpty(path) || path.Length >= characterCapacity)
         {
             return false;
         }
-        return string.Equals(GetText(edit), path, StringComparison.Ordinal);
+
+        uint processId;
+        if (GetWindowThreadProcessId(dialog, out processId) == 0 || processId == 0)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法确定文件对话框所属进程");
+        }
+
+        const uint processVmOperation = 0x0008;
+        const uint processVmRead = 0x0010;
+        const uint processVmWrite = 0x0020;
+        IntPtr process = OpenProcess(
+            processVmOperation | processVmRead | processVmWrite,
+            false,
+            processId
+        );
+        if (process == IntPtr.Zero)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法打开文件对话框所属进程");
+        }
+
+        byte[] source = Encoding.Unicode.GetBytes(path + "\0");
+        int byteCapacity = checked(characterCapacity * sizeof(char));
+        IntPtr remoteInput = IntPtr.Zero;
+        IntPtr remoteOutput = IntPtr.Zero;
+        try
+        {
+            remoteInput = VirtualAllocEx(
+                process,
+                IntPtr.Zero,
+                new UIntPtr((uint)source.Length),
+                0x3000,
+                0x04
+            );
+            if (remoteInput == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法分配文件对话框输入内存");
+            }
+
+            remoteOutput = VirtualAllocEx(
+                process,
+                IntPtr.Zero,
+                new UIntPtr((uint)byteCapacity),
+                0x3000,
+                0x04
+            );
+            if (remoteOutput == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法分配文件对话框输出内存");
+            }
+
+            UIntPtr bytesWritten;
+            if (!WriteProcessMemory(
+                    process,
+                    remoteInput,
+                    source,
+                    new UIntPtr((uint)source.Length),
+                    out bytesWritten
+                ) || bytesWritten.ToUInt64() != (ulong)source.Length)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法写入文件对话框进程内存");
+            }
+
+            SendMessageW(dialog, 0x0468, new IntPtr(0x0480), remoteInput);
+            long returnedCharacters = SendMessageW(
+                dialog,
+                0x0465,
+                new IntPtr(characterCapacity),
+                remoteOutput
+            ).ToInt64();
+            if (returnedCharacters <= 0 || returnedCharacters > characterCapacity)
+            {
+                return false;
+            }
+
+            int returnedBytes = checked((int)returnedCharacters * sizeof(char));
+            var destination = new byte[returnedBytes];
+            UIntPtr bytesRead;
+            if (!ReadProcessMemory(
+                    process,
+                    remoteOutput,
+                    destination,
+                    new UIntPtr((uint)returnedBytes),
+                    out bytesRead
+                ) || bytesRead.ToUInt64() != (ulong)returnedBytes)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取文件对话框进程内存");
+            }
+            if (destination[returnedBytes - 2] != 0 || destination[returnedBytes - 1] != 0)
+            {
+                return false;
+            }
+            string selected = Encoding.Unicode.GetString(
+                destination,
+                0,
+                returnedBytes - sizeof(char)
+            );
+            if (selected.IndexOf('\0') >= 0)
+            {
+                return false;
+            }
+            return string.Equals(
+                System.IO.Path.GetFullPath(selected),
+                System.IO.Path.GetFullPath(path),
+                StringComparison.OrdinalIgnoreCase
+            );
+        }
+        finally
+        {
+            if (remoteOutput != IntPtr.Zero)
+            {
+                VirtualFreeEx(process, remoteOutput, UIntPtr.Zero, 0x8000);
+            }
+            if (remoteInput != IntPtr.Zero)
+            {
+                VirtualFreeEx(process, remoteInput, UIntPtr.Zero, 0x8000);
+            }
+            CloseHandle(process);
+        }
     }
 
     public static string ReadClipboardUnicodeText()

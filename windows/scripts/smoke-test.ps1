@@ -709,14 +709,10 @@ function Dismiss-AppDialog {
         (Find-AppDialog -Process $Process -Title $Title) -ne [IntPtr]::Zero
     }
     $dialog = Find-AppDialog -Process $Process -Title $Title
-    Wait-ForCondition -Description "初始化 $Title 对话框确认按钮" -Condition {
-        [WooTodoSmokeNative]::GetDlgItem($dialog, 1) -ne [IntPtr]::Zero
-    }
-    $accept = Require-ChildWindow -Parent $dialog -Id 1
     if (-not [WooTodoSmokeNative]::PostMessageW(
-            $accept,
-            0x00F5,
-            [IntPtr]::Zero,
+            $dialog,
+            0x0111,
+            [IntPtr] 1,
             [IntPtr]::Zero
         )) {
         throw "无法关闭 $Title 对话框"

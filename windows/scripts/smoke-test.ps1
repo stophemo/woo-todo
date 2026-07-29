@@ -316,8 +316,13 @@ public static class WooTodoSmokeNative
 
     public static string GetText(IntPtr window)
     {
-        var text = new StringBuilder(32768);
-        GetWindowTextW(window, text, text.Capacity);
+        int length = SendMessageW(window, 0x000E, IntPtr.Zero, IntPtr.Zero).ToInt32();
+        if (length < 0)
+        {
+            throw new InvalidOperationException("无法读取控件文本长度");
+        }
+        var text = new StringBuilder(Math.Min(length, 32767) + 1);
+        SendMessageBuffer(window, 0x000D, new IntPtr(text.Capacity), text);
         return text.ToString();
     }
 

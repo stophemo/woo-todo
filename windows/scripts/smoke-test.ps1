@@ -60,15 +60,6 @@ using System.Text;
 public static class WooTodoSmokeNative
 {
     [StructLayout(LayoutKind.Sequential)]
-    private struct Rect
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
     private struct SystemTime
     {
         public ushort Year;
@@ -139,9 +130,6 @@ public static class WooTodoSmokeNative
         IntPtr wparam,
         StringBuilder lparam
     );
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
-    private static extern IntPtr SendMessageRect(IntPtr window, uint message, IntPtr wparam, ref Rect lparam);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
     private static extern IntPtr SendMessageSystemTime(
@@ -512,17 +500,6 @@ public static class WooTodoSmokeNative
         }
     }
 
-    public static IntPtr FirstListItemCoordinates(IntPtr list)
-    {
-        var rectangle = new Rect { Left = 0 };
-        if (SendMessageRect(list, 0x100E, IntPtr.Zero, ref rectangle) == IntPtr.Zero)
-        {
-            throw new InvalidOperationException("无法读取首行位置");
-        }
-        var x = Math.Max(rectangle.Left + 8, (rectangle.Left + rectangle.Right) / 2);
-        var y = Math.Max(rectangle.Top + 2, (rectangle.Top + rectangle.Bottom) / 2);
-        return new IntPtr((x & 0xffff) | ((y & 0xffff) << 16));
-    }
 }
 "@
 
@@ -1357,11 +1334,10 @@ function Set-Opacity {
 function Toggle-FirstTaskCheckbox {
     param([Parameter(Mandatory = $true)][IntPtr] $List)
 
-    # 点击文本区选中首行，再发送空格，让原生 ListView 自己切换复选框并产生 LVN_ITEMCHANGED。
-    $coordinates = [WooTodoSmokeNative]::FirstListItemCoordinates($List)
-    [WooTodoSmokeNative]::SendMessageW($List, 0x0201, [IntPtr] 1, [IntPtr] $coordinates) | Out-Null
-    [WooTodoSmokeNative]::SendMessageW($List, 0x0202, [IntPtr]::Zero, [IntPtr] $coordinates) | Out-Null
-    $selected = [WooTodoSmokeNative]::SendMessageW($List, 0x100C, [IntPtr](-1), [IntPtr] 2).ToInt64()
+    # Home 会让分组 ListView 自己选择并聚焦首项，不需要跨进程传递几何结构体。
+    [WooTodoSmokeNative]::SendMessageW($List, 0x0100, [IntPtr] 0x24, [IntPtr]::Zero) | Out-Null
+    [WooTodoSmokeNative]::SendMessageW($List, 0x0101, [IntPtr] 0x24, [IntPtr]::Zero) | Out-Null
+    $selected = [WooTodoSmokeNative]::SendMessageW($List, 0x100C, [IntPtr](-1), [IntPtr] 3).ToInt64()
     if ($selected -ne 0) {
         throw "无法选中悬浮任务板首行，实际索引：$selected"
     }

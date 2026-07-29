@@ -1645,6 +1645,15 @@ try {
     if ($groupView -eq 0) {
         throw "悬浮任务板没有启用主线、支线、外传分组"
     }
+    $groupCount = [WooTodoSmokeNative]::SendMessageW(
+        $taskList,
+        0x1098,
+        [IntPtr]::Zero,
+        [IntPtr]::Zero
+    ).ToInt64()
+    if ($groupCount -ne 3) {
+        throw "悬浮任务板分组数量异常：groupCount=$groupCount"
+    }
     Assert-TaskState -Inspector $inspector -Database $database -Title $taskTitle -State pending
 
     Toggle-FirstTaskCheckbox -List $taskList

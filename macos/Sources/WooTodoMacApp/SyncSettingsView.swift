@@ -12,9 +12,6 @@ struct SyncSettingsView: View {
     @ObservedObject var store: SyncSettingsStore
     @ObservedObject var webDavStore: WebDavSettingsStore
     @State private var devicePendingRevocation: DeviceInfo?
-    @State private var backupPassphrase = ""
-    @State private var backupConfirmation = ""
-    @State private var includeSyncIdentity = false
     @State private var pairingLinkCopied = false
     @State private var webDavSetupLinkCopied = false
     @State private var webDavSetupLinkRevealed = false
@@ -108,7 +105,7 @@ struct SyncSettingsView: View {
                         TextField("https://你的-worker.workers.dev", text: $store.endpointText)
                             .textFieldStyle(.roundedBorder)
                         endpointGuidance
-                        Text("这里需要填写已部署的 Cloudflare Worker 根地址。Vercel 产品主页和夸克网盘都不是同步服务；夸克网盘仅用于手动保存加密备份。")
+                        Text("这里需要填写已部署的 Cloudflare Worker 根地址。Vercel 产品主页和夸克网盘都不是同步服务。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -155,7 +152,6 @@ struct SyncSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                backupCard
                 privacyNote
                 actionError
             }
@@ -176,7 +172,6 @@ struct SyncSettingsView: View {
                 runtimeCard
                 pairingCard
                 devicesCard
-                backupCard
                 privacyNote
                 actionError
             }
@@ -676,7 +671,7 @@ struct SyncSettingsView: View {
 
     private var privacyNote: some View {
         Label(
-            "vault key 和设备令牌只保存在本机 Keychain，或用户主动导出的加密备份中；服务端无法读取任务明文。",
+            "vault key 和设备令牌只保存在本机 Keychain；服务端无法读取任务明文。",
             systemImage: "key.fill"
         )
         .font(.caption)
@@ -723,54 +718,6 @@ struct SyncSettingsView: View {
             Text("5. 手机保存密钥后会自动首次同步；任务明文不会上传到服务端。")
         }
         .font(.callout)
-    }
-
-    private var backupCard: some View {
-        SettingsCard(title: "加密备份", systemImage: "externaldrive.badge.lock") {
-            Text("文件始终端到端加密；忘记口令后无法解密。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            SecureField("备份口令（至少 10 个字符）", text: $backupPassphrase)
-                .textFieldStyle(.roundedBorder)
-            SecureField("导出时再次输入口令", text: $backupConfirmation)
-                .textFieldStyle(.roundedBorder)
-
-            Toggle("包含当前同步身份（仅用于替换丢失的本机）", isOn: $includeSyncIdentity)
-                .disabled(store.connection == nil)
-            Text("默认关闭。开启后备份会包含设备令牌与 vault key；旧安装仍在运行时，不要把它恢复成第二份并存设备，新增设备请使用二维码配对。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                Button("导出恢复备份") {
-                    Task {
-                        await store.exportBackup(
-                            passphrase: backupPassphrase,
-                            confirmation: backupConfirmation,
-                            includeSyncIdentity: includeSyncIdentity
-                        )
-                    }
-                }
-                .disabled(store.isBackupBusy || backupPassphrase.isEmpty)
-
-                Button("全新安装恢复") {
-                    Task { await store.importBackup(passphrase: backupPassphrase) }
-                }
-                .disabled(store.isBackupBusy || backupPassphrase.isEmpty || store.connection != nil)
-
-                if store.isBackupBusy {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-            }
-            Text("恢复备份仅允许空白安装；双端数据请使用坚果云自动同步。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if let message = store.backupStatusMessage {
-                Label(message, systemImage: "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-            }
-        }
     }
 
     @ViewBuilder

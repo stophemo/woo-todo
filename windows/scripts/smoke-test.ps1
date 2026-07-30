@@ -135,16 +135,6 @@ public static class WooTodoSmokeNative
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ReadProcessMemory(
-        IntPtr process,
-        IntPtr address,
-        [Out] byte[] buffer,
-        UIntPtr size,
-        out UIntPtr bytesRead
-    );
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool VirtualFreeEx(
         IntPtr process,
         IntPtr address,
@@ -195,12 +185,6 @@ public static class WooTodoSmokeNative
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindowEnabled(IntPtr window);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern int GetDlgCtrlID(IntPtr window);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr GetParent(IntPtr window);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static extern IntPtr GetWindowLongPtrW(IntPtr window, int index);
@@ -263,27 +247,6 @@ public static class WooTodoSmokeNative
             uint ownerProcessId;
             GetWindowThreadProcessId(window, out ownerProcessId);
             if (ownerProcessId == processId && GetDlgItem(window, childId) != IntPtr.Zero)
-            {
-                result = window;
-                return false;
-            }
-            return true;
-        }, IntPtr.Zero);
-        return result;
-    }
-
-    public static IntPtr FindTopLevelWindowByTitle(uint processId, string expectedTitle)
-    {
-        IntPtr result = IntPtr.Zero;
-        EnumWindows(delegate(IntPtr window, IntPtr parameter)
-        {
-            uint ownerProcessId;
-            GetWindowThreadProcessId(window, out ownerProcessId);
-            if (ownerProcessId != processId)
-            {
-                return true;
-            }
-            if (GetText(window) == expectedTitle)
             {
                 result = window;
                 return false;
@@ -464,144 +427,6 @@ public static class WooTodoSmokeNative
         }
     }
 
-    public static bool SetFileDialogPath(IntPtr dialog, string path)
-    {
-        const int characterCapacity = 32768;
-        if (string.IsNullOrEmpty(path) || path.Length >= characterCapacity)
-        {
-            return false;
-        }
-
-        uint processId;
-        if (GetWindowThreadProcessId(dialog, out processId) == 0 || processId == 0)
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法确定文件对话框所属进程");
-        }
-
-        const uint processVmOperation = 0x0008;
-        const uint processVmRead = 0x0010;
-        const uint processVmWrite = 0x0020;
-        IntPtr process = OpenProcess(
-            processVmOperation | processVmRead | processVmWrite,
-            false,
-            processId
-        );
-        if (process == IntPtr.Zero)
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法打开文件对话框所属进程");
-        }
-
-        byte[] source = Encoding.Unicode.GetBytes(path + "\0");
-        int byteCapacity = checked(characterCapacity * sizeof(char));
-        IntPtr remoteInput = IntPtr.Zero;
-        IntPtr remoteOutput = IntPtr.Zero;
-        try
-        {
-            remoteInput = VirtualAllocEx(
-                process,
-                IntPtr.Zero,
-                new UIntPtr((uint)source.Length),
-                0x3000,
-                0x04
-            );
-            if (remoteInput == IntPtr.Zero)
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法分配文件对话框输入内存");
-            }
-
-            remoteOutput = VirtualAllocEx(
-                process,
-                IntPtr.Zero,
-                new UIntPtr((uint)byteCapacity),
-                0x3000,
-                0x04
-            );
-            if (remoteOutput == IntPtr.Zero)
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法分配文件对话框输出内存");
-            }
-
-            UIntPtr bytesWritten;
-            if (!WriteProcessMemory(
-                    process,
-                    remoteInput,
-                    source,
-                    new UIntPtr((uint)source.Length),
-                    out bytesWritten
-                ) || bytesWritten.ToUInt64() != (ulong)source.Length)
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法写入文件对话框进程内存");
-            }
-
-            const uint cdmGetFilePath = 0x0465;
-            const uint cdmSetControlText = 0x0468;
-            // Explorer 风格对话框使用 cmb13，旧模板仍可能使用 edt1。
-            int[] fileNameControlIds = { 0x047C, 0x0480 };
-            foreach (int controlId in fileNameControlIds)
-            {
-                SendMessageW(dialog, cdmSetControlText, new IntPtr(controlId), remoteInput);
-                long returnedCharacters = SendMessageW(
-                    dialog,
-                    cdmGetFilePath,
-                    new IntPtr(characterCapacity),
-                    remoteOutput
-                ).ToInt64();
-                if (returnedCharacters <= 0 || returnedCharacters > characterCapacity)
-                {
-                    continue;
-                }
-
-                int returnedBytes = checked((int)returnedCharacters * sizeof(char));
-                var destination = new byte[returnedBytes];
-                UIntPtr bytesRead;
-                if (!ReadProcessMemory(
-                        process,
-                        remoteOutput,
-                        destination,
-                        new UIntPtr((uint)returnedBytes),
-                        out bytesRead
-                    ) || bytesRead.ToUInt64() != (ulong)returnedBytes)
-                {
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取文件对话框进程内存");
-                }
-                if (destination[returnedBytes - 2] != 0 || destination[returnedBytes - 1] != 0)
-                {
-                    continue;
-                }
-                string selected = Encoding.Unicode.GetString(
-                    destination,
-                    0,
-                    returnedBytes - sizeof(char)
-                );
-                if (selected.IndexOf('\0') >= 0)
-                {
-                    continue;
-                }
-                if (string.Equals(
-                        System.IO.Path.GetFullPath(selected),
-                        System.IO.Path.GetFullPath(path),
-                        StringComparison.OrdinalIgnoreCase
-                    ))
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-        finally
-        {
-            if (remoteOutput != IntPtr.Zero)
-            {
-                VirtualFreeEx(process, remoteOutput, UIntPtr.Zero, 0x8000);
-            }
-            if (remoteInput != IntPtr.Zero)
-            {
-                VirtualFreeEx(process, remoteInput, UIntPtr.Zero, 0x8000);
-            }
-            CloseHandle(process);
-        }
-    }
-
     public static string ReadClipboardUnicodeText()
     {
         if (!OpenClipboard(IntPtr.Zero))
@@ -772,74 +597,6 @@ function Click-Control {
     ) | Out-Null
 }
 
-function Find-AppDialog {
-    param(
-        [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
-        [Parameter(Mandatory = $true)][string] $Title
-    )
-
-    return [WooTodoSmokeNative]::FindTopLevelWindowByTitle([uint32] $Process.Id, $Title)
-}
-
-function Submit-FileDialog {
-    param(
-        [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
-        [Parameter(Mandatory = $true)][string] $Title,
-        [Parameter(Mandatory = $true)][string] $Path
-    )
-
-    Wait-ForCondition -Description "打开 $Title 文件对话框" -TimeoutSeconds 15 -Condition {
-        (Find-AppDialog -Process $Process -Title $Title) -ne [IntPtr]::Zero
-    }
-    Wait-ForCondition -Description "初始化 $Title 文件对话框确认按钮" -Condition {
-        $candidate = Find-AppDialog -Process $Process -Title $Title
-        $candidate -ne [IntPtr]::Zero -and
-            [WooTodoSmokeNative]::GetDlgItem($candidate, 1) -ne [IntPtr]::Zero
-    }
-    Wait-ForCondition -Description "向 $Title 文件对话框写入路径" -TimeoutSeconds 15 -Condition {
-        $candidate = Find-AppDialog -Process $Process -Title $Title
-        if ($candidate -eq [IntPtr]::Zero) {
-            return $false
-        }
-        return [WooTodoSmokeNative]::SetFileDialogPath($candidate, $Path)
-    }
-    $dialog = Find-AppDialog -Process $Process -Title $Title
-    $accept = Require-ChildWindow -Parent $dialog -Id 1
-    if (-not [WooTodoSmokeNative]::PostMessageW(
-            $accept,
-            0x00F5,
-            [IntPtr]::Zero,
-            [IntPtr]::Zero
-        )) {
-        throw "无法提交 $Title 文件对话框"
-    }
-    Wait-ForCondition -Description "关闭 $Title 文件对话框" -TimeoutSeconds 15 -Condition {
-        (Find-AppDialog -Process $Process -Title $Title) -eq [IntPtr]::Zero
-    }
-}
-
-function Dismiss-AppDialog {
-    param(
-        [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
-        [Parameter(Mandatory = $true)][string] $Title,
-        [int] $TimeoutSeconds = 30
-    )
-
-    Wait-ForCondition -Description "显示 $Title 对话框" -TimeoutSeconds $TimeoutSeconds -Condition {
-        (Find-AppDialog -Process $Process -Title $Title) -ne [IntPtr]::Zero
-    }
-    $dialog = Find-AppDialog -Process $Process -Title $Title
-    [WooTodoSmokeNative]::SendMessageW(
-        $dialog,
-        0x0010,
-        [IntPtr]::Zero,
-        [IntPtr]::Zero
-    ) | Out-Null
-    Wait-ForCondition -Description "关闭 $Title 对话框" -Condition {
-        (Find-AppDialog -Process $Process -Title $Title) -eq [IntPtr]::Zero
-    }
-}
-
 function Assert-TaskState {
     param(
         [Parameter(Mandatory = $true)][string] $Inspector,
@@ -955,10 +712,14 @@ function Select-SettingsSection {
 function Select-SyncSection {
     param([Parameter(Mandatory = $true)][IntPtr] $Main)
 
-    Select-MainSection -Main $Main -Index 8 -ExpectedLabel "同步与备份"
+    Select-MainSection -Main $Main -Index 8 -ExpectedLabel "同步"
     $mode = Require-ChildWindow -Parent $Main -Id 150
-    Wait-ForCondition -Description "同步与备份控件可见" -Condition {
+    Wait-ForCondition -Description "同步控件可见" -Condition {
         [WooTodoSmokeNative]::IsWindowVisible($mode)
+    }
+    $visibleTexts = [WooTodoSmokeNative]::VisibleChildTexts($Main)
+    if (@($visibleTexts | Where-Object { $_ -match "备份|\.wootodo" }).Count -ne 0) {
+        throw "同步页仍包含已取消的加密备份入口"
     }
 }
 
@@ -1128,13 +889,6 @@ function Assert-SyncModeSurface {
     }
     foreach ($id in @(150, 159, 160, 161, 165)) {
         Require-ChildWindow -Parent $Main -Id $id | Out-Null
-    }
-    foreach ($id in @(170, 171, 172, 173, 174)) {
-        if (-not [WooTodoSmokeNative]::IsWindowVisible(
-                (Require-ChildWindow -Parent $Main -Id $id)
-            )) {
-            throw "$Mode 同步缺少可见备份控件：$id"
-        }
     }
     $setupText = Get-ControlText -Control (Require-ChildWindow -Parent $Main -Id 159)
     if ($setupText -ne $expectation.Setup) {
@@ -1457,7 +1211,7 @@ function Set-SmokeSensitiveFields {
         [Parameter(Mandatory = $true)][string] $Sentinel
     )
 
-    foreach ($id in @(152, 154, 157, 158, 170, 171)) {
+    foreach ($id in @(152, 154, 157, 158)) {
         Set-ControlText -Control (Require-ChildWindow -Parent $Main -Id $id) -Text "$Sentinel-$id"
     }
 }
@@ -1465,84 +1219,12 @@ function Set-SmokeSensitiveFields {
 function Assert-SensitiveFieldsEmpty {
     param([Parameter(Mandatory = $true)][IntPtr] $Main)
 
-    foreach ($id in @(152, 154, 157, 158, 170, 171)) {
+    foreach ($id in @(152, 154, 157, 158)) {
         $value = Get-ControlText -Control (Require-ChildWindow -Parent $Main -Id $id)
         if (-not [string]::IsNullOrEmpty($value)) {
             throw "敏感控件离开同步页后没有清空：$id"
         }
     }
-}
-
-function Export-SmokeBackup {
-    param(
-        [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
-        [Parameter(Mandatory = $true)][IntPtr] $Main,
-        [Parameter(Mandatory = $true)][string] $Path,
-        [Parameter(Mandatory = $true)][string] $Passphrase
-    )
-
-    Set-ControlText -Control (Require-ChildWindow -Parent $Main -Id 170) -Text $Passphrase
-    Set-ControlText -Control (Require-ChildWindow -Parent $Main -Id 171) -Text $Passphrase
-    [WooTodoSmokeNative]::SendMessageW(
-        (Require-ChildWindow -Parent $Main -Id 172),
-        0x00F1,
-        [IntPtr] 1,
-        [IntPtr]::Zero
-    ) | Out-Null
-    $export = Require-ChildWindow -Parent $Main -Id 173
-    if (-not [WooTodoSmokeNative]::PostMessageW(
-            $export,
-            0x00F5,
-            [IntPtr]::Zero,
-            [IntPtr]::Zero
-        )) {
-        throw "无法启动备份导出"
-    }
-    Submit-FileDialog -Process $Process -Title "导出加密备份" -Path $Path
-    Dismiss-AppDialog -Process $Process -Title "备份已导出" -TimeoutSeconds 90
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or
-        (Get-Item -LiteralPath $Path).Length -le 64) {
-        throw "导出的 .wootodo 文件不存在或为空"
-    }
-    foreach ($id in @(170, 171)) {
-        if (-not [string]::IsNullOrEmpty(
-                (Get-ControlText -Control (Require-ChildWindow -Parent $Main -Id $id))
-            )) {
-            throw "备份导出开始后仍保留口令：$id"
-        }
-    }
-    Add-Diagnostic "带局域网身份的加密备份已导出"
-}
-
-function Import-SmokeBackup {
-    param(
-        [Parameter(Mandatory = $true)][System.Diagnostics.Process] $Process,
-        [Parameter(Mandatory = $true)][IntPtr] $Main,
-        [Parameter(Mandatory = $true)][string] $Path,
-        [Parameter(Mandatory = $true)][string] $Passphrase
-    )
-
-    Set-ControlText -Control (Require-ChildWindow -Parent $Main -Id 170) -Text $Passphrase
-    Set-ControlText -Control (Require-ChildWindow -Parent $Main -Id 171) -Text $Passphrase
-    $import = Require-ChildWindow -Parent $Main -Id 174
-    if (-not [WooTodoSmokeNative]::PostMessageW(
-            $import,
-            0x00F5,
-            [IntPtr]::Zero,
-            [IntPtr]::Zero
-        )) {
-        throw "无法启动备份恢复"
-    }
-    Submit-FileDialog -Process $Process -Title "恢复加密备份" -Path $Path
-    Dismiss-AppDialog -Process $Process -Title "恢复完成" -TimeoutSeconds 90
-    foreach ($id in @(170, 171)) {
-        if (-not [string]::IsNullOrEmpty(
-                (Get-ControlText -Control (Require-ChildWindow -Parent $Main -Id $id))
-            )) {
-            throw "备份恢复开始后仍保留口令：$id"
-        }
-    }
-    Add-Diagnostic "加密备份已恢复到空白数据目录"
 }
 
 function Set-Opacity {
@@ -1661,7 +1343,6 @@ $primary = $null
 $secondary = $null
 $dataDirectory = $null
 $sourceDataDirectory = $null
-$restoredDataDirectory = $null
 $credentialTarget = "WooTodo/Sync/v1"
 $credentialMayHaveBeenCreated = $false
 $previousSkipIntegration = $env:WOO_TODO_SKIP_PORTABLE_INTEGRATION
@@ -1676,8 +1357,6 @@ try {
     $sourceDataDirectory = $dataDirectory
     $database = Join-Path $dataDirectory "woo-todo.sqlite3"
     $settingsPath = Join-Path $dataDirectory "settings.json"
-    $backupPath = Join-Path $temporaryDirectory "runner-smoke-backup.wootodo"
-    $backupPassphrase = "Runner-Smoke-Backup-2026!"
     $env:WOO_TODO_SMOKE_TRACE = Join-Path $ArtifactDirectory "app-trace.txt"
     $env:WOO_TODO_SKIP_UPDATE_CHECK = "1"
     if (-not [string]::IsNullOrWhiteSpace(
@@ -1948,14 +1627,7 @@ try {
     Set-SmokeSensitiveFields -Main $main -Sentinel $sensitiveSentinel
     Select-SettingsSection -Main $main
     Assert-SensitiveFieldsEmpty -Main $main
-    Add-Diagnostic "离开同步与备份页会清空全部敏感输入"
-
-    Select-SyncSection -Main $main
-    Export-SmokeBackup `
-        -Process $primary `
-        -Main $main `
-        -Path $backupPath `
-        -Passphrase $backupPassphrase
+    Add-Diagnostic "离开同步页会清空全部敏感输入"
 
     [WooTodoSmokeNative]::SendMessageW($main, 0x0111, [IntPtr] 405, [IntPtr]::Zero) | Out-Null
     if (-not $primary.WaitForExit(10000)) {
@@ -2006,46 +1678,7 @@ try {
     }
     Add-Diagnostic "任务、设置和局域网主机重启持久化验证通过"
 
-    [WooTodoSmokeNative]::SendMessageW($main, 0x0111, [IntPtr] 405, [IntPtr]::Zero) | Out-Null
-    if (-not $primary.WaitForExit(15000)) {
-        throw "备份恢复前主实例没有正常退出"
-    }
-    [WooTodoSmokeNative]::DeleteGenericCredential($credentialTarget)
-    if (-not [string]::IsNullOrWhiteSpace(
-            [WooTodoSmokeNative]::ReadGenericCredential($credentialTarget)
-        )) {
-        throw "无法清理用于空白恢复的同步凭据"
-    }
-
-    $env:LOCALAPPDATA = Join-Path $temporaryDirectory "restored-local-app-data"
-    $dataDirectory = Join-Path $env:LOCALAPPDATA "Woo Todo"
-    $restoredDataDirectory = $dataDirectory
-    $database = Join-Path $dataDirectory "woo-todo.sqlite3"
-    $settingsPath = Join-Path $dataDirectory "settings.json"
-    $primary = Start-Process -FilePath $executable -PassThru
-    if ($primary.WaitForExit(5000)) {
-        throw "空白恢复实例意外退出，退出码：$($primary.ExitCode)"
-    }
-    Wait-ForCondition -Description "创建空白恢复窗口" -TimeoutSeconds 30 -Condition {
-        (Find-AppWindow -Process $primary -ChildId 100) -ne [IntPtr]::Zero -and
-        (Find-AppWindow -Process $primary -ChildId 200) -ne [IntPtr]::Zero
-    }
-    $main = Find-AppWindow -Process $primary -ChildId 100
-    $floating = Find-AppWindow -Process $primary -ChildId 200
     Select-SyncSection -Main $main
-    Import-SmokeBackup `
-        -Process $primary `
-        -Main $main `
-        -Path $backupPath `
-        -Passphrase $backupPassphrase
-    Assert-TaskState -Inspector $inspector -Database $database -Title $taskTitle -State pending
-    $restoredCredential = Read-SyncCredential -Target $credentialTarget
-    if ($null -eq $restoredCredential) {
-        throw "空白恢复后没有写回 Credential Manager 身份"
-    }
-    Assert-SettingsContainsNoSecrets -Path $settingsPath -Credential $restoredCredential
-    Assert-LocalNetworkHealth -Credential $restoredCredential
-
     $closePair = Require-ChildWindow -Parent $main -Id 166
     $closeQr = Require-ChildWindow -Parent $main -Id 169
     Click-Control -Control $closePair
@@ -2140,17 +1773,12 @@ finally {
             Add-Diagnostic "清理烟测 Credential Manager 身份失败：$($_.Exception.Message)"
         }
     }
-    foreach ($snapshot in @(
-            @{ Path = $sourceDataDirectory; Name = "source-data" },
-            @{ Path = $restoredDataDirectory; Name = "restored-data" }
-        )) {
-        if ($null -ne $snapshot.Path -and (Test-Path -LiteralPath $snapshot.Path)) {
-            Copy-Item `
-                -LiteralPath $snapshot.Path `
-                -Destination (Join-Path $ArtifactDirectory $snapshot.Name) `
-                -Recurse `
-                -Force
-        }
+    if ($null -ne $sourceDataDirectory -and (Test-Path -LiteralPath $sourceDataDirectory)) {
+        Copy-Item `
+            -LiteralPath $sourceDataDirectory `
+            -Destination (Join-Path $ArtifactDirectory "source-data") `
+            -Recurse `
+            -Force
     }
     $env:LOCALAPPDATA = $previousLocalAppData
     try {

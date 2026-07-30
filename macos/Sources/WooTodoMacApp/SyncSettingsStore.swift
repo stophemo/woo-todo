@@ -1031,7 +1031,7 @@ final class SyncSettingsStore: ObservableObject {
                 return "同步服务尚未配置创建邀请码，无法创建空间。请由部署者配置 VAULT_CREATION_INVITE_CODE 后重新部署。\(requestSuffix)"
             }
             if payload.code == "VAULT_CAPACITY_REACHED" {
-                return "同步空间已达到存储上限，本地待发送任务仍会保留。请先导出加密备份，等待后续压缩或迁移工具。\(requestSuffix)"
+                return "同步空间已达到存储上限，本地待发送任务仍会保留。请切换同步空间或稍后重试。\(requestSuffix)"
             }
             switch statusCode {
             case 401, 403:

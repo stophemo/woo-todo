@@ -149,7 +149,7 @@ class SyncRuntimeTest {
         assertEquals(SyncExecutionResult.Failed(retryable = false), runtime.synchronize())
         assertEquals(
             SyncRuntimeState.Failed(
-                message = "同步空间已达到存储上限，本地待发送任务仍会保留；请先导出加密备份",
+                message = "同步空间已达到存储上限，本地待发送任务仍会保留；请切换同步空间或稍后重试",
                 retryable = false,
                 finishedAt = 456L,
             ),

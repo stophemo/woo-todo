@@ -70,7 +70,7 @@ object SyncFailurePolicy {
                     "设备授权已失效，请检查设备是否被撤销"
 
                 capacityReached ->
-                    "同步空间已达到存储上限，本地待发送任务仍会保留；请先导出加密备份"
+                    "同步空间已达到存储上限，本地待发送任务仍会保留；请切换同步空间或稍后重试"
 
                 retryable -> "同步服务暂时不可用，稍后会自动重试"
                 else -> "同步服务拒绝了本次请求（${error.payload.code}）"

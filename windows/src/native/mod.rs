@@ -945,7 +945,7 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         "历史",
         "统计",
         "显示与快捷键",
-        "同步与备份",
+        "同步",
     ] {
         let value = wide(label);
         SendMessageW(
@@ -1680,7 +1680,7 @@ unsafe fn layout_main(app: &App) {
         } else {
             settings_width
         },
-        if sync_qr_visible { 172 } else { 76 },
+        172,
         1,
     );
     MoveWindow(
@@ -2061,7 +2061,7 @@ unsafe fn show_settings(app: &mut App) {
 }
 
 unsafe fn show_sync_settings(app: &mut App) {
-    set_text(app.main_controls.title, "同步与备份");
+    set_text(app.main_controls.title, "同步");
     set_text(
         app.main_controls.subtitle,
         "同步方式互斥；本地任务始终可离线使用",
@@ -2143,14 +2143,6 @@ fn sync_settings_controls(app: &App) -> Vec<HWND> {
         app.sync_controls.pair_confirm,
         app.sync_controls.pair_qr,
         app.sync_controls.output,
-        app.sync_controls.backup_heading,
-        app.sync_controls.backup_passphrase_label,
-        app.sync_controls.backup_passphrase,
-        app.sync_controls.backup_confirmation_label,
-        app.sync_controls.backup_confirmation,
-        app.sync_controls.backup_include_identity,
-        app.sync_controls.backup_export,
-        app.sync_controls.backup_import,
     ];
     controls.extend(app.sync_controls.field_labels);
     controls
@@ -2367,7 +2359,6 @@ unsafe fn update_pairing_controls(app: &App) {
         },
     );
 
-    let hide_backup = awaiting_scan;
     for control in [
         app.sync_controls.backup_heading,
         app.sync_controls.backup_passphrase_label,
@@ -2378,7 +2369,7 @@ unsafe fn update_pairing_controls(app: &App) {
         app.sync_controls.backup_export,
         app.sync_controls.backup_import,
     ] {
-        ShowWindow(control, if hide_backup { SW_HIDE } else { SW_SHOW });
+        ShowWindow(control, SW_HIDE);
     }
     layout_main(app);
 }

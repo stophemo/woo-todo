@@ -48,9 +48,6 @@ import com.wootodo.domain.QuestLine
 import com.wootodo.reminder.ReminderPreferences
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.reminder.ReminderSettings
-import com.wootodo.sync.BackupPackageCodec
-import com.wootodo.sync.BackupPackageException
-import com.wootodo.sync.BackupTransferException
 import com.wootodo.sync.Base64Url
 import com.wootodo.sync.PairingDeepLink
 import com.wootodo.sync.PairingPollPolicy
@@ -71,10 +68,6 @@ import com.wootodo.update.AppUpdateViewModel
 import com.wootodo.update.ApkUpdateInstaller
 import com.wootodo.update.GitHubRelease
 import com.wootodo.widget.TodayWidgetUpdater
-import java.io.ByteArrayOutputStream
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -95,7 +88,6 @@ class MainActivity : AppCompatActivity() {
     private var pairingMessageView: TextView? = null
     private var pairingCodeView: TextView? = null
     private var deepLinkIntentConsumed = false
-    private var backupProgressDialog: AlertDialog? = null
     private var updateProgressDialog: AlertDialog? = null
     private var updateDownloadJob: Job? = null
     private var pendingUpdatePermissionRelease: GitHubRelease? = null
@@ -126,26 +118,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val createBackupDocument = registerForActivityResult(
-        ActivityResultContracts.CreateDocument(BACKUP_MIME_TYPE),
-    ) { uri ->
-        if (uri == null) {
-            backupFileViewModel.clearExport()
-        } else {
-            writePendingBackup(uri)
-        }
-    }
-
-    private val openBackupDocument = registerForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri == null) {
-            backupFileViewModel.clearImport()
-        } else {
-            readBackupForImport(uri)
-        }
-    }
-
     private val requestUpdateInstallPermission = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
@@ -170,8 +142,6 @@ class MainActivity : AppCompatActivity() {
     private val pairingViewModel: PairingViewModel by viewModels {
         PairingViewModel.Factory(application as WooTodoApplication)
     }
-
-    private val backupFileViewModel: BackupFileViewModel by viewModels()
 
     private val appUpdateViewModel: AppUpdateViewModel by viewModels()
 
@@ -285,9 +255,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             consumeDeepLinkIntent()
         }
-        if (backupFileViewModel.importData() != null) {
-            showBackupImportDialog()
-        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -324,7 +291,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         pairingDialog?.dismiss()
         pairingTerminalDialog?.dismiss()
-        backupProgressDialog?.dismiss()
         updateProgressDialog?.dismiss()
         super.onDestroy()
     }
@@ -466,8 +432,6 @@ class MainActivity : AppCompatActivity() {
             menu.add(0, MENU_REMINDER, order++, R.string.reminder_settings_title)
             menu.add(0, MENU_SYNC_METHOD, order++, R.string.sync_method_settings)
             menu.add(0, MENU_CHECK_UPDATE, order++, R.string.check_for_updates)
-            menu.add(0, MENU_EXPORT_BACKUP, order++, R.string.backup_export)
-            menu.add(0, MENU_IMPORT_BACKUP, order, R.string.backup_import)
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     MENU_AVAILABLE_UPDATE -> {
@@ -477,8 +441,6 @@ class MainActivity : AppCompatActivity() {
                     MENU_REMINDER -> showReminderSettings()
                     MENU_SYNC_METHOD -> showPairingMethodMenu(anchor)
                     MENU_CHECK_UPDATE -> checkForAppUpdate(manual = true)
-                    MENU_EXPORT_BACKUP -> prepareBackupExport()
-                    MENU_IMPORT_BACKUP -> prepareBackupImport()
                     else -> return@setOnMenuItemClickListener false
                 }
                 true
@@ -720,323 +682,6 @@ class MainActivity : AppCompatActivity() {
         screenTitle.isVisible = rendered.header != null
         dayCounterText.text = rendered.subtitle.orEmpty()
         dayCounterText.isVisible = rendered.subtitle != null
-    }
-
-    private fun prepareBackupExport() {
-        lifecycleScope.launch {
-            val result = runCatching {
-                (application as WooTodoApplication).hasBackupSyncCredentials()
-            }
-            result.fold(
-                onSuccess = { hasSyncCredentials ->
-                    showBackupExportDialog(
-                        hasSyncCredentials = hasSyncCredentials,
-                    )
-                },
-                onFailure = { showBackupError(it) },
-            )
-        }
-    }
-
-    private fun showBackupExportDialog(hasSyncCredentials: Boolean) {
-        val padding = (20 * resources.displayMetrics.density).toInt()
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(padding, 0, padding, 0)
-        }
-        val explanation = TextView(this).apply {
-            setText(R.string.backup_export_message)
-            setPadding(0, 0, 0, padding / 2)
-        }
-        val passphrase = passwordInput(R.string.backup_passphrase_hint)
-        val confirmation = passwordInput(R.string.backup_passphrase_confirm_hint)
-        val includeIdentity = SwitchCompat(this).apply {
-            setText(R.string.backup_include_sync_identity)
-            isChecked = false
-            isEnabled = hasSyncCredentials
-        }
-        val identityNote = TextView(this).apply {
-            setText(
-                if (hasSyncCredentials) {
-                    R.string.backup_identity_warning
-                } else {
-                    R.string.backup_identity_unavailable
-                },
-            )
-            setPadding(0, 0, 0, padding / 2)
-        }
-        container.addView(explanation)
-        container.addView(passphrase)
-        container.addView(confirmation)
-        container.addView(includeIdentity)
-        container.addView(identityNote)
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.backup_export_title)
-            .setView(container)
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.backup_choose_location, null)
-            .create()
-        dialog.setOnShowListener {
-            fun beginExport() {
-                val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-                positive.isEnabled = false
-                passphrase.error = null
-                confirmation.error = null
-                lifecycleScope.launch {
-                    showBackupProgress(R.string.backup_encrypting)
-                    val result = runCatching {
-                        (application as WooTodoApplication).createEncryptedBackup(
-                            passphrase = passphrase.text.toString(),
-                            confirmation = confirmation.text.toString(),
-                            includeSyncCredentials = includeIdentity.isChecked,
-                        )
-                    }
-                    dismissBackupProgress()
-                    result.fold(
-                        onSuccess = { data ->
-                            passphrase.setText("")
-                            confirmation.setText("")
-                            dialog.dismiss()
-                            backupFileViewModel.holdExport(data)
-                            createBackupDocument.launch(backupFileName())
-                        },
-                        onFailure = { error ->
-                            positive.isEnabled = true
-                            when (error) {
-                                is BackupTransferException.PassphraseMismatch ->
-                                    confirmation.error = error.message
-
-                                is BackupPackageException.InvalidPassphrase ->
-                                    passphrase.error = error.message
-
-                                else -> showBackupError(error)
-                            }
-                        },
-                    )
-                }
-            }
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                beginExport()
-            }
-        }
-        dialog.show()
-    }
-
-    private fun writePendingBackup(uri: Uri) {
-        val data = backupFileViewModel.exportData()
-        if (data == null) {
-            showBackupError(IllegalStateException(getString(R.string.backup_export_interrupted)))
-            return
-        }
-        lifecycleScope.launch {
-            showBackupProgress(R.string.backup_writing)
-            val result = runCatching {
-                withContext(Dispatchers.IO) {
-                    val output = contentResolver.openOutputStream(uri, "w")
-                        ?: error(getString(R.string.backup_open_output_failed))
-                    output.use {
-                        it.write(data)
-                        it.flush()
-                    }
-                }
-            }
-            if (result.isFailure) {
-                withContext(Dispatchers.IO) {
-                    runCatching { contentResolver.delete(uri, null, null) }
-                }
-            }
-            backupFileViewModel.clearExport()
-            dismissBackupProgress()
-            result.fold(
-                onSuccess = {
-                    Toast.makeText(
-                        this@MainActivity,
-                        R.string.backup_export_succeeded,
-                        Toast.LENGTH_LONG,
-                    ).show()
-                },
-                onFailure = { showBackupError(it) },
-            )
-        }
-    }
-
-    private fun prepareBackupImport() {
-        lifecycleScope.launch {
-            val result = runCatching {
-                (application as WooTodoApplication).requireBackupRestoreReady()
-            }
-            result.fold(
-                onSuccess = {
-                    backupFileViewModel.beginImport()
-                    openBackupDocument.launch(BACKUP_MIME_TYPES)
-                },
-                onFailure = { showBackupError(it, R.string.backup_import_unavailable_title) },
-            )
-        }
-    }
-
-    private fun readBackupForImport(uri: Uri) {
-        lifecycleScope.launch {
-            showBackupProgress(R.string.backup_reading)
-            val result = runCatching {
-                withContext(Dispatchers.IO) { readBackupBytes(uri) }
-            }
-            dismissBackupProgress()
-            result.fold(
-                onSuccess = { data ->
-                    backupFileViewModel.holdImport(data)
-                    showBackupImportDialog()
-                },
-                onFailure = {
-                    backupFileViewModel.clearImport()
-                    showBackupError(it)
-                },
-            )
-        }
-    }
-
-    private fun showBackupImportDialog() {
-        if (backupFileViewModel.importData() == null) return
-        val padding = (20 * resources.displayMetrics.density).toInt()
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(padding, 0, padding, 0)
-        }
-        val explanation = TextView(this).apply {
-            setText(R.string.backup_import_message)
-            setPadding(0, 0, 0, padding / 2)
-        }
-        val passphrase = passwordInput(R.string.backup_passphrase_hint)
-        container.addView(explanation)
-        container.addView(passphrase)
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.backup_import_title)
-            .setView(container)
-            .setNegativeButton(R.string.cancel) { _, _ ->
-                backupFileViewModel.clearImport()
-            }
-            .setPositiveButton(R.string.backup_restore, null)
-            .setOnCancelListener { backupFileViewModel.clearImport() }
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val data = backupFileViewModel.importData() ?: return@setOnClickListener
-                val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-                positive.isEnabled = false
-                passphrase.error = null
-                lifecycleScope.launch {
-                    showBackupProgress(R.string.backup_restoring)
-                    val result = runCatching {
-                        val app = application as WooTodoApplication
-                        val restored = app.restoreEncryptedBackup(
-                            data = data,
-                            passphrase = passphrase.text.toString(),
-                        )
-                        getString(
-                            if (restored.syncCredentialsRestored) {
-                                R.string.backup_import_succeeded_with_sync
-                            } else {
-                                R.string.backup_import_succeeded
-                            },
-                            restored.restoredTaskCount,
-                        )
-                    }
-                    dismissBackupProgress()
-                    result.fold(
-                        onSuccess = { successMessage ->
-                            passphrase.setText("")
-                            backupFileViewModel.clearImport()
-                            dialog.dismiss()
-                            viewModel.refresh()
-                            Toast.makeText(
-                                this@MainActivity,
-                                successMessage,
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        },
-                        onFailure = { error ->
-                            positive.isEnabled = true
-                            when (error) {
-                                is BackupPackageException.AuthenticationFailed,
-                                is BackupPackageException.InvalidPassphrase ->
-                                    passphrase.error = error.message
-
-                                else -> {
-                                    backupFileViewModel.clearImport()
-                                    dialog.dismiss()
-                                    showBackupError(error)
-                                }
-                            }
-                        },
-                    )
-                }
-            }
-        }
-        dialog.show()
-    }
-
-    private fun passwordInput(hintRes: Int): EditText = EditText(this).apply {
-        setHint(hintRes)
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        isSingleLine = true
-        importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        enableEditableTextActions()
-    }
-
-    private fun readBackupBytes(uri: Uri): ByteArray {
-        val input = contentResolver.openInputStream(uri)
-            ?: error(getString(R.string.backup_open_input_failed))
-        return input.use { stream ->
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(8 * 1024)
-            var total = 0
-            while (true) {
-                val count = stream.read(buffer)
-                if (count < 0) break
-                total += count
-                if (total > BackupPackageCodec.MAXIMUM_FILE_BYTES) {
-                    throw BackupPackageException.SnapshotTooLarge()
-                }
-                output.write(buffer, 0, count)
-            }
-            output.toByteArray()
-        }
-    }
-
-    private fun showBackupProgress(titleRes: Int) {
-        dismissBackupProgress()
-        backupProgressDialog = AlertDialog.Builder(this)
-            .setTitle(titleRes)
-            .setView(ProgressBar(this))
-            .setCancelable(false)
-            .show()
-    }
-
-    private fun dismissBackupProgress() {
-        backupProgressDialog?.dismiss()
-        backupProgressDialog = null
-    }
-
-    private fun showBackupError(error: Throwable, titleRes: Int = R.string.backup_failed_title) {
-        val message = when (error) {
-            is BackupPackageException,
-            is BackupTransferException -> error.message
-
-            else -> null
-        } ?: getString(R.string.backup_failed_message)
-        AlertDialog.Builder(this)
-            .setTitle(titleRes)
-            .setMessage(message)
-            .setPositiveButton(R.string.confirm, null)
-            .show()
-            .enableMessageSelection()
-    }
-
-    private fun backupFileName(): String {
-        val timestamp = BACKUP_FILENAME_FORMAT.format(Instant.now())
-        return "woo-todo-$timestamp.wootodo"
     }
 
     private fun checkForAppUpdate(manual: Boolean) {
@@ -1425,21 +1070,10 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_OPEN_TOMORROW = "open_tomorrow"
         private const val MENU_REMINDER = 1
-        private const val MENU_EXPORT_BACKUP = 2
-        private const val MENU_IMPORT_BACKUP = 3
         private const val MENU_DAY_COUNTER = 4
         private const val MENU_SYNC_METHOD = 5
         private const val MENU_CHECK_UPDATE = 6
         private const val MENU_AVAILABLE_UPDATE = 8
-        private const val BACKUP_MIME_TYPE = "application/octet-stream"
-        val BACKUP_MIME_TYPES = arrayOf(
-            BACKUP_MIME_TYPE,
-            "application/json",
-            "application/vnd.woo-todo.backup",
-        )
-        val BACKUP_FILENAME_FORMAT: DateTimeFormatter = DateTimeFormatter
-            .ofPattern("yyyyMMdd-HHmm")
-            .withZone(ZoneId.systemDefault())
         private const val STATE_PAIRING_ACTIVE = "pairing_active"
         private const val STATE_DEEP_LINK_INTENT_CONSUMED = "deep_link_intent_consumed"
         private const val STATE_SELECTED_SCOPE = "selected_scope"

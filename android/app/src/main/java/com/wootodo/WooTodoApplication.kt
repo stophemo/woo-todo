@@ -13,9 +13,6 @@ import com.wootodo.sync.AndroidWebDavCredentialsStore
 import com.wootodo.sync.BearerCredential
 import com.wootodo.sync.PairingCompletion
 import com.wootodo.sync.PairingException
-import com.wootodo.sync.BackupRestoreResult
-import com.wootodo.sync.BackupTransferService
-import com.wootodo.sync.SQLiteBackupDatabase
 import com.wootodo.sync.SQLiteSyncStore
 import com.wootodo.sync.SyncApiClient
 import com.wootodo.sync.SyncCoordinator
@@ -43,10 +40,6 @@ class WooTodoApplication : Application() {
     val taskRepository: TaskRepository by lazy { TaskRepository(taskStore) }
     val syncCredentialsStore by lazy { AndroidSyncCredentialsStore(this) }
     val webDavCredentialsStore by lazy { AndroidWebDavCredentialsStore(this) }
-    private val backupDatabase by lazy { SQLiteBackupDatabase(database) }
-    private val backupTransferService by lazy {
-        BackupTransferService(backupDatabase, syncCredentialsStore)
-    }
     val syncRuntime: SyncRuntime by lazy {
         SyncRuntime(
             runnerFactory = { createSyncRunner() },
@@ -246,50 +239,6 @@ class WooTodoApplication : Application() {
         val result = syncRuntime.synchronize()
         if (result is SyncExecutionResult.Failed && result.retryable) {
             SyncJobScheduler.enqueueImmediate(this)
-        }
-        return result
-    }
-
-    suspend fun hasBackupSyncCredentials(): Boolean = withContext(Dispatchers.IO) {
-        backupTransferService.hasSyncCredentials()
-    }
-
-    suspend fun requireBackupRestoreReady() = withContext(Dispatchers.IO) {
-        backupTransferService.requireRestoreReady()
-    }
-
-    suspend fun createEncryptedBackup(
-        passphrase: String,
-        confirmation: String,
-        includeSyncCredentials: Boolean,
-    ): ByteArray = withContext(Dispatchers.IO) {
-        backupTransferService.createEncryptedBackup(
-            passphrase = passphrase,
-            confirmation = confirmation,
-            includeSyncCredentials = includeSyncCredentials,
-        )
-    }
-
-    suspend fun restoreEncryptedBackup(
-        data: ByteArray,
-        passphrase: String,
-    ): BackupRestoreResult {
-        val result = withContext(Dispatchers.IO) {
-            backupTransferService.restoreEncryptedBackup(data, passphrase)
-        }
-        taskStore.invalidateFromSync()
-        TodayWidgetUpdater.updateAllAsync(this)
-        TaskReminderScheduler.scheduleAllAsync(this)
-        val webDavConfigured = withContext(Dispatchers.IO) {
-            webDavCredentialsStore.load() != null
-        }
-        syncRuntime.refreshConfiguration(result.syncCredentialsRestored || webDavConfigured)
-        if (result.syncCredentialsRestored || webDavConfigured) {
-            SyncJobScheduler.ensurePeriodic(this)
-            SyncJobScheduler.enqueueImmediate(this)
-            applicationScope.launch { syncRuntime.synchronize() }
-        } else {
-            SyncJobScheduler.cancel(this)
         }
         return result
     }

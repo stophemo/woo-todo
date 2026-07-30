@@ -38,7 +38,7 @@
         <a href="#download">安装</a>
         <a href="https://github.com/stophemo/woo-todo" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
-      <a class="header-download" href="#download">下载 v0.1.15</a>
+      <a class="header-download" href="#download">下载 v0.1.16</a>
     </div>
   </header>
 
@@ -48,14 +48,14 @@
       <div class="hero-rule hero-rule-two" aria-hidden="true"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="release-line"><span>v0.1.15</span> macOS + Android + Windows</p>
+          <p class="release-line"><span>v0.1.16</span> macOS + Android + Windows</p>
           <h1 id="hero-title">无我待办</h1>
           <p class="hero-tagline">今晚规划，明早开干。</p>
-          <p class="hero-support">手机睡前列好明日任务，Mac 或 Windows 电脑次日直接展开今日清单。任务先存本地，断网照常使用；需要时再让 Mac 与 Android 加密同步。</p>
+          <p class="hero-support">手机睡前列好明日任务，Mac 或 Windows 电脑次日直接展开今日清单。任务先存本地，断网照常使用；需要时再让三端加密同步。</p>
           <div class="hero-actions" aria-label="下载与项目链接">
-            <a class="button button-primary" aria-label="下载 Android APK" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-android.apk"><span class="download-label">下载&nbsp;</span>Android</a>
-            <a class="button button-secondary" aria-label="下载 macOS ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-macos-arm64.zip"><span class="download-label">下载&nbsp;</span>macOS</a>
-            <a class="button button-secondary" aria-label="下载 Windows x64 免安装 ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-windows-x64.zip"><span class="download-label">下载&nbsp;</span>Windows</a>
+            <a class="button button-primary" aria-label="下载 Android APK" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.16/Woo-Todo-v0.1.16-android.apk"><span class="download-label">下载&nbsp;</span>Android</a>
+            <a class="button button-secondary" aria-label="下载 macOS ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.16/Woo-Todo-v0.1.16-macos-arm64.zip"><span class="download-label">下载&nbsp;</span>macOS</a>
+            <a class="button button-secondary" aria-label="下载 Windows x64 免安装 ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.16/Woo-Todo-v0.1.16-windows-x64.zip"><span class="download-label">下载&nbsp;</span>Windows</a>
           </div>
           <p class="hero-meta">MIT 开源 · 无传统账号 · 无应用商店依赖</p>
         </div>
@@ -64,7 +64,6 @@
           <section class="mac-board" aria-label="macOS 今日悬浮任务板">
             <header class="board-header">
               <div>
-                <p class="board-eyebrow">WOO TODO</p>
                 <h2>今日</h2>
               </div>
               <div class="board-date">
@@ -175,9 +174,9 @@
           </article>
           <article class="workflow-step">
             <span class="step-number">03</span>
-            <p class="step-time">周期结束 · 本地</p>
-            <h3>完成，或者诚实 Pass</h3>
-            <p>完成项保留划线，逾期项自动记为 Pass。历史与履约率留下真实结果，不滚成明天的负担。</p>
+            <p class="step-time">跨日 · 本地</p>
+            <h3>完成，或者主动 Pass</h3>
+            <p>一次性任务跨日后仍会保留，直到完成或手动 Pass；设置截止日期只会提示逾期，不会替你隐藏任务。</p>
           </article>
         </div>
       </div>
@@ -232,9 +231,9 @@
             <ol>
               <li>解压 Windows ZIP，运行根目录中的 <code>WooTodo.exe</code>；无需安装 .NET、运行库或安装器。</li>
               <li>任务板支持新增、完成、取消完成、置顶和穿透；托盘可恢复窗口并检查更新。</li>
-              <li>任务与设置保存在 <code>%LOCALAPPDATA%\Woo Todo</code>，移动或更新 EXE 不会清空数据。</li>
+              <li>“同步”可切换 Worker、同一网络与坚果云，并管理配对设备。</li>
             </ol>
-            <p class="quickstart-note">当前 EXE 未做 Authenticode 签名，SmartScreen 可能提示来源未知；请只从本仓库 Release 下载并核对 SHA-256。</p>
+            <p class="quickstart-note">任务与设置保存在 <code>%LOCALAPPDATA%\Woo Todo</code>。当前 EXE 未做 Authenticode 签名，请只从本仓库 Release 下载并核对 SHA-256。</p>
           </article>
 
           <article class="quickstart-card quickstart-sync">
@@ -247,12 +246,11 @@
             </div>
             <ol>
               <li>先安装并登录坚果云官方客户端确认账号可用，再在网页“账户信息 → 安全选项 → 第三方应用管理”创建应用密码；网页端只用于安全设置。</li>
-              <li>Mac 打开“设置… → 同步 → 坚果云自动同步”，填写账号和应用密码，保存并等待连接成功。</li>
-              <li>连接成功后二维码默认隐藏；在 Mac 显式点击“显示 Android 配置二维码”。</li>
-              <li>Android 在 Woo Todo 中选择“更多 → 扫描 Mac 配置二维码”，确认预填配置并保存；手机会生成本机独立设备 ID。</li>
+              <li>Mac 打开“设置… → 同步”，或在 Windows 打开“同步”，选择坚果云并填写账号和应用密码。</li>
+              <li>连接成功后二维码默认隐藏；在 Mac 或 Windows 显式显示 Android 配置二维码。</li>
+              <li>Android 在 Woo Todo 中选择“配对 → 扫描二维码配对”，确认预填配置并保存；手机会生成本机独立设备 ID。</li>
             </ol>
             <p class="quickstart-warning"><strong>配置二维码严格包含 <code>username</code>、<code>appPassword</code>、<code>vaultId</code> 与 <code>vaultKey</code>，等同坚果云 WebDAV 与 Woo Todo 的完整敏感凭据。</strong> 它不含固定端点或 <code>deviceId</code>，只能在两台设备近旁展示，用完立即隐藏；Woo Todo 不会上传或记录二维码和完整配置链接。任务先写入本地，坚果云只保存 AES-256-GCM 密文。</p>
-            <a href="https://github.com/stophemo/woo-todo/blob/main/docs/JIANGUOYUN_SYNC.md" target="_blank" rel="noreferrer">查看坚果云同步与通知设置</a>
           </article>
         </div>
       </div>
@@ -278,7 +276,7 @@
             <span class="feature-index">B</span>
             <div>
               <h3>本地优先，网络不挡路</h3>
-              <p>新增、修改、完成和排序只依赖本地 SQLite，三端断网时都能照常工作；macOS 与 Android 恢复联网后可继续自动同步。</p>
+              <p>新增、修改、完成和排序只依赖本地 SQLite，三端断网时都能照常工作；恢复联网后可继续自动同步。</p>
             </div>
             <span class="feature-tag">离线可用</span>
           </article>
@@ -294,7 +292,7 @@
             <span class="feature-index">D</span>
             <div>
               <h3>误点可撤销，设置可同步</h3>
-              <p>三端都能在当前周期内取消误点完成；macOS 与 Android 的今日标题、副标题、起始日和截止日可随任务一起加密同步。</p>
+              <p>三端都能在当前周期内取消误点完成；今日标题、副标题和独立日期变量可随任务一起加密同步。</p>
             </div>
             <span class="feature-tag">允许纠错</span>
           </article>
@@ -309,8 +307,8 @@
           <article class="feature-row">
             <span class="feature-index">F</span>
             <div>
-              <h3>无传统账号，加密备份</h3>
-              <p>macOS 与 Android 无需 Woo Todo 账号，可使用加密的 <code>.wootodo</code> 恢复备份；Windows 当前聚焦本地任务，暂不支持同步和加密备份。</p>
+              <h3>无传统账号，加密同步</h3>
+              <p>三端都无需 Woo Todo 账号，可在坚果云、Worker 和同一网络三种端到端加密同步方式中选择。</p>
             </div>
             <span class="feature-tag">自己掌控</span>
           </article>
@@ -353,10 +351,10 @@
             <strong role="cell">置顶、穿透、退出后系统提醒</strong>
           </div>
           <div class="platform-row" role="row">
-            <span role="cell">同步与备份</span>
-            <strong role="cell">坚果云 / Worker 同步、加密备份</strong>
-            <strong role="cell">坚果云 / Worker 同步、加密备份</strong>
-            <strong role="cell">当前暂不支持同步和加密备份</strong>
+            <span role="cell">加密同步</span>
+            <strong role="cell">三种同步、配对</strong>
+            <strong role="cell">三种同步、配对</strong>
+            <strong role="cell">三种同步、配对</strong>
           </div>
           <div class="platform-row" role="row">
             <span role="cell">后续更新</span>
@@ -371,10 +369,9 @@
     <section class="security section" aria-labelledby="security-title">
       <div class="section-inner security-layout">
         <div class="security-copy">
-          <p class="section-kicker">macOS 与 Android：坚果云密文自动同步</p>
+          <p class="section-kicker">三端：坚果云密文自动同步</p>
           <h2 id="security-title">任务明文只留在设备里</h2>
-          <p>macOS 与 Android 始终先读写本地 SQLite。启用坚果云后，任务和显示设置会写成 AES-256-GCM 密文对象并自动同步，云端只能看到同步所需的实体标识、逻辑时钟和密文大小等元数据。暂时断网时改动留在本地，恢复联网后继续同步；Mac 局域网和自建 Worker + D1 也是可选方案。Windows 当前不参与跨端同步。</p>
-          <a href="https://github.com/stophemo/woo-todo/blob/main/docs/SYNC_AND_SECURITY.md" target="_blank" rel="noreferrer">查看同步与安全设计</a>
+          <p>macOS、Android 与 Windows 始终先读写本地 SQLite。启用坚果云后，任务和显示设置会写成 AES-256-GCM 密文对象并自动同步，云端只能看到同步所需的实体标识、逻辑时钟和密文大小等元数据。暂时断网时改动留在本地，恢复联网后继续同步；Mac 或 Windows 局域网主机和自建 Worker + D1 也是可选方案。</p>
         </div>
         <div class="sync-flow" aria-label="坚果云加密自动同步流程">
           <div class="sync-node node-android">
@@ -397,7 +394,7 @@
           </div>
           <div class="sync-node node-macos">
             <span>03</span>
-            <strong>macOS 本地库</strong>
+            <strong>macOS / Windows 本地库</strong>
             <small>本机解密</small>
           </div>
         </div>
@@ -408,7 +405,7 @@
       <div class="section-inner">
         <div class="download-heading">
           <div>
-            <p class="section-kicker">v0.1.15 · 2026-07-28</p>
+            <p class="section-kicker">v0.1.16 · 2026-07-30</p>
             <h2 id="download-title">现在就装上</h2>
           </div>
           <p>macOS 和 Windows 下载 ZIP 后直接运行，只有 Android 需要系统安装。三个正式包都来自 GitHub Release，并提供 SHA-256 校验。</p>
@@ -420,8 +417,8 @@
               <span>Android 13+</span>
             </div>
             <h3>手机端与今日 Widget</h3>
-            <p>Release APK 使用项目长期升级密钥签名。v0.1.14 可在应用内升级到 v0.1.15，后续版本也会先验签再交给系统确认安装。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-android.apk">下载 APK</a>
+            <p>Release APK 使用项目长期升级密钥签名。v0.1.15 可在应用内升级到 v0.1.16，后续版本也会先验签再交给系统确认安装。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.16/Woo-Todo-v0.1.16-android.apk">下载 APK</a>
           </article>
           <article class="download-card download-macos">
             <div class="download-card-top">
@@ -429,8 +426,8 @@
               <span>Apple Silicon</span>
             </div>
             <h3>悬浮任务板与完整管理页</h3>
-            <p>ZIP 内是可直接运行的 <code>Woo Todo.app</code>，不是 DMG。macOS v0.1.14 无法启动，需手动覆盖安装 v0.1.15 一次；此后可恢复 Sparkle 更新。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-macos-arm64.zip">下载 macOS ZIP</a>
+            <p>ZIP 内是可直接运行的 <code>Woo Todo.app</code>，不是 DMG。v0.1.15 可通过 Sparkle 升级；v0.1.14 仍需手动覆盖一次。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.16/Woo-Todo-v0.1.16-macos-arm64.zip">下载 macOS ZIP</a>
           </article>
           <article class="download-card download-windows">
             <div class="download-card-top">
@@ -438,27 +435,24 @@
               <span>Windows 10 / 11 · x64</span>
             </div>
             <h3>悬浮任务板与系统提醒</h3>
-            <p>ZIP 内只有原生 <code>WooTodo.exe</code>，无需安装、.NET 或 Visual C++ Runtime。当前程序未签名，SmartScreen 可能提示来源；暂不支持同步和加密备份。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.15/Woo-Todo-v0.1.15-windows-x64.zip">下载 Windows ZIP</a>
+            <p>ZIP 内只有原生 <code>WooTodo.exe</code>，无需安装、.NET 或 Visual C++ Runtime。已支持三种加密同步和设备配对；当前未签名，SmartScreen 可能提示来源。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.16/Woo-Todo-v0.1.16-windows-x64.zip">下载 Windows ZIP</a>
           </article>
         </div>
         <div class="release-links">
-          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.15">发布说明</a>
-          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.15/SHA256SUMS.txt">SHA-256 校验</a>
-          <a href="https://github.com/stophemo/woo-todo/blob/main/docs/INSTALLATION.md">安装指南</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.16">发布说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.16/SHA256SUMS.txt">SHA-256 校验</a>
+          <a href="#quickstart">安装指南</a>
         </div>
         <aside class="deployment-note upgrade-note">
-          <strong>升级到 v0.1.15</strong>
-          <p>Android 与 Windows 的 v0.1.14 可直接在应用内升级。macOS v0.1.14 因打包问题无法启动，需手动下载并覆盖安装 v0.1.15 一次；安装后，后续正式版可恢复通过 Sparkle 更新。</p>
-          <div class="deployment-links">
-            <a href="https://github.com/stophemo/woo-todo/blob/main/docs/INSTALLATION.md">查看升级说明</a>
-          </div>
+          <strong>升级到 v0.1.16</strong>
+          <p>三端的 v0.1.15 都可直接在应用内升级。macOS v0.1.14 因打包问题无法启动，仍需手动下载并覆盖一次；覆盖更新会保留本地任务、设置和同步身份。</p>
         </aside>
         <aside class="deployment-note">
           <strong>关于跨端同步</strong>
-          <p>macOS 与 Android 推荐使用坚果云 WebDAV 密文自动同步，不需要自建服务器；同一网络可由 Mac 提供局域网同步，也可自行部署 Cloudflare Workers + D1。断网期间两端仍可独立使用，恢复联网后再同步积压变更；Windows 当前暂不支持这些同步方式。</p>
+          <p>macOS、Android 与 Windows 都可使用坚果云 WebDAV 密文同步，也可自行部署 Cloudflare Workers + D1；同一网络可由 Mac 或 Windows PC 承载局域网主机。断网期间三端仍可独立使用，恢复联网后再同步积压变更。</p>
           <div class="deployment-links">
-            <a href="https://github.com/stophemo/woo-todo/blob/main/docs/JIANGUOYUN_SYNC.md">坚果云配置</a>
+            <a href="#quickstart">坚果云配置</a>
             <a href="https://github.com/stophemo/woo-todo/blob/main/backend/README.md">Cloudflare 免费部署</a>
           </div>
         </aside>

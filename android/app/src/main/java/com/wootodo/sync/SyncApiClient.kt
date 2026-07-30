@@ -2,6 +2,7 @@ package com.wootodo.sync
 
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.Proxy
 import java.net.URI
 import java.net.URLEncoder
 import java.net.URL
@@ -27,13 +28,16 @@ interface PairingTransport {
     fun pairingResult(pairingId: String, request: PairingResultRequest): PairingResultData
 }
 
+internal object SyncProxyPolicy {
+    fun requiresDirectConnection(endpoint: URI): Boolean =
+        SyncEndpointPolicy.scope(endpoint) == SyncEndpointScope.LOCAL_NETWORK
+}
+
 class SyncApiClient(
     endpoint: String,
     private val connectTimeoutMillis: Int = 10_000,
     private val readTimeoutMillis: Int = 20_000,
-    private val connectionFactory: (URL) -> HttpURLConnection = { url ->
-        url.openConnection() as HttpURLConnection
-    },
+    private val connectionFactory: ((URL) -> HttpURLConnection)? = null,
 ) : SyncTransport, PairingTransport {
     private val endpoint: URI = validateEndpoint(endpoint)
 
@@ -135,7 +139,7 @@ class SyncApiClient(
         vaultCreationInviteCode: String? = null,
     ): T {
         val connection = try {
-            connectionFactory(buildUrl(path)).apply {
+            openConnection(buildUrl(path)).apply {
                 requestMethod = method
                 connectTimeout = connectTimeoutMillis
                 readTimeout = readTimeoutMillis
@@ -186,6 +190,16 @@ class SyncApiClient(
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun openConnection(url: URL): HttpURLConnection {
+        connectionFactory?.let { return it(url) }
+        val connection = if (SyncProxyPolicy.requiresDirectConnection(endpoint)) {
+            url.openConnection(Proxy.NO_PROXY)
+        } else {
+            url.openConnection()
+        }
+        return connection as HttpURLConnection
     }
 
     private fun readResponse(connection: HttpURLConnection, status: Int): String {

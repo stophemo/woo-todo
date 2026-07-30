@@ -4,6 +4,27 @@ import Testing
 
 @Suite("同步 API 客户端", .serialized)
 struct SyncAPIClientTests {
+    @Test("局域网 HTTP 绕过系统代理且远程 HTTPS 保持原路由")
+    func test局域网HTTP绕过系统代理且远程HTTPS保持原路由() throws {
+        for source in [
+            "http://woo-todo.local:48473",
+            "http://192.168.1.20:48473",
+        ] {
+            let endpoint = try #require(URL(string: source))
+            let configuration = try #require(
+                SyncAPIClient.directSessionConfiguration(for: endpoint)
+            )
+            #expect(configuration.connectionProxyDictionary?.isEmpty == true)
+        }
+
+        #expect(SyncAPIClient.directSessionConfiguration(
+            for: try #require(URL(string: "https://sync.example.com"))
+        ) == nil)
+        #expect(SyncAPIClient.directSessionConfiguration(
+            for: try #require(URL(string: "https://192.168.1.20"))
+        ) == nil)
+    }
+
     @Test("创建空间只通过专用请求头发送邀请码")
     func test创建空间只通过专用请求头发送邀请码() async throws {
         defer { MockURLProtocol.handler = nil }

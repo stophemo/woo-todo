@@ -46,12 +46,30 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
     public let endpoint: URL
     private let session: URLSession
 
-    public init(endpoint: URL, session: URLSession = .shared) throws {
+    public convenience init(endpoint: URL) throws {
+        try self.init(endpoint: endpoint, session: Self.defaultSession(for: endpoint))
+    }
+
+    public init(endpoint: URL, session: URLSession) throws {
         guard SyncEndpointPolicy.isAllowed(endpoint) else {
             throw SyncAPIError.invalidEndpoint
         }
         self.endpoint = endpoint
         self.session = session
+    }
+
+    static func directSessionConfiguration(for endpoint: URL) -> URLSessionConfiguration? {
+        guard SyncEndpointPolicy.scope(of: endpoint) == .localNetwork else { return nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [:]
+        return configuration
+    }
+
+    private static func defaultSession(for endpoint: URL) -> URLSession {
+        guard let configuration = directSessionConfiguration(for: endpoint) else {
+            return .shared
+        }
+        return URLSession(configuration: configuration)
     }
 
     public func createVault(

@@ -1,5 +1,6 @@
 package com.wootodo.ui
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -17,6 +18,7 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,6 +48,14 @@ object PairingRecoveryPolicy {
         wasPairingInSavedState && !runtimeStillActive
 }
 
+internal class PairingSessionGeneration {
+    private val value = AtomicLong()
+
+    fun advance(): Long = value.incrementAndGet()
+    fun current(): Long = value.get()
+    fun isCurrent(candidate: Long): Boolean = value.get() == candidate
+}
+
 class PairingViewModel(
     private val coordinator: PairingCoordinator,
     private val credentialsStore: SyncCredentialsStore,
@@ -54,51 +64,87 @@ class PairingViewModel(
     private val mutableState = MutableStateFlow<PairingUiState>(PairingUiState.Idle)
     val state: StateFlow<PairingUiState> = mutableState.asStateFlow()
     private var pairingJob: Job? = null
+    private var recoveryJob: Job? = null
+    private val sessionGeneration = PairingSessionGeneration()
+
+    fun prepareForNewPairing() {
+        pairingJob?.cancel()
+        recoveryJob?.cancel()
+        pairingJob = null
+        recoveryJob = null
+        sessionGeneration.advance()
+        mutableState.value = PairingUiState.Idle
+    }
 
     fun begin(link: PairingDeepLink, deviceName: String) {
-        pairingJob?.cancel()
+        prepareForNewPairing()
+        val generation = sessionGeneration.current()
         pairingJob = viewModelScope.launch {
             mutableState.value = PairingUiState.Claiming
             try {
                 val completion = withContext(Dispatchers.IO) {
                     coordinator.pair(link, deviceName) { progress ->
-                        mutableState.value = progress.toUiState()
+                        if (sessionGeneration.isCurrent(generation)) {
+                            mutableState.value = progress.toUiState()
+                        }
                     }
                 }
+                if (!sessionGeneration.isCurrent(generation)) return@launch
                 finalizePairing(completion)
-                mutableState.value = PairingUiState.Succeeded(completion.deviceId)
+                if (sessionGeneration.isCurrent(generation)) {
+                    mutableState.value = PairingUiState.Succeeded(completion.deviceId)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                mutableState.value = PairingUiState.Failed(PairingErrorMessage.from(error))
+                Log.e(TAG, "配对流程失败", error)
+                if (sessionGeneration.isCurrent(generation)) {
+                    mutableState.value = PairingUiState.Failed(PairingErrorMessage.from(error))
+                }
             }
         }
     }
 
     fun cancel() {
         pairingJob?.cancel()
+        recoveryJob?.cancel()
         pairingJob = null
+        recoveryJob = null
+        sessionGeneration.advance()
         mutableState.value = PairingUiState.Idle
     }
 
     fun recoverInterruptedPairing() {
         if (isPairingActive()) return
-        viewModelScope.launch {
+        recoveryJob?.cancel()
+        val generation = sessionGeneration.advance()
+        recoveryJob = viewModelScope.launch {
             val credentials = withContext(Dispatchers.IO) {
                 runCatching { credentialsStore.load() }.getOrNull()
             }
             if (credentials == null) {
-                mutableState.value = PairingUiState.Interrupted
+                if (sessionGeneration.isCurrent(generation)) {
+                    mutableState.value = PairingUiState.Interrupted
+                }
             } else {
+                if (!sessionGeneration.isCurrent(generation)) return@launch
                 val completion = PairingCompletion(credentials.vaultId, credentials.deviceId)
                 try {
                     finalizePairing(completion)
-                    mutableState.value = PairingUiState.Succeeded(completion.deviceId)
+                    if (sessionGeneration.isCurrent(generation)) {
+                        mutableState.value = PairingUiState.Succeeded(completion.deviceId)
+                    }
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
-                    mutableState.value = PairingUiState.Failed(PairingErrorMessage.from(error))
+                    Log.e(TAG, "恢复配对流程失败", error)
+                    if (sessionGeneration.isCurrent(generation)) {
+                        mutableState.value = PairingUiState.Failed(PairingErrorMessage.from(error))
+                    }
                 }
+            }
+            if (sessionGeneration.isCurrent(generation)) {
+                recoveryJob = null
             }
         }
     }
@@ -144,6 +190,10 @@ class PairingViewModel(
             ) as T
         }
     }
+
+    private companion object {
+        const val TAG = "WooTodoPairing"
+    }
 }
 
 internal object PairingErrorMessage {
@@ -177,6 +227,9 @@ internal object PairingErrorMessage {
         }
 
         is SyncCryptoException -> "配对密钥校验失败，请确认六位码并重新扫码"
-        else -> "配对未完成，请在 Mac 上重新生成二维码后再试"
+        else -> error.localizedMessage
+            ?.takeIf(String::isNotBlank)
+            ?.let { "配对未完成：$it" }
+            ?: "配对未完成，请确认 Mac 上仍显示同一组配对码后重试"
     }
 }

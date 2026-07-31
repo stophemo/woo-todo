@@ -123,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self?.showDashboard(section: .display)
                     },
                     checkForUpdates: { [weak appUpdateController] in
-                        appUpdateController?.checkManually()
+                        appUpdateController?.performMenuAction()
                     }
                 )
             } else {
@@ -141,7 +141,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.quickAddPanelController = quickAddPanelController
             self.statusMenuController = statusMenuController
             self.appUpdateController = appUpdateController
-            appUpdateController?.checkAutomatically()
+            appUpdateController?.onStateChange = { [weak statusMenuController] state in
+                statusMenuController?.setUpdateState(state)
+            }
+            appUpdateController?.onMessage = { [weak statusMenuController] title, message in
+                statusMenuController?.showTransientMessage(title: title, message: message)
+            }
+            appUpdateController?.checkOnLaunch()
             if runtime.allowsExternalServices {
                 wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
                     forName: NSWorkspace.didWakeNotification,

@@ -37,7 +37,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let blurItem: NSMenuItem
     private let alwaysOnTopItem: NSMenuItem
     private let opacityItem: NSMenuItem
+    private let updateItem: NSMenuItem
     private var opacityPresetItems: [NSMenuItem] = []
+    private var updateState = AppUpdateState.idle
+    private var messagePopover: NSPopover?
+    private var messageDismissTask: Task<Void, Never>?
 
     init(
         panelController: FloatingPanelController,
@@ -61,6 +65,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         blurItem = NSMenuItem(title: "毛玻璃", action: nil, keyEquivalent: "")
         alwaysOnTopItem = NSMenuItem(title: "始终置顶", action: nil, keyEquivalent: "")
         opacityItem = NSMenuItem(title: "日常不透明度", action: nil, keyEquivalent: "")
+        updateItem = NSMenuItem(title: "检查更新…", action: nil, keyEquivalent: "")
         super.init()
 
         statusItem.button?.image = NSImage(
@@ -94,6 +99,64 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         opacityPresetItems.forEach { item in
             guard let rawValue = item.representedObject as? Int else { return }
             item.state = rawValue == percentage ? .on : .off
+        }
+        switch updateState {
+        case .idle:
+            updateItem.title = "检查更新…"
+            updateItem.isEnabled = true
+        case .checking:
+            updateItem.title = "正在检查更新…"
+            updateItem.isEnabled = false
+        case let .available(version):
+            updateItem.title = "更新到 v\(version)"
+            updateItem.isEnabled = true
+        case let .downloading(version):
+            updateItem.title = "正在更新到 v\(version)…"
+            updateItem.isEnabled = false
+        }
+    }
+
+    func setUpdateState(_ state: AppUpdateState) {
+        updateState = state
+        refreshState()
+    }
+
+    func showTransientMessage(title: String, message: String) {
+        messageDismissTask?.cancel()
+        messagePopover?.close()
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        let messageLabel = NSTextField(wrappingLabelWithString: message)
+        messageLabel.font = .systemFont(ofSize: 12)
+        messageLabel.textColor = .secondaryLabelColor
+        messageLabel.maximumNumberOfLines = 3
+
+        let stack = NSStackView(views: [titleLabel, messageLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 5
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+
+        let controller = NSViewController()
+        controller.view = stack
+        stack.frame = NSRect(x: 0, y: 0, width: 280, height: 72)
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = stack.frame.size
+        popover.contentViewController = controller
+        messagePopover = popover
+
+        DispatchQueue.main.async { [weak self, weak popover] in
+            guard let self, let popover, let button = self.statusItem.button else { return }
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        messageDismissTask = Task { @MainActor [weak self, weak popover] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, self?.messagePopover === popover else { return }
+            popover?.close()
+            self?.messagePopover = nil
         }
     }
 
@@ -144,7 +207,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         alwaysOnTopItem.action = #selector(toggleAlwaysOnTop)
         menu.addItem(alwaysOnTopItem)
         menu.addItem(.separator())
-        menu.addItem(item("检查更新…", action: #selector(checkForUpdates)))
+        updateItem.target = self
+        updateItem.action = #selector(checkForUpdates)
+        menu.addItem(updateItem)
         menu.addItem(item("退出 Woo Todo", action: #selector(quit)))
         return menu
     }

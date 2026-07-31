@@ -378,6 +378,7 @@ struct App {
     update_sender: Sender<UpdateEvent>,
     update_receiver: Receiver<UpdateEvent>,
     update_state: UpdateState,
+    available_update: Option<UpdateRelease>,
     current_date: NaiveDate,
     credential_store: Arc<WindowsCredentialStore>,
     sync_runtime: SyncRuntime,
@@ -677,6 +678,7 @@ pub fn run() -> Result<(), String> {
             update_sender,
             update_receiver,
             update_state: UpdateState::Idle,
+            available_update: None,
             current_date: today_shanghai(),
             credential_store,
             sync_runtime,
@@ -775,7 +777,7 @@ pub fn run() -> Result<(), String> {
         UpdateWindow(app.floating);
         handle_activation_args(&mut app);
         if std::env::var_os("WOO_TODO_SKIP_UPDATE_CHECK").is_none() {
-            begin_automatic_update_check(&mut app);
+            begin_update_check(&mut app, false);
             SetTimer(
                 app.main,
                 UPDATE_CHECK_TIMER_ID,
@@ -5021,18 +5023,24 @@ unsafe fn show_tray_information(app: &App, title: &str, message: &str) {
 unsafe fn begin_update_check(app: &mut App, manual: bool) {
     if app.update_state != UpdateState::Idle {
         if manual {
-            show_message(
-                app.main,
+            show_tray_information(
+                app,
                 "Woo Todo 更新",
                 match app.update_state {
                     UpdateState::Checking => "正在检查更新，请稍候。",
                     UpdateState::Downloading => "正在下载更新，请稍候。",
                     UpdateState::Idle => "",
                 },
-                MB_OK | MB_ICONINFORMATION,
             );
         }
         return;
+    }
+    if manual && let Some(release) = app.available_update.clone() {
+        begin_update_download(app, release);
+        return;
+    }
+    if manual {
+        show_tray_information(app, "Woo Todo 更新", "正在后台检查，完成后会提示结果。");
     }
     app.settings.last_update_attempt_at = now_millis();
     let _ = app.settings.save();
@@ -5068,6 +5076,7 @@ unsafe fn begin_automatic_update_check(app: &mut App) {
 }
 
 unsafe fn begin_update_download(app: &mut App, release: UpdateRelease) {
+    app.available_update = None;
     app.update_state = UpdateState::Downloading;
     show_tray_information(
         app,
@@ -5095,31 +5104,27 @@ unsafe fn handle_update_events(app: &mut App) {
                 }
                 match result {
                     Ok(Some(release)) => {
-                        let message = format!(
-                            "发现 Woo Todo v{}。\n\n是否立即下载、替换当前程序并重启？任务和设置不会受影响。",
-                            release.version
-                        );
-                        if show_message(
-                            app.main,
+                        show_tray_information(
+                            app,
                             "Woo Todo 有新版本",
-                            &message,
-                            MB_YESNO | MB_ICONINFORMATION,
-                        ) == IDYES
-                        {
-                            begin_update_download(app, release);
-                        }
+                            &format!(
+                                "v{} 已显示在托盘菜单中，点击即可一键更新。",
+                                release.version
+                            ),
+                        );
+                        app.available_update = Some(release);
                     }
                     Ok(None) if manual => {
-                        show_message(
-                            app.main,
+                        app.available_update = None;
+                        show_tray_information(
+                            app,
                             "Woo Todo 更新",
                             &format!("当前已是最新版本（v{}）。", env!("CARGO_PKG_VERSION")),
-                            MB_OK | MB_ICONINFORMATION,
                         );
                     }
-                    Ok(None) => {}
+                    Ok(None) => app.available_update = None,
                     Err(error) if manual => {
-                        show_message(app.main, "无法检查更新", &error, MB_OK | MB_ICONWARNING);
+                        show_tray_warning(app, "无法检查更新", &error);
                     }
                     Err(_) => {}
                 }
@@ -5129,13 +5134,13 @@ unsafe fn handle_update_events(app: &mut App) {
                 match result {
                     Ok(prepared) => {
                         if let Err(error) = update::launch_helper(&prepared) {
-                            show_message(app.main, "无法安装更新", &error, MB_OK | MB_ICONWARNING);
+                            show_tray_warning(app, "无法安装更新", &error);
                         } else {
                             exit_application(app);
                         }
                     }
                     Err(error) => {
-                        show_message(app.main, "更新下载失败", &error, MB_OK | MB_ICONWARNING);
+                        show_tray_warning(app, "更新下载失败", &error);
                     }
                 }
             }
@@ -5176,15 +5181,16 @@ unsafe fn show_tray_menu(app: &mut App) {
     );
     append_menu(menu, ID_TRAY_RESTORE, "恢复可交互");
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
-    append_menu(
-        menu,
-        ID_TRAY_CHECK_UPDATE,
-        match app.update_state {
-            UpdateState::Checking => "正在检查更新...",
-            UpdateState::Downloading => "正在下载更新...",
-            UpdateState::Idle => "检查更新...",
-        },
-    );
+    let update_title = match app.update_state {
+        UpdateState::Checking => "正在检查更新...".to_owned(),
+        UpdateState::Downloading => "正在下载更新...".to_owned(),
+        UpdateState::Idle => app
+            .available_update
+            .as_ref()
+            .map(|release| format!("更新到 v{}", release.version))
+            .unwrap_or_else(|| "检查更新...".to_owned()),
+    };
+    append_menu(menu, ID_TRAY_CHECK_UPDATE, &update_title);
     append_menu(menu, ID_TRAY_EXIT, "退出 Woo Todo");
     let mut point: POINT = zeroed();
     GetCursorPos(&mut point);

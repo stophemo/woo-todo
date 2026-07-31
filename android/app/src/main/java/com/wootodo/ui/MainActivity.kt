@@ -35,6 +35,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.ItemTouchHelper
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.snackbar.Snackbar
 import com.journeyapps.barcodescanner.ScanContract
 import com.wootodo.BuildConfig
 import com.wootodo.R
@@ -84,9 +85,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dayCounterText: TextView
     private lateinit var scopeGroup: RadioGroup
     private var pairingDialog: AlertDialog? = null
-    private var pairingTerminalDialog: AlertDialog? = null
+    private var pairingSwitchDialog: AlertDialog? = null
     private var pairingMessageView: TextView? = null
     private var pairingCodeView: TextView? = null
+    private var pairingEntryJob: Job? = null
+    private val pairingEntryGeneration = PairingSessionGeneration()
     private var deepLinkIntentConsumed = false
     private var updateProgressDialog: AlertDialog? = null
     private var updateDownloadJob: Job? = null
@@ -231,6 +234,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        if (savedInstanceState == null) {
+            checkForAppUpdate(manual = false, force = true)
+        }
         requestNotificationPermissionIfNeeded()
         renderDayCounter()
         if (savedInstanceState == null) {
@@ -289,8 +295,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        pairingEntryJob?.cancel()
         pairingDialog?.dismiss()
-        pairingTerminalDialog?.dismiss()
+        pairingSwitchDialog?.dismiss()
         updateProgressDialog?.dismiss()
         super.onDestroy()
     }
@@ -684,12 +691,12 @@ class MainActivity : AppCompatActivity() {
         dayCounterText.isVisible = rendered.subtitle != null
     }
 
-    private fun checkForAppUpdate(manual: Boolean) {
+    private fun checkForAppUpdate(manual: Boolean, force: Boolean = false) {
         if (manual) {
-            Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show()
+            showTransientMessage(R.string.update_checking)
         }
         val now = System.currentTimeMillis()
-        if (!manual && !updatePreferences.shouldAutomaticallyCheck(now)) {
+        if (!manual && !force && !updatePreferences.shouldAutomaticallyCheck(now)) {
             return
         }
         if (!manual) updatePreferences.markAttempted(now)
@@ -707,26 +714,41 @@ class MainActivity : AppCompatActivity() {
                         availableUpdateRelease = null
                         updatePreferences.clearAvailableRelease()
                         if (event.reportToUser) {
-                            Toast.makeText(
-                                this,
+                            showTransientMessage(
                                 getString(R.string.update_up_to_date, currentVersionLabel()),
-                                Toast.LENGTH_SHORT,
-                            ).show()
+                            )
                         }
                     }
                     is AppUpdateCheckResult.Available -> {
                         val release = updateResult.release
                         availableUpdateRelease = release
                         updatePreferences.cacheAvailableRelease(release)
+                        showTransientMessage(
+                            getString(R.string.update_available_hint, release.versionLabel),
+                        )
                     }
                 }
             },
             onFailure = {
                 if (event.reportToUser) {
-                    Toast.makeText(this, R.string.update_check_failed, Toast.LENGTH_LONG).show()
+                    showTransientMessage(R.string.update_check_failed, Snackbar.LENGTH_LONG)
                 }
             }
         )
+    }
+
+    private fun showTransientMessage(
+        @StringRes messageRes: Int,
+        duration: Int = Snackbar.LENGTH_SHORT,
+    ) {
+        showTransientMessage(getString(messageRes), duration)
+    }
+
+    private fun showTransientMessage(
+        message: String,
+        duration: Int = Snackbar.LENGTH_SHORT,
+    ) {
+        Snackbar.make(findViewById(R.id.main_root), message, duration).show()
     }
 
     private fun beginUpdate(release: GitHubRelease) {
@@ -833,43 +855,46 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun beginWorkerPairing(link: PairingDeepLink) {
-        lifecycleScope.launch {
+        pairingEntryJob?.cancel()
+        pairingSwitchDialog?.dismiss()
+        pairingSwitchDialog = null
+        val generation = pairingEntryGeneration.advance()
+        pairingViewModel.prepareForNewPairing()
+        showTransientMessage(R.string.pairing_link_received, Snackbar.LENGTH_LONG)
+        pairingEntryJob = lifecycleScope.launch {
             val replacingWebDav = withContext(Dispatchers.IO) {
                 runCatching {
                     (application as WooTodoApplication).webDavCredentialsStore.load() != null
                 }.getOrDefault(false)
             }
+            if (!pairingEntryGeneration.isCurrent(generation)) return@launch
             val begin = {
-                Toast.makeText(
-                    this@MainActivity,
-                    R.string.pairing_link_received,
-                    Toast.LENGTH_SHORT,
-                ).show()
-                pairingViewModel.begin(link, deviceDisplayName())
+                if (pairingEntryGeneration.isCurrent(generation)) {
+                    pairingViewModel.begin(link, deviceDisplayName())
+                }
             }
             if (replacingWebDav) {
-                showSyncSwitchConfirmation(
+                pairingSwitchDialog = showSyncSwitchConfirmation(
                     messageRes = R.string.sync_switch_to_worker_message,
                     onConfirm = begin,
                 )
             } else {
                 begin()
             }
+            pairingEntryJob = null
         }
     }
 
     private fun showSyncSwitchConfirmation(
         @StringRes messageRes: Int,
         onConfirm: () -> Unit,
-    ) {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.sync_switch_title)
-            .setMessage(messageRes)
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.sync_switch_confirm) { _, _ -> onConfirm() }
-            .show()
-            .enableMessageSelection()
-    }
+    ): AlertDialog = AlertDialog.Builder(this)
+        .setTitle(R.string.sync_switch_title)
+        .setMessage(messageRes)
+        .setNegativeButton(R.string.cancel, null)
+        .setPositiveButton(R.string.sync_switch_confirm) { _, _ -> onConfirm() }
+        .show()
+        .enableMessageSelection()
 
     private fun handleWebDavSetupLink(source: String) {
         val setupLink = runCatching { WebDavSetupLink.parse(source) }.getOrNull()
@@ -980,17 +1005,19 @@ class MainActivity : AppCompatActivity() {
             )
             is PairingUiState.Succeeded -> {
                 dismissPairingProgress()
-                Toast.makeText(this, R.string.pairing_succeeded, Toast.LENGTH_SHORT).show()
+                showTransientMessage(R.string.pairing_succeeded, Snackbar.LENGTH_LONG)
                 pairingViewModel.acknowledgeTerminalState()
             }
-            is PairingUiState.Failed -> showPairingTerminalDialog(
-                title = getString(R.string.pairing_failed_title),
-                message = state.message,
-            )
-            PairingUiState.Interrupted -> showPairingTerminalDialog(
-                title = getString(R.string.pairing_interrupted_title),
-                message = getString(R.string.pairing_interrupted_message),
-            )
+            is PairingUiState.Failed -> {
+                dismissPairingProgress()
+                showTransientMessage(state.message, Snackbar.LENGTH_LONG)
+                pairingViewModel.acknowledgeTerminalState()
+            }
+            PairingUiState.Interrupted -> {
+                dismissPairingProgress()
+                showTransientMessage(R.string.pairing_interrupted_message, Snackbar.LENGTH_LONG)
+                pairingViewModel.acknowledgeTerminalState()
+            }
         }
     }
 
@@ -999,8 +1026,6 @@ class MainActivity : AppCompatActivity() {
         verificationCode: String?,
         allowCancel: Boolean = true,
     ) {
-        pairingTerminalDialog?.dismiss()
-        pairingTerminalDialog = null
         if (pairingDialog?.isShowing != true) {
             val padding = (24 * resources.displayMetrics.density).toInt()
             val container = LinearLayout(this).apply {
@@ -1043,24 +1068,6 @@ class MainActivity : AppCompatActivity() {
         pairingDialog = null
         pairingMessageView = null
         pairingCodeView = null
-    }
-
-    private fun showPairingTerminalDialog(title: String, message: String) {
-        dismissPairingProgress()
-        if (pairingTerminalDialog?.isShowing == true) return
-        pairingTerminalDialog = AlertDialog.Builder(this)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                pairingViewModel.acknowledgeTerminalState()
-                pairingTerminalDialog = null
-            }
-            .setOnCancelListener {
-                pairingViewModel.acknowledgeTerminalState()
-                pairingTerminalDialog = null
-            }
-            .show()
-            .enableMessageSelection()
     }
 
     private fun AlertDialog.enableMessageSelection(): AlertDialog = apply {

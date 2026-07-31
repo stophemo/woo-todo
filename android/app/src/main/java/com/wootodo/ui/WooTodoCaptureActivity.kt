@@ -1,6 +1,7 @@
 package com.wootodo.ui
 
 import android.content.Context
+import com.google.zxing.DecodeHintType
 import com.journeyapps.barcodescanner.CaptureActivity
 import com.journeyapps.barcodescanner.ScanOptions
 import com.wootodo.R
@@ -13,7 +14,8 @@ internal object WooTodoScanOptions {
         setDesiredBarcodeFormats(ScanOptions.QR_CODE)
         setCaptureActivity(WooTodoCaptureActivity::class.java)
         setPrompt(context.getString(R.string.scan_qr_prompt))
-        setBeepEnabled(false)
+        addExtra(DecodeHintType.TRY_HARDER.name, true)
+        setBeepEnabled(true)
         setBarcodeImageEnabled(false)
         setOrientationLocked(false)
     }

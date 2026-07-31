@@ -485,6 +485,7 @@ private struct StatisticsView: View {
             .padding(22)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .textSelection(.enabled)
     }
 }
 

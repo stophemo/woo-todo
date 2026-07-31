@@ -26,6 +26,7 @@ struct SyncSettingsView: View {
                 setupContent
             }
         }
+        .textSelection(.enabled)
         .task {
             if store.connection != nil {
                 await store.refreshDevices()
@@ -807,20 +808,39 @@ private struct QRCodeView: View {
                     .font(.system(size: 80))
             }
         }
-        .frame(width: 210, height: 210)
-        .padding(10)
+        .frame(width: 260, height: 260)
+        .padding(8)
         .background(.white, in: RoundedRectangle(cornerRadius: 10))
         .accessibilityLabel(accessibilityLabel)
     }
 }
 
 private enum QRCodeRenderer {
+    private static let quietZoneModules: CGFloat = 4
+
     static func render(_ payload: String) -> NSImage? {
         guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
         filter.setValue(Data(payload.utf8), forKey: "inputMessage")
         filter.setValue("M", forKey: "inputCorrectionLevel")
         guard let output = filter.outputImage else { return nil }
-        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        let extent = output.extent.integral
+        let paddedExtent = CGRect(
+            x: 0,
+            y: 0,
+            width: extent.width + quietZoneModules * 2,
+            height: extent.height + quietZoneModules * 2
+        )
+        let positioned = output.transformed(
+            by: CGAffineTransform(
+                translationX: quietZoneModules - extent.minX,
+                y: quietZoneModules - extent.minY
+            )
+        )
+        let whiteBackground = CIImage(
+            color: CIColor(red: 1, green: 1, blue: 1)
+        ).cropped(to: paddedExtent)
+        let padded = positioned.composited(over: whiteBackground)
+        let scaled = padded.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
         let representation = NSCIImageRep(ciImage: scaled)
         let image = NSImage(size: representation.size)
         image.addRepresentation(representation)

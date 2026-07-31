@@ -35,8 +35,8 @@ android {
         applicationId = "com.wootodo"
         minSdk = 33
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.1.18"
+        versionCode = 20
+        versionName = "0.1.19"
 
         testInstrumentationRunner = "com.wootodo.WooTodoTestRunner"
     }
@@ -77,6 +77,7 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        resources.excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
     }
 
     sourceSets {
@@ -102,6 +103,7 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.1.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.79")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

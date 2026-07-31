@@ -8,6 +8,7 @@ import android.content.pm.FeatureInfo
 import android.content.pm.PackageManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.google.zxing.DecodeHintType
 import com.google.zxing.client.android.Intents
 import com.journeyapps.barcodescanner.ScanOptions
 import com.wootodo.ui.WooTodoCaptureActivity
@@ -54,6 +55,8 @@ class QrScannerContractInstrumentedTest {
         val intent = WooTodoScanOptions.create(context).createScanIntent(context)
 
         assertTrue(intent.getStringExtra(Intents.Scan.FORMATS) == ScanOptions.QR_CODE)
+        assertTrue(intent.getBooleanExtra(DecodeHintType.TRY_HARDER.name, false))
+        assertTrue(intent.getBooleanExtra(Intents.Scan.BEEP_ENABLED, false))
         assertFalse(intent.getBooleanExtra(Intents.Scan.ORIENTATION_LOCKED, true))
         assertTrue(intent.component?.className == WooTodoCaptureActivity::class.java.name)
     }

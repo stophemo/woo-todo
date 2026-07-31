@@ -1,18 +1,11 @@
 package com.wootodo.sync
 
-import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
-import java.security.KeyFactory
-import java.security.KeyPairGenerator
-import java.security.interfaces.XECPrivateKey
-import java.security.interfaces.XECPublicKey
-import java.security.spec.NamedParameterSpec
-import java.security.spec.XECPrivateKeySpec
-import java.security.spec.XECPublicKeySpec
-import javax.crypto.KeyAgreement
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters
 
 class PairingKeyPair private constructor(
     privateScalarBytes: ByteArray,
@@ -24,18 +17,11 @@ class PairingKeyPair private constructor(
 
     fun sharedSecret(peerPublicKey: ByteArray): ByteArray {
         require(peerPublicKey.size == 32) { "X25519 公钥必须为 32 字节" }
-        val keyFactory = xdhKeyFactory()
-        val privateKey = keyFactory.generatePrivate(
-            XECPrivateKeySpec(NamedParameterSpec.X25519, privateScalar.copyOf()),
-        )
-        val peerValue = BigInteger(1, peerPublicKey.reversedArray())
-        val peerKey = keyFactory.generatePublic(
-            XECPublicKeySpec(NamedParameterSpec.X25519, peerValue),
-        )
-        val agreement = xdhKeyAgreement()
-        agreement.init(privateKey)
-        agreement.doPhase(peerKey, true)
-        return agreement.generateSecret()
+        val privateKey = X25519PrivateKeyParameters(privateScalar.copyOf(), 0)
+        val peerKey = X25519PublicKeyParameters(peerPublicKey.copyOf(), 0)
+        return ByteArray(32).also { sharedSecret ->
+            privateKey.generateSecret(peerKey, sharedSecret, 0)
+        }
     }
 
     fun sessionKey(
@@ -69,30 +55,22 @@ class PairingKeyPair private constructor(
 
     companion object {
         fun generate(): PairingKeyPair {
-            val generator = runCatching { KeyPairGenerator.getInstance("XDH") }
-                .getOrElse { KeyPairGenerator.getInstance("X25519") }
-            generator.initialize(NamedParameterSpec.X25519)
-            val pair = generator.generateKeyPair()
-            val privateScalar = (pair.private as? XECPrivateKey)?.scalar?.orElse(null)
-                ?: throw SyncCryptoException("无法导出 X25519 私钥")
-            val publicValue = (pair.public as? XECPublicKey)?.u
-                ?: throw SyncCryptoException("无法导出 X25519 公钥")
-            return PairingKeyPair(privateScalar, publicValue.toLittleEndian(32))
+            val privateScalar = SecureBytes.generate(32)
+            return try {
+                // 部分 Android OEM Provider 不接受 XDH 参数对象，也不允许导出生成后的
+                // XEC 私钥。使用轻量级 X25519 实现可避开这两类 Provider 差异。
+                fromPrivateKey(privateScalar)
+            } catch (error: Exception) {
+                throw SyncCryptoException("当前系统无法构造 X25519 临时密钥", error)
+            } finally {
+                privateScalar.fill(0)
+            }
         }
 
         fun fromPrivateKey(privateScalar: ByteArray): PairingKeyPair {
             require(privateScalar.size == 32) { "X25519 私钥必须为 32 字节" }
-            val keyFactory = xdhKeyFactory()
-            val privateKey = keyFactory.generatePrivate(
-                XECPrivateKeySpec(NamedParameterSpec.X25519, privateScalar.copyOf()),
-            )
-            val basePoint = keyFactory.generatePublic(
-                XECPublicKeySpec(NamedParameterSpec.X25519, BigInteger.valueOf(9)),
-            )
-            val agreement = xdhKeyAgreement()
-            agreement.init(privateKey)
-            agreement.doPhase(basePoint, true)
-            return PairingKeyPair(privateScalar, agreement.generateSecret())
+            val privateKey = X25519PrivateKeyParameters(privateScalar.copyOf(), 0)
+            return PairingKeyPair(privateScalar, privateKey.generatePublicKey().encoded)
         }
     }
 }
@@ -181,19 +159,3 @@ object PairingSessionCrypto {
         return (value % 1_000_000L).toString().padStart(6, '0')
     }
 }
-
-private fun BigInteger.toLittleEndian(size: Int): ByteArray {
-    val bigEndian = toByteArray().let { bytes ->
-        if (bytes.size > 1 && bytes[0] == 0.toByte()) bytes.copyOfRange(1, bytes.size) else bytes
-    }
-    require(bigEndian.size <= size) { "X25519 公钥超出 32 字节" }
-    return ByteArray(size).also { output ->
-        bigEndian.reversedArray().copyInto(output)
-    }
-}
-
-private fun xdhKeyFactory(): KeyFactory = runCatching { KeyFactory.getInstance("XDH") }
-    .getOrElse { KeyFactory.getInstance("X25519") }
-
-private fun xdhKeyAgreement(): KeyAgreement = runCatching { KeyAgreement.getInstance("XDH") }
-    .getOrElse { KeyAgreement.getInstance("X25519") }

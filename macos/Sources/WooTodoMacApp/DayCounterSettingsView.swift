@@ -161,6 +161,7 @@ struct DayCounterSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .textSelection(.enabled)
         .padding(16)
         .onChange(of: store.configuration) { _, value in
             load(value)

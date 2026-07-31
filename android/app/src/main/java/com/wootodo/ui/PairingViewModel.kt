@@ -226,7 +226,7 @@ internal object PairingErrorMessage {
             else -> "同步服务暂时无法完成配对（${error.payload.code}）"
         }
 
-        is SyncCryptoException -> "配对密钥校验失败，请确认六位码并重新扫码"
+        is SyncCryptoException -> "配对密钥协商或校验失败，请更新 Woo Todo 后重新扫码"
         else -> error.localizedMessage
             ?.takeIf(String::isNotBlank)
             ?.let { "配对未完成：$it" }

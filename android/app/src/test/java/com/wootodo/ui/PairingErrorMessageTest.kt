@@ -2,9 +2,12 @@ package com.wootodo.ui
 
 import com.wootodo.sync.PairingException
 import com.wootodo.sync.SyncApiException
+import com.wootodo.sync.SyncCryptoException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.security.InvalidAlgorithmParameterException
 import javax.net.ssl.SSLHandshakeException
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -33,5 +36,20 @@ class PairingErrorMessageTest {
         assertTrue(unknownHost.contains("服务地址可访问"))
         assertTrue(timeout.contains("超时"))
         assertTrue(certificate.contains("HTTPS 证书"))
+    }
+
+    @Test
+    fun `Provider兼容错误不向用户暴露英文实现细节`() {
+        val message = PairingErrorMessage.from(
+            SyncCryptoException(
+                "当前系统无法生成 X25519 临时密钥",
+                InvalidAlgorithmParameterException(
+                    "No AlgorithmParameterSpec classes are supported",
+                ),
+            ),
+        )
+
+        assertTrue(message.contains("密钥协商"))
+        assertFalse(message.contains("AlgorithmParameterSpec"))
     }
 }

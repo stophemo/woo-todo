@@ -730,6 +730,11 @@ strong {
   background: var(--paper-bright);
 }
 
+.quickstart-card:not(.quickstart-sync) {
+  display: flex;
+  flex-direction: column;
+}
+
 .quickstart-card-heading {
   display: flex;
   gap: 16px;
@@ -792,6 +797,14 @@ strong {
   background: #ece9f8;
   color: #4f4a63;
   font-size: 13px;
+}
+
+.quickstart-card:not(.quickstart-sync) .quickstart-note {
+  margin-top: auto;
+}
+
+.quickstart-card:not(.quickstart-sync) ol {
+  margin-bottom: 23px;
 }
 
 .quickstart-sync {
@@ -1174,6 +1187,11 @@ strong {
   padding: 25px 0;
   border-top: 1px solid var(--ink);
   border-bottom: 1px solid var(--ink);
+}
+
+.deployment-note + .deployment-note {
+  margin-top: 0;
+  border-top: 0;
 }
 
 .deployment-note strong {

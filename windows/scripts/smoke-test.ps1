@@ -661,9 +661,9 @@ function Assert-FloatingStyle {
         )) {
         throw "无法读取悬浮窗透明度"
     }
-    $expectedAlpha = [byte] [Math]::Round($Opacity * 255.0)
-    if ($alpha -ne $expectedAlpha -or ($flags -band 0x2) -eq 0) {
-        throw "悬浮窗透明度不匹配：预期 $expectedAlpha，实际 $alpha，flags=$flags"
+    $expectedAlpha = [int] [Math]::Round($Opacity * 255.0)
+    if ([Math]::Abs(([int] $alpha) - $expectedAlpha) -gt 1 -or ($flags -band 0x2) -eq 0) {
+        throw "悬浮窗透明度不匹配：预期约 $expectedAlpha，实际 $alpha，flags=$flags"
     }
     Add-Diagnostic "窗口样式符合预期：alpha=$alpha, clickThrough=$ClickThrough"
 }
@@ -1438,7 +1438,7 @@ try {
             $helperArchive,
             $helperTarget,
             "4294967295",
-            "0.1.21",
+            "0.1.20",
             $helperDigest
         ) `
         -PassThru

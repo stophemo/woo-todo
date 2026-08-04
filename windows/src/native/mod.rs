@@ -110,6 +110,8 @@ const ID_SHORTCUT_TOPMOST: i32 = 142;
 const ID_SHORTCUT_CLICK_THROUGH: i32 = 143;
 const ID_SHORTCUT_SAVE: i32 = 144;
 const ID_SHORTCUT_RESET: i32 = 145;
+const ID_SHORTCUT_INCREASE_OPACITY: i32 = 146;
+const ID_SHORTCUT_DECREASE_OPACITY: i32 = 147;
 const ID_SYNC_MODE: i32 = 150;
 const ID_SYNC_ENDPOINT: i32 = 151;
 const ID_SYNC_INVITE: i32 = 152;
@@ -161,7 +163,7 @@ const ID_TRAY_SHOW_MAIN: i32 = 400;
 const ID_TRAY_TOGGLE_BOARD: i32 = 401;
 const ID_TRAY_QUICK_ADD: i32 = 402;
 const ID_TRAY_TOPMOST: i32 = 403;
-const ID_TRAY_RESTORE: i32 = 404;
+const ID_TRAY_CLICK_THROUGH: i32 = 404;
 const ID_TRAY_EXIT: i32 = 405;
 const ID_TRAY_CHECK_UPDATE: i32 = 406;
 
@@ -169,6 +171,12 @@ const HOTKEY_QUICK_ADD: i32 = 1;
 const HOTKEY_TOGGLE_BOARD: i32 = 2;
 const HOTKEY_TOPMOST: i32 = 3;
 const HOTKEY_CLICK_THROUGH: i32 = 4;
+const HOTKEY_INCREASE_OPACITY: i32 = 5;
+const HOTKEY_DECREASE_OPACITY: i32 = 6;
+
+const MINIMUM_OPACITY_PERCENT: i32 = 20;
+const MAXIMUM_OPACITY_PERCENT: i32 = 100;
+const OPACITY_STEP_PERCENT: i32 = 10;
 
 static QUICK_EDIT_PROC: AtomicIsize = AtomicIsize::new(0);
 
@@ -238,8 +246,8 @@ struct MainControls {
     display_save: HWND,
     display_reset: HWND,
     shortcut_heading: HWND,
-    shortcut_labels: [HWND; 4],
-    shortcut_edits: [HWND; 4],
+    shortcut_labels: [HWND; 6],
+    shortcut_edits: [HWND; 6],
     shortcut_save: HWND,
     shortcut_reset: HWND,
 }
@@ -455,7 +463,7 @@ enum SyncUiEvent {
         result: Result<woo_todo_core::BackupSnapshot, String>,
     },
     WorkerVaultCreated(Result<SyncCredentials, String>),
-    SyncPreflighted(Result<SyncCredentials, String>),
+    SyncPreflighted(Result<(SyncCredentials, i64), String>),
     DevicesLoaded(Result<String, String>),
     DeviceRevoked(Result<String, String>),
 }
@@ -1009,7 +1017,24 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
     )?;
     SendMessageW(app.main_controls.opacity, TBM_SETRANGEMIN, 1, 20);
     SendMessageW(app.main_controls.opacity, TBM_SETRANGEMAX, 1, 100);
-    SendMessageW(app.main_controls.opacity, TBM_SETTICFREQ, 5, 0);
+    SendMessageW(
+        app.main_controls.opacity,
+        TBM_SETTICFREQ,
+        OPACITY_STEP_PERCENT as usize,
+        0,
+    );
+    SendMessageW(
+        app.main_controls.opacity,
+        TBM_SETLINESIZE,
+        0,
+        OPACITY_STEP_PERCENT as isize,
+    );
+    SendMessageW(
+        app.main_controls.opacity,
+        TBM_SETPAGESIZE,
+        0,
+        OPACITY_STEP_PERCENT as isize,
+    );
     app.main_controls.opacity_value = create_child(parent, "STATIC", "", STATIC_RIGHT, 0, 0)?;
     app.main_controls.topmost = create_child(
         parent,
@@ -1086,9 +1111,16 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
 
     app.main_controls.shortcut_heading =
         create_child(parent, "STATIC", "全局快捷键", STATIC_LEFT, 0, 0)?;
-    for (index, label) in ["快速新增", "显示任务板", "切换置顶", "切换穿透"]
-        .into_iter()
-        .enumerate()
+    for (index, label) in [
+        "快速新增",
+        "显示任务板",
+        "切换置顶",
+        "切换穿透",
+        "增加不透明度",
+        "降低不透明度",
+    ]
+    .into_iter()
+    .enumerate()
     {
         app.main_controls.shortcut_labels[index] =
             create_child(parent, "STATIC", label, STATIC_LEFT, 0, 0)?;
@@ -1098,6 +1130,8 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         ID_SHORTCUT_TOGGLE_BOARD,
         ID_SHORTCUT_TOPMOST,
         ID_SHORTCUT_CLICK_THROUGH,
+        ID_SHORTCUT_INCREASE_OPACITY,
+        ID_SHORTCUT_DECREASE_OPACITY,
     ]
     .into_iter()
     .enumerate()
@@ -1505,7 +1539,7 @@ unsafe fn layout_main(app: &App) {
         1,
     );
     let shortcut_column_width = (settings_width - 18) / 2;
-    for index in 0..4 {
+    for index in 0..6 {
         let column = index % 2;
         let row = index / 2;
         let x = settings_left + column as i32 * (shortcut_column_width + 18);
@@ -1530,7 +1564,7 @@ unsafe fn layout_main(app: &App) {
     MoveWindow(
         app.main_controls.shortcut_reset,
         settings_left,
-        432,
+        468,
         104,
         28,
         1,
@@ -1538,7 +1572,7 @@ unsafe fn layout_main(app: &App) {
     MoveWindow(
         app.main_controls.shortcut_save,
         settings_left + 112,
-        432,
+        468,
         104,
         28,
         1,
@@ -2163,10 +2197,28 @@ unsafe fn populate_sync_form(app: &mut App) {
     ] {
         set_text(control, "");
     }
-    match app.credential_store.load() {
+    let selected_mode = selected_sync_mode(app);
+    let mode = if let Some(mode) = selected_mode {
+        mode
+    } else {
+        let mode = app
+            .credential_store
+            .load()
+            .ok()
+            .flatten()
+            .map(|credentials| credentials.mode())
+            .unwrap_or(SyncMode::Worker);
+        SendMessageW(
+            app.sync_controls.mode,
+            CB_SETCURSEL,
+            sync_mode_index(mode) as usize,
+            0,
+        );
+        mode
+    };
+    let loaded = app.credential_store.load_for_mode(mode);
+    match loaded {
         Ok(Some(credentials)) => {
-            let mode_index = sync_mode_index(credentials.mode());
-            SendMessageW(app.sync_controls.mode, CB_SETCURSEL, mode_index as usize, 0);
             set_text(app.sync_controls.vault_id, credentials.vault_id());
             set_text(app.sync_controls.device_id, credentials.device_id());
             match credentials {
@@ -2179,9 +2231,7 @@ unsafe fn populate_sync_form(app: &mut App) {
                 }
             }
         }
-        Ok(None) => {
-            SendMessageW(app.sync_controls.mode, CB_SETCURSEL, 0, 0);
-        }
+        Ok(None) => {}
         Err(error) => set_text(app.sync_controls.output, &error),
     }
     update_sync_form(app);
@@ -3145,20 +3195,23 @@ unsafe fn sync_credentials_from_form(app: &App) -> Result<SyncCredentials, Strin
             vault_key,
         },
     };
-    let saved = app.credential_store.load()?;
+    let saved = app.credential_store.load_for_mode(mode)?;
     credentials.reuse_empty_secrets(saved.as_ref())
 }
 
-fn preflight_sync_credentials(credentials: &SyncCredentials) -> Result<(), String> {
+fn preflight_sync_credentials(credentials: &SyncCredentials) -> Result<i64, String> {
     match credentials.mode() {
         SyncMode::Worker | SyncMode::LocalNetwork => {
-            WorkerClient::new(credentials, WinHttpTransport)?.list_devices()?;
+            let client = WorkerClient::new(credentials, WinHttpTransport)?;
+            client.list_devices()?;
+            client.highest_lamport()
         }
         SyncMode::WebDav => {
-            WebDavClient::new(credentials, WinHttpTransport)?.ensure_collections()?;
+            let client = WebDavClient::new(credentials, WinHttpTransport)?;
+            client.ensure_collections()?;
+            client.highest_lamport()
         }
     }
-    Ok(())
 }
 
 fn local_network_state_path(directory: &std::path::Path, credentials: &SyncCredentials) -> PathBuf {
@@ -3249,11 +3302,19 @@ unsafe fn apply_sync_credentials_with_host(
     app: &mut App,
     credentials: SyncCredentials,
     mut new_local_server: Option<LocalNetworkHttpServer>,
+    remote_lamport_floor: i64,
 ) -> Result<(), String> {
     clear_pairing(app);
     let previous_credentials = app.credential_store.load()?;
     let previous_was_host = app.settings.local_network_host;
     let new_is_host = new_local_server.is_some();
+    let local_lamport_floor = new_local_server
+        .as_ref()
+        .map(LocalNetworkHttpServer::highest_lamport)
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .unwrap_or(0);
+    let lamport_floor = remote_lamport_floor.max(local_lamport_floor);
 
     app.settings.local_network_host = new_is_host;
     if let Err(error) = app.settings.save() {
@@ -3272,7 +3333,7 @@ unsafe fn apply_sync_credentials_with_host(
         &mut app.repository,
         app.credential_store.as_ref(),
         credentials,
-        |_| Ok(()),
+        lamport_floor,
     );
     if let Err(error) = result {
         let mut recovery_errors = Vec::new();
@@ -3333,21 +3394,35 @@ unsafe fn setup_selected_sync_mode(app: &mut App) -> Result<(), String> {
             }
             let endpoint = preferred_local_endpoint(DEFAULT_LOCAL_SYNC_PORT)
                 .map_err(|error| error.to_string())?;
-            let credentials = SyncCredentials::LocalNetwork {
-                endpoint,
-                vault_id: random_sync_identifier("vault")?,
-                device_id: random_sync_identifier("device")?,
-                device_token: woo_todo_core::base64url_encode(
-                    &woo_todo_core::random_bytes::<32>().map_err(|error| error.to_string())?,
-                ),
-                vault_key: woo_todo_core::base64url_encode(
-                    &woo_todo_core::random_bytes::<32>().map_err(|error| error.to_string())?,
-                ),
+            let archived = app.credential_store.load_for_mode(SyncMode::LocalNetwork)?;
+            let can_reuse_host = archived.as_ref().is_some_and(|credentials| {
+                local_network_state_path(&app.data_directory, credentials).is_file()
+            });
+            let credentials = if can_reuse_host {
+                archived
+                    .as_ref()
+                    .expect("已确认存在局域网主机身份")
+                    .with_endpoint(endpoint)?
+            } else {
+                SyncCredentials::LocalNetwork {
+                    endpoint,
+                    vault_id: random_sync_identifier("vault")?,
+                    device_id: random_sync_identifier("device")?,
+                    device_token: woo_todo_core::base64url_encode(
+                        &woo_todo_core::random_bytes::<32>().map_err(|error| error.to_string())?,
+                    ),
+                    vault_key: woo_todo_core::base64url_encode(
+                        &woo_todo_core::random_bytes::<32>().map_err(|error| error.to_string())?,
+                    ),
+                }
             };
             let state_path = local_network_state_path(&app.data_directory, &credentials);
             let server = start_local_network_host(&app.data_directory, &credentials)?;
-            if let Err(error) = apply_sync_credentials_with_host(app, credentials, Some(server)) {
-                let _ = fs::remove_file(state_path);
+            if let Err(error) = apply_sync_credentials_with_host(app, credentials, Some(server), 0)
+            {
+                if !can_reuse_host {
+                    let _ = fs::remove_file(state_path);
+                }
                 return Err(error);
             }
             let endpoint = app
@@ -3361,17 +3436,27 @@ unsafe fn setup_selected_sync_mode(app: &mut App) -> Result<(), String> {
             );
         }
         SyncMode::WebDav => {
-            let vault_id = random_sync_identifier("vault")?;
-            let device_id = random_sync_identifier("device")?;
-            let vault_key = woo_todo_core::base64url_encode(
-                &woo_todo_core::random_bytes::<32>().map_err(|error| error.to_string())?,
-            );
-            set_text(app.sync_controls.vault_id, &vault_id);
-            set_text(app.sync_controls.device_id, &device_id);
-            set_text(app.sync_controls.vault_key, &vault_key);
+            let Some(saved) = app.credential_store.load_for_mode(SyncMode::WebDav)? else {
+                let vault_id = random_sync_identifier("vault")?;
+                let device_id = random_sync_identifier("device")?;
+                let vault_key = woo_todo_core::base64url_encode(
+                    &woo_todo_core::random_bytes::<32>().map_err(|error| error.to_string())?,
+                );
+                set_text(app.sync_controls.vault_id, &vault_id);
+                set_text(app.sync_controls.device_id, &device_id);
+                set_text(app.sync_controls.vault_key, &vault_key);
+                set_text(
+                    app.sync_controls.output,
+                    "已生成新的坚果云空间参数。填写账号与应用密码后点击“保存并切换”。",
+                );
+                return Ok(());
+            };
+            set_text(app.sync_controls.vault_id, saved.vault_id());
+            set_text(app.sync_controls.device_id, saved.device_id());
+            set_text(app.sync_controls.vault_key, "");
             set_text(
                 app.sync_controls.output,
-                "已生成新的坚果云空间参数。填写账号与应用密码后点击“保存并切换”。",
+                "已回填已保存的坚果云空间参数。应用密码不会显示，直接点击“保存并切换”即可复用。",
             );
         }
     }
@@ -3425,7 +3510,8 @@ unsafe fn begin_sync_preflight(app: &mut App, credentials: SyncCredentials) -> R
     thread::Builder::new()
         .name("woo-todo-sync-preflight".to_owned())
         .spawn(move || {
-            let result = preflight_sync_credentials(&credentials).map(|()| credentials);
+            let result = preflight_sync_credentials(&credentials)
+                .map(|lamport_floor| (credentials, lamport_floor));
             let _ = sender.send(SyncUiEvent::SyncPreflighted(result));
         })
         .map_err(|error| {
@@ -3821,7 +3907,8 @@ unsafe fn poll_sync_ui_events(app: &mut App) {
                 update_network_controls(app);
                 match result {
                     Ok(credentials) => {
-                        if let Err(error) = apply_sync_credentials_with_host(app, credentials, None)
+                        if let Err(error) =
+                            apply_sync_credentials_with_host(app, credentials, None, 0)
                         {
                             show_error(app.main, "无法保存 Worker 同步空间", &error);
                         } else {
@@ -3838,8 +3925,9 @@ unsafe fn poll_sync_ui_events(app: &mut App) {
                 app.network_job_running = false;
                 update_network_controls(app);
                 match result {
-                    Ok(credentials) => {
-                        if let Err(error) = apply_sync_credentials_with_host(app, credentials, None)
+                    Ok((credentials, lamport_floor)) => {
+                        if let Err(error) =
+                            apply_sync_credentials_with_host(app, credentials, None, lamport_floor)
                         {
                             show_error(app.main, "无法切换同步方式", &error);
                         }
@@ -4641,7 +4729,7 @@ unsafe fn handle_main_command(app: &mut App, id: i32, notification: u16) {
         }
         ID_SYNC_MODE if notification == CBN_SELCHANGE as u16 => {
             clear_pairing(app);
-            update_sync_form(app);
+            populate_sync_form(app);
         }
         ID_SYNC_SETUP => {
             if let Err(error) = setup_selected_sync_mode(app) {
@@ -4715,7 +4803,7 @@ unsafe fn handle_main_command(app: &mut App, id: i32, notification: u16) {
         ID_TRAY_TOGGLE_BOARD => toggle_board(app),
         ID_TRAY_QUICK_ADD => show_quick_add(app),
         ID_TRAY_TOPMOST => toggle_topmost(app),
-        ID_TRAY_RESTORE => restore_interaction(app),
+        ID_TRAY_CLICK_THROUGH => toggle_click_through(app),
         ID_TRAY_CHECK_UPDATE => begin_update_check(app, true),
         ID_TRAY_EXIT => exit_application(app),
         _ => {}
@@ -4810,14 +4898,6 @@ unsafe fn toggle_click_through(app: &mut App) {
     }
 }
 
-unsafe fn restore_interaction(app: &mut App) {
-    app.settings.click_through = false;
-    apply_floating_settings(app);
-    let _ = app.settings.save();
-    ShowWindow(app.floating, SW_SHOW);
-    SetForegroundWindow(app.floating);
-}
-
 unsafe fn apply_floating_settings(app: &App) {
     let mut style = GetWindowLongPtrW(app.floating, GWL_EXSTYLE);
     style |= WS_EX_LAYERED as isize;
@@ -4842,6 +4922,21 @@ unsafe fn apply_floating_settings(app: &App) {
         0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
     );
+}
+
+unsafe fn set_opacity_percent(app: &mut App, percent: i32) {
+    let percent = percent.clamp(MINIMUM_OPACITY_PERCENT, MAXIMUM_OPACITY_PERCENT);
+    let percent =
+        ((percent + OPACITY_STEP_PERCENT / 2) / OPACITY_STEP_PERCENT) * OPACITY_STEP_PERCENT;
+    app.settings.opacity = percent as f64 / 100.0;
+    SendMessageW(app.main_controls.opacity, TBM_SETPOS, 1, percent as isize);
+    set_text(app.main_controls.opacity_value, &format!("{percent}%"));
+    apply_floating_settings(app);
+    let _ = app.settings.save();
+}
+
+unsafe fn adjust_opacity(app: &mut App, delta: i32) {
+    set_opacity_percent(app, app.settings.opacity_percent() as i32 + delta);
 }
 
 unsafe fn keep_floating_on_screen(app: &App) {
@@ -4928,6 +5023,8 @@ fn hotkey_id(command: ShortcutCommand) -> i32 {
         ShortcutCommand::ToggleTaskPanel => HOTKEY_TOGGLE_BOARD,
         ShortcutCommand::ToggleAlwaysOnTop => HOTKEY_TOPMOST,
         ShortcutCommand::ToggleClickThrough => HOTKEY_CLICK_THROUGH,
+        ShortcutCommand::IncreaseOpacity => HOTKEY_INCREASE_OPACITY,
+        ShortcutCommand::DecreaseOpacity => HOTKEY_DECREASE_OPACITY,
     }
 }
 
@@ -4937,6 +5034,8 @@ fn shortcut_command_label(command: ShortcutCommand) -> &'static str {
         ShortcutCommand::ToggleTaskPanel => "显示任务板",
         ShortcutCommand::ToggleAlwaysOnTop => "切换置顶",
         ShortcutCommand::ToggleClickThrough => "切换穿透",
+        ShortcutCommand::IncreaseOpacity => "增加不透明度",
+        ShortcutCommand::DecreaseOpacity => "降低不透明度",
     }
 }
 
@@ -4946,6 +5045,8 @@ unsafe fn unregister_hotkeys(app: &App) {
         HOTKEY_TOGGLE_BOARD,
         HOTKEY_TOPMOST,
         HOTKEY_CLICK_THROUGH,
+        HOTKEY_INCREASE_OPACITY,
+        HOTKEY_DECREASE_OPACITY,
     ] {
         UnregisterHotKey(app.main, id);
     }
@@ -4957,6 +5058,8 @@ unsafe fn handle_hotkey(app: &mut App, id: i32) {
         HOTKEY_TOGGLE_BOARD => toggle_board(app),
         HOTKEY_TOPMOST => toggle_topmost(app),
         HOTKEY_CLICK_THROUGH => toggle_click_through(app),
+        HOTKEY_INCREASE_OPACITY => adjust_opacity(app, OPACITY_STEP_PERCENT),
+        HOTKEY_DECREASE_OPACITY => adjust_opacity(app, -OPACITY_STEP_PERCENT),
         _ => {}
     }
 }
@@ -5179,7 +5282,15 @@ unsafe fn show_tray_menu(app: &mut App) {
             "任务板始终置顶"
         },
     );
-    append_menu(menu, ID_TRAY_RESTORE, "恢复可交互");
+    append_menu(
+        menu,
+        ID_TRAY_CLICK_THROUGH,
+        if app.settings.click_through {
+            "鼠标穿透：已开启"
+        } else {
+            "鼠标穿透"
+        },
+    );
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     let update_title = match app.update_state {
         UpdateState::Checking => "正在检查更新...".to_owned(),
@@ -5363,10 +5474,7 @@ unsafe extern "system" fn main_window_proc(
             if lparam as HWND == app.main_controls.opacity {
                 let value =
                     SendMessageW(app.main_controls.opacity, TRACKBAR_GET_POSITION, 0, 0) as i32;
-                app.settings.opacity = (value.clamp(20, 100) as f64) / 100.0;
-                set_text(app.main_controls.opacity_value, &format!("{}%", value));
-                apply_floating_settings(app);
-                let _ = app.settings.save();
+                set_opacity_percent(app, value);
             }
             0
         }

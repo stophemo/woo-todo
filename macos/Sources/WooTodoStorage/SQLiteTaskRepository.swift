@@ -719,12 +719,24 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     }
 
     /// 切换同步方式时在同一事务中清理旧空间并绑定新空间，避免留下半重置状态。
-    public func replaceSyncBinding(with configuration: SQLiteSyncConfiguration) throws {
+    public func replaceSyncBinding(
+        with configuration: SQLiteSyncConfiguration,
+        remoteLamportFloor: Int64 = 0
+    ) throws {
         try withLock {
             try validate(configuration)
+            guard remoteLamportFloor >= 0, remoteLamportFloor < Int64.max else {
+                throw SQLiteRepositoryError.invalidSyncConfiguration("远端 Lamport 水位无效")
+            }
             try execute("BEGIN IMMEDIATE TRANSACTION")
             do {
                 try resetSyncMetadata()
+                let statement = try prepare(
+                    "UPDATE sync_state SET lamport = ? WHERE singleton = 1"
+                )
+                defer { sqlite3_finalize(statement) }
+                try bind([.integer(remoteLamportFloor)], to: statement)
+                guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
                 try bindUnboundSync(configuration)
                 try execute("COMMIT")
                 syncConfiguration = configuration

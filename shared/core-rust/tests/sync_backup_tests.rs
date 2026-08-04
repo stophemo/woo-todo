@@ -356,6 +356,66 @@ fn replacing_binding_preserves_tasks_and_builds_a_fresh_baseline() {
     ));
 }
 
+#[test]
+fn replacing_binding_uses_remote_lamport_floor_across_repeated_switches() {
+    let (_directory, mut repository) = open_repository();
+    let id = create_task(&mut repository, "跨同步方式保留", 100);
+    repository
+        .configure_sync(sync_configuration("vault-a", "device-a", 4))
+        .unwrap();
+
+    let vault_b = sync_configuration("vault-b", "device-b", 8);
+    repository
+        .replace_sync_binding_with_lamport_floor(vault_b.clone(), 50)
+        .unwrap();
+    let first = repository.pending_operations(100).unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].lamport, 51);
+    assert_eq!(repository.sync_state().unwrap().lamport, 51);
+    repository
+        .acknowledge_operations(&[first[0].op_id.clone()])
+        .unwrap();
+
+    let vault_a = sync_configuration("vault-a", "device-a", 4);
+    repository
+        .replace_sync_binding_with_lamport_floor(vault_a, 120)
+        .unwrap();
+    let second = repository.pending_operations(100).unwrap();
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].lamport, 121);
+    assert_eq!(
+        repository.find(&id).unwrap().unwrap().title,
+        "跨同步方式保留"
+    );
+
+    repository
+        .replace_sync_binding_with_lamport_floor(vault_b, 120)
+        .unwrap();
+    let repeated = repository.pending_operations(100).unwrap();
+    assert_eq!(repeated.len(), 1);
+    assert_eq!(repeated[0].lamport, 121);
+    assert_eq!(repository.sync_state().unwrap().lamport, 121);
+}
+
+#[test]
+fn replacing_binding_rejects_invalid_lamport_floor_without_mutation() {
+    let (_directory, mut repository) = open_repository();
+    create_task(&mut repository, "不可破坏", 100);
+    let original = sync_configuration("vault-original", "device-original", 7);
+    repository.configure_sync(original).unwrap();
+    let before = repository.sync_state().unwrap();
+
+    let error = repository
+        .replace_sync_binding_with_lamport_floor(
+            sync_configuration("vault-invalid", "device-invalid", 9),
+            i64::MAX,
+        )
+        .unwrap_err();
+
+    assert_eq!(error.code, "validation");
+    assert_eq!(repository.sync_state().unwrap(), before);
+}
+
 fn pulled(
     configuration: &SyncConfiguration,
     entity: &WireEntity,

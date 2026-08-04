@@ -35,7 +35,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let activeCredentials: SyncCredentials?
             let syncActivationError: Error?
             do {
-                let credentials = try credentialsStore.load()
+                let workerOrLocalCredentials = try credentialsStore.load()
+                let hasWebDavCredentials = (try? webDavCredentialsStore.load()) != nil
+                let selectedBackend = SyncBackendSelection.resolve(
+                    defaults: runtime.defaults,
+                    hasWorkerOrLocalCredentials: workerOrLocalCredentials != nil,
+                    hasWebDavCredentials: hasWebDavCredentials
+                )
+                let credentials = selectedBackend == .workerOrLocal
+                    ? workerOrLocalCredentials
+                    : nil
+                if let selectedBackend {
+                    selectedBackend.persist(in: runtime.defaults)
+                }
                 if let credentials {
                     try repository.configureSync(SQLiteSyncConfiguration(
                         vaultId: credentials.vaultId,
@@ -105,6 +117,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     },
                     .toggleClickThrough: { [weak panelController] in
                         panelController?.toggleClickThrough()
+                    },
+                    .increasePanelOpacity: { [weak panelController] in
+                        panelController?.increasePanelOpacity()
+                    },
+                    .decreasePanelOpacity: { [weak panelController] in
+                        panelController?.decreasePanelOpacity()
                     },
                 ]
             )

@@ -456,6 +456,15 @@ impl LocalServerStore {
         })
     }
 
+    pub fn highest_lamport(&self) -> i64 {
+        self.state
+            .operations
+            .iter()
+            .map(|operation| operation.lamport)
+            .max()
+            .unwrap_or(0)
+    }
+
     pub fn handle(&mut self, request: LocalHttpRequest) -> LocalHttpResponse {
         let request_id = request_identifier();
         if request.body.len() > MAXIMUM_BODY_BYTES {
@@ -1745,6 +1754,13 @@ impl LocalNetworkHttpServer {
         &self.endpoint
     }
 
+    pub fn highest_lamport(&self) -> Result<i64, LocalServerError> {
+        self.store
+            .lock()
+            .map(|store| store.highest_lamport())
+            .map_err(|_| LocalServerError::CorruptedState)
+    }
+
     #[cfg(test)]
     pub fn local_addr(&self) -> Result<SocketAddr, LocalServerError> {
         self.listener
@@ -2157,6 +2173,7 @@ mod tests {
         let replay: SyncData = success(first.handle(sync_request(token(&credentials), &request)));
         assert_eq!(replay.push.inserted, 0);
         assert_eq!(replay.push.duplicates, 1);
+        assert_eq!(first.highest_lamport(), 1);
 
         let persisted = fs::read_to_string(&state_path).unwrap();
         assert!(!persisted.contains(token(&credentials)));
@@ -2170,6 +2187,7 @@ mod tests {
             || 2_000,
         )
         .unwrap();
+        assert_eq!(restarted.highest_lamport(), 1);
         let pulled: SyncData = success(restarted.handle(sync_request(
             token(&credentials),
             &SyncRequest {

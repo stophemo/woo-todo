@@ -12,6 +12,8 @@ const DEFAULT_TOP: f64 = 80.0;
 const DEFAULT_WIDTH: f64 = 380.0;
 const DEFAULT_HEIGHT: f64 = 540.0;
 const DEFAULT_OPACITY: f64 = 0.92;
+const MINIMUM_OPACITY_PERCENT: f64 = 20.0;
+const OPACITY_STEP_PERCENT: f64 = 10.0;
 
 #[derive(Debug, Clone)]
 pub struct AppSettings {
@@ -85,6 +87,7 @@ impl AppSettings {
             .unwrap_or_default();
         let shortcuts = serde_json::from_value::<ShortcutConfiguration>(loaded.shortcuts)
             .ok()
+            .map(ShortcutConfiguration::with_missing_defaults)
             .filter(|configuration| configuration.validate().is_ok())
             .unwrap_or_default();
         Self {
@@ -93,7 +96,7 @@ impl AppSettings {
             board_top: loaded.board_top,
             board_width: loaded.board_width.max(320.0),
             board_height: loaded.board_height.max(360.0),
-            opacity: loaded.opacity.clamp(0.20, 1.0),
+            opacity: normalize_opacity(loaded.opacity),
             topmost: loaded.topmost,
             click_through: loaded.click_through,
             display,
@@ -140,8 +143,14 @@ impl AppSettings {
     }
 
     pub fn opacity_percent(&self) -> u8 {
-        (self.opacity * 100.0).round().clamp(20.0, 100.0) as u8
+        (normalize_opacity(self.opacity) * 100.0).round() as u8
     }
+}
+
+fn normalize_opacity(value: f64) -> f64 {
+    let percent = (value * 100.0).clamp(MINIMUM_OPACITY_PERCENT, 100.0);
+    let stepped = (percent / OPACITY_STEP_PERCENT).round() * OPACITY_STEP_PERCENT;
+    stepped.clamp(MINIMUM_OPACITY_PERCENT, 100.0) / 100.0
 }
 
 #[cfg(test)]
@@ -191,7 +200,7 @@ mod tests {
         settings.save().unwrap();
 
         let restored = AppSettings::load(directory.path());
-        assert_eq!(restored.opacity_percent(), 73);
+        assert_eq!(restored.opacity_percent(), 70);
         assert!(restored.click_through);
         assert_eq!(restored.last_update_successful_check_at, 123_000);
         assert_eq!(restored.last_update_attempt_at, 124_000);
@@ -262,7 +271,7 @@ mod tests {
         assert_eq!(settings.board_top, 26.0);
         assert_eq!(settings.board_width, 640.0);
         assert_eq!(settings.board_height, 720.0);
-        assert_eq!(settings.opacity_percent(), 42);
+        assert_eq!(settings.opacity_percent(), 40);
         assert!(!settings.topmost);
         assert!(settings.click_through);
         assert_eq!(settings.display, DisplayConfiguration::default());
@@ -276,5 +285,44 @@ mod tests {
         settings.opacity = 0.01;
 
         assert_eq!(settings.opacity_percent(), 20);
+    }
+
+    #[test]
+    fn legacy_shortcuts_gain_opacity_commands_without_losing_custom_bindings() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("settings.json"),
+            r#"{
+  "Shortcuts": {
+    "Bindings": {
+      "QuickAdd": { "Modifiers": 6, "VirtualKey": 81 },
+      "ToggleTaskPanel": { "Modifiers": 3, "VirtualKey": 50 },
+      "ToggleAlwaysOnTop": { "Modifiers": 3, "VirtualKey": 51 },
+      "ToggleClickThrough": { "Modifiers": 3, "VirtualKey": 52 }
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let settings = AppSettings::load(directory.path());
+
+        assert_eq!(
+            settings
+                .shortcuts
+                .binding(crate::shortcut::ShortcutCommand::QuickAdd),
+            Some(&crate::shortcut::ShortcutBinding::new(
+                crate::shortcut::ShortcutModifiers::CONTROL
+                    | crate::shortcut::ShortcutModifiers::SHIFT,
+                0x51,
+            ))
+        );
+        assert!(
+            settings
+                .shortcuts
+                .binding(crate::shortcut::ShortcutCommand::IncreaseOpacity)
+                .is_some()
+        );
+        assert_eq!(settings.shortcuts.validate(), Ok(()));
     }
 }

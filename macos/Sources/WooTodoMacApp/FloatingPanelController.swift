@@ -2,19 +2,24 @@ import AppKit
 import SwiftUI
 import WooTodoCore
 
-@MainActor
-final class FloatingPanelController: NSWindowController {
-    private enum OpacityPolicy {
-        static let minimum: CGFloat = 0.2
-        static let maximum: CGFloat = 1
-        static let defaultValue: CGFloat = 1
+enum PanelOpacityPolicy {
+    static let minimum: CGFloat = 0.2
+    static let maximum: CGFloat = 1
+    static let defaultValue: CGFloat = 1
+    static let adjustmentStep: CGFloat = 0.1
 
-        static func normalized(_ value: CGFloat) -> CGFloat {
-            guard value.isFinite else { return defaultValue }
-            return min(max(value, minimum), maximum)
-        }
+    static func normalized(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite else { return defaultValue }
+        return min(max(value, minimum), maximum)
     }
 
+    static func adjusted(_ value: CGFloat, by delta: CGFloat) -> CGFloat {
+        normalized(value + delta)
+    }
+}
+
+@MainActor
+final class FloatingPanelController: NSWindowController {
     private enum PreferenceKey {
         static let blurEnabled = "panel.blurEnabled"
         static let clickThrough = "panel.clickThrough"
@@ -44,12 +49,12 @@ final class FloatingPanelController: NSWindowController {
             PreferenceKey.blurEnabled: true,
             PreferenceKey.clickThrough: false,
             PreferenceKey.alwaysOnTop: true,
-            PreferenceKey.opacity: Double(OpacityPolicy.defaultValue)
+            PreferenceKey.opacity: Double(PanelOpacityPolicy.defaultValue)
         ])
         isBlurEnabled = defaults.bool(forKey: PreferenceKey.blurEnabled)
         isClickThrough = defaults.bool(forKey: PreferenceKey.clickThrough)
         isAlwaysOnTop = defaults.bool(forKey: PreferenceKey.alwaysOnTop)
-        panelOpacity = OpacityPolicy.normalized(
+        panelOpacity = PanelOpacityPolicy.normalized(
             CGFloat(defaults.double(forKey: PreferenceKey.opacity))
         )
 
@@ -118,11 +123,23 @@ final class FloatingPanelController: NSWindowController {
     }
 
     func setPanelOpacity(_ opacity: CGFloat) {
-        let normalized = OpacityPolicy.normalized(opacity)
+        let normalized = PanelOpacityPolicy.normalized(opacity)
         guard panelOpacity != normalized else { return }
         panelOpacity = normalized
         defaults.set(Double(normalized), forKey: PreferenceKey.opacity)
         applyVisualState()
+    }
+
+    func increasePanelOpacity() {
+        adjustPanelOpacity(by: PanelOpacityPolicy.adjustmentStep)
+    }
+
+    func decreasePanelOpacity() {
+        adjustPanelOpacity(by: -PanelOpacityPolicy.adjustmentStep)
+    }
+
+    private func adjustPanelOpacity(by delta: CGFloat) {
+        setPanelOpacity(PanelOpacityPolicy.adjusted(panelOpacity, by: delta))
     }
 
     private func setClickThrough(_ enabled: Bool) {

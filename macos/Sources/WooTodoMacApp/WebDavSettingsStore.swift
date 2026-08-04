@@ -81,9 +81,10 @@ final class WebDavSettingsStore: ObservableObject {
 
         do {
             if workerSyncConfigured {
-                makeFreshDraft()
-                if try credentialsStore.load() != nil {
-                    actionErrorMessage = "当前已连接 Worker 或局域网同步，同一个任务库不能同时启用坚果云同步"
+                if let stored = try credentialsStore.load() {
+                    applyDraft(stored)
+                } else {
+                    makeFreshDraft()
                 }
             } else if let stored = try credentialsStore.load() {
                 try repository.configureSync(Self.sqliteConfiguration(for: stored))
@@ -130,6 +131,7 @@ final class WebDavSettingsStore: ObservableObject {
         var previousWorkerCredentials: SyncCredentials?
         var replacementPrepared = false
         do {
+            previous = try credentialsStore.load()
             let key = try Base64URL.decode(
                 vaultKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
             )
@@ -137,12 +139,18 @@ final class WebDavSettingsStore: ObservableObject {
                 username: username.trimmingCharacters(in: .whitespacesAndNewlines),
                 appPassword: appPassword,
                 vaultId: vaultId.trimmingCharacters(in: .whitespacesAndNewlines),
-                deviceId: credentials?.deviceId ?? draftDeviceId,
+                deviceId: credentials?.deviceId ?? previous?.deviceId ?? draftDeviceId,
                 vaultKey: key
             )
             try newCredentials.validate()
             let preparedClient = try WebDavClient(credentials: newCredentials)
-            previous = try credentialsStore.load()
+            let remoteLamportFloor: Int64
+            if replacingWorkerSync {
+                try await preparedClient.ensureCollections()
+                remoteLamportFloor = try await preparedClient.maximumLamport()
+            } else {
+                remoteLamportFloor = 0
+            }
             previousWorkerCredentials = try workerCredentialsStore.load()
             if replacingWorkerSync {
                 guard previousWorkerCredentials != nil else {
@@ -152,13 +160,11 @@ final class WebDavSettingsStore: ObservableObject {
                 replacementPrepared = true
             }
             try credentialsStore.save(newCredentials)
-            if replacingWorkerSync {
-                try workerCredentialsStore.delete()
-            }
             do {
                 if replacingWorkerSync {
                     try repository.replaceSyncBinding(
-                        with: Self.sqliteConfiguration(for: newCredentials)
+                        with: Self.sqliteConfiguration(for: newCredentials),
+                        remoteLamportFloor: remoteLamportFloor
                     )
                 } else {
                     try repository.configureSync(Self.sqliteConfiguration(for: newCredentials))
@@ -168,6 +174,7 @@ final class WebDavSettingsStore: ObservableObject {
                 throw error
             }
             workerSyncConfigured = false
+            SyncBackendSelection.webDav.persist(in: defaults)
             runtimeMachine.setConfigured(true)
             publishRuntimeState()
             if replacingWorkerSync {
@@ -233,8 +240,18 @@ final class WebDavSettingsStore: ObservableObject {
         workerSyncConfigured = true
         runtimeMachine = SyncRuntimeStateMachine(isConfigured: false)
         publishRuntimeState()
-        appPassword = ""
-        makeFreshDraft()
+        do {
+            if let stored = try credentialsStore.load() {
+                applyDraft(stored)
+            } else {
+                appPassword = ""
+                makeFreshDraft()
+            }
+        } catch {
+            appPassword = ""
+            makeFreshDraft()
+            actionErrorMessage = "无法读取已保存的坚果云配置：\(error.localizedDescription)"
+        }
     }
 
     func resumeAfterFailedReplacement() {
@@ -287,6 +304,13 @@ final class WebDavSettingsStore: ObservableObject {
         let randomKey = (try? SecureRandom.bytes(count: AES256GCM.keyByteCount)).map(Base64URL.encode) ?? ""
         vaultId = "vault-\(randomVault)"
         vaultKeyText = randomKey
+    }
+
+    private func applyDraft(_ credentials: WebDavCredentials) {
+        username = credentials.username
+        appPassword = credentials.appPassword
+        vaultId = credentials.vaultId
+        vaultKeyText = Base64URL.encode(credentials.vaultKey)
     }
 
     private func publishRuntimeState() {

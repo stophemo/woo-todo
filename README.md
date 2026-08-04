@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://woo-todo.vercel.app/">产品主页</a> ·
-  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.19">下载 v0.1.19</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.20">下载 v0.1.20</a> ·
   <a href="#装好以后从这里开始">安装指南</a> ·
   <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
 </p>
@@ -50,26 +50,26 @@ macOS 的原生悬浮任务板常驻桌面，可置顶、毛玻璃或鼠标穿�
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.1.19`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.19)，提供 macOS ZIP、Android APK 与 Windows 免安装 ZIP。macOS ZIP 内是可直接运行的 `Woo Todo.app`，不是 DMG；Windows ZIP 内只有原生 `WooTodo.exe`，没有安装器。三端都坚持原生、轻量和本地优先。
+当前稳定版是 [`v0.1.20`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.20)，提供 macOS ZIP、Android APK 与 Windows 免安装 ZIP。macOS ZIP 内是可直接运行的 `Woo Todo.app`，不是 DMG；Windows ZIP 内只有原生 `WooTodo.exe`，没有安装器。三端都坚持原生、轻量和本地优先。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | 工作时常驻桌面的悬浮任务板、完整任务管理与统计 | `v0.1.19` 可下载 |
-| Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.1.19` 可下载 |
-| Windows 10 build 19041+ / Windows 11（仅 x64） | 原生悬浮任务板、完整任务管理、统计与加密同步 | `v0.1.19` 可下载 |
+| macOS 15+、Apple Silicon | 工作时常驻桌面的悬浮任务板、完整任务管理与统计 | `v0.1.20` 可下载 |
+| Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.1.20` 可下载 |
+| Windows 10 build 19041+ / Windows 11（仅 x64） | 原生悬浮任务板、完整任务管理、统计与加密同步 | `v0.1.20` 可下载 |
 
 Windows 已支持 Worker、同一网络与坚果云 WebDAV 三种互斥同步方式，以及设备配对和撤销。同步凭据保存在 Windows Credential Manager，不写入 `settings.json`。
 
-## 下载 v0.1.19
+## 下载 v0.1.20
 
 | 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.1.19-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.19/Woo-Todo-v0.1.19-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
-| Android | [Woo-Todo-v0.1.19-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.19/Woo-Todo-v0.1.19-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| Windows | [Woo-Todo-v0.1.19-windows-x64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.19/Woo-Todo-v0.1.19-windows-x64.zip) | ZIP 内只有 `WooTodo.exe`；解压后直接运行，无需安装、管理员权限、.NET 或 Visual C++ Runtime。当前程序未签名，SmartScreen 可能提示来源未知。 |
-| 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.19/SHA256SUMS.txt) | 下载后用 `shasum -a 256 <文件>` 或系统等价工具核对。 |
+| macOS | [Woo-Todo-v0.1.20-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.20/Woo-Todo-v0.1.20-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.1.20-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.20/Woo-Todo-v0.1.20-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| Windows | [Woo-Todo-v0.1.20-windows-x64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.20/Woo-Todo-v0.1.20-windows-x64.zip) | ZIP 内只有 `WooTodo.exe`；解压后直接运行，无需安装、管理员权限、.NET 或 Visual C++ Runtime。当前程序未签名，SmartScreen 可能提示来源未知。 |
+| 完整性校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.20/SHA256SUMS.txt) | 下载后用 `shasum -a 256 <文件>` 或系统等价工具核对。 |
 
-三端的 `v0.1.18` 都可在应用内升级到 `v0.1.19`。macOS `v0.1.14` 因 Sparkle 框架打包路径错误而无法启动，仍需手动下载新 ZIP 并覆盖旧应用一次。覆盖更新会保留任务、设置和同步身份；不要先卸载或清除应用数据。
+三端的 `v0.1.19` 都可在应用内升级到 `v0.1.20`。macOS `v0.1.14` 因 Sparkle 框架打包路径错误而无法启动，仍需手动下载新 ZIP 并覆盖旧应用一次。覆盖更新会保留任务、设置和同步身份；不要先卸载或清除应用数据。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名，更新后的代码身份仍可能导致 Keychain 再次请求授权；Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -89,9 +89,9 @@ Windows 已支持 Worker、同一网络与坚果云 WebDAV 三种互斥同步方
 
 ### Windows
 
-1. 解压 `Woo-Todo-v0.1.19-windows-x64.zip`，运行其中的 `WooTodo.exe`；若 SmartScreen 拦截，请先确认文件来自本仓库 Release 并核对校验和。
+1. 解压 `Woo-Todo-v0.1.20-windows-x64.zip`，运行其中的 `WooTodo.exe`；若 SmartScreen 拦截，请先确认文件来自本仓库 Release 并核对校验和。
 2. 在悬浮任务板快速新增、完成或编辑任务；选中已完成任务后可“取消完成”，右键也可 `Pass` 或删除。
-3. 托盘菜单负责完整窗口、任务板显隐、穿透恢复和检查更新；默认全局快捷键为 `Ctrl + Alt + 1` 至 `Ctrl + Alt + 4`。完整窗口的“同步”可配置三种同步方式。任务提醒由 Windows 系统调度，应用退出后仍可触发。
+3. 托盘菜单负责完整窗口、任务板显隐、鼠标穿透和检查更新；默认全局快捷键为 `Ctrl + Alt + 1` 至 `Ctrl + Alt + 6`，其中 `5/6` 调整任务板不透明度。完整窗口的“同步”可配置三种同步方式。任务提醒由 Windows 系统调度，应用退出后仍可触发。
 
 ## 同步，按自己的信任边界选
 
@@ -101,7 +101,7 @@ Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；�
 - **坚果云 WebDAV，推荐长期使用**：不需要部署服务器。Woo Todo 直接上传端到端加密的增量对象，坚果云只保存密文。
 - **Cloudflare Worker + D1，自己托管**：适合希望掌控在线服务端与设备授权的人；服务端仍接触不到任务明文。
 
-三种同步方式互斥，但都不会成为本地操作的前置条件。macOS、Android 与 Windows 都能在设置中切换已配置的同步方式；切换保留本地任务和显示配置，并在新空间建立加密基线。同一网络同步会在三端绕过系统 HTTP 代理，避免 `.local` 或私有地址被错误转发；全局 TUN/VPN 模式仍需把局域网配置为直连。配置二维码和配对链接可能含有完整凭据或一次性 secret，只应在自己的设备旁展示，用完立即隐藏或清理剪贴板。
+三种同步方式互斥，但都不会成为本地操作的前置条件。macOS 与 Windows 会分别保留已配置的局域网/Worker 和坚果云身份，切回时无需重填；切换同时保留本地任务和显示配置，并从远端 Lamport 水位之后建立加密基线。同一网络同步会在三端绕过系统 HTTP 代理，避免 `.local` 或私有地址被错误转发；全局 TUN/VPN 模式仍需把局域网配置为直连。配置二维码和配对链接可能含有完整凭据或一次性 secret，只应在自己的设备旁展示，用完立即隐藏或清理剪贴板。
 
 ## 数据归你，不是口号
 

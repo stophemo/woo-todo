@@ -9,7 +9,7 @@ use url::Url;
 const DEFAULT_TARGET: &str = "WooTodo/Sync/v1";
 const MAXIMUM_CREDENTIAL_BYTES: usize = 2_560;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SyncMode {
     Worker,
     LocalNetwork,
@@ -321,33 +321,64 @@ impl SyncCredentials {
 pub trait SyncCredentialStore: Send + Sync {
     fn save(&self, credentials: &SyncCredentials) -> Result<(), String>;
     fn load(&self) -> Result<Option<SyncCredentials>, String>;
+    fn load_for_mode(&self, mode: SyncMode) -> Result<Option<SyncCredentials>, String>;
     fn delete(&self) -> Result<(), String>;
 }
 
 #[cfg(test)]
 #[derive(Default)]
+struct MemoryCredentialState {
+    active: Option<Vec<u8>>,
+    archived: std::collections::BTreeMap<SyncMode, Vec<u8>>,
+}
+
+#[cfg(test)]
+#[derive(Default)]
 pub struct MemoryCredentialStore {
-    value: Mutex<Option<Vec<u8>>>,
+    state: Mutex<MemoryCredentialState>,
 }
 
 #[cfg(test)]
 impl SyncCredentialStore for MemoryCredentialStore {
     fn save(&self, credentials: &SyncCredentials) -> Result<(), String> {
-        *self.value.lock().map_err(|_| "同步凭据锁已损坏")? = Some(credentials.encode()?);
+        let encoded = credentials.encode()?;
+        let mut state = self.state.lock().map_err(|_| "同步凭据锁已损坏")?;
+        if let Some(active) = state.active.as_deref() {
+            let active = SyncCredentials::decode(active)?;
+            state.archived.insert(active.mode(), active.encode()?);
+        }
+        state.archived.insert(credentials.mode(), encoded.clone());
+        state.active = Some(encoded);
         Ok(())
     }
 
     fn load(&self) -> Result<Option<SyncCredentials>, String> {
-        self.value
+        self.state
             .lock()
             .map_err(|_| "同步凭据锁已损坏".to_owned())?
+            .active
             .as_deref()
             .map(SyncCredentials::decode)
             .transpose()
     }
 
+    fn load_for_mode(&self, mode: SyncMode) -> Result<Option<SyncCredentials>, String> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "同步凭据锁已损坏".to_owned())?;
+        let value = state.archived.get(&mode).or_else(|| {
+            state.active.as_ref().filter(|value| {
+                SyncCredentials::decode(value).is_ok_and(|credentials| credentials.mode() == mode)
+            })
+        });
+        value
+            .map(|value| SyncCredentials::decode(value))
+            .transpose()
+    }
+
     fn delete(&self) -> Result<(), String> {
-        *self.value.lock().map_err(|_| "同步凭据锁已损坏")? = None;
+        *self.state.lock().map_err(|_| "同步凭据锁已损坏")? = MemoryCredentialState::default();
         Ok(())
     }
 }
@@ -371,17 +402,23 @@ impl WindowsCredentialStore {
             target: target.into(),
         }
     }
-}
 
-#[cfg(windows)]
-impl SyncCredentialStore for WindowsCredentialStore {
-    fn save(&self, credentials: &SyncCredentials) -> Result<(), String> {
+    fn archived_target(&self, mode: SyncMode) -> String {
+        let suffix = match mode {
+            SyncMode::Worker => "worker",
+            SyncMode::LocalNetwork => "local-network",
+            SyncMode::WebDav => "webdav",
+        };
+        format!("{}/{}", self.target, suffix)
+    }
+
+    fn write_target(&self, target_name: &str, credentials: &SyncCredentials) -> Result<(), String> {
         use windows_sys::Win32::Security::Credentials::{
             CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredWriteW,
         };
 
         let mut blob = credentials.encode()?;
-        let mut target = wide(&self.target);
+        let mut target = wide(target_name);
         let mut username = wide("Woo Todo 同步身份");
         let credential = CREDENTIALW {
             Type: CRED_TYPE_GENERIC,
@@ -400,7 +437,7 @@ impl SyncCredentialStore for WindowsCredentialStore {
         Ok(())
     }
 
-    fn load(&self) -> Result<Option<SyncCredentials>, String> {
+    fn read_target(&self, target_name: &str) -> Result<Option<SyncCredentials>, String> {
         use std::ptr::null_mut;
         use windows_sys::Win32::Foundation::{ERROR_NOT_FOUND, GetLastError};
         use windows_sys::Win32::Security::Credentials::{
@@ -416,7 +453,7 @@ impl SyncCredentialStore for WindowsCredentialStore {
             }
         }
 
-        let target = wide(&self.target);
+        let target = wide(target_name);
         let mut raw: *mut CREDENTIALW = null_mut();
         if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut raw) } == 0 {
             let error = unsafe { GetLastError() };
@@ -441,11 +478,11 @@ impl SyncCredentialStore for WindowsCredentialStore {
         decoded.map(Some)
     }
 
-    fn delete(&self) -> Result<(), String> {
+    fn delete_target(&self, target_name: &str) -> Result<(), String> {
         use windows_sys::Win32::Foundation::{ERROR_NOT_FOUND, GetLastError};
         use windows_sys::Win32::Security::Credentials::{CRED_TYPE_GENERIC, CredDeleteW};
 
-        let target = wide(&self.target);
+        let target = wide(target_name);
         if unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) } == 0 {
             let error = unsafe { GetLastError() };
             if error != ERROR_NOT_FOUND {
@@ -453,6 +490,52 @@ impl SyncCredentialStore for WindowsCredentialStore {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl SyncCredentialStore for WindowsCredentialStore {
+    fn save(&self, credentials: &SyncCredentials) -> Result<(), String> {
+        if let Some(previous) = self.load()? {
+            self.write_target(&self.archived_target(previous.mode()), &previous)?;
+        }
+        self.write_target(&self.archived_target(credentials.mode()), credentials)?;
+        self.write_target(&self.target, credentials)
+    }
+
+    fn load(&self) -> Result<Option<SyncCredentials>, String> {
+        self.read_target(&self.target)
+    }
+
+    fn load_for_mode(&self, mode: SyncMode) -> Result<Option<SyncCredentials>, String> {
+        if let Some(credentials) = self.read_target(&self.archived_target(mode))? {
+            return (credentials.mode() == mode)
+                .then_some(credentials)
+                .ok_or_else(|| "Windows 安全存储中的同步方式归档不匹配".to_owned())
+                .map(Some);
+        }
+        Ok(self
+            .load()?
+            .filter(|credentials| credentials.mode() == mode))
+    }
+
+    fn delete(&self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        for target in [
+            self.target.clone(),
+            self.archived_target(SyncMode::Worker),
+            self.archived_target(SyncMode::LocalNetwork),
+            self.archived_target(SyncMode::WebDav),
+        ] {
+            if let Err(error) = self.delete_target(&target) {
+                errors.push(error);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("；"))
+        }
     }
 }
 
@@ -523,6 +606,42 @@ mod tests {
         assert_eq!(store.load().unwrap(), Some(credentials));
         store.delete().unwrap();
         assert_eq!(store.load().unwrap(), None);
+    }
+
+    #[test]
+    fn credential_store_preserves_each_mode_until_explicit_delete() {
+        let store = MemoryCredentialStore::default();
+        let worker = worker();
+        let local = SyncCredentials::LocalNetwork {
+            endpoint: "http://192.168.8.21:48473".to_owned(),
+            vault_id: "vault-local".to_owned(),
+            device_id: "device-local-1".to_owned(),
+            device_token: key('c'),
+            vault_key: key('d'),
+        };
+        let webdav = SyncCredentials::WebDav {
+            username: "windows@example.com".to_owned(),
+            app_password: "application-password".to_owned(),
+            vault_id: "vault-webdav".to_owned(),
+            device_id: "device-webdav-1".to_owned(),
+            vault_key: key('e'),
+        };
+
+        store.save(&worker).unwrap();
+        store.save(&local).unwrap();
+        store.save(&webdav).unwrap();
+        assert_eq!(store.load().unwrap(), Some(webdav.clone()));
+        assert_eq!(store.load_for_mode(SyncMode::Worker).unwrap(), Some(worker));
+        assert_eq!(
+            store.load_for_mode(SyncMode::LocalNetwork).unwrap(),
+            Some(local)
+        );
+        assert_eq!(store.load_for_mode(SyncMode::WebDav).unwrap(), Some(webdav));
+
+        store.delete().unwrap();
+        for mode in [SyncMode::Worker, SyncMode::LocalNetwork, SyncMode::WebDav] {
+            assert_eq!(store.load_for_mode(mode).unwrap(), None);
+        }
     }
 
     #[test]

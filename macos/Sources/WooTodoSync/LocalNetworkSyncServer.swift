@@ -238,6 +238,10 @@ public actor LocalSyncServerStore {
         }
     }
 
+    public func maximumLamport() -> Int64 {
+        state.operations.map(\.lamport).max() ?? 0
+    }
+
     private func route(
         _ request: LocalSyncHTTPRequest,
         requestId: String

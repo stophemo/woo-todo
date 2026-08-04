@@ -225,6 +225,30 @@ struct SQLiteSyncIntegrationTests {
         #expect(payload.title == task.title)
     }
 
+    @Test("切回旧同步空间时本地快照从远端 Lamport 水位之后继续")
+    func replaceSyncBindingContinuesAfterRemoteLamportFloor() async throws {
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: syncConfiguration()
+        )
+        let task = try makeTask(
+            title: "切回旧空间仍保留当前版本",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        try repository.save(task)
+        let replacement = SQLiteSyncConfiguration(
+            vaultId: "vault-returning",
+            deviceId: "device-returning",
+            vaultKey: Data((96..<128).map { UInt8($0) })
+        )
+
+        try repository.replaceSyncBinding(with: replacement, remoteLamportFloor: 42)
+
+        let operations = try await repository.pendingOperations(limit: 50)
+        #expect(operations.first?.lamport == 43)
+        #expect(operations.allSatisfy { $0.lamport > 42 })
+    }
+
     @Test("新设备默认显示配置不会覆盖同步空间已有配置")
     func seededDisplayConfigurationDoesNotCreateBaseline() async throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")

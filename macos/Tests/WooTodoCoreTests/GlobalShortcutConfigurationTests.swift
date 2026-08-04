@@ -76,8 +76,8 @@ struct GlobalShortcutConfigurationTests {
     }
 
     @Test func migratesOnlyBindingsThatStillMatchLegacyDefaults() {
-        let legacy = defaults(labels: ["N", "L", "T", "Space"], keyCodes: [45, 37, 17, 49])
-        let current = defaults(labels: ["1", "2", "3", "4"], keyCodes: [18, 19, 20, 21])
+        let legacy = legacyDefaults()
+        let current = currentDefaults()
         var persisted = legacy
         persisted[.quickAdd] = GlobalShortcutBinding(
             keyCode: 6,
@@ -95,11 +95,13 @@ struct GlobalShortcutConfigurationTests {
         #expect(migrated[.toggleTaskPanel] == current[.toggleTaskPanel])
         #expect(migrated[.toggleAlwaysOnTop] == current[.toggleAlwaysOnTop])
         #expect(migrated[.toggleClickThrough] == current[.toggleClickThrough])
+        #expect(migrated[.increasePanelOpacity] == current[.increasePanelOpacity])
+        #expect(migrated[.decreasePanelOpacity] == current[.decreasePanelOpacity])
     }
 
     @Test func keepsLegacyBindingWhenItsReplacementConflictsWithCustomization() throws {
-        let legacy = defaults(labels: ["N", "L", "T", "Space"], keyCodes: [45, 37, 17, 49])
-        let current = defaults(labels: ["1", "2", "3", "4"], keyCodes: [18, 19, 20, 21])
+        let legacy = legacyDefaults()
+        let current = currentDefaults()
         var persisted = legacy
         persisted[.quickAdd] = current[.toggleTaskPanel]
 
@@ -114,23 +116,36 @@ struct GlobalShortcutConfigurationTests {
         try GlobalShortcutConfiguration.validate(migrated)
     }
 
-    private func defaults(
+    private func legacyDefaults() -> [GlobalShortcutCommand: GlobalShortcutBinding] {
+        bindings(
+            commands: [.quickAdd, .toggleTaskPanel, .toggleAlwaysOnTop, .toggleClickThrough],
+            labels: ["N", "L", "T", "Space"],
+            keyCodes: [45, 37, 17, 49]
+        )
+    }
+
+    private func currentDefaults() -> [GlobalShortcutCommand: GlobalShortcutBinding] {
+        bindings(
+            commands: GlobalShortcutCommand.allCases,
+            labels: ["1", "2", "3", "4", "5", "6"],
+            keyCodes: [18, 19, 20, 21, 23, 22]
+        )
+    }
+
+    private func bindings(
+        commands: [GlobalShortcutCommand],
         labels: [String],
         keyCodes: [UInt32]
     ) -> [GlobalShortcutCommand: GlobalShortcutBinding] {
-        let commands = GlobalShortcutCommand.allCases
-        return Dictionary(uniqueKeysWithValues: commands.indices.map { index in
-            let modifiers: GlobalShortcutModifiers = index == 3 && labels[index] == "Space"
+        Dictionary(uniqueKeysWithValues: commands.indices.map { index in
+            let modifiers: GlobalShortcutModifiers = labels[index] == "Space"
                 ? [.control, .option]
                 : [.shift, .option]
-            return (
-                commands[index],
-                GlobalShortcutBinding(
-                    keyCode: keyCodes[index],
-                    modifiers: modifiers,
-                    keyLabel: labels[index]
-                )
-            )
+            return (commands[index], GlobalShortcutBinding(
+                keyCode: keyCodes[index],
+                modifiers: modifiers,
+                keyLabel: labels[index]
+            ))
         })
     }
 }

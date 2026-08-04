@@ -257,8 +257,13 @@ final class SyncSettingsStore: ObservableObject {
         var server: LocalNetworkSyncHTTPServer?
         var previousWebDavCredentials: WebDavCredentials?
         var switchWasPrepared = false
+        var savedNewCredentials = false
         do {
-            guard try credentialsStore.load() == nil else {
+            let storedCredentials = try credentialsStore.load()
+            let reusableCredentials = replacingWebDav
+                ? storedCredentials?.takeIfLocalNetwork()
+                : nil
+            if storedCredentials != nil, reusableCredentials == nil {
                 throw SyncSetupError.credentialsAlreadyStored
             }
             previousWebDavCredentials = try webDavCredentialsStore.load()
@@ -270,14 +275,25 @@ final class SyncSettingsStore: ObservableObject {
                 throw SyncSetupError.credentialsAlreadyStored
             }
             let endpoint = try LocalNetworkSyncEndpointResolver.preferredEndpoint()
-            let randomVault = Base64URL.encode(try SecureRandom.bytes(count: 9))
-            let newCredentials = SyncCredentials(
-                endpoint: endpoint,
-                vaultId: "vault-\(randomVault)",
-                deviceId: UUID().uuidString.lowercased(),
-                deviceToken: try SecureRandom.deviceToken(),
-                vaultKey: try SecureRandom.bytes(count: AES256GCM.keyByteCount)
-            )
+            let newCredentials: SyncCredentials
+            if let reusableCredentials {
+                newCredentials = SyncCredentials(
+                    endpoint: endpoint,
+                    vaultId: reusableCredentials.vaultId,
+                    deviceId: reusableCredentials.deviceId,
+                    deviceToken: reusableCredentials.deviceToken,
+                    vaultKey: reusableCredentials.vaultKey
+                )
+            } else {
+                let randomVault = Base64URL.encode(try SecureRandom.bytes(count: 9))
+                newCredentials = SyncCredentials(
+                    endpoint: endpoint,
+                    vaultId: "vault-\(randomVault)",
+                    deviceId: UUID().uuidString.lowercased(),
+                    deviceToken: try SecureRandom.deviceToken(),
+                    vaultKey: try SecureRandom.bytes(count: AES256GCM.keyByteCount)
+                )
+            }
             try newCredentials.validate()
             let preparedClient = try SyncAPIClient(endpoint: newCredentials.endpoint)
             if !replacingWebDav {
@@ -288,14 +304,16 @@ final class SyncSettingsStore: ObservableObject {
             }
 
             let stateURL = try Self.localNetworkStateURL()
-            guard !FileManager.default.fileExists(atPath: stateURL.path) else {
+            guard reusableCredentials != nil
+                    || !FileManager.default.fileExists(atPath: stateURL.path) else {
                 throw LocalSyncServerError.identityMismatch
             }
             let localStore = try LocalSyncServerStore(
                 fileURL: stateURL,
                 bootstrapCredentials: newCredentials
             )
-            createdStateURL = stateURL
+            let remoteLamportFloor = await localStore.maximumLamport()
+            if reusableCredentials == nil { createdStateURL = stateURL }
             let localServer = try LocalNetworkSyncHTTPServer(
                 store: localStore,
                 endpoint: endpoint,
@@ -307,19 +325,22 @@ final class SyncSettingsStore: ObservableObject {
             if replacingWebDav {
                 await onWillSwitchFromWebDav?()
                 switchWasPrepared = true
-                try webDavCredentialsStore.delete()
             }
-            try credentialsStore.save(newCredentials)
+            if storedCredentials == nil {
+                try credentialsStore.save(newCredentials)
+                savedNewCredentials = true
+            }
             do {
                 if replacingWebDav {
                     try repository.replaceSyncBinding(
-                        with: Self.sqliteConfiguration(for: newCredentials)
+                        with: Self.sqliteConfiguration(for: newCredentials),
+                        remoteLamportFloor: remoteLamportFloor
                     )
                 } else {
                     try repository.configureSync(Self.sqliteConfiguration(for: newCredentials))
                 }
             } catch {
-                try? credentialsStore.delete()
+                if savedNewCredentials { try? credentialsStore.delete() }
                 if let previousWebDavCredentials {
                     try? webDavCredentialsStore.save(previousWebDavCredentials)
                 }
@@ -331,6 +352,7 @@ final class SyncSettingsStore: ObservableObject {
             runtimeMachine.setConfigured(true)
             publishRuntimeState()
             defaults.set(endpoint.absoluteString, forKey: Self.endpointDefaultsKey)
+            SyncBackendSelection.workerOrLocal.persist(in: defaults)
             if replacingWebDav {
                 onDidSwitchFromWebDav?()
             }
@@ -341,10 +363,7 @@ final class SyncSettingsStore: ObservableObject {
                 try? FileManager.default.removeItem(at: createdStateURL)
             }
             if switchWasPrepared {
-                try? credentialsStore.delete()
-                if let previousWebDavCredentials {
-                    try? webDavCredentialsStore.save(previousWebDavCredentials)
-                }
+                if savedNewCredentials { try? credentialsStore.delete() }
                 onSwitchFromWebDavFailed?()
             }
             localNetworkHostState = .failed(error.localizedDescription)
@@ -732,7 +751,6 @@ final class SyncSettingsStore: ObservableObject {
     }
 
     func finishReplacement() {
-        let wasLocalNetworkConnection = isLocalNetworkConnection
         credentials = nil
         apiClient = nil
         coordinator = nil
@@ -741,10 +759,6 @@ final class SyncSettingsStore: ObservableObject {
         localNetworkServer?.stop()
         localNetworkServer = nil
         localNetworkHostState = .disabled
-        if wasLocalNetworkConnection,
-           let stateURL = try? Self.localNetworkStateURL() {
-            try? FileManager.default.removeItem(at: stateURL)
-        }
         runtimeMachine = SyncRuntimeStateMachine(isConfigured: false)
         publishRuntimeState()
     }
@@ -1103,4 +1117,10 @@ private struct PairingContext {
     var pairingSecret: String?
     var claim: PairingClaimInfo? = nil
     var sessionKey: Data? = nil
+}
+
+private extension SyncCredentials {
+    func takeIfLocalNetwork() -> SyncCredentials? {
+        SyncEndpointPolicy.scope(of: endpoint) == .localNetwork ? self : nil
+    }
 }

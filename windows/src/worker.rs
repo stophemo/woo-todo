@@ -10,6 +10,7 @@ use crate::http::{EndpointScope, HttpRequest, HttpResponse, HttpTransport, Valid
 
 const MAXIMUM_RESPONSE_BYTES: usize = 3 * 1_024 * 1_024;
 const MAXIMUM_DEVICE_NAME_CHARACTERS: usize = 80;
+const MAXIMUM_PREFLIGHT_PAGES: usize = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -198,6 +199,34 @@ impl<T: HttpTransport> WorkerClient<T> {
             }
         }
         Ok(data.devices)
+    }
+
+    pub fn highest_lamport(&self) -> Result<i64, String> {
+        let mut cursor = 0;
+        let mut highest = 0;
+        for _ in 0..MAXIMUM_PREFLIGHT_PAGES {
+            let response = self.synchronize(&SyncRequest {
+                cursor,
+                ack: None,
+                pull_limit: Some(100),
+                push: Vec::new(),
+            })?;
+            highest = response
+                .pull
+                .iter()
+                .map(|operation| operation.lamport)
+                .max()
+                .unwrap_or(0)
+                .max(highest);
+            if !response.has_more {
+                return Ok(highest);
+            }
+            if response.cursor <= cursor {
+                return Err("同步服务在预检期间未推进游标".to_owned());
+            }
+            cursor = response.cursor;
+        }
+        Err("同步服务在预检期间超过分页安全上限".to_owned())
     }
 
     pub fn revoke_device(&self, device_id: &str) -> Result<i64, String> {
@@ -509,6 +538,13 @@ mod tests {
                 requests: Mutex::new(Vec::new()),
             }
         }
+
+        fn with(responses: impl IntoIterator<Item = HttpResponse>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().collect()),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
     }
 
     impl HttpTransport for MockTransport {
@@ -540,6 +576,17 @@ mod tests {
         }
     }
 
+    fn sync_page(cursor: i64, has_more: bool, lamport: i64, request_id: &str) -> HttpResponse {
+        let ciphertext = base64url_encode(&[2; 32]);
+        let nonce = base64url_encode(&[3; 12]);
+        response(
+            200,
+            &format!(
+                r#"{{"ok":true,"data":{{"push":{{"received":0,"inserted":0,"duplicates":0}},"pull":[{{"serverSeq":{cursor},"opId":"operation-{cursor:08}","deviceId":"device-remote-1","entityId":"task-remote-0001","kind":"upsert","lamport":{lamport},"ciphertext":"{ciphertext}","nonce":"{nonce}","createdAt":1000}}],"cursor":{cursor},"hasMore":{has_more},"serverTime":1000}},"requestId":"{request_id}"}}"#
+            ),
+        )
+    }
+
     #[test]
     fn create_vault_registers_windows_and_keeps_key_client_side() {
         let token = base64url_encode(&[7; 32]);
@@ -559,6 +606,17 @@ mod tests {
         assert_eq!(created.device_token, token);
         assert_eq!(base64url_decode(&created.vault_key).unwrap().len(), 32);
         assert_eq!(created.into_credentials().mode(), SyncMode::Worker);
+    }
+
+    #[test]
+    fn highest_lamport_scans_all_pages_without_pushing() {
+        let transport = MockTransport::with([
+            sync_page(1, true, 7, "request-lamport-1"),
+            sync_page(2, false, 42, "request-lamport-2"),
+        ]);
+        let client = WorkerClient::new(&credentials(), transport).unwrap();
+
+        assert_eq!(client.highest_lamport().unwrap(), 42);
     }
 
     #[test]

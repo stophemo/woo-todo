@@ -10,14 +10,18 @@ pub enum ShortcutCommand {
     ToggleTaskPanel,
     ToggleAlwaysOnTop,
     ToggleClickThrough,
+    IncreaseOpacity,
+    DecreaseOpacity,
 }
 
 impl ShortcutCommand {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::QuickAdd,
         Self::ToggleTaskPanel,
         Self::ToggleAlwaysOnTop,
         Self::ToggleClickThrough,
+        Self::IncreaseOpacity,
+        Self::DecreaseOpacity,
     ];
 }
 
@@ -126,6 +130,14 @@ impl Default for ShortcutConfiguration {
                     ShortcutCommand::ToggleClickThrough,
                     ShortcutBinding::new(modifiers, 0x34),
                 ),
+                (
+                    ShortcutCommand::IncreaseOpacity,
+                    ShortcutBinding::new(modifiers, 0x35),
+                ),
+                (
+                    ShortcutCommand::DecreaseOpacity,
+                    ShortcutBinding::new(modifiers, 0x36),
+                ),
             ]
             .into_iter()
             .collect(),
@@ -148,6 +160,13 @@ pub enum ShortcutConfigurationError {
 }
 
 impl ShortcutConfiguration {
+    pub fn with_missing_defaults(mut self) -> Self {
+        for (command, binding) in ShortcutConfiguration::default().bindings {
+            self.bindings.entry(command).or_insert(binding);
+        }
+        self
+    }
+
     pub fn binding(&self, command: ShortcutCommand) -> Option<&ShortcutBinding> {
         self.bindings.get(&command)
     }
@@ -202,9 +221,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_contain_all_four_commands() {
+    fn defaults_contain_all_six_commands() {
         let configuration = ShortcutConfiguration::default();
-        assert_eq!(configuration.bindings.len(), 4);
+        assert_eq!(configuration.bindings.len(), 6);
         assert_eq!(configuration.validate(), Ok(()));
 
         for (offset, command) in ShortcutCommand::ALL.into_iter().enumerate() {

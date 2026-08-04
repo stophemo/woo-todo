@@ -82,7 +82,7 @@ struct SyncSettingsView: View {
                 syncSwitchTarget = nil
             }
         } message: {
-            Text("本地任务和显示配置会保留并重新同步；旧方式的本机凭据与同步记录会清除，旧同步空间中的远端数据不会被删除。")
+            Text("本地任务和显示配置会保留并重新同步；旧方式的加密凭据与设备绑定会保留，之后可直接切回。")
         }
     }
 

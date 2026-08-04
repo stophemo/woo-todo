@@ -400,9 +400,24 @@ impl TaskRepository {
     }
 
     pub fn replace_sync_binding(&mut self, configuration: SyncConfiguration) -> CoreResult<()> {
+        self.replace_sync_binding_with_lamport_floor(configuration, 0)
+    }
+
+    pub fn replace_sync_binding_with_lamport_floor(
+        &mut self,
+        configuration: SyncConfiguration,
+        lamport_floor: i64,
+    ) -> CoreResult<()> {
         validate_sync_identity(&configuration.vault_id, &configuration.device_id)?;
+        if !(0..i64::MAX).contains(&lamport_floor) {
+            return Err(CoreError::validation("Lamport 下限必须为非负且可递增"));
+        }
         let transaction = self.connection.transaction()?;
         reset_sync_metadata(&transaction)?;
+        transaction.execute(
+            "UPDATE sync_state SET lamport = ?1 WHERE singleton = 1",
+            [lamport_floor],
+        )?;
         bind_unbound_sync(&transaction, &configuration)?;
         transaction.commit()?;
         self.sync_configuration = Some(configuration);

@@ -141,6 +141,14 @@ impl<T: HttpTransport> WebDavClient<T> {
         Ok(operation)
     }
 
+    pub fn highest_lamport(&self) -> Result<i64, String> {
+        let mut highest = 0;
+        for path in self.list_operation_paths()? {
+            highest = highest.max(self.get_operation(&path)?.lamport);
+        }
+        Ok(highest)
+    }
+
     fn propfind(&self, path: &[&str]) -> Result<Vec<Vec<String>>, String> {
         let body = br#"<?xml version="1.0" encoding="utf-8" ?><propfind xmlns="DAV:"><prop><resourcetype/></prop></propfind>"#.to_vec();
         let response = self.request(
@@ -468,5 +476,32 @@ mod tests {
                 "op-windows-0001.json"
             ]]
         );
+    }
+
+    #[test]
+    fn highest_lamport_reads_remote_operations() {
+        let root = br#"<d:multistatus xmlns:d="DAV:">
+          <d:response><d:href>/dav/v1/vault-windows/ops/op/</d:href></d:response>
+        </d:multistatus>"#;
+        let shard = br#"<d:multistatus xmlns:d="DAV:">
+          <d:response><d:href>/dav/v1/vault-windows/ops/op/op-windows-0001.json</d:href></d:response>
+        </d:multistatus>"#;
+        let transport = MockTransport::with([
+            HttpResponse {
+                status: 207,
+                body: root.to_vec(),
+            },
+            HttpResponse {
+                status: 207,
+                body: shard.to_vec(),
+            },
+            HttpResponse {
+                status: 200,
+                body: canonical_operation_json(&operation()).unwrap(),
+            },
+        ]);
+        let client = WebDavClient::new(&credentials(), transport).unwrap();
+
+        assert_eq!(client.highest_lamport().unwrap(), 7);
     }
 }

@@ -139,21 +139,19 @@ pub fn configure_repository_from_store(
     Ok(Some(credentials))
 }
 
-pub fn switch_sync_binding<Preflight>(
+pub fn switch_sync_binding(
     repository: &mut TaskRepository,
     store: &dyn SyncCredentialStore,
     new_credentials: SyncCredentials,
-    preflight: Preflight,
-) -> Result<(), String>
-where
-    Preflight: FnOnce(&SyncCredentials) -> Result<(), String>,
-{
+    lamport_floor: i64,
+) -> Result<(), String> {
     new_credentials.validate()?;
-    preflight(&new_credentials)?;
     let configuration = core_configuration(&new_credentials)?;
     let previous = store.load()?;
     store.save(&new_credentials)?;
-    if let Err(error) = repository.replace_sync_binding(configuration) {
+    if let Err(error) =
+        repository.replace_sync_binding_with_lamport_floor(configuration, lamport_floor)
+    {
         let rollback = match previous {
             Some(ref value) => store.save(value),
             None => store.delete(),

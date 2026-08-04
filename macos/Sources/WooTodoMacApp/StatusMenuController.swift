@@ -5,17 +5,25 @@ import WooTodoCore
 final class StatusMenuController: NSObject, NSMenuDelegate {
     private enum OpacityPreset: Int, CaseIterable {
         case twenty = 20
+        case thirty = 30
         case forty = 40
+        case fifty = 50
         case sixty = 60
+        case seventy = 70
         case eighty = 80
+        case ninety = 90
         case oneHundred = 100
 
         var title: String {
             switch self {
             case .twenty: "20%（最透明）"
+            case .thirty: "30%"
             case .forty: "40%"
+            case .fifty: "50%"
             case .sixty: "60%"
+            case .seventy: "70%"
             case .eighty: "80%"
+            case .ninety: "90%"
             case .oneHundred: "100%（最清晰）"
             }
         }
@@ -32,7 +40,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let quickAddItem: NSMenuItem
     private let taskPanelItem: NSMenuItem
-    private let makeInteractiveItem: NSMenuItem
     private let clickThroughItem: NSMenuItem
     private let blurItem: NSMenuItem
     private let alwaysOnTopItem: NSMenuItem
@@ -60,7 +67,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         quickAddItem = NSMenuItem(title: "快速新增任务", action: nil, keyEquivalent: "")
         taskPanelItem = NSMenuItem(title: "显示任务板", action: nil, keyEquivalent: "")
-        makeInteractiveItem = NSMenuItem(title: "恢复可交互", action: nil, keyEquivalent: "")
         clickThroughItem = NSMenuItem(title: "鼠标穿透", action: nil, keyEquivalent: "")
         blurItem = NSMenuItem(title: "毛玻璃", action: nil, keyEquivalent: "")
         alwaysOnTopItem = NSMenuItem(title: "始终置顶", action: nil, keyEquivalent: "")
@@ -87,7 +93,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         taskPanelItem.title = panelController.isVisible
             ? "隐藏任务板"
             : "显示任务板"
-        makeInteractiveItem.isHidden = !panelController.isClickThrough
         clickThroughItem.title = panelController.isClickThrough
             ? "鼠标穿透：已开启"
             : "鼠标穿透"
@@ -175,9 +180,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(taskPanelItem)
         menu.addItem(item("任务详情与统计…", action: #selector(openDashboard)))
         menu.addItem(item("设置…", action: #selector(openSettingsFromStatusMenu)))
-        makeInteractiveItem.target = self
-        makeInteractiveItem.action = #selector(makeInteractive)
-        menu.addItem(makeInteractiveItem)
         menu.addItem(.separator())
 
         clickThroughItem.target = self
@@ -283,10 +285,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func openSettingsFromStatusMenu() {
         openSettingsAction()
-    }
-
-    @objc private func makeInteractive() {
-        panelController.makeInteractive()
     }
 
     @objc private func toggleClickThrough() {

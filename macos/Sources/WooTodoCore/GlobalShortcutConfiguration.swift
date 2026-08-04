@@ -5,6 +5,8 @@ public enum GlobalShortcutCommand: String, CaseIterable, Codable, Sendable {
     case toggleTaskPanel
     case toggleAlwaysOnTop
     case toggleClickThrough
+    case increasePanelOpacity
+    case decreasePanelOpacity
 }
 
 public struct GlobalShortcutModifiers: OptionSet, Codable, Hashable, Sendable {

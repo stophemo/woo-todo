@@ -333,6 +333,35 @@ public final class WebDavClient: @unchecked Sendable {
         try await request(method: "GET", path: path, body: nil, headers: [:], accepted: [200]).data
     }
 
+    public func listOperations() async throws -> [WebDavOperation] {
+        var operations: [WebDavOperation] = []
+        for path in try await listOperationPaths() {
+            let data = try await get(path: path)
+            do {
+                let operation = try JSONDecoder().decode(WebDavOperation.self, from: data)
+                guard operation.vaultId == credentials.vaultId else {
+                    throw WebDavError.malformedObject("同步空间不匹配")
+                }
+                guard path == WebDavOperation.path(
+                    vaultId: operation.vaultId,
+                    opId: operation.opId
+                ) else {
+                    throw WebDavError.malformedObject("对象路径与 opId 不匹配")
+                }
+                operations.append(operation)
+            } catch let error as WebDavError {
+                throw error
+            } catch {
+                throw WebDavError.malformedObject(error.localizedDescription)
+            }
+        }
+        return operations
+    }
+
+    public func maximumLamport() async throws -> Int64 {
+        try await listOperations().map(\.lamport).max() ?? 0
+    }
+
     private func propfind(path: [String], depth: Int) async throws -> [[String]] {
         let response = try await request(
             method: "PROPFIND",
@@ -394,28 +423,7 @@ public final class WebDavSyncRunner: @unchecked Sendable {
             ))
         }
 
-        let paths = try await client.listOperationPaths()
-        var operations: [WebDavOperation] = []
-        for path in paths {
-            let data = try await client.get(path: path)
-            do {
-                let operation = try JSONDecoder().decode(WebDavOperation.self, from: data)
-                guard operation.vaultId == client.credentials.vaultId else {
-                    throw WebDavError.malformedObject("同步空间不匹配")
-                }
-                guard path == WebDavOperation.path(
-                    vaultId: operation.vaultId,
-                    opId: operation.opId
-                ) else {
-                    throw WebDavError.malformedObject("对象路径与 opId 不匹配")
-                }
-                operations.append(operation)
-            } catch let error as WebDavError {
-                throw error
-            } catch {
-                throw WebDavError.malformedObject(error.localizedDescription)
-            }
-        }
+        let operations = try await client.listOperations()
         for start in stride(from: 0, to: operations.count, by: Self.webDavApplyBatchSize) {
             let end = min(start + Self.webDavApplyBatchSize, operations.count)
             try await local.applyWebDavOperations(Array(operations[start..<end]))

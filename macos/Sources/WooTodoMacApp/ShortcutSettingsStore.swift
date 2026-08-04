@@ -28,6 +28,16 @@ final class ShortcutSettingsStore: ObservableObject {
             modifiers: [.shift, .option],
             keyLabel: "4"
         ),
+        .increasePanelOpacity: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_5),
+            modifiers: [.shift, .option],
+            keyLabel: "5"
+        ),
+        .decreasePanelOpacity: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_6),
+            modifiers: [.shift, .option],
+            keyLabel: "6"
+        ),
     ]
 
     private static let legacyDefaultBindings: [GlobalShortcutCommand: GlobalShortcutBinding] = [
@@ -159,16 +169,19 @@ final class ShortcutSettingsStore: ObservableObject {
                   [GlobalShortcutCommand: GlobalShortcutBinding].self,
                   from: data
               ),
-              Set(decoded.keys) == Set(GlobalShortcutCommand.allCases),
               (try? GlobalShortcutConfiguration.validate(decoded)) != nil else {
             return defaultBindings
         }
-        // 逐项迁移仍为旧默认值的组合，用户自定义过的组合保持不变。
+        // 逐项迁移旧默认值并补入新增命令，用户自定义过的组合保持不变。
         let migrated = GlobalShortcutConfiguration.migratingUnchangedDefaults(
             decoded,
             from: legacyDefaultBindings,
             to: defaultBindings
         )
+        guard Set(migrated.keys) == Set(GlobalShortcutCommand.allCases),
+              (try? GlobalShortcutConfiguration.validate(migrated)) != nil else {
+            return defaultBindings
+        }
         if migrated != decoded, let migratedData = try? JSONEncoder().encode(migrated) {
             defaults.set(migratedData, forKey: defaultsKey)
         }
@@ -194,6 +207,8 @@ extension GlobalShortcutCommand {
         case .toggleTaskPanel: "显示或隐藏任务板"
         case .toggleAlwaysOnTop: "切换始终置顶"
         case .toggleClickThrough: "切换鼠标穿透"
+        case .increasePanelOpacity: "增加不透明度"
+        case .decreasePanelOpacity: "减少不透明度"
         }
     }
 
@@ -203,6 +218,8 @@ extension GlobalShortcutCommand {
         case .toggleTaskPanel: "rectangle.on.rectangle"
         case .toggleAlwaysOnTop: "pin"
         case .toggleClickThrough: "cursorarrow.motionlines"
+        case .increasePanelOpacity: "sun.max"
+        case .decreasePanelOpacity: "sun.min"
         }
     }
 }

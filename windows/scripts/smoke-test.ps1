@@ -1438,7 +1438,7 @@ try {
             $helperArchive,
             $helperTarget,
             "4294967295",
-            "0.1.20",
+            "0.1.21",
             $helperDigest
         ) `
         -PassThru
@@ -1560,20 +1560,20 @@ try {
     Set-Opacity -Main $main -Value 73
     $clickThrough = Require-ChildWindow -Parent $main -Id 122
     [WooTodoSmokeNative]::SendMessageW($clickThrough, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-    Assert-Settings -Path $settingsPath -Opacity 0.73 -ClickThrough $true
-    Assert-FloatingStyle -Floating $floating -Opacity 0.73 -ClickThrough $true
+    Assert-Settings -Path $settingsPath -Opacity 0.70 -ClickThrough $true
+    Assert-FloatingStyle -Floating $floating -Opacity 0.70 -ClickThrough $true
 
     Set-Opacity -Main $main -Value 61
-    Assert-Settings -Path $settingsPath -Opacity 0.61 -ClickThrough $true
-    Assert-FloatingStyle -Floating $floating -Opacity 0.61 -ClickThrough $true
+    Assert-Settings -Path $settingsPath -Opacity 0.60 -ClickThrough $true
+    Assert-FloatingStyle -Floating $floating -Opacity 0.60 -ClickThrough $true
     [WooTodoSmokeNative]::SendMessageW($clickThrough, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-    Assert-Settings -Path $settingsPath -Opacity 0.61 -ClickThrough $false
+    Assert-Settings -Path $settingsPath -Opacity 0.60 -ClickThrough $false
     Assert-DisplayTemplate `
         -Path $settingsPath `
         -Header $displayHeader `
         -Subtitle $displaySubtitle
-    Assert-FloatingStyle -Floating $floating -Opacity 0.61 -ClickThrough $false
-    Add-Diagnostic "透明度与鼠标穿透独立变化验证通过"
+    Assert-FloatingStyle -Floating $floating -Opacity 0.60 -ClickThrough $false
+    Add-Diagnostic "透明度按 10% 档位归一化并与鼠标穿透独立变化验证通过"
 
     Select-SyncSection -Main $main
     Assert-SyncModeSurface -Main $main -Mode worker
@@ -1648,12 +1648,12 @@ try {
     $restartedCredential = Read-SyncCredential -Target $credentialTarget
     Assert-SettingsContainsNoSecrets -Path $settingsPath -Credential $restartedCredential
     Assert-LocalNetworkHealth -Credential $restartedCredential
-    Assert-Settings -Path $settingsPath -Opacity 0.61 -ClickThrough $false
+    Assert-Settings -Path $settingsPath -Opacity 0.60 -ClickThrough $false
     Assert-DisplayTemplate `
         -Path $settingsPath `
         -Header $displayHeader `
         -Subtitle $displaySubtitle
-    Assert-FloatingStyle -Floating $floating -Opacity 0.61 -ClickThrough $false
+    Assert-FloatingStyle -Floating $floating -Opacity 0.60 -ClickThrough $false
     if (-not [WooTodoSmokeNative]::IsWindowEnabled($taskList)) {
         throw "重启后任务列表没有恢复"
     }
@@ -1673,7 +1673,7 @@ try {
         [IntPtr]::Zero,
         [IntPtr]::Zero
     ).ToInt64()
-    if ($restoredOpacity -ne 61) {
+    if ($restoredOpacity -ne 60) {
         throw "重启后透明度控件没有恢复：$restoredOpacity"
     }
     Add-Diagnostic "任务、设置和局域网主机重启持久化验证通过"

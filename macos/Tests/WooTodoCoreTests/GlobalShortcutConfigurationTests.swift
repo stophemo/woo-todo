@@ -105,6 +105,7 @@ struct GlobalShortcutConfigurationTests {
         #expect(migrated[.toggleTaskPanel] == current[.toggleTaskPanel])
         #expect(migrated[.toggleAlwaysOnTop] == current[.toggleAlwaysOnTop])
         #expect(migrated[.toggleClickThrough] == current[.toggleClickThrough])
+        #expect(migrated[.toggleDesktopWidget] == current[.toggleDesktopWidget])
         #expect(migrated[.increasePanelOpacity] == current[.increasePanelOpacity])
         #expect(migrated[.decreasePanelOpacity] == current[.decreasePanelOpacity])
     }
@@ -128,7 +129,14 @@ struct GlobalShortcutConfigurationTests {
 
     private func legacyDefaults() -> [GlobalShortcutCommand: GlobalShortcutBinding] {
         bindings(
-            commands: GlobalShortcutCommand.allCases,
+            commands: [
+                .quickAdd,
+                .toggleTaskPanel,
+                .toggleAlwaysOnTop,
+                .toggleClickThrough,
+                .increasePanelOpacity,
+                .decreasePanelOpacity,
+            ],
             labels: ["N", "L", "T", "Space", "5", "6"],
             keyCodes: [45, 37, 17, 49, 23, 22]
         )
@@ -137,8 +145,8 @@ struct GlobalShortcutConfigurationTests {
     private func currentDefaults() -> [GlobalShortcutCommand: GlobalShortcutBinding] {
         bindings(
             commands: GlobalShortcutCommand.allCases,
-            labels: ["1", "2", "3", "4", "↑", "↓"],
-            keyCodes: [18, 19, 20, 21, 126, 125]
+            labels: ["1", "2", "4", "3", "5", "↑", "↓"],
+            keyCodes: [18, 19, 21, 20, 23, 126, 125]
         )
     }
 

@@ -107,6 +107,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         applyShortcut(.toggleTaskPanel, to: taskPanelItem)
         applyShortcut(.toggleClickThrough, to: clickThroughItem)
         applyShortcut(.toggleAlwaysOnTop, to: alwaysOnTopItem)
+        applyShortcut(.toggleDesktopWidget, to: desktopWidgetItem)
         opacityPresetItems.forEach { item in
             guard let rawValue = item.representedObject as? Int else { return }
             item.state = rawValue == percentage ? .on : .off
@@ -184,9 +185,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         taskPanelItem.target = self
         taskPanelItem.action = #selector(toggleTaskPanel)
         menu.addItem(taskPanelItem)
-        desktopWidgetItem.target = self
-        desktopWidgetItem.action = #selector(toggleDesktopWidget)
-        menu.addItem(desktopWidgetItem)
         menu.addItem(item("任务详情与统计…", action: #selector(openDashboard)))
         menu.addItem(item("设置…", action: #selector(openSettingsFromStatusMenu)))
         menu.addItem(.separator())
@@ -217,6 +215,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         alwaysOnTopItem.target = self
         alwaysOnTopItem.action = #selector(toggleAlwaysOnTop)
         menu.addItem(alwaysOnTopItem)
+        desktopWidgetItem.target = self
+        desktopWidgetItem.action = #selector(toggleDesktopWidget)
+        menu.addItem(desktopWidgetItem)
         menu.addItem(.separator())
         updateItem.target = self
         updateItem.action = #selector(checkForUpdates)

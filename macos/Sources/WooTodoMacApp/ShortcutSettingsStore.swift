@@ -19,14 +19,19 @@ final class ShortcutSettingsStore: ObservableObject {
             keyLabel: "2"
         ),
         .toggleAlwaysOnTop: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_4),
+            modifiers: [.shift, .option],
+            keyLabel: "4"
+        ),
+        .toggleClickThrough: GlobalShortcutBinding(
             keyCode: UInt32(kVK_ANSI_3),
             modifiers: [.shift, .option],
             keyLabel: "3"
         ),
-        .toggleClickThrough: GlobalShortcutBinding(
-            keyCode: UInt32(kVK_ANSI_4),
+        .toggleDesktopWidget: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_5),
             modifiers: [.shift, .option],
-            keyLabel: "4"
+            keyLabel: "5"
         ),
         .increasePanelOpacity: GlobalShortcutBinding(
             keyCode: UInt32(kVK_UpArrow),
@@ -61,6 +66,29 @@ final class ShortcutSettingsStore: ObservableObject {
             modifiers: [.control, .option],
             keyLabel: "Space"
         ),
+    ]
+
+    private static let v0_1_20DefaultBindings: [GlobalShortcutCommand: GlobalShortcutBinding] = [
+        .quickAdd: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_1),
+            modifiers: [.shift, .option],
+            keyLabel: "1"
+        ),
+        .toggleTaskPanel: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_2),
+            modifiers: [.shift, .option],
+            keyLabel: "2"
+        ),
+        .toggleAlwaysOnTop: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_3),
+            modifiers: [.shift, .option],
+            keyLabel: "3"
+        ),
+        .toggleClickThrough: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_4),
+            modifiers: [.shift, .option],
+            keyLabel: "4"
+        ),
         .increasePanelOpacity: GlobalShortcutBinding(
             keyCode: UInt32(kVK_ANSI_5),
             modifiers: [.shift, .option],
@@ -70,6 +98,39 @@ final class ShortcutSettingsStore: ObservableObject {
             keyCode: UInt32(kVK_ANSI_6),
             modifiers: [.shift, .option],
             keyLabel: "6"
+        ),
+    ]
+
+    private static let v0_1_21DefaultBindings: [GlobalShortcutCommand: GlobalShortcutBinding] = [
+        .quickAdd: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_1),
+            modifiers: [.shift, .option],
+            keyLabel: "1"
+        ),
+        .toggleTaskPanel: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_2),
+            modifiers: [.shift, .option],
+            keyLabel: "2"
+        ),
+        .toggleAlwaysOnTop: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_3),
+            modifiers: [.shift, .option],
+            keyLabel: "3"
+        ),
+        .toggleClickThrough: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_4),
+            modifiers: [.shift, .option],
+            keyLabel: "4"
+        ),
+        .increasePanelOpacity: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_UpArrow),
+            modifiers: [.shift, .option],
+            keyLabel: "↑"
+        ),
+        .decreasePanelOpacity: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_DownArrow),
+            modifiers: [.shift, .option],
+            keyLabel: "↓"
         ),
     ]
 
@@ -182,12 +243,18 @@ final class ShortcutSettingsStore: ObservableObject {
               (try? GlobalShortcutConfiguration.validate(decoded)) != nil else {
             return defaultBindings
         }
-        // 逐项迁移旧默认值并补入新增命令，用户自定义过的组合保持不变。
-        let migrated = GlobalShortcutConfiguration.migratingUnchangedDefaults(
-            decoded,
-            from: legacyDefaultBindings,
-            to: defaultBindings
-        )
+        // 逐版迁移仍为旧默认值的组合，用户自定义过的组合保持不变。
+        let migrated = [
+            legacyDefaultBindings,
+            v0_1_20DefaultBindings,
+            v0_1_21DefaultBindings,
+        ].reduce(decoded) { bindings, legacyDefaults in
+            GlobalShortcutConfiguration.migratingUnchangedDefaults(
+                bindings,
+                from: legacyDefaults,
+                to: defaultBindings
+            )
+        }
         guard Set(migrated.keys) == Set(GlobalShortcutCommand.allCases),
               (try? GlobalShortcutConfiguration.validate(migrated)) != nil else {
             return defaultBindings
@@ -217,6 +284,7 @@ extension GlobalShortcutCommand {
         case .toggleTaskPanel: "显示或隐藏任务板"
         case .toggleAlwaysOnTop: "切换始终置顶"
         case .toggleClickThrough: "切换鼠标穿透"
+        case .toggleDesktopWidget: "切换桌面小组件模式"
         case .increasePanelOpacity: "增加不透明度"
         case .decreasePanelOpacity: "减少不透明度"
         }
@@ -228,6 +296,7 @@ extension GlobalShortcutCommand {
         case .toggleTaskPanel: "rectangle.on.rectangle"
         case .toggleAlwaysOnTop: "pin"
         case .toggleClickThrough: "cursorarrow.motionlines"
+        case .toggleDesktopWidget: "desktopcomputer"
         case .increasePanelOpacity: "sun.max"
         case .decreasePanelOpacity: "sun.min"
         }

@@ -1,4 +1,6 @@
+import AppKit
 import Testing
+import WooTodoCore
 @testable import WooTodoMacApp
 
 struct FloatingPanelOpacityTests {
@@ -39,5 +41,23 @@ struct FloatingPanelOpacityTests {
             isDesktopWidget: false,
             isAlwaysOnTop: true
         ) == .alwaysOnTop)
+    }
+
+    @MainActor @Test func defaultShortcutsReserveThreeFourAndFiveForPanelModes() {
+        let defaults = ShortcutSettingsStore.defaultBindings
+        #expect(defaults[.toggleClickThrough]?.displayValue == "⇧⌥3")
+        #expect(defaults[.toggleAlwaysOnTop]?.displayValue == "⇧⌥4")
+        #expect(defaults[.toggleDesktopWidget]?.displayValue == "⇧⌥5")
+    }
+
+    @Test func widgetResizeKeepsOriginAndHonorsMinimumSize() {
+        let resized = PanelResizePolicy.resizedFrame(
+            initialFrame: NSRect(x: 40, y: 50, width: 420, height: 520),
+            mouseDelta: NSPoint(x: -200, y: -300),
+            minimumSize: NSSize(width: 300, height: 360)
+        )
+
+        #expect(resized.origin == NSPoint(x: 40, y: 50))
+        #expect(resized.size == NSSize(width: 300, height: 360))
     }
 }

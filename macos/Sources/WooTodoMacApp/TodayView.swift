@@ -25,7 +25,7 @@ struct TodayView: View {
                     .padding(.bottom, 10)
             }
         }
-        .frame(minWidth: 340, minHeight: 420)
+        .frame(minWidth: 300, minHeight: 360)
         .foregroundStyle(.white)
         .tint(WooTodoTheme.purpleLight)
         .background(Color.clear)
@@ -57,31 +57,23 @@ struct TodayView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 14) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "checklist")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(WooTodoTheme.purpleLight)
-                    .frame(width: 26, height: 26)
-                    .background(WooTodoTheme.purple.opacity(0.26), in: Circle())
-
-                VStack(alignment: .leading, spacing: 3) {
-                    if let title = dayCounterStore.configuration.headerText(
-                        on: dayCounterStore.renderDate
-                    ) {
-                        Text(title)
-                            .font(.title2.weight(.semibold))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                    if let subtitle = dayCounterStore.configuration.subtitleText(
-                        on: dayCounterStore.renderDate
-                    ) {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(WooTodoTheme.mutedOnDark)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
+            VStack(alignment: .leading, spacing: 3) {
+                if let title = dayCounterStore.configuration.headerText(
+                    on: dayCounterStore.renderDate
+                ) {
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if let subtitle = dayCounterStore.configuration.subtitleText(
+                    on: dayCounterStore.renderDate
+                ) {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(WooTodoTheme.mutedOnDark)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
             Spacer()
@@ -93,53 +85,39 @@ struct TodayView: View {
                     .foregroundStyle(WooTodoTheme.mutedOnDark)
             }
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 22)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 11)
     }
 
     private var progress: some View {
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .lastTextBaseline, spacing: 7) {
-                Text("\(pendingCount)")
-                    .font(.system(size: 46, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .contentTransition(.numericText())
-                Text("项待办")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(WooTodoTheme.mutedOnDark)
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(completedCount) / \(totalCount)")
-                        .font(.headline.monospacedDigit())
-                    Text("已完成")
-                        .font(.caption2)
-                        .foregroundStyle(WooTodoTheme.mutedOnDark)
-                }
-            }
-
+        let completed = store.tasks.filter { $0.status == .completed }.count
+        let total = store.tasks.count
+        let fraction = total == 0 ? 0 : CGFloat(completed) / CGFloat(total)
+        return VStack(spacing: 8) {
             HStack {
                 Text("今日进度")
                 Spacer()
-                Text("\(Int((completionFraction * 100).rounded()))%")
-                    .font(.caption.monospacedDigit().weight(.semibold))
+                Text("\(completed) / \(total)")
+                    .foregroundStyle(.white)
+                    .fontWeight(.semibold)
             }
             .font(.caption)
             .foregroundStyle(WooTodoTheme.mutedOnDark)
 
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
-                    Capsule()
+                    Rectangle()
                         .fill(WooTodoTheme.lineOnDark)
-                    Capsule()
+                    Rectangle()
                         .fill(WooTodoTheme.green)
-                        .frame(width: proxy.size.width * completionFraction)
+                        .frame(width: proxy.size.width * fraction)
                 }
             }
-            .frame(height: 5)
+            .frame(height: 2)
         }
-        .padding(.horizontal, 22)
-        .padding(.bottom, 12)
+        .padding(.horizontal, 18)
+        .padding(.bottom, 8)
     }
 
     private var taskList: some View {
@@ -177,23 +155,18 @@ struct TodayView: View {
                             .moveDisabled(true)
                         }
                     } header: {
-                        let completed = group.filter { $0.status == .completed }.count
-                        HStack(spacing: 8) {
+                        HStack(spacing: 7) {
                             RoundedRectangle(cornerRadius: 2)
                                 .fill(tier.accentColor)
-                                .frame(width: 5, height: 18)
+                                .frame(width: 7, height: 7)
                             Text(tier.displayName)
-                            Spacer()
-                            Text("\(completed) / \(group.count)")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(WooTodoTheme.mutedOnDark)
                         }
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(WooTodoTheme.mutedOnDark)
                         .textCase(nil)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 9)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 7)
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
                     }
@@ -213,36 +186,17 @@ struct TodayView: View {
                 .foregroundStyle(WooTodoTheme.purpleLight)
             Text("今天还没有任务")
                 .font(.headline)
-            Text("把最重要的一件事放进今天")
+            Text("今晚列好明日事项，明天直接开干。")
                 .font(.caption)
                 .foregroundStyle(WooTodoTheme.mutedOnDark)
-            Button {
+            Button("新增任务") {
                 showingNewTask = true
-            } label: {
-                Label("新增任务", systemImage: "plus")
             }
             .buttonStyle(.borderedProminent)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
-    }
-
-    private var completedCount: Int {
-        store.tasks.filter { $0.status == .completed }.count
-    }
-
-    private var pendingCount: Int {
-        store.tasks.filter { $0.status == .pending }.count
-    }
-
-    private var totalCount: Int {
-        store.tasks.count
-    }
-
-    private var completionFraction: CGFloat {
-        guard totalCount > 0 else { return 0 }
-        return CGFloat(completedCount) / CGFloat(totalCount)
     }
 }
 
@@ -255,10 +209,6 @@ private struct TaskRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(task.tier.accentColor)
-                .frame(width: 3, height: 20)
-
             Button(action: toggle) {
                 Image(systemName: statusImage)
                     .foregroundStyle(statusColor)

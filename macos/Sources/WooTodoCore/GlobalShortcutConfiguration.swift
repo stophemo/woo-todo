@@ -5,6 +5,7 @@ public enum GlobalShortcutCommand: String, CaseIterable, Codable, Sendable {
     case toggleTaskPanel
     case toggleAlwaysOnTop
     case toggleClickThrough
+    case toggleDesktopWidget
     case increasePanelOpacity
     case decreasePanelOpacity
 }
@@ -105,8 +106,23 @@ public enum GlobalShortcutConfiguration {
         to currentDefaults: [GlobalShortcutCommand: GlobalShortcutBinding]
     ) -> [GlobalShortcutCommand: GlobalShortcutBinding] {
         var migrated = bindings
+
+        // 先迁移已有命令，再补入新命令，避免新默认键与旧版透明度快捷键冲突。
         for command in GlobalShortcutCommand.allCases {
-            guard bindings[command] == legacyDefaults[command],
+            guard let binding = bindings[command],
+                  binding == legacyDefaults[command],
+                  let replacement = currentDefaults[command] else {
+                continue
+            }
+            var candidate = migrated
+            candidate[command] = replacement
+            if (try? validate(candidate)) != nil {
+                migrated = candidate
+            }
+        }
+
+        for command in GlobalShortcutCommand.allCases {
+            guard migrated[command] == nil,
                   let replacement = currentDefaults[command] else {
                 continue
             }

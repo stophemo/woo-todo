@@ -118,6 +118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     .toggleClickThrough: { [weak panelController] in
                         panelController?.toggleClickThrough()
                     },
+                    .toggleDesktopWidget: { [weak panelController] in
+                        panelController?.toggleDesktopWidget()
+                    },
                     .increasePanelOpacity: { [weak panelController] in
                         panelController?.increasePanelOpacity()
                     },

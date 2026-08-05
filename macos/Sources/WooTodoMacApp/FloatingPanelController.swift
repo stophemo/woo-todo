@@ -34,6 +34,21 @@ enum PanelPresentationPolicy {
     }
 }
 
+enum PanelResizePolicy {
+    static func resizedFrame(
+        initialFrame: NSRect,
+        mouseDelta: NSPoint,
+        minimumSize: NSSize
+    ) -> NSRect {
+        NSRect(
+            x: initialFrame.minX,
+            y: initialFrame.minY,
+            width: max(minimumSize.width, initialFrame.width + mouseDelta.x),
+            height: max(minimumSize.height, initialFrame.height + mouseDelta.y)
+        )
+    }
+}
+
 @MainActor
 final class FloatingPanelController: NSWindowController {
     private enum PreferenceKey {
@@ -48,6 +63,7 @@ final class FloatingPanelController: NSWindowController {
     private let contentContainer = NSView()
     private let solidBackgroundView = AppearanceAwareBackgroundView()
     private let effectView = NSVisualEffectView()
+    private let resizeHandle = WidgetResizeHandleView()
     var onStateChange: (() -> Void)?
 
     private(set) var isBlurEnabled: Bool
@@ -79,7 +95,7 @@ final class FloatingPanelController: NSWindowController {
         )
 
         let panel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 540)
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 520)
         )
         super.init(window: panel)
 
@@ -196,17 +212,16 @@ final class FloatingPanelController: NSWindowController {
         panel.isExcludedFromWindowsMenu = true
         panel.animationBehavior = .utilityWindow
         panel.setFrameAutosaveName("WooTodoFloatingPanel")
-        panel.minSize = NSSize(width: 340, height: 420)
+        panel.minSize = NSSize(width: 300, height: 360)
     }
 
     private func configureContent(store: TodayStore, dayCounterStore: DayCounterStore) {
         guard let panel = window else { return }
         contentContainer.wantsLayer = true
-        contentContainer.layer?.cornerRadius = 26
-        contentContainer.layer?.cornerCurve = .continuous
-        contentContainer.layer?.borderWidth = 0.5
-        contentContainer.layer?.borderColor = NSColor.white.withAlphaComponent(0.22).cgColor
+        contentContainer.layer?.cornerRadius = 8
         contentContainer.layer?.masksToBounds = true
+        resizeHandle.panel = panel
+        resizeHandle.translatesAutoresizingMaskIntoConstraints = false
 
         solidBackgroundView.translatesAutoresizingMaskIntoConstraints = false
         effectView.blendingMode = .behindWindow
@@ -222,6 +237,7 @@ final class FloatingPanelController: NSWindowController {
         contentContainer.addSubview(solidBackgroundView)
         contentContainer.addSubview(effectView)
         contentContainer.addSubview(hostingView)
+        contentContainer.addSubview(resizeHandle)
         NSLayoutConstraint.activate([
             solidBackgroundView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             solidBackgroundView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
@@ -234,7 +250,11 @@ final class FloatingPanelController: NSWindowController {
             hostingView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             hostingView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             hostingView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
+            hostingView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            resizeHandle.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            resizeHandle.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            resizeHandle.widthAnchor.constraint(equalToConstant: 16),
+            resizeHandle.heightAnchor.constraint(equalToConstant: 16)
         ])
         panel.contentView = contentContainer
     }
@@ -262,6 +282,7 @@ final class FloatingPanelController: NSWindowController {
         panel.backgroundColor = .clear
         effectView.isHidden = !isBlurEnabled
         solidBackgroundView.isHidden = isBlurEnabled
+        resizeHandle.isHidden = !isDesktopWidget
         solidBackgroundView.refreshColor()
         onStateChange?()
     }
@@ -318,4 +339,54 @@ private final class FloatingPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+}
+
+private final class WidgetResizeHandleView: NSView {
+    weak var panel: NSWindow?
+
+    private var initialFrame: NSRect?
+    private var initialMouseLocation: NSPoint?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .resizeUpDown)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let panel else { return }
+        initialFrame = panel.frame
+        initialMouseLocation = screenLocation(for: event, in: panel)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let panel,
+              let initialFrame,
+              let initialMouseLocation else {
+            return
+        }
+        let currentMouseLocation = screenLocation(for: event, in: panel)
+        panel.setFrame(
+            PanelResizePolicy.resizedFrame(
+                initialFrame: initialFrame,
+                mouseDelta: NSPoint(
+                    x: currentMouseLocation.x - initialMouseLocation.x,
+                    y: currentMouseLocation.y - initialMouseLocation.y
+                ),
+                minimumSize: panel.minSize
+            ),
+            display: true
+        )
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        panel?.saveFrame(usingName: "WooTodoFloatingPanel")
+        initialFrame = nil
+        initialMouseLocation = nil
+    }
+
+    private func screenLocation(for event: NSEvent, in panel: NSWindow) -> NSPoint {
+        panel.convertToScreen(NSRect(origin: event.locationInWindow, size: .zero)).origin
+    }
 }

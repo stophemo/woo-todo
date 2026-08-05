@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity version="0.1.23.0" processorArchitecture="amd64" name="stophemo.WooTodo" type="win32" />
+  <assemblyIdentity version="0.1.24.0" processorArchitecture="amd64" name="stophemo.WooTodo" type="win32" />
   <description>无我待办</description>
   <dependency>
     <dependentAssembly>

@@ -128,6 +128,22 @@ struct TodayView: View {
                 let settled = group.filter { $0.status != .pending }
                 if !group.isEmpty {
                     Section {
+                        HStack(spacing: 7) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(tier.accentColor)
+                                .frame(width: 7, height: 7)
+                            Text(tier.displayName)
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(WooTodoTheme.mutedOnDark)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 7)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .accessibilityAddTraits(.isHeader)
+
                         ForEach(pending) { task in
                             TaskRow(
                                 task: task,
@@ -154,21 +170,6 @@ struct TodayView: View {
                             )
                             .moveDisabled(true)
                         }
-                    } header: {
-                        HStack(spacing: 7) {
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(tier.accentColor)
-                                .frame(width: 7, height: 7)
-                            Text(tier.displayName)
-                        }
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WooTodoTheme.mutedOnDark)
-                        .textCase(nil)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 7)
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
                     }
                 }
             }

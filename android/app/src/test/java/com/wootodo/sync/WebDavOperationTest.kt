@@ -1,5 +1,10 @@
 package com.wootodo.sync
 
+import java.util.concurrent.atomic.AtomicInteger
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -86,5 +91,49 @@ class WebDavOperationTest {
         assertEquals(1, WebDavSyncRunner.webDavPageCount(500))
         assertEquals(2, WebDavSyncRunner.webDavPageCount(501))
         assertEquals(3, WebDavSyncRunner.webDavPageCount(1_001))
+    }
+
+    @Test
+    fun `WebDAV只重试短时服务错误`() {
+        listOf(408, 425, 429, 500, 502, 503, 504).forEach { statusCode ->
+            assertTrue(WebDavRetryPolicy.isRetryableHttpStatus(statusCode))
+        }
+        listOf(400, 401, 403, 404, 409).forEach { statusCode ->
+            assertFalse(WebDavRetryPolicy.isRetryableHttpStatus(statusCode))
+        }
+    }
+
+    @Test
+    fun `坚果云连续两次503后会重试并继续创建目录`() {
+        val requests = AtomicInteger()
+        val httpClient = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val requestNumber = requests.incrementAndGet()
+                val statusCode = if (requestNumber <= 2) 503 else 201
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(statusCode)
+                    .message(if (statusCode == 503) "Service Unavailable" else "Created")
+                    .body(ByteArray(0).toResponseBody())
+                    .build()
+            }
+            .build()
+        val client = WebDavClient(
+            credentials = WebDavCredentials(
+                username = "user@example.com",
+                appPassword = "application-password",
+                vaultId = "personal-vault",
+                deviceId = "device-android-01",
+                vaultKey = ByteArray(Aes256Gcm.KEY_BYTES),
+            ),
+            httpClient = httpClient,
+            retryDelaysMillis = listOf(0L, 0L),
+            retrySleep = {},
+        )
+
+        client.ensureCollections()
+
+        assertEquals(5, requests.get())
     }
 }

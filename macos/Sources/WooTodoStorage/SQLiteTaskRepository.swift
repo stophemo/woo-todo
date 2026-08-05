@@ -833,6 +833,18 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         try applyWebDavOperationsSynchronously(operations)
     }
 
+    public func pendingWebDavOperationIDs(_ operationIDs: [String]) async throws -> Set<String> {
+        try withLock {
+            var pending = Set<String>()
+            for operationID in Set(operationIDs) {
+                if try !isWebDavOperationApplied(operationID) {
+                    pending.insert(operationID)
+                }
+            }
+            return pending
+        }
+    }
+
     private func pendingOperationsSynchronously(limit: Int) throws -> [SyncPushOperation] {
         guard limit > 0 else { return [] }
         return try withLock {

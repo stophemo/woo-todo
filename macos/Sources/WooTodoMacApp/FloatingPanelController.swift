@@ -18,12 +18,29 @@ enum PanelOpacityPolicy {
     }
 }
 
+enum PanelPresentation: Equatable {
+    case desktopWidget
+    case normal
+    case alwaysOnTop
+}
+
+enum PanelPresentationPolicy {
+    static func resolve(
+        isDesktopWidget: Bool,
+        isAlwaysOnTop: Bool
+    ) -> PanelPresentation {
+        if isDesktopWidget { return .desktopWidget }
+        return isAlwaysOnTop ? .alwaysOnTop : .normal
+    }
+}
+
 @MainActor
 final class FloatingPanelController: NSWindowController {
     private enum PreferenceKey {
         static let blurEnabled = "panel.blurEnabled"
         static let clickThrough = "panel.clickThrough"
         static let alwaysOnTop = "panel.alwaysOnTop"
+        static let desktopWidget = "panel.desktopWidget"
         static let opacity = "panel.opacity"
     }
 
@@ -36,6 +53,7 @@ final class FloatingPanelController: NSWindowController {
     private(set) var isBlurEnabled: Bool
     private(set) var isClickThrough: Bool
     private(set) var isAlwaysOnTop: Bool
+    private(set) var isDesktopWidget: Bool
     private(set) var panelOpacity: CGFloat
     var isVisible: Bool { window?.isVisible == true }
 
@@ -48,18 +66,20 @@ final class FloatingPanelController: NSWindowController {
         defaults.register(defaults: [
             PreferenceKey.blurEnabled: true,
             PreferenceKey.clickThrough: false,
-            PreferenceKey.alwaysOnTop: true,
+            PreferenceKey.alwaysOnTop: false,
+            PreferenceKey.desktopWidget: true,
             PreferenceKey.opacity: Double(PanelOpacityPolicy.defaultValue)
         ])
         isBlurEnabled = defaults.bool(forKey: PreferenceKey.blurEnabled)
         isClickThrough = defaults.bool(forKey: PreferenceKey.clickThrough)
-        isAlwaysOnTop = defaults.bool(forKey: PreferenceKey.alwaysOnTop)
+        isDesktopWidget = defaults.bool(forKey: PreferenceKey.desktopWidget)
+        isAlwaysOnTop = !isDesktopWidget && defaults.bool(forKey: PreferenceKey.alwaysOnTop)
         panelOpacity = PanelOpacityPolicy.normalized(
             CGFloat(defaults.double(forKey: PreferenceKey.opacity))
         )
 
         let panel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 520)
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 540)
         )
         super.init(window: panel)
 
@@ -76,7 +96,7 @@ final class FloatingPanelController: NSWindowController {
     func show() {
         guard let window else { return }
         if !window.setFrameUsingName("WooTodoFloatingPanel") {
-            window.center()
+            positionForFirstPresentation(window)
         }
         window.orderFrontRegardless()
         onStateChange?()
@@ -117,7 +137,23 @@ final class FloatingPanelController: NSWindowController {
     }
 
     func toggleAlwaysOnTop() {
-        isAlwaysOnTop.toggle()
+        if isDesktopWidget {
+            isDesktopWidget = false
+            isAlwaysOnTop = true
+        } else {
+            isAlwaysOnTop.toggle()
+        }
+        defaults.set(isDesktopWidget, forKey: PreferenceKey.desktopWidget)
+        defaults.set(isAlwaysOnTop, forKey: PreferenceKey.alwaysOnTop)
+        applyVisualState()
+    }
+
+    func toggleDesktopWidget() {
+        isDesktopWidget.toggle()
+        if isDesktopWidget {
+            isAlwaysOnTop = false
+        }
+        defaults.set(isDesktopWidget, forKey: PreferenceKey.desktopWidget)
         defaults.set(isAlwaysOnTop, forKey: PreferenceKey.alwaysOnTop)
         applyVisualState()
     }
@@ -157,16 +193,19 @@ final class FloatingPanelController: NSWindowController {
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
         panel.isReleasedWhenClosed = false
+        panel.isExcludedFromWindowsMenu = true
         panel.animationBehavior = .utilityWindow
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.setFrameAutosaveName("WooTodoFloatingPanel")
-        panel.minSize = NSSize(width: 300, height: 360)
+        panel.minSize = NSSize(width: 340, height: 420)
     }
 
     private func configureContent(store: TodayStore, dayCounterStore: DayCounterStore) {
         guard let panel = window else { return }
         contentContainer.wantsLayer = true
-        contentContainer.layer?.cornerRadius = 8
+        contentContainer.layer?.cornerRadius = 26
+        contentContainer.layer?.cornerCurve = .continuous
+        contentContainer.layer?.borderWidth = 0.5
+        contentContainer.layer?.borderColor = NSColor.white.withAlphaComponent(0.22).cgColor
         contentContainer.layer?.masksToBounds = true
 
         solidBackgroundView.translatesAutoresizingMaskIntoConstraints = false
@@ -202,7 +241,22 @@ final class FloatingPanelController: NSWindowController {
 
     private func applyVisualState() {
         guard let panel = window else { return }
-        panel.level = isAlwaysOnTop ? .floating : .normal
+        switch PanelPresentationPolicy.resolve(
+            isDesktopWidget: isDesktopWidget,
+            isAlwaysOnTop: isAlwaysOnTop
+        ) {
+        case .desktopWidget:
+            panel.level = NSWindow.Level(
+                rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1
+            )
+            panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        case .normal:
+            panel.level = .normal
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        case .alwaysOnTop:
+            panel.level = .floating
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        }
         panel.ignoresMouseEvents = isClickThrough
         panel.alphaValue = panelOpacity
         panel.backgroundColor = .clear
@@ -210,6 +264,17 @@ final class FloatingPanelController: NSWindowController {
         solidBackgroundView.isHidden = isBlurEnabled
         solidBackgroundView.refreshColor()
         onStateChange?()
+    }
+
+    private func positionForFirstPresentation(_ panel: NSWindow) {
+        guard isDesktopWidget, let visibleFrame = NSScreen.main?.visibleFrame else {
+            panel.center()
+            return
+        }
+        panel.setFrameOrigin(NSPoint(
+            x: visibleFrame.minX + 24,
+            y: visibleFrame.maxY - panel.frame.height - 24
+        ))
     }
 }
 

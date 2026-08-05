@@ -3,6 +3,7 @@ package com.wootodo.sync
 import android.content.Context
 import android.net.Uri
 import android.util.Xml
+import java.io.IOException
 import java.io.StringReader
 import java.nio.charset.StandardCharsets
 import java.util.UUID
@@ -268,7 +269,15 @@ data class WebDavOperation(
 }
 
 interface WebDavLocalApplying {
+    fun pendingWebDavOperationIds(operationIds: List<String>): Set<String> = operationIds.toSet()
     fun applyWebDavOperations(operations: List<WebDavOperation>)
+}
+
+internal object WebDavRetryPolicy {
+    val delaysMillis = listOf(250L, 750L)
+    private val retryableHttpStatuses = setOf(408, 425, 429, 500, 502, 503, 504)
+
+    fun isRetryableHttpStatus(statusCode: Int): Boolean = statusCode in retryableHttpStatuses
 }
 
 class WebDavClient(
@@ -278,6 +287,8 @@ class WebDavClient(
         .readTimeout(java.time.Duration.ofSeconds(20))
         .writeTimeout(java.time.Duration.ofSeconds(20))
         .build(),
+    private val retryDelaysMillis: List<Long> = WebDavRetryPolicy.delaysMillis,
+    private val retrySleep: (Long) -> Unit = Thread::sleep,
 ) {
     private val baseUrl = credentials.endpoint.toHttpUrl()
     private val authorization = Credentials.basic(credentials.username, credentials.appPassword)
@@ -371,17 +382,42 @@ class WebDavClient(
             .apply { headers.forEach(::header) }
             .method(method, requestBody)
             .build()
-        try {
-            httpClient.newCall(request).execute().use { response ->
-                val responseBody = response.body?.bytes() ?: ByteArray(0)
-                if (response.code !in accepted) throw WebDavException.Http(response.code)
-                return ResponseData(response.code, responseBody)
+        var retryIndex = 0
+        while (true) {
+            val result = try {
+                httpClient.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.bytes() ?: ByteArray(0)
+                    ResponseData(response.code, responseBody)
+                }
+            } catch (error: IOException) {
+                if (retryIndex >= retryDelaysMillis.size) {
+                    throw WebDavException.Transport(error.localizedMessage ?: "网络不可用")
+                }
+                retryIndex = waitBeforeRetry(retryIndex)
+                continue
+            } catch (error: WebDavException) {
+                throw error
+            } catch (error: Exception) {
+                throw WebDavException.Transport(error.localizedMessage ?: "网络不可用")
             }
-        } catch (error: WebDavException) {
-            throw error
-        } catch (error: Exception) {
-            throw WebDavException.Transport(error.localizedMessage ?: "网络不可用")
+            if (result.code in accepted) return result
+            if (!WebDavRetryPolicy.isRetryableHttpStatus(result.code) ||
+                retryIndex >= retryDelaysMillis.size
+            ) {
+                throw WebDavException.Http(result.code)
+            }
+            retryIndex = waitBeforeRetry(retryIndex)
         }
+    }
+
+    private fun waitBeforeRetry(retryIndex: Int): Int {
+        try {
+            retrySleep(retryDelaysMillis[retryIndex])
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw WebDavException.Transport("同步已取消")
+        }
+        return retryIndex + 1
     }
 
     private data class ResponseData(val code: Int, val body: ByteArray)
@@ -396,16 +432,21 @@ class WebDavSyncRunner(
         client.ensureCollections()
         val pending = outbox.pendingOperations(SyncCoordinator.MAXIMUM_PUSH_BATCH)
         pending.forEach { client.put(WebDavOperation.from(it, client.credentials)) }
-        val operations = client.listOperationPaths().map { path ->
-            WebDavOperation.decode(String(client.get(path), StandardCharsets.UTF_8)).also { operation ->
-                if (operation.vaultId != client.credentials.vaultId) {
-                    throw WebDavException.MalformedObject("同步空间不匹配")
-                }
-                if (path != WebDavOperation.path(operation.vaultId, operation.opId)) {
-                    throw WebDavException.MalformedObject("对象路径与 opId 不匹配")
+        val paths = client.listOperationPaths()
+        val operationIds = paths.map(::operationId)
+        val pendingIds = local.pendingWebDavOperationIds(operationIds)
+        val operations = paths.zip(operationIds)
+            .filter { (_, operationId) -> operationId in pendingIds }
+            .map { (path, _) ->
+                WebDavOperation.decode(String(client.get(path), StandardCharsets.UTF_8)).also { operation ->
+                    if (operation.vaultId != client.credentials.vaultId) {
+                        throw WebDavException.MalformedObject("同步空间不匹配")
+                    }
+                    if (path != WebDavOperation.path(operation.vaultId, operation.opId)) {
+                        throw WebDavException.MalformedObject("对象路径与 opId 不匹配")
+                    }
                 }
             }
-        }
         operations.chunked(WEBDAV_APPLY_BATCH_SIZE).forEach { batch ->
             local.applyWebDavOperations(batch)
         }
@@ -423,6 +464,15 @@ class WebDavSyncRunner(
 
         internal fun webDavPageCount(operationCount: Int): Int =
             maxOf(1, (operationCount + WEBDAV_APPLY_BATCH_SIZE - 1) / WEBDAV_APPLY_BATCH_SIZE)
+
+        private fun operationId(path: List<String>): String {
+            val fileName = path.lastOrNull()
+                ?: throw WebDavException.MalformedObject("对象路径缺少 opId")
+            if (!fileName.endsWith(".json") || fileName.length <= ".json".length) {
+                throw WebDavException.MalformedObject("对象路径缺少有效的 opId")
+            }
+            return fileName.removeSuffix(".json")
+        }
     }
 }
 

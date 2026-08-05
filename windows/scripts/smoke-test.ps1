@@ -1438,7 +1438,7 @@ try {
             $helperArchive,
             $helperTarget,
             "4294967295",
-            "0.1.20",
+            "0.1.21",
             $helperDigest
         ) `
         -PassThru

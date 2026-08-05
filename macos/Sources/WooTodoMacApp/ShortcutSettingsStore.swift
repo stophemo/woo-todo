@@ -29,14 +29,14 @@ final class ShortcutSettingsStore: ObservableObject {
             keyLabel: "4"
         ),
         .increasePanelOpacity: GlobalShortcutBinding(
-            keyCode: UInt32(kVK_ANSI_5),
+            keyCode: UInt32(kVK_UpArrow),
             modifiers: [.shift, .option],
-            keyLabel: "5"
+            keyLabel: "↑"
         ),
         .decreasePanelOpacity: GlobalShortcutBinding(
-            keyCode: UInt32(kVK_ANSI_6),
+            keyCode: UInt32(kVK_DownArrow),
             modifiers: [.shift, .option],
-            keyLabel: "6"
+            keyLabel: "↓"
         ),
     ]
 
@@ -60,6 +60,16 @@ final class ShortcutSettingsStore: ObservableObject {
             keyCode: UInt32(kVK_Space),
             modifiers: [.control, .option],
             keyLabel: "Space"
+        ),
+        .increasePanelOpacity: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_5),
+            modifiers: [.shift, .option],
+            keyLabel: "5"
+        ),
+        .decreasePanelOpacity: GlobalShortcutBinding(
+            keyCode: UInt32(kVK_ANSI_6),
+            modifiers: [.shift, .option],
+            keyLabel: "6"
         ),
     ]
 

@@ -514,6 +514,14 @@ class SQLiteSyncStore(
     }
 
     @Synchronized
+    override fun pendingWebDavOperationIds(operationIds: List<String>): Set<String> {
+        val sqlite = database.readableDatabase
+        return operationIds.toSet().filterTo(mutableSetOf()) { operationId ->
+            !isWebDavOperationApplied(sqlite, operationId)
+        }
+    }
+
+    @Synchronized
     override fun applyWebDavOperations(operations: List<WebDavOperation>) {
         val sqlite = database.writableDatabase
         var tasksChanged = false

@@ -40,6 +40,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let quickAddItem: NSMenuItem
     private let taskPanelItem: NSMenuItem
+    private let desktopWidgetItem: NSMenuItem
     private let clickThroughItem: NSMenuItem
     private let blurItem: NSMenuItem
     private let alwaysOnTopItem: NSMenuItem
@@ -67,6 +68,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         quickAddItem = NSMenuItem(title: "快速新增任务", action: nil, keyEquivalent: "")
         taskPanelItem = NSMenuItem(title: "显示任务板", action: nil, keyEquivalent: "")
+        desktopWidgetItem = NSMenuItem(title: "桌面小组件模式", action: nil, keyEquivalent: "")
         clickThroughItem = NSMenuItem(title: "鼠标穿透", action: nil, keyEquivalent: "")
         blurItem = NSMenuItem(title: "毛玻璃", action: nil, keyEquivalent: "")
         alwaysOnTopItem = NSMenuItem(title: "始终置顶", action: nil, keyEquivalent: "")
@@ -93,6 +95,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         taskPanelItem.title = panelController.isVisible
             ? "隐藏任务板"
             : "显示任务板"
+        desktopWidgetItem.state = panelController.isDesktopWidget ? .on : .off
+        desktopWidgetItem.title = panelController.isDesktopWidget
+            ? "桌面小组件模式：已开启"
+            : "桌面小组件模式"
         clickThroughItem.title = panelController.isClickThrough
             ? "鼠标穿透：已开启"
             : "鼠标穿透"
@@ -178,6 +184,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         taskPanelItem.target = self
         taskPanelItem.action = #selector(toggleTaskPanel)
         menu.addItem(taskPanelItem)
+        desktopWidgetItem.target = self
+        desktopWidgetItem.action = #selector(toggleDesktopWidget)
+        menu.addItem(desktopWidgetItem)
         menu.addItem(item("任务详情与统计…", action: #selector(openDashboard)))
         menu.addItem(item("设置…", action: #selector(openSettingsFromStatusMenu)))
         menu.addItem(.separator())
@@ -273,6 +282,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func toggleTaskPanel() {
         panelController.toggleVisibility()
+    }
+
+    @objc private func toggleDesktopWidget() {
+        panelController.toggleDesktopWidget()
     }
 
     @objc private func quickAdd() {

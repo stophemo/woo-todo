@@ -13,6 +13,16 @@ struct GlobalShortcutConfigurationTests {
         #expect(binding.displayValue == "⇧⌥1")
     }
 
+    @Test func displayValueSupportsArrowShortcut() {
+        let binding = GlobalShortcutBinding(
+            keyCode: 126,
+            modifiers: [.shift, .option],
+            keyLabel: "↑"
+        )
+
+        #expect(binding.displayValue == "⇧⌥↑")
+    }
+
     @Test func rejectsShortcutWithoutModifier() {
         let binding = GlobalShortcutBinding(
             keyCode: 45,
@@ -118,17 +128,17 @@ struct GlobalShortcutConfigurationTests {
 
     private func legacyDefaults() -> [GlobalShortcutCommand: GlobalShortcutBinding] {
         bindings(
-            commands: [.quickAdd, .toggleTaskPanel, .toggleAlwaysOnTop, .toggleClickThrough],
-            labels: ["N", "L", "T", "Space"],
-            keyCodes: [45, 37, 17, 49]
+            commands: GlobalShortcutCommand.allCases,
+            labels: ["N", "L", "T", "Space", "5", "6"],
+            keyCodes: [45, 37, 17, 49, 23, 22]
         )
     }
 
     private func currentDefaults() -> [GlobalShortcutCommand: GlobalShortcutBinding] {
         bindings(
             commands: GlobalShortcutCommand.allCases,
-            labels: ["1", "2", "3", "4", "5", "6"],
-            keyCodes: [18, 19, 20, 21, 23, 22]
+            labels: ["1", "2", "3", "4", "↑", "↓"],
+            keyCodes: [18, 19, 20, 21, 126, 125]
         )
     }
 

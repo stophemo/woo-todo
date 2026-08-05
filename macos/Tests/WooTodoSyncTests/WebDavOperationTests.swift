@@ -153,6 +153,44 @@ struct WebDavOperationTests {
         #expect(WebDavSyncRunner.webDavPageCount(1_001) == 3)
     }
 
+    @Test("坚果云临时 503 会短退避重试后继续")
+    func retriesTemporaryServiceFailures() async throws {
+        let counter = WebDavRequestCounter()
+        WebDavMockURLProtocol.handler = { request in
+            let requestNumber = counter.next()
+            let statusCode = requestNumber <= 2 ? 503 : 201
+            return (
+                HTTPURLResponse(
+                    url: try #require(request.url),
+                    statusCode: statusCode,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: nil
+                )!,
+                Data()
+            )
+        }
+        defer { WebDavMockURLProtocol.handler = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WebDavMockURLProtocol.self]
+        let client = try WebDavClient(
+            credentials: WebDavCredentials(
+                username: "user@example.com",
+                appPassword: "application-password",
+                vaultId: "personal-vault",
+                deviceId: "device-macos-01",
+                vaultKey: Data(repeating: 0, count: AES256GCM.keyByteCount)
+            ),
+            session: URLSession(configuration: configuration),
+            retryDelaysNanoseconds: [0, 0],
+            retrySleep: { _ in }
+        )
+
+        try await client.ensureCollections()
+
+        #expect(counter.value == 5)
+    }
+
     @Test("WebDAV 错误文案包含真实上下文")
     func errorDescriptionsInterpolateValues() {
         #expect(WebDavError.http(503).errorDescription == "坚果云 WebDAV 返回 HTTP 503")
@@ -171,4 +209,63 @@ struct WebDavOperationTests {
             .appendingPathComponent("fixtures")
             .appendingPathComponent("webdav-operation.json")
     }
+}
+
+private final class WebDavRequestCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.withLock { count }
+    }
+
+    func next() -> Int {
+        lock.withLock {
+            count += 1
+            return count
+        }
+    }
+}
+
+private final class WebDavHandlerStorage: @unchecked Sendable {
+    typealias Handler = @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
+    private let lock = NSLock()
+    private var value: Handler?
+
+    func set(_ handler: Handler?) {
+        lock.withLock { value = handler }
+    }
+
+    func get() -> Handler? {
+        lock.withLock { value }
+    }
+}
+
+private final class WebDavMockURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let storage = WebDavHandlerStorage()
+
+    static var handler: WebDavHandlerStorage.Handler? {
+        get { storage.get() }
+        set { storage.set(newValue) }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }

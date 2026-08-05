@@ -257,19 +257,61 @@ public struct WebDavOperation: Codable, Equatable, Sendable {
 }
 
 public protocol WebDavLocalApplying: Sendable {
+    func pendingWebDavOperationIDs(_ operationIDs: [String]) async throws -> Set<String>
     func applyWebDavOperations(_ operations: [WebDavOperation]) async throws
 }
 
+public extension WebDavLocalApplying {
+    func pendingWebDavOperationIDs(_ operationIDs: [String]) async throws -> Set<String> {
+        Set(operationIDs)
+    }
+}
+
 public final class WebDavClient: @unchecked Sendable {
+    internal typealias RetrySleep = @Sendable (UInt64) async throws -> Void
+
     public let credentials: WebDavCredentials
     private let session: URLSession
     private let baseURL: URL
+    private let retryDelaysNanoseconds: [UInt64]
+    private let retrySleep: RetrySleep
+
+    private static let defaultRetryDelaysNanoseconds: [UInt64] = [
+        250_000_000,
+        750_000_000,
+    ]
+    private static let retryableHTTPStatuses: Set<Int> = [
+        408, 425, 429, 500, 502, 503, 504,
+    ]
+    private static let retryableURLErrorCodes: Set<URLError.Code> = [
+        .cannotConnectToHost,
+        .dnsLookupFailed,
+        .networkConnectionLost,
+        .notConnectedToInternet,
+        .timedOut,
+    ]
 
     public init(credentials: WebDavCredentials, session: URLSession = .shared) throws {
         try credentials.validate()
         self.credentials = credentials
         self.session = session
         self.baseURL = credentials.endpoint
+        self.retryDelaysNanoseconds = Self.defaultRetryDelaysNanoseconds
+        self.retrySleep = { try await Task.sleep(nanoseconds: $0) }
+    }
+
+    internal init(
+        credentials: WebDavCredentials,
+        session: URLSession,
+        retryDelaysNanoseconds: [UInt64],
+        retrySleep: @escaping RetrySleep
+    ) throws {
+        try credentials.validate()
+        self.credentials = credentials
+        self.session = session
+        self.baseURL = credentials.endpoint
+        self.retryDelaysNanoseconds = retryDelaysNanoseconds
+        self.retrySleep = retrySleep
     }
 
     public func ensureCollections() async throws {
@@ -334,8 +376,13 @@ public final class WebDavClient: @unchecked Sendable {
     }
 
     public func listOperations() async throws -> [WebDavOperation] {
+        let paths = try await listOperationPaths()
+        return try await listOperations(at: paths)
+    }
+
+    internal func listOperations(at paths: [[String]]) async throws -> [WebDavOperation] {
         var operations: [WebDavOperation] = []
-        for path in try await listOperationPaths() {
+        for path in paths {
             let data = try await get(path: path)
             do {
                 let operation = try JSONDecoder().decode(WebDavOperation.self, from: data)
@@ -388,15 +435,41 @@ public final class WebDavClient: @unchecked Sendable {
         request.timeoutInterval = 20
         request.setValue("Basic \(Data("\(credentials.username):\(credentials.appPassword)".utf8).base64EncodedString())", forHTTPHeaderField: "Authorization")
         for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else { throw WebDavError.invalidResponse }
-            guard accepted.contains(http.statusCode) else { throw WebDavError.http(http.statusCode) }
-            return (data, http.statusCode)
-        } catch let error as WebDavError {
-            throw error
-        } catch {
-            throw WebDavError.transport(error.localizedDescription)
+        var retryIndex = 0
+        while true {
+            try Task.checkCancellation()
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw WebDavError.invalidResponse
+                }
+                if accepted.contains(http.statusCode) {
+                    return (data, http.statusCode)
+                }
+                guard Self.retryableHTTPStatuses.contains(http.statusCode),
+                      retryIndex < retryDelaysNanoseconds.count else {
+                    throw WebDavError.http(http.statusCode)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as URLError {
+                if error.code == .cancelled || Task.isCancelled {
+                    throw CancellationError()
+                }
+                guard Self.retryableURLErrorCodes.contains(error.code),
+                      retryIndex < retryDelaysNanoseconds.count else {
+                    throw WebDavError.transport(error.localizedDescription)
+                }
+            } catch let error as WebDavError {
+                throw error
+            } catch {
+                guard retryIndex < retryDelaysNanoseconds.count else {
+                    throw WebDavError.transport(error.localizedDescription)
+                }
+            }
+            let delay = retryDelaysNanoseconds[retryIndex]
+            retryIndex += 1
+            try await retrySleep(delay)
         }
     }
 }
@@ -423,7 +496,16 @@ public final class WebDavSyncRunner: @unchecked Sendable {
             ))
         }
 
-        let operations = try await client.listOperations()
+        let paths = try await client.listOperationPaths()
+        let operationIDs = paths.compactMap(Self.operationID(from:))
+        guard operationIDs.count == paths.count else {
+            throw WebDavError.malformedObject("对象路径缺少有效的 opId")
+        }
+        let pendingIDs = try await local.pendingWebDavOperationIDs(operationIDs)
+        let pendingPaths = zip(paths, operationIDs).compactMap { path, operationID in
+            pendingIDs.contains(operationID) ? path : nil
+        }
+        let operations = try await client.listOperations(at: pendingPaths)
         for start in stride(from: 0, to: operations.count, by: Self.webDavApplyBatchSize) {
             let end = min(start + Self.webDavApplyBatchSize, operations.count)
             try await local.applyWebDavOperations(Array(operations[start..<end]))
@@ -441,6 +523,13 @@ public final class WebDavSyncRunner: @unchecked Sendable {
 
     internal static func webDavPageCount(_ operationCount: Int) -> Int {
         max(1, (operationCount + webDavApplyBatchSize - 1) / webDavApplyBatchSize)
+    }
+
+    private static func operationID(from path: [String]) -> String? {
+        guard let fileName = path.last,
+              fileName.hasSuffix(".json"),
+              fileName.count > ".json".count else { return nil }
+        return String(fileName.dropLast(".json".count))
     }
 }
 

@@ -22,4 +22,22 @@ struct FloatingPanelOpacityTests {
         #expect(once == 0.2)
         #expect(twice == once)
     }
+
+    @Test func desktopWidgetTakesPrecedenceOverWindowLevels() {
+        #expect(PanelPresentationPolicy.resolve(
+            isDesktopWidget: true,
+            isAlwaysOnTop: true
+        ) == .desktopWidget)
+    }
+
+    @Test func disabledDesktopWidgetUsesRequestedWindowLevel() {
+        #expect(PanelPresentationPolicy.resolve(
+            isDesktopWidget: false,
+            isAlwaysOnTop: false
+        ) == .normal)
+        #expect(PanelPresentationPolicy.resolve(
+            isDesktopWidget: false,
+            isAlwaysOnTop: true
+        ) == .alwaysOnTop)
+    }
 }

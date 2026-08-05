@@ -892,6 +892,47 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.pendingOperations(limit: 50).isEmpty)
     }
 
+    @Test("WebDAV 会跨设备同步标题和副标题并跳过已应用对象")
+    func webDavSynchronizesDisplayConfigurationAcrossDevices() async throws {
+        let senderConfiguration = syncConfiguration()
+        let receiverConfiguration = SQLiteSyncConfiguration(
+            vaultId: senderConfiguration.vaultId,
+            deviceId: "device-webdav-receiver",
+            vaultKey: senderConfiguration.vaultKey
+        )
+        let sender = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: senderConfiguration
+        )
+        let receiver = try SQLiteTaskRepository(path: ":memory:")
+        try receiver.seedDisplayConfiguration(try displayConfiguration(header: "新设备默认标题"))
+        try receiver.configureSync(receiverConfiguration)
+        #expect(try await receiver.pendingOperations(limit: 50).isEmpty)
+
+        let expected = try displayConfiguration(
+            header: "西安 · {elapsedMonthsDays:2026-03-03}",
+            subtitle: "DDL · {deadlineMonthsDays:2026-11-17}",
+            startDate: "2026-03-03",
+            deadlineDate: "2026-11-17"
+        )
+        try sender.saveDisplayConfiguration(expected)
+        let push = try #require(try await sender.pendingOperations(limit: 1).first)
+        let operation = try WebDavOperation(
+            vaultId: senderConfiguration.vaultId,
+            deviceId: senderConfiguration.deviceId,
+            operation: push
+        )
+
+        #expect(try await receiver.pendingWebDavOperationIDs([push.opId]) == [push.opId])
+        try await receiver.applyWebDavOperations([operation])
+        #expect(try receiver.displayConfiguration() == expected)
+        #expect(try await receiver.pendingWebDavOperationIDs([push.opId]).isEmpty)
+
+        try await receiver.applyWebDavOperations([operation])
+        #expect(try receiver.displayConfiguration() == expected)
+        #expect(try await receiver.currentCursor() == 0)
+    }
+
     @Test("WebDAV 批次坏密文会回滚此前任务并可重试")
     func webDavBatchIsAtomicAndRetryable() async throws {
         let configuration = syncConfiguration()

@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -13,6 +14,11 @@ use crate::http::{EndpointScope, HttpRequest, HttpResponse, HttpTransport, Valid
 const ENDPOINT: &str = "https://dav.jianguoyun.com/dav/";
 const MAXIMUM_OBJECT_BYTES: usize = 64 * 1_024;
 const MAXIMUM_PROPFIND_BYTES: usize = 2 * 1_024 * 1_024;
+const RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
 
 pub struct WebDavClient<T: HttpTransport> {
     endpoint: ValidatedEndpoint,
@@ -21,10 +27,26 @@ pub struct WebDavClient<T: HttpTransport> {
     vault_id: String,
     device_id: String,
     transport: T,
+    retry_delays: Vec<Duration>,
+    retry_sleep: fn(Duration),
 }
 
 impl<T: HttpTransport> WebDavClient<T> {
     pub fn new(credentials: &SyncCredentials, transport: T) -> Result<Self, String> {
+        Self::new_with_options(
+            credentials,
+            transport,
+            RETRY_DELAYS.to_vec(),
+            std::thread::sleep,
+        )
+    }
+
+    fn new_with_options(
+        credentials: &SyncCredentials,
+        transport: T,
+        retry_delays: Vec<Duration>,
+        retry_sleep: fn(Duration),
+    ) -> Result<Self, String> {
         credentials.validate()?;
         let (username, app_password) = credentials
             .webdav_login()
@@ -36,6 +58,8 @@ impl<T: HttpTransport> WebDavClient<T> {
             vault_id: credentials.vault_id().to_owned(),
             device_id: credentials.device_id().to_owned(),
             transport,
+            retry_delays,
+            retry_sleep,
         })
     }
 
@@ -179,18 +203,31 @@ impl<T: HttpTransport> WebDavClient<T> {
                 .iter()
                 .map(|(name, value)| ((*name).to_owned(), (*value).to_owned())),
         );
-        let response = self.transport.execute(HttpRequest {
-            method,
-            url: self.endpoint.append_path(path)?,
-            headers: request_headers,
-            body,
-            maximum_response_bytes,
-        })?;
-        if !accepted_statuses.contains(&response.status) {
-            return Err(format!("坚果云 WebDAV 返回 HTTP {}", response.status));
+        let url = self.endpoint.append_path(path)?;
+        let mut retry_index = 0;
+        loop {
+            let response = self.transport.execute(HttpRequest {
+                method,
+                url: url.clone(),
+                headers: request_headers.clone(),
+                body: body.clone(),
+                maximum_response_bytes,
+            })?;
+            if accepted_statuses.contains(&response.status) {
+                return Ok(response);
+            }
+            if !is_retryable_http_status(response.status) || retry_index >= self.retry_delays.len()
+            {
+                return Err(format!("坚果云 WebDAV 返回 HTTP {}", response.status));
+            }
+            (self.retry_sleep)(self.retry_delays[retry_index]);
+            retry_index += 1;
         }
-        Ok(response)
     }
+}
+
+fn is_retryable_http_status(status: u16) -> bool {
+    matches!(status, 408 | 425 | 429 | 500 | 502 | 503 | 504)
 }
 
 pub fn canonical_operation_json(operation: &WebDavOperation) -> Result<Vec<u8>, String> {
@@ -349,6 +386,8 @@ mod tests {
         }
     }
 
+    fn no_sleep(_: Duration) {}
+
     fn key(value: char) -> String {
         std::iter::repeat_n(value, 43).collect()
     }
@@ -361,6 +400,79 @@ mod tests {
             device_id: "device-windows-1".to_owned(),
             vault_key: key('a'),
         }
+    }
+
+    #[test]
+    fn temporary_service_failures_are_retried_before_continuing() {
+        let transport = MockTransport::with([
+            HttpResponse {
+                status: 503,
+                body: Vec::new(),
+            },
+            HttpResponse {
+                status: 503,
+                body: Vec::new(),
+            },
+            HttpResponse {
+                status: 503,
+                body: Vec::new(),
+            },
+            HttpResponse {
+                status: 201,
+                body: Vec::new(),
+            },
+            HttpResponse {
+                status: 201,
+                body: Vec::new(),
+            },
+            HttpResponse {
+                status: 201,
+                body: Vec::new(),
+            },
+        ]);
+        let client = WebDavClient::new_with_options(
+            &credentials(),
+            transport,
+            vec![Duration::ZERO, Duration::ZERO, Duration::ZERO],
+            no_sleep,
+        )
+        .unwrap();
+
+        client.ensure_collections().unwrap();
+    }
+
+    #[test]
+    fn exhausted_temporary_service_failures_return_the_http_status() {
+        let transport = MockTransport::with([
+            HttpResponse {
+                status: 503,
+                body: Vec::new(),
+            },
+            HttpResponse {
+                status: 503,
+                body: Vec::new(),
+            },
+            HttpResponse {
+                status: 503,
+                body: Vec::new(),
+            },
+            HttpResponse {
+                status: 503,
+                body: Vec::new(),
+            },
+        ]);
+        let client = WebDavClient::new_with_options(
+            &credentials(),
+            transport,
+            vec![Duration::ZERO, Duration::ZERO, Duration::ZERO],
+            no_sleep,
+        )
+        .unwrap();
+
+        assert_eq!(
+            client.ensure_collections().unwrap_err(),
+            "坚果云 WebDAV 返回 HTTP 503"
+        );
     }
 
     fn operation() -> WebDavOperation {

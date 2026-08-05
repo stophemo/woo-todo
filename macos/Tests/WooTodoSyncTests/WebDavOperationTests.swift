@@ -158,7 +158,7 @@ struct WebDavOperationTests {
         let counter = WebDavRequestCounter()
         WebDavMockURLProtocol.handler = { request in
             let requestNumber = counter.next()
-            let statusCode = requestNumber <= 2 ? 503 : 201
+            let statusCode = requestNumber <= 3 ? 503 : 201
             return (
                 HTTPURLResponse(
                     url: try #require(request.url),
@@ -182,13 +182,13 @@ struct WebDavOperationTests {
                 vaultKey: Data(repeating: 0, count: AES256GCM.keyByteCount)
             ),
             session: URLSession(configuration: configuration),
-            retryDelaysNanoseconds: [0, 0],
+            retryDelaysNanoseconds: [0, 0, 0],
             retrySleep: { _ in }
         )
 
         try await client.ensureCollections()
 
-        #expect(counter.value == 5)
+        #expect(counter.value == 6)
     }
 
     @Test("WebDAV 错误文案包含真实上下文")

@@ -277,8 +277,9 @@ public final class WebDavClient: @unchecked Sendable {
     private let retrySleep: RetrySleep
 
     private static let defaultRetryDelaysNanoseconds: [UInt64] = [
-        250_000_000,
-        750_000_000,
+        1_000_000_000,
+        2_000_000_000,
+        4_000_000_000,
     ]
     private static let retryableHTTPStatuses: Set<Int> = [
         408, 425, 429, 500, 502, 503, 504,

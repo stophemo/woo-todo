@@ -104,12 +104,12 @@ class WebDavOperationTest {
     }
 
     @Test
-    fun `坚果云连续两次503后会重试并继续创建目录`() {
+    fun `坚果云连续三次503后会重试并继续创建目录`() {
         val requests = AtomicInteger()
         val httpClient = OkHttpClient.Builder()
             .addInterceptor { chain ->
                 val requestNumber = requests.incrementAndGet()
-                val statusCode = if (requestNumber <= 2) 503 else 201
+                val statusCode = if (requestNumber <= 3) 503 else 201
                 Response.Builder()
                     .request(chain.request())
                     .protocol(Protocol.HTTP_1_1)
@@ -128,12 +128,12 @@ class WebDavOperationTest {
                 vaultKey = ByteArray(Aes256Gcm.KEY_BYTES),
             ),
             httpClient = httpClient,
-            retryDelaysMillis = listOf(0L, 0L),
+            retryDelaysMillis = listOf(0L, 0L, 0L),
             retrySleep = {},
         )
 
         client.ensureCollections()
 
-        assertEquals(5, requests.get())
+        assertEquals(6, requests.get())
     }
 }

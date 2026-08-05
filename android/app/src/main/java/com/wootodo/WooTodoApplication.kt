@@ -8,6 +8,7 @@ import com.wootodo.display.DayCounterPreferences
 import com.wootodo.reminder.NotificationHelper
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.reminder.TaskReminderScheduler
+import com.wootodo.sync.AndroidSyncBackendSelection
 import com.wootodo.sync.AndroidSyncCredentialsStore
 import com.wootodo.sync.AndroidWebDavCredentialsStore
 import com.wootodo.sync.BearerCredential
@@ -15,7 +16,9 @@ import com.wootodo.sync.PairingCompletion
 import com.wootodo.sync.PairingException
 import com.wootodo.sync.SQLiteSyncStore
 import com.wootodo.sync.SyncApiClient
+import com.wootodo.sync.SyncBackend
 import com.wootodo.sync.SyncCoordinator
+import com.wootodo.sync.SyncCredentials
 import com.wootodo.sync.SyncJobScheduler
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRunner
@@ -40,6 +43,7 @@ class WooTodoApplication : Application() {
     val taskRepository: TaskRepository by lazy { TaskRepository(taskStore) }
     val syncCredentialsStore by lazy { AndroidSyncCredentialsStore(this) }
     val webDavCredentialsStore by lazy { AndroidWebDavCredentialsStore(this) }
+    val syncBackendSelection by lazy { AndroidSyncBackendSelection(this) }
     val syncRuntime: SyncRuntime by lazy {
         SyncRuntime(
             runnerFactory = { createSyncRunner() },
@@ -48,29 +52,40 @@ class WooTodoApplication : Application() {
 
     private fun createSyncRunner(): SyncRunner? {
         val webDav = webDavCredentialsStore.load()
-        if (webDav != null) {
-            ensureDisplayConfigurationStored()
-            val syncStore = SQLiteSyncStore(
-                database = database,
-                credentials = webDav.syncIdentity(),
-                onTasksChanged = { onRemoteTasksChanged() },
-                onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
-            )
-            return SyncRunner(WebDavSyncRunner(
-                client = WebDavClient(webDav),
-                outbox = syncStore,
-                local = syncStore,
-            )::synchronize)
-        }
-        return createSyncCoordinator()?.let { coordinator ->
-            SyncRunner(coordinator::synchronize)
+        val workerOrLocal = syncCredentialsStore.load()
+        return when (resolveSyncBackend(workerOrLocal, webDav)) {
+            SyncBackend.WEB_DAV -> {
+                val credentials = webDav ?: return null
+                ensureDisplayConfigurationStored()
+                val syncStore = SQLiteSyncStore(
+                    database = database,
+                    credentials = credentials.syncIdentity(),
+                    onTasksChanged = { onRemoteTasksChanged() },
+                    onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
+                )
+                SyncRunner(WebDavSyncRunner(
+                    client = WebDavClient(credentials),
+                    outbox = syncStore,
+                    local = syncStore,
+                )::synchronize)
+            }
+
+            SyncBackend.WORKER_OR_LOCAL -> workerOrLocal?.let(::createSyncCoordinator)
+                ?.let { coordinator -> SyncRunner(coordinator::synchronize) }
+
+            null -> null
         }
     }
 
     /** 调用方应在 IO 线程运行同步；尚未配对时返回 null。 */
     fun createSyncCoordinator(): SyncCoordinator? {
-        if (webDavCredentialsStore.load() != null) return null
         val credentials = syncCredentialsStore.load() ?: return null
+        val webDav = webDavCredentialsStore.load()
+        if (resolveSyncBackend(credentials, webDav) != SyncBackend.WORKER_OR_LOCAL) return null
+        return createSyncCoordinator(credentials)
+    }
+
+    private fun createSyncCoordinator(credentials: SyncCredentials): SyncCoordinator {
         ensureDisplayConfigurationStored()
         val syncStore = SQLiteSyncStore(
             database = database,
@@ -85,6 +100,22 @@ class WooTodoApplication : Application() {
             credential = BearerCredential(credentials.deviceToken),
         )
     }
+
+    fun activeSyncBackend(): SyncBackend? = resolveSyncBackend(
+        workerOrLocal = syncCredentialsStore.load(),
+        webDav = webDavCredentialsStore.load(),
+    )
+
+    fun canSwitchToSavedWorkerOrLocalSync(): Boolean =
+        activeSyncBackend() == SyncBackend.WEB_DAV && syncCredentialsStore.load() != null
+
+    private fun resolveSyncBackend(
+        workerOrLocal: SyncCredentials?,
+        webDav: WebDavCredentials?,
+    ): SyncBackend? = syncBackendSelection.resolve(
+        hasWorkerOrLocalCredentials = workerOrLocal != null,
+        hasWebDavCredentials = webDav != null,
+    )
 
     private fun onRemoteTasksChanged() {
         taskStore.invalidateFromSync()
@@ -130,17 +161,17 @@ class WooTodoApplication : Application() {
     ) = syncRuntime.withExclusiveConfiguration {
         withContext(Dispatchers.IO) {
             val previousWorker = syncCredentialsStore.load()
-            if (previousWorker != null && !replacingWorkerSync) {
+            val previous = webDavCredentialsStore.load()
+            val activeBackend = resolveSyncBackend(previousWorker, previous)
+            if (activeBackend == SyncBackend.WORKER_OR_LOCAL && !replacingWorkerSync) {
                 throw IllegalStateException("当前已配置其他同步方式，请先确认切换")
             }
-            if (replacingWorkerSync && previousWorker == null) {
+            if (replacingWorkerSync && activeBackend != SyncBackend.WORKER_OR_LOCAL) {
                 throw IllegalStateException("当前没有可替换的 Worker 或同一网络同步")
             }
-            val previous = webDavCredentialsStore.load()
             try {
                 if (replacingWorkerSync) SyncJobScheduler.cancel(this@WooTodoApplication)
                 webDavCredentialsStore.save(credentials)
-                if (replacingWorkerSync) syncCredentialsStore.delete()
                 ensureDisplayConfigurationStored()
                 if (replacingWorkerSync) {
                     SQLiteSyncStore.replaceSyncBinding(
@@ -152,6 +183,7 @@ class WooTodoApplication : Application() {
                 } else {
                     SQLiteSyncStore(database, credentials.syncIdentity())
                 }
+                syncBackendSelection.persist(SyncBackend.WEB_DAV)
             } catch (error: Exception) {
                 if (previous == null) {
                     webDavCredentialsStore.delete()
@@ -159,13 +191,38 @@ class WooTodoApplication : Application() {
                     webDavCredentialsStore.save(previous)
                 }
                 if (previousWorker != null) {
-                    syncCredentialsStore.save(previousWorker)
                     syncRuntime.refreshConfiguration(configured = true)
                     SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
                     SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
                 }
                 throw error
             }
+            syncRuntime.refreshConfiguration(configured = true)
+            SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
+            SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
+        }
+    }
+
+    suspend fun switchToSavedWorkerOrLocalSync() = syncRuntime.withExclusiveConfiguration {
+        withContext(Dispatchers.IO) {
+            val credentials = syncCredentialsStore.load()
+                ?: throw IllegalStateException("没有可切回的 Worker 或同一网络同步身份")
+            val webDav = webDavCredentialsStore.load()
+            when (resolveSyncBackend(credentials, webDav)) {
+                SyncBackend.WORKER_OR_LOCAL -> return@withContext
+                SyncBackend.WEB_DAV -> Unit
+                null -> throw IllegalStateException("当前同步方式不可用")
+            }
+            SyncApiClient(credentials.endpoint)
+            SyncJobScheduler.cancel(this@WooTodoApplication)
+            ensureDisplayConfigurationStored()
+            SQLiteSyncStore.replaceSyncBinding(
+                database = database,
+                credentials = credentials,
+                onTasksChanged = { onRemoteTasksChanged() },
+                onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
+            )
+            syncBackendSelection.persist(SyncBackend.WORKER_OR_LOCAL)
             syncRuntime.refreshConfiguration(configured = true)
             SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
             SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
@@ -188,7 +245,8 @@ class WooTodoApplication : Application() {
                     SyncApiClient(credentials.endpoint)
                     ensureDisplayConfigurationStored()
                     val previousWebDav = webDavCredentialsStore.load()
-                    if (previousWebDav == null) {
+                    val previousBackend = resolveSyncBackend(credentials, previousWebDav)
+                    if (previousBackend != SyncBackend.WEB_DAV) {
                         SQLiteSyncStore(
                             database = database,
                             credentials = credentials,
@@ -197,19 +255,14 @@ class WooTodoApplication : Application() {
                         )
                     } else {
                         SyncJobScheduler.cancel(this@WooTodoApplication)
-                        webDavCredentialsStore.delete()
-                        try {
-                            SQLiteSyncStore.replaceSyncBinding(
-                                database = database,
-                                credentials = credentials,
-                                onTasksChanged = { onRemoteTasksChanged() },
-                                onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
-                            )
-                        } catch (error: Exception) {
-                            webDavCredentialsStore.save(previousWebDav)
-                            throw error
-                        }
+                        SQLiteSyncStore.replaceSyncBinding(
+                            database = database,
+                            credentials = credentials,
+                            onTasksChanged = { onRemoteTasksChanged() },
+                            onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
+                        )
                     }
+                    syncBackendSelection.persist(SyncBackend.WORKER_OR_LOCAL)
                 }
             } catch (error: CancellationException) {
                 // 凭据已完整落盘时保留它；下次启动会继续完成数据库绑定。
@@ -217,7 +270,7 @@ class WooTodoApplication : Application() {
             } catch (error: Exception) {
                 runCatching { syncCredentialsStore.delete() }
                 val fallbackConfigured = withContext(Dispatchers.IO) {
-                    runCatching { webDavCredentialsStore.load() != null }.getOrDefault(false)
+                    runCatching { activeSyncBackend() != null }.getOrDefault(false)
                 }
                 syncRuntime.refreshConfiguration(configured = fallbackConfigured)
                 if (fallbackConfigured) {
@@ -248,7 +301,7 @@ class WooTodoApplication : Application() {
         TaskReminderScheduler.scheduleAllAsync(this)
         applicationScope.launch {
             val configured = runCatching {
-                syncCredentialsStore.load() != null || webDavCredentialsStore.load() != null
+                activeSyncBackend() != null
             }.getOrDefault(false)
             if (configured) {
                 syncRuntime.refreshConfiguration(configured = true)
@@ -264,7 +317,7 @@ class WooTodoApplication : Application() {
         ReminderScheduler.schedule(this)
         applicationScope.launch {
             val configured = runCatching {
-                syncCredentialsStore.load() != null || webDavCredentialsStore.load() != null
+                activeSyncBackend() != null
             }.getOrDefault(false)
             try {
                 taskRepository.autoPassExpired()

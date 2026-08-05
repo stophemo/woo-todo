@@ -54,6 +54,7 @@ import com.wootodo.sync.PairingDeepLink
 import com.wootodo.sync.PairingPollPolicy
 import com.wootodo.sync.ScannedConfiguration
 import com.wootodo.sync.ScannedConfigurationParser
+import com.wootodo.sync.SyncBackend
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRuntimeState
 import com.wootodo.sync.SecureBytes
@@ -461,19 +462,63 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showPairingMethodMenu(anchor: View) {
-        PopupMenu(this, anchor).apply {
-            menuInflater.inflate(R.menu.pairing_methods, menu)
-            setOnMenuItemClickListener { item ->
-                when (item.itemId) {
-                    R.id.pairing_scan_qr -> scanMacConfiguration()
-                    R.id.pairing_paste_link -> showPairingLinkInput()
-                    R.id.pairing_manual_webdav -> showWebDavSettings()
-                    else -> return@setOnMenuItemClickListener false
-                }
-                true
+        lifecycleScope.launch {
+            val canSwitchToSavedWorker = withContext(Dispatchers.IO) {
+                runCatching {
+                    (application as WooTodoApplication).canSwitchToSavedWorkerOrLocalSync()
+                }.getOrDefault(false)
             }
-            show()
+            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@launch
+            PopupMenu(this@MainActivity, anchor).apply {
+                menuInflater.inflate(R.menu.pairing_methods, menu)
+                menu.findItem(R.id.pairing_saved_worker).isVisible = canSwitchToSavedWorker
+                setOnMenuItemClickListener { item ->
+                    when (item.itemId) {
+                        R.id.pairing_saved_worker -> switchToSavedWorkerOrLocalSync()
+                        R.id.pairing_scan_qr -> scanMacConfiguration()
+                        R.id.pairing_paste_link -> showPairingLinkInput()
+                        R.id.pairing_manual_webdav -> showWebDavSettings()
+                        else -> return@setOnMenuItemClickListener false
+                    }
+                    true
+                }
+                show()
+            }
         }
+    }
+
+    private fun switchToSavedWorkerOrLocalSync() {
+        showSyncSwitchConfirmation(
+            messageRes = R.string.sync_switch_to_saved_worker_message,
+            onConfirm = {
+                lifecycleScope.launch {
+                    val app = application as WooTodoApplication
+                    val result = runCatching {
+                        app.switchToSavedWorkerOrLocalSync()
+                        when (val syncResult = app.synchronizeManually()) {
+                            is SyncExecutionResult.Succeeded ->
+                                getString(R.string.sync_switched_to_saved_worker)
+
+                            is SyncExecutionResult.Failed -> if (syncResult.retryable) {
+                                getString(R.string.sync_switched_to_saved_worker_retrying)
+                            } else {
+                                getString(R.string.sync_switched_to_saved_worker_failed)
+                            }
+
+                            SyncExecutionResult.NotConfigured ->
+                                getString(R.string.sync_switched_to_saved_worker_pending)
+                        }
+                    }
+                    Toast.makeText(
+                        this@MainActivity,
+                        result.getOrElse {
+                            it.localizedMessage ?: getString(R.string.sync_switch_saved_worker_failed)
+                        },
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            },
+        )
     }
 
     private fun showPairingLinkInput() {
@@ -525,7 +570,9 @@ class MainActivity : AppCompatActivity() {
                 runCatching { app.webDavCredentialsStore.load() }.getOrNull()
             }
             val workerSyncConfigured = withContext(Dispatchers.IO) {
-                runCatching { app.syncCredentialsStore.load() != null }.getOrDefault(false)
+                runCatching {
+                    app.activeSyncBackend() == SyncBackend.WORKER_OR_LOCAL
+                }.getOrDefault(false)
             }
             val generatedIdentity = newWebDavIdentity()
             val generatedKey = Base64Url.encode(SecureBytes.generate(32))
@@ -864,7 +911,7 @@ class MainActivity : AppCompatActivity() {
         pairingEntryJob = lifecycleScope.launch {
             val replacingWebDav = withContext(Dispatchers.IO) {
                 runCatching {
-                    (application as WooTodoApplication).webDavCredentialsStore.load() != null
+                    (application as WooTodoApplication).activeSyncBackend() == SyncBackend.WEB_DAV
                 }.getOrDefault(false)
             }
             if (!pairingEntryGeneration.isCurrent(generation)) return@launch

@@ -274,7 +274,7 @@ interface WebDavLocalApplying {
 }
 
 internal object WebDavRetryPolicy {
-    val delaysMillis = listOf(250L, 750L)
+    val delaysMillis = listOf(1_000L, 2_000L, 4_000L)
     private val retryableHttpStatuses = setOf(408, 425, 429, 500, 502, 503, 504)
 
     fun isRetryableHttpStatus(statusCode: Int): Boolean = statusCode in retryableHttpStatuses

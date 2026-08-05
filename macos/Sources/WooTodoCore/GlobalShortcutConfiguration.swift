@@ -3,8 +3,8 @@ import Foundation
 public enum GlobalShortcutCommand: String, CaseIterable, Codable, Sendable {
     case quickAdd
     case toggleTaskPanel
-    case toggleAlwaysOnTop
     case toggleClickThrough
+    case toggleAlwaysOnTop
     case toggleDesktopWidget
     case increasePanelOpacity
     case decreasePanelOpacity

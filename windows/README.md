@@ -39,13 +39,13 @@ cargo run --manifest-path windows/Cargo.toml
 
 ```powershell
 pwsh -NoProfile -File windows/scripts/package.ps1
-pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.22
+pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.23
 ```
 
 输出文件为：
 
 ```text
-windows/dist/Woo-Todo-v0.1.22-windows-x64.zip
+windows/dist/Woo-Todo-v0.1.23-windows-x64.zip
 ```
 
 正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和 Release 构建，再对最终 ZIP 执行真实 Win32 交互烟测，覆盖 AMD64 PE、启动、原生窗口、单实例、开始菜单身份、协议激活、快速新增、完成/取消完成、显示设置、同步入口、透明度与穿透独立变化、托盘退出及重启持久化。通过烟测的同一份 ZIP 会与 Android APK、macOS ZIP 一起发布；无论成功或失败，Runner 都会上传诊断日志、桌面截图、Windows Application 事件、隔离 SQLite 与设置文件。

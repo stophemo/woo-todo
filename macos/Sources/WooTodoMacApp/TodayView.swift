@@ -62,7 +62,7 @@ struct TodayView: View {
                     on: dayCounterStore.renderDate
                 ) {
                     Text(title)
-                        .font(.title2.weight(.semibold))
+                        .font(.system(size: 27, weight: .bold))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -79,45 +79,43 @@ struct TodayView: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text(dayCounterStore.renderDate, format: .dateTime.month().day())
-                    .font(.callout.weight(.semibold))
+                    .font(.system(size: 12))
                 Text(dayCounterStore.renderDate, format: .dateTime.weekday(.wide))
-                    .font(.caption2)
-                    .foregroundStyle(WooTodoTheme.mutedOnDark)
+                    .font(.system(size: 12))
             }
+            .foregroundStyle(WooTodoTheme.mutedOnDark)
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 11)
+        .padding(.horizontal, 24)
+        .padding(.top, 23)
+        .padding(.bottom, 14)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(WooTodoTheme.lineOnDark)
+                .frame(height: 1)
+        }
     }
 
     private var progress: some View {
         let completed = store.tasks.filter { $0.status == .completed }.count
         let total = store.tasks.count
-        let fraction = total == 0 ? 0 : CGFloat(completed) / CGFloat(total)
-        return VStack(spacing: 8) {
+        return VStack(spacing: 0) {
             HStack {
                 Text("今日进度")
                 Spacer()
                 Text("\(completed) / \(total)")
                     .foregroundStyle(.white)
-                    .fontWeight(.semibold)
+                    .font(.system(size: 13, weight: .semibold))
             }
-            .font(.caption)
+            .font(.system(size: 12))
             .foregroundStyle(WooTodoTheme.mutedOnDark)
+            .padding(.bottom, 10)
 
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Rectangle()
-                        .fill(WooTodoTheme.lineOnDark)
-                    Rectangle()
-                        .fill(WooTodoTheme.green)
-                        .frame(width: proxy.size.width * fraction)
-                }
-            }
-            .frame(height: 2)
+            Rectangle()
+                .fill(WooTodoTheme.green)
+                .frame(height: 2)
         }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
     }
 
     private var taskList: some View {
@@ -134,11 +132,13 @@ struct TodayView: View {
                                 .frame(width: 7, height: 7)
                             Text(tier.displayName)
                         }
-                        .font(.caption2.weight(.semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(WooTodoTheme.mutedOnDark)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 7)
+                        .frame(height: 18)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 9)
+                        .padding(.bottom, 2)
                         .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -176,7 +176,10 @@ struct TodayView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListHeaderHeight, 0)
+        .contentMargins(.horizontal, 0, for: .scrollContent)
+        .padding(.top, 7)
+        .environment(\.defaultMinListRowHeight, 1)
+        .environment(\.defaultMinListHeaderHeight, 1)
     }
 
     private var emptyState: some View {
@@ -209,12 +212,10 @@ private struct TaskRow: View {
     let delete: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Button(action: toggle) {
-                Image(systemName: statusImage)
-                    .foregroundStyle(statusColor)
-                    .font(.system(size: 16, weight: .medium))
-                    .frame(width: 24, height: 24)
+                statusIndicator
+                    .frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
             .disabled(task.status == .pass)
@@ -222,31 +223,34 @@ private struct TaskRow: View {
 
             Text(task.title)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 13))
+                .lineLimit(1)
+                .truncationMode(.tail)
                 .strikethrough(task.status == .completed)
                 .foregroundStyle(
-                    task.status == .completed ? WooTodoTheme.mutedOnDark : Color.white
+                    task.status == .pending
+                        ? WooTodoTheme.taskOnDark
+                        : WooTodoTheme.settledOnDark
                 )
             if case .repeating = task.recurrence {
-                Image(systemName: "repeat")
-                    .font(.caption)
-                    .foregroundStyle(WooTodoTheme.mutedOnDark)
+                Text("每日")
+                    .font(.system(size: 10))
+                    .foregroundStyle(WooTodoTheme.metadataOnDark)
                     .help("每日重复")
             }
             if task.reminderTime != nil {
                 Image(systemName: "bell")
-                    .font(.caption)
-                    .foregroundStyle(WooTodoTheme.mutedOnDark)
+                    .font(.system(size: 11))
+                    .foregroundStyle(WooTodoTheme.metadataOnDark)
                     .help("已设置提醒")
             }
             if let deadline = task.deadlineDate {
                 Image(systemName: "calendar.badge.exclamationmark")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(
                         deadline < Calendar.current.startOfDay(for: Date())
                             ? WooTodoTheme.orange
-                            : WooTodoTheme.mutedOnDark
+                            : WooTodoTheme.metadataOnDark
                     )
                     .help("截止日期：\(deadline.formatted(.dateTime.year().month().day()))")
             }
@@ -262,24 +266,35 @@ private struct TaskRow: View {
                 Button("删除", role: .destructive, action: delete)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 6)
+        .frame(minHeight: 39)
+        .padding(.horizontal, 16)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(WooTodoTheme.lineOnDark)
+                .fill(WooTodoTheme.taskLineOnDark)
                 .frame(height: 1)
+                .padding(.horizontal, 16)
         }
     }
 
-    private var statusImage: String {
-        switch task.status {
-        case .pending: "square"
-        case .completed: "checkmark.square.fill"
-        case .pass: "xmark.square.fill"
+    private var statusIndicator: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(task.status == .pending ? Color.clear : statusColor)
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(
+                    task.status == .pending ? WooTodoTheme.controlBorderOnDark : statusColor,
+                    lineWidth: 1
+                )
+            if task.status != .pending {
+                Image(systemName: task.status == .completed ? "checkmark" : "xmark")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(WooTodoTheme.ink)
+            }
         }
+        .frame(width: 17, height: 17)
     }
 
     private var statusColor: Color {

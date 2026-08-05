@@ -60,4 +60,28 @@ struct FloatingPanelOpacityTests {
         #expect(resized.origin == NSPoint(x: 40, y: 50))
         #expect(resized.size == NSSize(width: 300, height: 360))
     }
+
+    @Test func legacyDefaultPanelSizeIsRecognizedWithoutMatchingCustomSizes() {
+        #expect(PanelFramePolicy.usesLegacyDefaultSize(NSSize(width: 360, height: 520)))
+        #expect(!PanelFramePolicy.usesLegacyDefaultSize(NSSize(width: 420, height: 520)))
+        #expect(!PanelFramePolicy.usesLegacyDefaultSize(NSSize(width: 360, height: 480)))
+    }
+
+    @Test func panelFrameMigrationPreservesTopRightPositionWithinVisibleScreen() {
+        let migrated = PanelFramePolicy.migratedFrame(
+            from: NSRect(x: 1012, y: 383, width: 360, height: 520),
+            visibleFrame: NSRect(x: 0, y: 0, width: 1470, height: 923)
+        )
+
+        #expect(migrated == NSRect(x: 762, y: 463, width: 610, height: 440))
+    }
+
+    @Test func panelFrameMigrationClampsExpandedPanelToVisibleScreen() {
+        let migrated = PanelFramePolicy.migratedFrame(
+            from: NSRect(x: 10, y: 20, width: 360, height: 520),
+            visibleFrame: NSRect(x: 0, y: 0, width: 800, height: 600)
+        )
+
+        #expect(migrated == NSRect(x: 0, y: 100, width: 610, height: 440))
+    }
 }

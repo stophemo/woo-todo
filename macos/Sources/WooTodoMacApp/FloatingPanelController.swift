@@ -34,6 +34,35 @@ enum PanelPresentationPolicy {
     }
 }
 
+enum PanelFramePolicy {
+    static let autosaveName = "WooTodoFloatingPanel"
+    static let currentLayoutVersion = 2
+    static let defaultSize = NSSize(width: 610, height: 440)
+    static let legacyDefaultSize = NSSize(width: 360, height: 520)
+
+    static func usesLegacyDefaultSize(_ size: NSSize) -> Bool {
+        abs(size.width - legacyDefaultSize.width) < 0.5
+            && abs(size.height - legacyDefaultSize.height) < 0.5
+    }
+
+    static func migratedFrame(from frame: NSRect, visibleFrame: NSRect) -> NSRect {
+        let size = NSSize(
+            width: min(defaultSize.width, visibleFrame.width),
+            height: min(defaultSize.height, visibleFrame.height)
+        )
+        let proposedOrigin = NSPoint(
+            x: frame.maxX - size.width,
+            y: frame.maxY - size.height
+        )
+        return NSRect(
+            x: min(max(proposedOrigin.x, visibleFrame.minX), visibleFrame.maxX - size.width),
+            y: min(max(proposedOrigin.y, visibleFrame.minY), visibleFrame.maxY - size.height),
+            width: size.width,
+            height: size.height
+        )
+    }
+}
+
 enum PanelResizePolicy {
     static func resizedFrame(
         initialFrame: NSRect,
@@ -57,12 +86,14 @@ final class FloatingPanelController: NSWindowController {
         static let alwaysOnTop = "panel.alwaysOnTop"
         static let desktopWidget = "panel.desktopWidget"
         static let opacity = "panel.opacity"
+        static let frameLayoutVersion = "panel.frameLayoutVersion"
     }
 
     private let defaults: UserDefaults
     private let contentContainer = NSView()
     private let solidBackgroundView = AppearanceAwareBackgroundView()
     private let effectView = NSVisualEffectView()
+    private let blurTintView = NSView()
     private let resizeHandle = WidgetResizeHandleView()
     var onStateChange: (() -> Void)?
 
@@ -95,7 +126,7 @@ final class FloatingPanelController: NSWindowController {
         )
 
         let panel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 520)
+            contentRect: NSRect(origin: .zero, size: PanelFramePolicy.defaultSize)
         )
         super.init(window: panel)
 
@@ -111,8 +142,14 @@ final class FloatingPanelController: NSWindowController {
 
     func show() {
         guard let window else { return }
-        if !window.setFrameUsingName("WooTodoFloatingPanel") {
+        if window.setFrameUsingName(PanelFramePolicy.autosaveName) {
+            migratePanelFrameIfNeeded(window)
+        } else {
             positionForFirstPresentation(window)
+            defaults.set(
+                PanelFramePolicy.currentLayoutVersion,
+                forKey: PreferenceKey.frameLayoutVersion
+            )
         }
         window.orderFrontRegardless()
         onStateChange?()
@@ -211,7 +248,7 @@ final class FloatingPanelController: NSWindowController {
         panel.isReleasedWhenClosed = false
         panel.isExcludedFromWindowsMenu = true
         panel.animationBehavior = .utilityWindow
-        panel.setFrameAutosaveName("WooTodoFloatingPanel")
+        panel.setFrameAutosaveName(PanelFramePolicy.autosaveName)
         panel.minSize = NSSize(width: 300, height: 360)
     }
 
@@ -219,6 +256,8 @@ final class FloatingPanelController: NSWindowController {
         guard let panel = window else { return }
         contentContainer.wantsLayer = true
         contentContainer.layer?.cornerRadius = 8
+        contentContainer.layer?.borderWidth = 1
+        contentContainer.layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
         contentContainer.layer?.masksToBounds = true
         resizeHandle.panel = panel
         resizeHandle.translatesAutoresizingMaskIntoConstraints = false
@@ -229,6 +268,14 @@ final class FloatingPanelController: NSWindowController {
         effectView.state = .active
         effectView.appearance = NSAppearance(named: .darkAqua)
         effectView.translatesAutoresizingMaskIntoConstraints = false
+        blurTintView.wantsLayer = true
+        blurTintView.layer?.backgroundColor = NSColor(
+            srgbRed: 35 / 255,
+            green: 38 / 255,
+            blue: 36 / 255,
+            alpha: 0.82
+        ).cgColor
+        blurTintView.translatesAutoresizingMaskIntoConstraints = false
 
         let hostingView = NSHostingView(
             rootView: TodayView(store: store, dayCounterStore: dayCounterStore)
@@ -236,6 +283,7 @@ final class FloatingPanelController: NSWindowController {
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.addSubview(solidBackgroundView)
         contentContainer.addSubview(effectView)
+        contentContainer.addSubview(blurTintView)
         contentContainer.addSubview(hostingView)
         contentContainer.addSubview(resizeHandle)
         NSLayoutConstraint.activate([
@@ -247,6 +295,10 @@ final class FloatingPanelController: NSWindowController {
             effectView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             effectView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             effectView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+            blurTintView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            blurTintView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            blurTintView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            blurTintView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
             hostingView.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             hostingView.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             hostingView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
@@ -281,6 +333,7 @@ final class FloatingPanelController: NSWindowController {
         panel.alphaValue = panelOpacity
         panel.backgroundColor = .clear
         effectView.isHidden = !isBlurEnabled
+        blurTintView.isHidden = !isBlurEnabled
         solidBackgroundView.isHidden = isBlurEnabled
         resizeHandle.isHidden = !isDesktopWidget
         solidBackgroundView.refreshColor()
@@ -296,6 +349,28 @@ final class FloatingPanelController: NSWindowController {
             x: visibleFrame.minX + 24,
             y: visibleFrame.maxY - panel.frame.height - 24
         ))
+    }
+
+    private func migratePanelFrameIfNeeded(_ panel: NSWindow) {
+        guard defaults.integer(forKey: PreferenceKey.frameLayoutVersion)
+                < PanelFramePolicy.currentLayoutVersion else {
+            return
+        }
+        defer {
+            defaults.set(
+                PanelFramePolicy.currentLayoutVersion,
+                forKey: PreferenceKey.frameLayoutVersion
+            )
+        }
+        guard PanelFramePolicy.usesLegacyDefaultSize(panel.frame.size),
+              let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
+            return
+        }
+        panel.setFrame(
+            PanelFramePolicy.migratedFrame(from: panel.frame, visibleFrame: visibleFrame),
+            display: true
+        )
+        panel.saveFrame(usingName: PanelFramePolicy.autosaveName)
     }
 }
 
@@ -381,7 +456,7 @@ private final class WidgetResizeHandleView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        panel?.saveFrame(usingName: "WooTodoFloatingPanel")
+        panel?.saveFrame(usingName: PanelFramePolicy.autosaveName)
         initialFrame = nil
         initialMouseLocation = nil
     }

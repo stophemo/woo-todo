@@ -836,7 +836,7 @@ function Assert-SyncModeSurface {
         "worker" {
             @{
                 Index = 0
-                Label = "Worker 在线同步"
+                Label = "自建在线服务"
                 Setup = "创建空间"
                 Visible = @(151, 152, 155, 156, 157, 158, 162, 163, 164)
                 Hidden = @(153, 154)

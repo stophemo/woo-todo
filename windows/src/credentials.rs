@@ -5,9 +5,15 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::http::{EndpointScope, ValidatedEndpoint};
+
 #[cfg(windows)]
 const DEFAULT_TARGET: &str = "WooTodo/Sync/v1";
 const MAXIMUM_CREDENTIAL_BYTES: usize = 2_560;
+
+fn legacy_webdav_endpoint() -> String {
+    "https://dav.jianguoyun.com/dav/".to_owned()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SyncMode {
@@ -34,6 +40,8 @@ pub enum SyncCredentials {
         vault_key: String,
     },
     WebDav {
+        #[serde(default = "legacy_webdav_endpoint")]
+        endpoint: String,
         username: String,
         app_password: String,
         vault_id: String,
@@ -46,7 +54,9 @@ impl fmt::Debug for SyncCredentials {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut output = formatter.debug_struct("SyncCredentials");
         output.field("mode", &self.mode());
-        if let Some(endpoint) = self.endpoint() {
+        if !matches!(self, Self::WebDav { .. })
+            && let Some(endpoint) = self.endpoint()
+        {
             output.field("endpoint", &endpoint);
         }
         if matches!(self, Self::WebDav { .. }) {
@@ -95,8 +105,9 @@ impl SyncCredentials {
 
     pub fn endpoint(&self) -> Option<&str> {
         match self {
-            Self::Worker { endpoint, .. } | Self::LocalNetwork { endpoint, .. } => Some(endpoint),
-            Self::WebDav { .. } => None,
+            Self::Worker { endpoint, .. }
+            | Self::LocalNetwork { endpoint, .. }
+            | Self::WebDav { endpoint, .. } => Some(endpoint),
         }
     }
 
@@ -155,6 +166,7 @@ impl SyncCredentials {
             }
             (
                 Self::WebDav {
+                    endpoint,
                     username,
                     app_password,
                     vault_id,
@@ -162,6 +174,7 @@ impl SyncCredentials {
                     ..
                 },
                 Some(Self::WebDav {
+                    endpoint: saved_endpoint,
                     username: saved_username,
                     app_password: saved_app_password,
                     vault_id: saved_vault_id,
@@ -169,7 +182,10 @@ impl SyncCredentials {
                     ..
                 }),
             ) => {
-                if app_password.is_empty() && username == saved_username {
+                if app_password.is_empty()
+                    && endpoint == saved_endpoint
+                    && username == saved_username
+                {
                     app_password.clone_from(saved_app_password);
                 }
                 if vault_key.is_empty() && vault_id == saved_vault_id {
@@ -210,7 +226,21 @@ impl SyncCredentials {
                 device_token: device_token.clone(),
                 vault_key: vault_key.clone(),
             },
-            Self::WebDav { .. } => return Err("坚果云凭据没有可修改的同步端点".to_owned()),
+            Self::WebDav {
+                username,
+                app_password,
+                vault_id,
+                device_id,
+                vault_key,
+                ..
+            } => Self::WebDav {
+                endpoint,
+                username: username.clone(),
+                app_password: app_password.clone(),
+                vault_id: vault_id.clone(),
+                device_id: device_id.clone(),
+                vault_key: vault_key.clone(),
+            },
         };
         updated.validate()?;
         Ok(updated)
@@ -229,6 +259,7 @@ impl SyncCredentials {
 
     pub fn webdav_setup_link(&self) -> Result<String, String> {
         let Self::WebDav {
+            endpoint,
             username,
             app_password,
             vault_id,
@@ -236,13 +267,14 @@ impl SyncCredentials {
             ..
         } = self
         else {
-            return Err("只有坚果云同步身份可以生成配置二维码".to_owned());
+            return Err("只有 WebDAV 同步身份可以生成配置二维码".to_owned());
         };
         self.validate()?;
         let mut link =
-            Url::parse("wootodo://webdav").map_err(|_| "无法构造坚果云配置链接".to_owned())?;
+            Url::parse("wootodo://webdav").map_err(|_| "无法构造 WebDAV 配置链接".to_owned())?;
         link.query_pairs_mut()
-            .append_pair("v", "1")
+            .append_pair("v", "2")
+            .append_pair("endpoint", endpoint)
             .append_pair("username", username)
             .append_pair("appPassword", app_password)
             .append_pair("vaultId", vault_id)
@@ -277,11 +309,13 @@ impl SyncCredentials {
                 }
             }
             Self::WebDav {
+                endpoint,
                 username,
                 app_password,
                 ..
             } => {
-                if username.is_empty()
+                if !valid_webdav_endpoint(endpoint)
+                    || username.is_empty()
                     || username.chars().count() > 320
                     || username
                         .chars()
@@ -290,7 +324,7 @@ impl SyncCredentials {
                     || app_password.chars().count() > 256
                     || app_password.chars().any(char::is_control)
                 {
-                    return Err("坚果云同步凭据无效".to_owned());
+                    return Err("第三方 WebDAV 同步凭据无效".to_owned());
                 }
             }
         }
@@ -569,6 +603,10 @@ fn valid_endpoint_text(value: &str, require_https: bool) -> bool {
         && !value.contains([' ', '\\', '@', '#', '?'])
 }
 
+fn valid_webdav_endpoint(value: &str) -> bool {
+    ValidatedEndpoint::parse(value, EndpointScope::WebDav).is_ok()
+}
+
 #[cfg(windows)]
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -586,6 +624,10 @@ mod tests {
 
     fn key(value: char) -> String {
         std::iter::repeat_n(value, 43).collect()
+    }
+
+    fn webdav_endpoint() -> String {
+        "https://dav.example.com/remote.php/dav/files/person/woo-todo/".to_owned()
     }
 
     fn worker() -> SyncCredentials {
@@ -620,6 +662,7 @@ mod tests {
             vault_key: key('d'),
         };
         let webdav = SyncCredentials::WebDav {
+            endpoint: webdav_endpoint(),
             username: "windows@example.com".to_owned(),
             app_password: "application-password".to_owned(),
             vault_id: "vault-webdav".to_owned(),
@@ -668,6 +711,7 @@ mod tests {
         assert!(invalid.validate().is_err());
 
         let invalid_webdav = SyncCredentials::WebDav {
+            endpoint: webdav_endpoint(),
             username: "user name".to_owned(),
             app_password: "secret".to_owned(),
             vault_id: "vault-windows".to_owned(),
@@ -694,6 +738,7 @@ mod tests {
         assert_eq!(resolved.vault_key(), saved_worker.vault_key());
 
         let webdav_draft = SyncCredentials::WebDav {
+            endpoint: webdav_endpoint(),
             username: "windows@example.com".to_owned(),
             app_password: String::new(),
             vault_id: "vault-windows".to_owned(),
@@ -736,6 +781,7 @@ mod tests {
     #[test]
     fn entered_secrets_override_saved_values_and_webdav_blanks_reuse_them() {
         let saved_webdav = SyncCredentials::WebDav {
+            endpoint: webdav_endpoint(),
             username: "windows@example.com".to_owned(),
             app_password: "saved application password".to_owned(),
             vault_id: "vault-windows".to_owned(),
@@ -743,6 +789,7 @@ mod tests {
             vault_key: key('b'),
         };
         let reused = SyncCredentials::WebDav {
+            endpoint: webdav_endpoint(),
             username: "windows@example.com".to_owned(),
             app_password: String::new(),
             vault_id: "vault-windows".to_owned(),
@@ -758,6 +805,7 @@ mod tests {
         assert_eq!(reused.vault_key(), saved_webdav.vault_key());
 
         let changed_username = SyncCredentials::WebDav {
+            endpoint: webdav_endpoint(),
             username: "updated@example.com".to_owned(),
             app_password: String::new(),
             vault_id: "vault-windows".to_owned(),
@@ -766,6 +814,20 @@ mod tests {
         };
         assert!(
             changed_username
+                .reuse_empty_secrets(Some(&saved_webdav))
+                .is_err()
+        );
+
+        let changed_endpoint = SyncCredentials::WebDav {
+            endpoint: "https://other.example.com/woo-todo/".to_owned(),
+            username: "windows@example.com".to_owned(),
+            app_password: String::new(),
+            vault_id: "vault-windows".to_owned(),
+            device_id: "device-windows-1".to_owned(),
+            vault_key: String::new(),
+        };
+        assert!(
+            changed_endpoint
                 .reuse_empty_secrets(Some(&saved_webdav))
                 .is_err()
         );
@@ -789,6 +851,7 @@ mod tests {
     fn webdav_setup_link_matches_android_contract_and_debug_is_redacted() {
         let vault_key = key('z');
         let credentials = SyncCredentials::WebDav {
+            endpoint: webdav_endpoint(),
             username: "user+windows@example.com".to_owned(),
             app_password: "application password / private".to_owned(),
             vault_id: "vault-windows".to_owned(),
@@ -802,8 +865,12 @@ mod tests {
             .query_pairs()
             .into_owned()
             .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(parameters.len(), 5);
-        assert_eq!(parameters.get("v").map(String::as_str), Some("1"));
+        assert_eq!(parameters.len(), 6);
+        assert_eq!(parameters.get("v").map(String::as_str), Some("2"));
+        assert_eq!(
+            parameters.get("endpoint").map(String::as_str),
+            Some(webdav_endpoint().as_str())
+        );
         assert_eq!(
             parameters.get("username").map(String::as_str),
             Some("user+windows@example.com")
@@ -824,6 +891,7 @@ mod tests {
 
         let debug = format!("{credentials:?}");
         for secret in [
+            webdav_endpoint().as_str(),
             "user+windows@example.com",
             "application password / private",
             "vault-windows",
@@ -832,5 +900,24 @@ mod tests {
         ] {
             assert!(!debug.contains(secret));
         }
+    }
+
+    #[test]
+    fn legacy_webdav_credentials_gain_the_previous_endpoint_during_decode() {
+        let source = format!(
+            "{{\"mode\":\"webDav\",\"username\":\"legacy@example.com\",\"app_password\":\"password\",\"vault_id\":\"legacy-vault\",\"device_id\":\"legacy-device-1\",\"vault_key\":\"{}\"}}",
+            key('a')
+        );
+        let credentials = SyncCredentials::decode(source.as_bytes()).unwrap();
+
+        assert_eq!(
+            credentials.endpoint(),
+            Some("https://dav.jianguoyun.com/dav/")
+        );
+        assert!(
+            String::from_utf8(credentials.encode().unwrap())
+                .unwrap()
+                .contains("\"endpoint\"")
+        );
     }
 }

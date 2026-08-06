@@ -859,7 +859,7 @@ struct SQLiteSyncIntegrationTests {
             syncConfiguration: configuration
         )
         let task = try makeTask(
-            title: "坚果云只应用一次",
+            title: "WebDAV 只应用一次",
             createdAt: date("2026-07-15T08:00:00+08:00")
         )
         let pulled = try remoteTaskOperation(
@@ -887,7 +887,7 @@ struct SQLiteSyncIntegrationTests {
         )
         try await repository.applyWebDavOperations([corrupted])
 
-        #expect(try repository.fetchAll().first?.title == "坚果云只应用一次")
+        #expect(try repository.fetchAll().first?.title == "WebDAV 只应用一次")
         #expect(try await repository.currentCursor() == 0)
         #expect(try await repository.pendingOperations(limit: 50).isEmpty)
     }

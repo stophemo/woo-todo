@@ -4,6 +4,7 @@ import WooTodoStorage
 import WooTodoSync
 
 struct WebDavConnectionSummary: Equatable {
+    let endpoint: URL
     let username: String
     let vaultId: String
     let deviceId: String
@@ -11,6 +12,7 @@ struct WebDavConnectionSummary: Equatable {
 
 @MainActor
 final class WebDavSettingsStore: ObservableObject {
+    @Published var endpointText = ""
     @Published var username = ""
     @Published var appPassword = ""
     @Published var vaultId = ""
@@ -30,6 +32,7 @@ final class WebDavSettingsStore: ObservableObject {
     var setupLinkURL: URL? {
         guard let credentials else { return nil }
         return try? WebDavSetupLink(
+            endpoint: credentials.endpoint,
             username: credentials.username,
             appPassword: credentials.appPassword,
             vaultId: credentials.vaultId,
@@ -39,7 +42,7 @@ final class WebDavSettingsStore: ObservableObject {
 
     private let logger = Logger(
         subsystem: "io.github.stophemo.woo-todo",
-        category: "坚果云同步"
+        category: "WebDAV 同步"
     )
     private let repository: SQLiteTaskRepository
     private let credentialsStore: any WebDavCredentialsStoring
@@ -96,7 +99,7 @@ final class WebDavSettingsStore: ObservableObject {
             }
         } catch {
             makeFreshDraft()
-            actionErrorMessage = "坚果云同步身份暂时不可用：\(error.localizedDescription)"
+            actionErrorMessage = "WebDAV 同步身份暂时不可用：\(error.localizedDescription)"
         }
     }
 
@@ -135,7 +138,13 @@ final class WebDavSettingsStore: ObservableObject {
             let key = try Base64URL.decode(
                 vaultKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
             )
+            guard let endpoint = URL(
+                string: endpointText.trimmingCharacters(in: .whitespacesAndNewlines)
+            ) else {
+                throw WebDavError.invalidEndpoint
+            }
             let newCredentials = WebDavCredentials(
+                endpoint: endpoint,
                 username: username.trimmingCharacters(in: .whitespacesAndNewlines),
                 appPassword: appPassword,
                 vaultId: vaultId.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -217,10 +226,12 @@ final class WebDavSettingsStore: ObservableObject {
         self.credentials = credentials
         self.runner = WebDavSyncRunner(client: client, outbox: repository, local: repository)
         self.connection = WebDavConnectionSummary(
+            endpoint: credentials.endpoint,
             username: credentials.username,
             vaultId: credentials.vaultId,
             deviceId: credentials.deviceId
         )
+        endpointText = credentials.endpoint.absoluteString
         username = credentials.username
         appPassword = credentials.appPassword
         vaultId = credentials.vaultId
@@ -250,7 +261,7 @@ final class WebDavSettingsStore: ObservableObject {
         } catch {
             appPassword = ""
             makeFreshDraft()
-            actionErrorMessage = "无法读取已保存的坚果云配置：\(error.localizedDescription)"
+            actionErrorMessage = "无法读取已保存的 WebDAV 配置：\(error.localizedDescription)"
         }
     }
 
@@ -263,7 +274,7 @@ final class WebDavSettingsStore: ObservableObject {
             }
             start()
         } catch {
-            actionErrorMessage = "坚果云同步身份暂时不可用：\(error.localizedDescription)"
+            actionErrorMessage = "WebDAV 同步身份暂时不可用：\(error.localizedDescription)"
         }
     }
 
@@ -271,7 +282,7 @@ final class WebDavSettingsStore: ObservableObject {
         var trigger: SyncTrigger? = initialTrigger
         while trigger != nil, !Task.isCancelled {
             guard let runner else {
-                trigger = runtimeMachine.fail(message: "坚果云同步尚未配置")
+                trigger = runtimeMachine.fail(message: "WebDAV 同步尚未配置")
                 publishRuntimeState()
                 continue
             }
@@ -287,13 +298,13 @@ final class WebDavSettingsStore: ObservableObject {
                 publishRuntimeState()
                 if summary.pulled > 0 { onRemoteChanges?() }
             } catch is CancellationError {
-                trigger = runtimeMachine.fail(message: "坚果云同步已取消")
+                trigger = runtimeMachine.fail(message: "WebDAV 同步已取消")
                 publishRuntimeState()
                 break
             } catch {
                 trigger = runtimeMachine.fail(message: error.localizedDescription)
                 publishRuntimeState()
-                logger.notice("坚果云后台同步暂时失败：\(error.localizedDescription, privacy: .public)")
+                logger.notice("WebDAV 后台同步暂时失败：\(error.localizedDescription, privacy: .public)")
             }
         }
         syncTask = nil
@@ -302,11 +313,13 @@ final class WebDavSettingsStore: ObservableObject {
     private func makeFreshDraft() {
         let randomVault = (try? SecureRandom.bytes(count: 9)).map(Base64URL.encode) ?? UUID().uuidString
         let randomKey = (try? SecureRandom.bytes(count: AES256GCM.keyByteCount)).map(Base64URL.encode) ?? ""
+        endpointText = ""
         vaultId = "vault-\(randomVault)"
         vaultKeyText = randomKey
     }
 
     private func applyDraft(_ credentials: WebDavCredentials) {
+        endpointText = credentials.endpoint.absoluteString
         username = credentials.username
         appPassword = credentials.appPassword
         vaultId = credentials.vaultId

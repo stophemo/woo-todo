@@ -15,7 +15,7 @@ GitHub Release 提供 x64 免安装 ZIP，解压后直接运行根目录的 `Woo
 
 - SQLite：`%LOCALAPPDATA%\Woo Todo\woo-todo.sqlite3`
 - 设置：`%LOCALAPPDATA%\Woo Todo\settings.json`
-- Worker、局域网与坚果云同步凭据：Windows Credential Manager
+- Worker、局域网与第三方 WebDAV 同步凭据：Windows Credential Manager
 - 局域网主机状态：`%LOCALAPPDATA%\Woo Todo\local-sync\<vaultId>.json`
 
 `settings.json` 只保存窗口、显示、快捷键和本机是否承载局域网服务等非敏感设置，不写入设备令牌、应用密码或同步密钥。
@@ -54,7 +54,7 @@ windows/dist/Woo-Todo-v0.1.24-windows-x64.zip
 
 Windows 提供本地 SQLite 任务、日/周/月/闲时、重复与 Pass、截止日期、历史统计、任务级系统提醒、悬浮任务板、托盘和可自定义全局快捷键。一次性任务跨周期保留到完成或手动 Pass；当前重复周期和一次性任务误点完成后，可取消复选框或使用“取消完成”恢复为待办，已结束的重复实例历史与 Pass 不可改写。
 
-“同步”支持三种互斥方式：自建 Worker、由本机承载的同一网络同步、坚果云 WebDAV。可以从当前方式直接切换，切换前先验证新端点或 WebDAV 目录；本地任务和显示配置会保留并在新空间建立基线。Worker 与同一网络方式支持 10 分钟配对二维码、六位码核对、设备列表和撤销；坚果云保存后可生成或复制供 Android 扫描的完整配置二维码。配置二维码含坚果云应用密码和 `vault key`，离开“同步”或关闭窗口会从界面和内存清除。
+“同步”支持三种互斥方式：自建 Worker、由本机承载的同一网络同步、第三方 WebDAV。可以从当前方式直接切换，切换前先验证新端点或 WebDAV 目录；本地任务和显示配置会保留并在新空间建立基线。Worker 与同一网络方式支持 10 分钟配对二维码、六位码核对、设备列表和撤销；WebDAV 保存后可生成或复制供 Android 扫描的完整配置二维码。配置二维码含服务地址、认证凭据和 `vault key`，离开“同步”或关闭窗口会从界面和内存清除。
 
 同一网络模式固定监听 TCP `48473`，需要允许 Windows Defender 防火墙中的专用网络访问；休眠唤醒或本机 IP 变化后会刷新地址并恢复服务。局域网服务只适合可信网络，不提供公网 TLS。
 
@@ -68,9 +68,9 @@ Windows 提供本地 SQLite 任务、日/周/月/闲时、重复与 Pass、截�
 - `windows/src/native`：Win32 窗口、任务板、原生控件、托盘、全局快捷键、单实例和协议激活。
 - `windows/src/notifications.rs`：WinRT Toast 调度队列对齐。
 - `windows/src/settings.rs`：兼容旧版 `settings.json` 的本机设置持久化。
-- `windows/src/credentials.rs`：Worker、局域网与坚果云凭据校验及 Windows Credential Manager 持久化。
+- `windows/src/credentials.rs`：Worker、局域网与第三方 WebDAV 凭据校验及 Windows Credential Manager 持久化。
 - `windows/src/sync_runtime.rs`：后台同步调度、方式切换和共享 SQLite 同步核心接入。
-- `windows/src/worker.rs`、`windows/src/webdav.rs`：Worker/局域网 REST 与坚果云 WebDAV 客户端。
+- `windows/src/worker.rs`、`windows/src/webdav.rs`：Worker/局域网 REST 与通用 WebDAV 客户端。
 - `windows/src/local_server.rs`：同一网络主机、设备授权、配对与增量同步 HTTP 服务。
 - `windows/src/integration.rs`：免安装程序的当前用户通知身份与 `wootodo://` 协议注册。
 - `windows/src/update.rs`：Release 解析、WinHTTP 下载、SHA-256 校验和免安装自替换 helper。

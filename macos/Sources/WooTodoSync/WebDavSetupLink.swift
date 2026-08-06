@@ -5,6 +5,7 @@ public enum WebDavSetupLinkError: Error, Equatable, LocalizedError, Sendable {
     case invalidVersion
     case missingField(String)
     case duplicateOrUnknownField
+    case invalidEndpoint
     case invalidUsername
     case invalidAppPassword
     case invalidVaultId
@@ -14,43 +15,50 @@ public enum WebDavSetupLinkError: Error, Equatable, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .invalidScheme:
-            "不是 woo-todo 坚果云配置深链"
+            "不是 Woo Todo WebDAV 配置深链"
         case .invalidVersion:
-            "坚果云配置深链版本不受支持"
+            "WebDAV 配置深链版本不受支持"
         case .missingField(let field):
-            "坚果云配置深链缺少字段：\(field)"
+            "WebDAV 配置深链缺少字段：\(field)"
         case .duplicateOrUnknownField:
-            "坚果云配置深链包含重复或未知字段"
+            "WebDAV 配置深链包含重复或未知字段"
+        case .invalidEndpoint:
+            "WebDAV 服务地址必须是安全的 HTTPS 地址"
         case .invalidUsername:
-            "坚果云账号邮箱格式无效"
+            "WebDAV 账号格式无效"
         case .invalidAppPassword:
-            "坚果云应用密码格式无效"
+            "WebDAV 应用密码或访问令牌格式无效"
         case .invalidVaultId:
             "同步空间名格式无效"
         case .invalidVaultKey:
             "同步密钥必须为 32 字节 Base64URL"
         case .cannotEncode:
-            "无法构造坚果云配置深链"
+            "无法构造 WebDAV 配置深链"
         }
     }
 }
 
-/// 携带加入坚果云同步所需的完整凭据；设备 ID 与固定 WebDAV 地址永不进入深链。
+/// 携带加入第三方 WebDAV 同步所需的完整配置；设备 ID 永不进入深链。
 public struct WebDavSetupLink: Equatable, Sendable, CustomStringConvertible,
     CustomDebugStringConvertible {
-    public static let version = "1"
+    public static let version = "2"
 
+    public let endpoint: URL
     public let username: String
     public let appPassword: String
     public let vaultId: String
     public let vaultKey: String
 
     public init(
+        endpoint: URL,
         username: String,
         appPassword: String,
         vaultId: String,
         vaultKey: String
     ) throws {
+        guard WebDavEndpointPolicy.isAllowed(endpoint) else {
+            throw WebDavSetupLinkError.invalidEndpoint
+        }
         guard (1...320).contains(username.unicodeScalars.count),
               username.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
               username.rangeOfCharacter(from: .controlCharacters) == nil else {
@@ -69,6 +77,7 @@ public struct WebDavSetupLink: Equatable, Sendable, CustomStringConvertible,
         guard (try? Base64URL.decode(vaultKey).count) == AES256GCM.keyByteCount else {
             throw WebDavSetupLinkError.invalidVaultKey
         }
+        self.endpoint = endpoint
         self.username = username
         self.appPassword = appPassword
         self.vaultId = vaultId
@@ -87,7 +96,9 @@ public struct WebDavSetupLink: Equatable, Sendable, CustomStringConvertible,
             throw WebDavSetupLinkError.invalidScheme
         }
 
-        let expectedNames = Set(["v", "username", "appPassword", "vaultId", "vaultKey"])
+        let expectedNames = Set([
+            "v", "endpoint", "username", "appPassword", "vaultId", "vaultKey",
+        ])
         let items = components.queryItems ?? []
         guard items.count == expectedNames.count,
               Set(items.map(\.name)) == expectedNames else {
@@ -105,7 +116,11 @@ public struct WebDavSetupLink: Equatable, Sendable, CustomStringConvertible,
         guard try value("v") == Self.version else {
             throw WebDavSetupLinkError.invalidVersion
         }
+        guard let endpoint = URL(string: try value("endpoint")) else {
+            throw WebDavSetupLinkError.invalidEndpoint
+        }
         try self.init(
+            endpoint: endpoint,
             username: value("username"),
             appPassword: value("appPassword"),
             vaultId: value("vaultId"),
@@ -119,6 +134,7 @@ public struct WebDavSetupLink: Equatable, Sendable, CustomStringConvertible,
         components.host = "webdav"
         components.queryItems = [
             URLQueryItem(name: "v", value: Self.version),
+            URLQueryItem(name: "endpoint", value: endpoint.absoluteString),
             URLQueryItem(name: "username", value: username),
             URLQueryItem(name: "appPassword", value: appPassword),
             URLQueryItem(name: "vaultId", value: vaultId),
@@ -132,7 +148,7 @@ public struct WebDavSetupLink: Equatable, Sendable, CustomStringConvertible,
 
     /// 深链包含应用密码与同步密钥，描述和调试输出不得泄露完整 URL。
     public var description: String {
-        "WebDavSetupLink(username: <已隐藏>, appPassword: <已隐藏>, vaultId: \(vaultId), vaultKey: <已隐藏>)"
+        "WebDavSetupLink(endpoint: <已隐藏>, username: <已隐藏>, appPassword: <已隐藏>, vaultId: \(vaultId), vaultKey: <已隐藏>)"
     }
 
     public var debugDescription: String { description }

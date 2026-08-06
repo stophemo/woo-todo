@@ -25,7 +25,7 @@ class PairingCoordinatorTest {
             pause = { pauses += it },
         )
 
-        val completion = coordinator.pair(fixture.link, "  Samsung Galaxy S23 Ultra  ") {
+        val completion = coordinator.pair(fixture.link, "  Android 测试设备  ") {
             progress += it
         }
 
@@ -35,7 +35,7 @@ class PairingCoordinatorTest {
         val waiting = progress.filterIsInstance<PairingProgress.AwaitingConfirmation>().single()
         assertTrue(waiting.verificationCode.matches(Regex("^[0-9]{6}$")))
         assertTrue(progress.last() == PairingProgress.SavingCredentials)
-        assertEquals("Samsung Galaxy S23 Ultra", fixture.transport.claimRequest?.device?.name)
+        assertEquals("Android 测试设备", fixture.transport.claimRequest?.device?.name)
 
         assertNotNull(store.credentials)
         val credentials = requireNotNull(store.credentials)
@@ -58,7 +58,7 @@ class PairingCoordinatorTest {
             pause = {},
         )
 
-        val error = runCatching { coordinator.pair(fixture.link, "Galaxy") }.exceptionOrNull()
+        val error = runCatching { coordinator.pair(fixture.link, "Android 设备") }.exceptionOrNull()
 
         assertSame(PairingException.InvalidResult, error)
         assertNull(store.credentials)
@@ -81,7 +81,7 @@ class PairingCoordinatorTest {
             credentialsStore = store,
         )
 
-        val error = runCatching { coordinator.pair(fixture.link, "Galaxy") }.exceptionOrNull()
+        val error = runCatching { coordinator.pair(fixture.link, "Android 设备") }.exceptionOrNull()
 
         assertSame(PairingException.AlreadyPaired, error)
         assertNull(fixture.transport.claimRequest)
@@ -104,7 +104,7 @@ class PairingCoordinatorTest {
             credentialsStore = MemoryCredentialsStore(),
         )
 
-        val error = runCatching { coordinator.pair(localLink, "Galaxy") }.exceptionOrNull()
+        val error = runCatching { coordinator.pair(localLink, "Android 设备") }.exceptionOrNull()
 
         assertSame(PairingException.CurrentDeviceOnlyEndpoint, error)
         assertFalse(transportCreated)

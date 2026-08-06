@@ -69,6 +69,7 @@ class WebDavOperationTest {
         }
         assertThrows(WebDavException.InvalidCredentials::class.java) {
             WebDavCredentials(
+                endpoint = "https://dav.example.com/woo-todo/",
                 username = "user@example.com",
                 appPassword = "application-password",
                 vaultId = "..",
@@ -104,7 +105,7 @@ class WebDavOperationTest {
     }
 
     @Test
-    fun `坚果云连续三次503后会重试并继续创建目录`() {
+    fun `WebDAV服务连续三次503后会重试并继续创建目录`() {
         val requests = AtomicInteger()
         val httpClient = OkHttpClient.Builder()
             .addInterceptor { chain ->
@@ -121,6 +122,7 @@ class WebDavOperationTest {
             .build()
         val client = WebDavClient(
             credentials = WebDavCredentials(
+                endpoint = "https://dav.example.com/woo-todo/",
                 username = "user@example.com",
                 appPassword = "application-password",
                 vaultId = "personal-vault",

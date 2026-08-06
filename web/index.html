@@ -214,7 +214,7 @@
             </div>
             <ol>
               <li>顶部选择“明日”，点右下角 <strong>+</strong> 连续写下第二天的任务。</li>
-              <li>长按三星桌面空白处，选择“组件 → Woo Todo”，添加今日任务组件。</li>
+              <li>从 Android 桌面的“微件”或“组件”入口添加 Woo Todo 今日任务组件。</li>
               <li>列表与 Widget 可直接勾选完成；当前周期内误点时，再点一次即可撤销。</li>
             </ol>
             <p class="quickstart-note">默认每天 23:10 提醒规划；通知权限被关闭时，系统不会显示提醒。</p>
@@ -231,7 +231,7 @@
             <ol>
               <li>解压 Windows ZIP，运行根目录中的 <code>WooTodo.exe</code>；无需安装 .NET、运行库或安装器。</li>
               <li>任务板支持新增、完成、取消完成、置顶和穿透；托盘可恢复窗口并检查更新。</li>
-              <li>“同步”可切换 Worker、同一网络与坚果云，并管理配对设备。</li>
+              <li>“同步”可切换自建服务、同一网络与第三方 WebDAV，并管理配对设备。</li>
             </ol>
             <p class="quickstart-note">任务与设置保存在 <code>%LOCALAPPDATA%\Woo Todo</code>。当前 EXE 未做 Authenticode 签名，请只从本仓库 Release 下载并核对 SHA-256。</p>
           </article>
@@ -240,17 +240,17 @@
             <div class="quickstart-card-heading">
               <span>04</span>
               <div>
-                <p>JIANGUOYUN SYNC</p>
-                <h3>坚果云自动同步</h3>
+                <p>WEBDAV SYNC</p>
+                <h3>第三方 WebDAV 同步</h3>
               </div>
             </div>
             <ol>
-              <li>先安装并登录坚果云官方客户端确认账号可用，再在网页“账户信息 → 安全选项 → 第三方应用管理”创建应用密码；网页端只用于安全设置。</li>
-              <li>Mac 打开“设置… → 同步”，或在 Windows 打开“同步”，选择坚果云并填写账号和应用密码。</li>
+              <li>向服务商获取标准 WebDAV HTTPS 根目录，并创建应用密码或访问令牌。</li>
+              <li>Mac 打开“设置… → 同步”，或在 Windows 打开“同步”，选择第三方 WebDAV 并填写地址与认证凭据。</li>
               <li>连接成功后二维码默认隐藏；在 Mac 或 Windows 显式显示 Android 配置二维码。</li>
               <li>Android 在 Woo Todo 中选择“配对 → 扫描二维码配对”，确认预填配置并保存；手机会生成本机独立设备 ID。</li>
             </ol>
-            <p class="quickstart-warning"><strong>配置二维码严格包含 <code>username</code>、<code>appPassword</code>、<code>vaultId</code> 与 <code>vaultKey</code>，等同坚果云 WebDAV 与 Woo Todo 的完整敏感凭据。</strong> 它不含固定端点或 <code>deviceId</code>，只能在两台设备近旁展示，用完立即隐藏；Woo Todo 不会上传或记录二维码和完整配置链接。任务先写入本地，坚果云只保存 AES-256-GCM 密文。</p>
+            <p class="quickstart-warning"><strong>配置二维码包含 <code>endpoint</code>、<code>username</code>、<code>appPassword</code>、<code>vaultId</code> 与 <code>vaultKey</code>，等同第三方服务与 Woo Todo 的完整敏感凭据。</strong> 它不含 <code>deviceId</code>，只能在两台设备近旁展示，用完立即隐藏；Woo Todo 不会上传或记录二维码和完整配置链接。第三方服务只保存 AES-256-GCM 密文。</p>
           </article>
         </div>
       </div>
@@ -308,7 +308,7 @@
             <span class="feature-index">F</span>
             <div>
               <h3>无传统账号，加密同步</h3>
-              <p>三端都无需 Woo Todo 账号，可在坚果云、Worker 和同一网络三种端到端加密同步方式中选择。</p>
+              <p>三端都无需 Woo Todo 账号，可在第三方 WebDAV、自建服务和同一网络三种端到端加密同步方式中选择。</p>
             </div>
             <span class="feature-tag">自己掌控</span>
           </article>
@@ -369,11 +369,11 @@
     <section class="security section" aria-labelledby="security-title">
       <div class="section-inner security-layout">
         <div class="security-copy">
-          <p class="section-kicker">三端：坚果云密文自动同步</p>
+          <p class="section-kicker">三端：通用密文同步</p>
           <h2 id="security-title">任务明文只留在设备里</h2>
-          <p>macOS、Android 与 Windows 始终先读写本地 SQLite。启用坚果云后，任务和显示设置会写成 AES-256-GCM 密文对象并自动同步，云端只能看到同步所需的实体标识、逻辑时钟和密文大小等元数据。暂时断网时改动留在本地，恢复联网后继续同步；Mac 或 Windows 局域网主机和自建 Worker + D1 也是可选方案。</p>
+          <p>macOS、Android 与 Windows 始终先读写本地 SQLite。同一网络可在无互联网时直连；跨网络时，第三方 WebDAV 或自建服务只接收 AES-256-GCM 密文。暂时断网时改动留在本地，恢复连接后继续同步。</p>
         </div>
-        <div class="sync-flow" aria-label="坚果云加密自动同步流程">
+        <div class="sync-flow" aria-label="WebDAV 加密自动同步流程">
           <div class="sync-node node-android">
             <span>01</span>
             <strong>Android 本地库</strong>
@@ -385,7 +385,7 @@
           </div>
           <div class="sync-node node-cloud">
             <span>02</span>
-            <strong>坚果云 WebDAV</strong>
+            <strong>第三方 WebDAV</strong>
             <small>只存 AES-256-GCM 密文</small>
           </div>
           <div class="sync-link">
@@ -450,9 +450,9 @@
         </aside>
         <aside class="deployment-note">
           <strong>关于跨端同步</strong>
-          <p>macOS、Android 与 Windows 都可使用坚果云 WebDAV 密文同步，也可自行部署 Cloudflare Workers + D1；同一网络可由 Mac 或 Windows PC 承载局域网主机。断网期间三端仍可独立使用，恢复联网后再同步积压变更。</p>
+          <p>macOS、Android 与 Windows 都可使用第三方 WebDAV 密文同步，也可自行部署 Cloudflare Workers + D1；同一网络可由 Mac 或 Windows PC 承载局域网主机。断网期间三端仍可独立使用，恢复连接后再同步积压变更。</p>
           <div class="deployment-links">
-            <a href="#quickstart">坚果云配置</a>
+            <a href="#quickstart">WebDAV 配置</a>
             <a href="https://github.com/stophemo/woo-todo/blob/main/backend/README.md">Cloudflare 免费部署</a>
           </div>
         </aside>

@@ -2,8 +2,9 @@ import Foundation
 import Testing
 @testable import WooTodoSync
 
-@Suite("坚果云 WebDAV 操作协议")
+@Suite("第三方 WebDAV 操作协议")
 struct WebDavOperationTests {
+    private let endpoint = URL(string: "https://dav.example.com/remote.php/dav/files/person/woo-todo/")!
     @Test("共享 WebDAV 对象可严格解码并往返")
     func sharedFixtureRoundTrip() throws {
         let data = try Data(contentsOf: fixtureURL())
@@ -63,13 +64,16 @@ struct WebDavOperationTests {
         #expect(!WebDavOperation.isValidShard("a/"))
     }
 
-    @Test("坚果云端点策略拒绝凭据外送")
+    @Test("通用 WebDAV 端点策略接受任意 HTTPS 子路径并拒绝凭据外送")
     func endpointPolicy() throws {
-        #expect(WebDavEndpointPolicy.isAllowed(WebDavEndpointPolicy.endpoint))
-        #expect(!WebDavEndpointPolicy.isAllowed(try #require(URL(string: "https://example.com/dav/"))))
-        #expect(!WebDavEndpointPolicy.isAllowed(try #require(URL(string: "http://dav.jianguoyun.com/dav/"))))
+        #expect(WebDavEndpointPolicy.isAllowed(endpoint))
+        #expect(WebDavEndpointPolicy.isAllowed(try #require(URL(string: "https://another.example.net/storage/woo-todo"))))
+        #expect(!WebDavEndpointPolicy.isAllowed(try #require(URL(string: "http://dav.example.com/dav/"))))
+        #expect(!WebDavEndpointPolicy.isAllowed(try #require(URL(string: "https://user@dav.example.com/dav/"))))
+        #expect(!WebDavEndpointPolicy.isAllowed(try #require(URL(string: "https://dav.example.com/dav/?token=secret"))))
         #expect(throws: WebDavError.invalidCredentials) {
             try WebDavCredentials(
+                endpoint: endpoint,
                 username: "user@example.com",
                 appPassword: "application-password",
                 vaultId: "..",
@@ -79,10 +83,11 @@ struct WebDavOperationTests {
         }
     }
 
-    @Test("坚果云凭据统一限制账号与应用密码长度")
+    @Test("WebDAV 凭据统一限制账号与应用密码长度")
     func credentialLengthLimits() throws {
         func credentials(username: String, appPassword: String) -> WebDavCredentials {
             WebDavCredentials(
+                endpoint: endpoint,
                 username: username,
                 appPassword: appPassword,
                 vaultId: "personal-vault",
@@ -115,33 +120,40 @@ struct WebDavOperationTests {
         <?xml version="1.0" encoding="utf-8"?>
         <D:multistatus xmlns:D="DAV:">
           <D:response>
-            <D:href>https://dav.jianguoyun.com/dav/v1/personal-vault/ops/ab/op%20one.json?ignored=1</D:href>
+            <D:href>https://dav.example.com/remote.php/dav/files/person/woo-todo/v1/personal-vault/ops/ab/op%20one.json?ignored=1</D:href>
           </D:response>
           <D:response>
-            <D:href>/dav/v1/personal-vault/ops/cd/%E4%BB%BB%E5%8A%A1.json/</D:href>
+            <D:href>/remote.php/dav/files/person/woo-todo/v1/personal-vault/ops/cd/%E4%BB%BB%E5%8A%A1.json/</D:href>
           </D:response>
-          <D:response><D:href>/dav/other/path</D:href></D:response>
+          <D:response><D:href>v1/personal-vault/ops/ef/relative.json</D:href></D:response>
+          <D:response><D:href>/remote.php/dav/files/person/other/path</D:href></D:response>
         </D:multistatus>
         """
 
-        #expect(try WebDavHrefParser.parse(Data(source.utf8)) == [
+        #expect(try WebDavHrefParser.parse(Data(source.utf8), baseURL: endpoint) == [
             ["v1", "personal-vault", "ops", "ab", "op one.json"],
             ["v1", "personal-vault", "ops", "cd", "任务.json"],
+            ["v1", "personal-vault", "ops", "ef", "relative.json"],
         ])
     }
 
     @Test("PROPFIND 拒绝格式错误的 href 而不是静默漏掉远端操作")
     func rejectsMalformedPropfindHref() {
-        let source = """
-        <D:multistatus xmlns:D="DAV:">
-          <D:response>
-            <D:href>/dav/v1/personal-vault/ops/ab/operation%ZZ.json</D:href>
-          </D:response>
-        </D:multistatus>
-        """
+        for href in [
+            "/remote.php/dav/files/person/woo-todo/v1/personal-vault/ops/ab/operation%ZZ.json",
+            "/remote.php/dav/files/person/woo-todo/v1/personal-vault/ops/%2e%2e/operation.json",
+            "/remote.php/dav/files/person/woo-todo/v1/personal-vault/ops/ab/operation%2fescape.json",
+            "/remote.php/dav/files/person/woo-todo/v1/personal-vault/ops/ab/operation%5cescape.json",
+        ] {
+            let source = """
+            <D:multistatus xmlns:D="DAV:">
+              <D:response><D:href>\(href)</D:href></D:response>
+            </D:multistatus>
+            """
 
-        #expect(throws: WebDavError.self) {
-            try WebDavHrefParser.parse(Data(source.utf8))
+            #expect(throws: WebDavError.self) {
+                try WebDavHrefParser.parse(Data(source.utf8), baseURL: endpoint)
+            }
         }
     }
 
@@ -153,7 +165,7 @@ struct WebDavOperationTests {
         #expect(WebDavSyncRunner.webDavPageCount(1_001) == 3)
     }
 
-    @Test("坚果云临时 503 会短退避重试后继续")
+    @Test("WebDAV 服务临时 503 会短退避重试后继续")
     func retriesTemporaryServiceFailures() async throws {
         let counter = WebDavRequestCounter()
         WebDavMockURLProtocol.handler = { request in
@@ -175,6 +187,7 @@ struct WebDavOperationTests {
         configuration.protocolClasses = [WebDavMockURLProtocol.self]
         let client = try WebDavClient(
             credentials: WebDavCredentials(
+                endpoint: endpoint,
                 username: "user@example.com",
                 appPassword: "application-password",
                 vaultId: "personal-vault",
@@ -193,10 +206,10 @@ struct WebDavOperationTests {
 
     @Test("WebDAV 错误文案包含真实上下文")
     func errorDescriptionsInterpolateValues() {
-        #expect(WebDavError.http(503).errorDescription == "坚果云 WebDAV 返回 HTTP 503")
-        #expect(WebDavError.transport("超时").errorDescription == "坚果云网络请求失败：超时")
+        #expect(WebDavError.http(503).errorDescription == "WebDAV 服务返回 HTTP 503")
+        #expect(WebDavError.transport("超时").errorDescription == "WebDAV 网络请求失败：超时")
         #expect(WebDavError.objectConflict("v1/a.json").errorDescription ==
-            "坚果云对象发生冲突：v1/a.json")
+            "WebDAV 对象发生冲突：v1/a.json")
     }
 
     private func fixtureURL() -> URL {

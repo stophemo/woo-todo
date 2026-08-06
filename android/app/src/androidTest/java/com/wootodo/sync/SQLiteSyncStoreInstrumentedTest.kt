@@ -523,7 +523,7 @@ class SQLiteSyncStoreInstrumentedTest {
             serverSeq = 1,
             opId = "operation-webdav-idempotent",
             lamport = 7,
-            payload = remoteTask(entityId, "坚果云只应用一次"),
+            payload = remoteTask(entityId, "WebDAV 只应用一次"),
         ).toWebDavOperation()
 
         store.applyWebDavOperations(listOf(operation))
@@ -535,7 +535,7 @@ class SQLiteSyncStoreInstrumentedTest {
             ),
         )
 
-        assertEquals("坚果云只应用一次", taskTitle(entityId))
+        assertEquals("WebDAV 只应用一次", taskTitle(entityId))
         assertEquals(1, rowCount("sync_webdav_applied_operations"))
         assertEquals(0, rowCount("sync_applied_operations"))
         assertEquals(0L, store.currentCursor())

@@ -1,7 +1,6 @@
 package com.wootodo.sync
 
 import android.content.Context
-import android.net.Uri
 import android.util.Xml
 import java.io.IOException
 import java.io.StringReader
@@ -17,23 +16,32 @@ import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 
 sealed class WebDavException(message: String) : Exception(message) {
-    class InvalidCredentials : WebDavException("坚果云同步凭据无效")
+    class InvalidCredentials : WebDavException("第三方 WebDAV 同步凭据无效")
     class Transport(message: String) : WebDavException(message)
-    class Http(val statusCode: Int) : WebDavException("坚果云 WebDAV 返回 HTTP $statusCode")
-    class ObjectConflict(path: String) : WebDavException("坚果云对象发生冲突：$path")
-    class MalformedObject(message: String) : WebDavException("坚果云同步对象无效：$message")
+    class Http(val statusCode: Int) : WebDavException("WebDAV 服务返回 HTTP $statusCode")
+    class ObjectConflict(path: String) : WebDavException("WebDAV 对象发生冲突：$path")
+    class MalformedObject(message: String) : WebDavException("WebDAV 同步对象无效：$message")
 }
 
 object WebDavEndpointPolicy {
-    const val ENDPOINT = "https://dav.jianguoyun.com/dav/"
-
     fun isAllowed(value: String): Boolean = runCatching {
         val uri = java.net.URI(value)
         uri.scheme.equals("https", ignoreCase = true) &&
-            uri.host.equals("dav.jianguoyun.com", ignoreCase = true) &&
+            !uri.host.isNullOrBlank() && value.length <= 2_048 &&
             uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
-            (uri.path == "/dav" || uri.path == "/dav/")
+            (uri.port == -1 || uri.port in 1..65_535) &&
+            uri.rawPath.orEmpty().split('/').none(::isTraversalSegment)
     }.getOrDefault(false)
+
+    private fun isTraversalSegment(value: String): Boolean {
+        val decoded = runCatching {
+            java.net.URLDecoder.decode(
+                value.replace("+", "%2B"),
+                StandardCharsets.UTF_8.name(),
+            )
+        }.getOrNull() ?: return true
+        return decoded == "." || decoded == ".." || decoded.contains('/') || decoded.contains('\\')
+    }
 }
 
 internal object WebDavCredentialPolicy {
@@ -58,7 +66,7 @@ internal object WebDavCredentialPolicy {
 }
 
 data class WebDavCredentials(
-    val endpoint: String = WebDavEndpointPolicy.ENDPOINT,
+    val endpoint: String,
     val username: String,
     val appPassword: String,
     val vaultId: String,
@@ -145,7 +153,7 @@ class AndroidWebDavCredentialsStore(context: Context) {
     private fun decode(source: String): WebDavCredentials {
         val value = JSONObject(source)
         val expected = setOf("endpoint", "username", "appPassword", "vaultId", "deviceId", "vaultKey")
-        require(value.keys().asSequence().toSet() == expected) { "坚果云凭据字段不完整" }
+        require(value.keys().asSequence().toSet() == expected) { "WebDAV 凭据字段不完整" }
         return WebDavCredentials(
             endpoint = value.getString("endpoint"),
             username = value.getString("username"),
@@ -282,7 +290,7 @@ internal object WebDavRetryPolicy {
 
 class WebDavClient(
     val credentials: WebDavCredentials,
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+    httpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(java.time.Duration.ofSeconds(10))
         .readTimeout(java.time.Duration.ofSeconds(20))
         .writeTimeout(java.time.Duration.ofSeconds(20))
@@ -291,6 +299,10 @@ class WebDavClient(
     private val retrySleep: (Long) -> Unit = Thread::sleep,
 ) {
     private val baseUrl = credentials.endpoint.toHttpUrl()
+    private val httpClient = httpClient.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
     private val authorization = Credentials.basic(credentials.username, credentials.appPassword)
 
     init {
@@ -357,7 +369,10 @@ class WebDavClient(
             mapOf("Depth" to "1", "Content-Type" to "application/xml"),
             setOf(207),
         )
-        return WebDavPropfindParser.parse(String(response.body, StandardCharsets.UTF_8))
+        return WebDavPropfindParser.parse(
+            String(response.body, StandardCharsets.UTF_8),
+            baseUrl.pathSegments.filter(String::isNotEmpty),
+        )
     }
 
     private fun request(
@@ -477,9 +492,9 @@ class WebDavSyncRunner(
 }
 
 internal object WebDavPropfindParser {
-    fun parse(source: String): List<List<String>> {
+    fun parse(source: String, basePathSegments: List<String>): List<List<String>> {
         val parser = Xml.newPullParser().apply {
-            // 坚果云常见响应使用 d:href；同时开启命名空间处理并保留本地名兜底。
+            // WebDAV 服务常见响应使用 d:href；同时开启命名空间处理并保留本地名兜底。
             setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
             setInput(StringReader(source))
         }
@@ -487,7 +502,7 @@ internal object WebDavPropfindParser {
         var event = parser.eventType
         while (event != XmlPullParser.END_DOCUMENT) {
             if (event == XmlPullParser.START_TAG && isHrefElement(parser.name)) {
-                parseHref(parser.nextText())?.let(paths::add)
+                parseHref(parser.nextText(), basePathSegments)?.let(paths::add)
             }
             event = parser.next()
         }
@@ -497,23 +512,47 @@ internal object WebDavPropfindParser {
     private fun isHrefElement(name: String?): Boolean =
         name?.substringAfterLast(':')?.equals("href", ignoreCase = true) == true
 
-    private fun parseHref(raw: String): List<String>? {
+    private fun parseHref(raw: String, basePathSegments: List<String>): List<String>? {
         val value = raw.trim()
         if (value.isEmpty()) {
             throw WebDavException.MalformedObject("PROPFIND href 无效")
         }
-        val rawPath = try {
-            java.net.URI(value).rawPath
+        val uri = try {
+            java.net.URI(value)
         } catch (_: Exception) {
             null
-        }?.takeIf(String::isNotEmpty)
+        } ?: throw WebDavException.MalformedObject("PROPFIND href 无效")
+        val rawPath = uri.rawPath?.takeIf(String::isNotEmpty)
             ?: throw WebDavException.MalformedObject("PROPFIND href 无效")
         val segments = rawPath
             .split('/')
             .filter(String::isNotEmpty)
-            .map(Uri::decode)
-        val start = segments.indexOf("v1")
-        return start.takeIf { it >= 0 }?.let { segments.drop(it) }
+            .map(::decodePathSegment)
+        val isRelativePath = !uri.isAbsolute && uri.rawAuthority == null && !rawPath.startsWith('/')
+        if (isRelativePath) {
+            return segments.takeIf { it.firstOrNull() == "v1" }
+        }
+        if (segments.size < basePathSegments.size ||
+            segments.take(basePathSegments.size) != basePathSegments
+        ) {
+            return null
+        }
+        return segments.drop(basePathSegments.size).takeIf { it.firstOrNull() == "v1" }
+    }
+
+    private fun decodePathSegment(value: String): String {
+        val decoded = try {
+            java.net.URLDecoder.decode(
+                value.replace("+", "%2B"),
+                StandardCharsets.UTF_8.name(),
+            )
+        } catch (_: Exception) {
+            throw WebDavException.MalformedObject("PROPFIND href 无效")
+        }
+        if (decoded == "." || decoded == ".." || decoded.contains('/') || decoded.contains('\\')) {
+            throw WebDavException.MalformedObject("PROPFIND href 无效")
+        }
+        return decoded
     }
 }
 

@@ -1160,14 +1160,14 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         0,
         ID_SYNC_MODE,
     )?;
-    for label in ["Worker 在线同步", "同一网络同步", "坚果云 WebDAV"] {
+    for label in ["自建在线服务", "同一网络同步", "第三方 WebDAV"] {
         combo_add(app.sync_controls.mode, label);
     }
     for label in [
-        "Worker 地址",
+        "服务地址",
         "创建邀请码",
-        "坚果云账号",
-        "应用密码",
+        "WebDAV 账号",
+        "应用密码 / 令牌",
         "空间 ID",
         "设备 ID",
         "设备令牌",
@@ -2226,7 +2226,10 @@ unsafe fn populate_sync_form(app: &mut App) {
                 | SyncCredentials::LocalNetwork { endpoint, .. } => {
                     set_text(app.sync_controls.endpoint, &endpoint);
                 }
-                SyncCredentials::WebDav { username, .. } => {
+                SyncCredentials::WebDav {
+                    endpoint, username, ..
+                } => {
+                    set_text(app.sync_controls.endpoint, &endpoint);
                     set_text(app.sync_controls.username, &username);
                 }
             }
@@ -2270,8 +2273,8 @@ unsafe fn update_sync_form(app: &App) {
     let local = mode == SyncMode::LocalNetwork;
     let webdav = mode == SyncMode::WebDav;
     for (control, visible) in [
-        (app.sync_controls.field_labels[0], worker || local),
-        (app.sync_controls.endpoint, worker || local),
+        (app.sync_controls.field_labels[0], true),
+        (app.sync_controls.endpoint, true),
         (app.sync_controls.field_labels[1], worker),
         (app.sync_controls.invite, worker),
         (app.sync_controls.field_labels[2], webdav),
@@ -2436,9 +2439,9 @@ fn sync_mode_index(mode: SyncMode) -> i32 {
 
 fn sync_mode_label(mode: SyncMode) -> &'static str {
     match mode {
-        SyncMode::Worker => "Worker 在线同步",
+        SyncMode::Worker => "自建在线服务",
         SyncMode::LocalNetwork => "同一网络同步",
-        SyncMode::WebDav => "坚果云 WebDAV",
+        SyncMode::WebDav => "第三方 WebDAV",
     }
 }
 
@@ -3188,6 +3191,7 @@ unsafe fn sync_credentials_from_form(app: &App) -> Result<SyncCredentials, Strin
             vault_key,
         },
         SyncMode::WebDav => SyncCredentials::WebDav {
+            endpoint: get_text(app.sync_controls.endpoint).trim().to_owned(),
             username: get_text(app.sync_controls.username).trim().to_owned(),
             app_password: get_text(app.sync_controls.secret),
             vault_id,
@@ -3447,7 +3451,7 @@ unsafe fn setup_selected_sync_mode(app: &mut App) -> Result<(), String> {
                 set_text(app.sync_controls.vault_key, &vault_key);
                 set_text(
                     app.sync_controls.output,
-                    "已生成新的坚果云空间参数。填写账号与应用密码后点击“保存并切换”。",
+                    "已生成新的 WebDAV 空间参数。填写 HTTPS 根目录、账号与应用密码后点击“保存并切换”。",
                 );
                 return Ok(());
             };
@@ -3456,7 +3460,7 @@ unsafe fn setup_selected_sync_mode(app: &mut App) -> Result<(), String> {
             set_text(app.sync_controls.vault_key, "");
             set_text(
                 app.sync_controls.output,
-                "已回填已保存的坚果云空间参数。应用密码不会显示，直接点击“保存并切换”即可复用。",
+                "已回填保存的 WebDAV 空间参数。应用密码不会显示，直接点击“保存并切换”即可复用。",
             );
         }
     }
@@ -3561,7 +3565,7 @@ unsafe fn begin_sync_sharing(app: &mut App) -> Result<(), String> {
         clear_pairing(app);
         set_text(
             app.sync_controls.output,
-            "已隐藏坚果云配置二维码。临时配置链接已清除。",
+            "已隐藏 WebDAV 配置二维码。临时配置链接已清除。",
         );
         update_pairing_controls(app);
         return Ok(());
@@ -3573,7 +3577,7 @@ unsafe fn begin_sync_sharing(app: &mut App) -> Result<(), String> {
     app.webdav_setup_link = Some(link);
     set_text(
         app.sync_controls.output,
-        "请用 Android Woo Todo 扫描左侧二维码。二维码包含坚果云应用密码和同步密钥，离开本页或关闭窗口后会立即清除。",
+        "请用 Android 设备的系统相机、二维码扫描入口或 Woo Todo 内置扫码扫描左侧二维码。二维码包含 WebDAV 地址、认证凭据和同步密钥，离开本页或关闭窗口后会立即清除。",
     );
     update_pairing_controls(app);
     Ok(())
@@ -3601,7 +3605,7 @@ unsafe fn begin_pairing(app: &mut App) -> Result<(), String> {
         .load()?
         .ok_or_else(|| "请先配置 Worker 或同一网络同步".to_owned())?;
     if credentials.mode() == SyncMode::WebDav {
-        return Err("坚果云方式使用配置二维码，不使用设备配对会话".to_owned());
+        return Err("WebDAV 方式使用配置二维码，不使用设备配对会话".to_owned());
     }
     if credentials.mode() == SyncMode::LocalNetwork
         && app.settings.local_network_host
@@ -3778,7 +3782,7 @@ unsafe fn poll_sync_ui_events(app: &mut App) {
                         app.pairing_next_poll_at = now_millis();
                         set_text(
                             app.sync_controls.output,
-                            "请用 Android Woo Todo 扫描左侧二维码。两端随后会显示相同的六位核对码。",
+                            "请用 Android 设备的系统相机、二维码扫描入口或 Woo Todo 内置扫码扫描左侧二维码。两端随后会显示相同的六位核对码。",
                         );
                     }
                     Err(error) => set_text(
@@ -4096,7 +4100,7 @@ unsafe fn refresh_sync_devices(app: &mut App) -> Result<(), String> {
         .load()?
         .ok_or_else(|| "尚未配置同步".to_owned())?;
     if credentials.mode() == SyncMode::WebDav {
-        return Err("坚果云方式没有设备目录；每台设备使用独立 device ID".to_owned());
+        return Err("WebDAV 方式没有设备目录；每台设备使用独立 device ID".to_owned());
     }
     let sender = app.sync_ui_sender.clone();
     app.network_job_running = true;
@@ -4152,7 +4156,7 @@ unsafe fn revoke_sync_device(app: &mut App) -> Result<(), String> {
         .load()?
         .ok_or_else(|| "尚未配置同步".to_owned())?;
     if credentials.mode() == SyncMode::WebDav {
-        return Err("坚果云设备应通过撤销对应应用密码来断开".to_owned());
+        return Err("WebDAV 设备应通过撤销对应应用密码或访问令牌来断开".to_owned());
     }
     let device_id = get_text(app.sync_controls.revoke_device).trim().to_owned();
     if device_id == credentials.device_id() {
@@ -4233,7 +4237,7 @@ unsafe fn export_encrypted_backup(app: &mut App) -> Result<(), String> {
                 );
             }
             SyncCredentials::WebDav { .. } => {
-                return Err("坚果云账号和应用密码不会写入备份，请取消勾选同步身份".to_owned());
+                return Err("WebDAV 地址和认证凭据不会写入备份，请取消勾选同步身份".to_owned());
             }
         }
     } else {

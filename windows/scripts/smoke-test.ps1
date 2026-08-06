@@ -854,10 +854,10 @@ function Assert-SyncModeSurface {
         "webdav" {
             @{
                 Index = 2
-                Label = "坚果云 WebDAV"
+                Label = "第三方 WebDAV"
                 Setup = "生成新空间"
-                Visible = @(153, 154, 155, 156, 158)
-                Hidden = @(151, 152, 157, 162, 163, 164)
+                Visible = @(151, 153, 154, 155, 156, 158)
+                Hidden = @(152, 157, 162, 163, 164)
             }
         }
     }
@@ -1109,7 +1109,7 @@ function Assert-WebDavConfigurationQr {
         [IntPtr]::Zero
     ).ToInt32()
     if ($selected -ne 2) {
-        throw "载入坚果云身份后没有选中坚果云方式：$selected"
+        throw "载入 WebDAV 身份后没有选中 WebDAV 方式：$selected"
     }
     Assert-SensitiveFieldsEmpty -Main $Main
 
@@ -1118,10 +1118,10 @@ function Assert-WebDavConfigurationQr {
     $qr = Require-ChildWindow -Parent $Main -Id 169
     if (-not [WooTodoSmokeNative]::IsWindowVisible($pair) -or
         (Get-ControlText -Control $pair) -ne "生成配置码") {
-        throw "坚果云配置二维码入口不可用"
+        throw "WebDAV 配置二维码入口不可用"
     }
     Click-Control -Control $pair
-    Wait-ForCondition -Description "生成坚果云配置二维码" -Condition {
+    Wait-ForCondition -Description "生成 WebDAV 配置二维码" -Condition {
         [WooTodoSmokeNative]::IsWindowVisible($qr) -and
         [WooTodoSmokeNative]::SendMessageW(
             $qr,
@@ -1149,22 +1149,23 @@ function Assert-WebDavConfigurationQr {
         }
     } while ([DateTime]::UtcNow -lt $clipboardDeadline)
     if ([string]::IsNullOrEmpty($configurationLink)) {
-        throw "复制配置按钮没有写入坚果云配置深链"
+        throw "复制配置按钮没有写入 WebDAV 配置深链"
     }
     $query = ConvertFrom-UriQuery -Uri ([Uri] $configurationLink)
-    $expectedFields = @("v", "username", "appPassword", "vaultId", "vaultKey")
+    $expectedFields = @("v", "endpoint", "username", "appPassword", "vaultId", "vaultKey")
     if ($query.Count -ne $expectedFields.Count -or
         @($expectedFields | Where-Object { -not $query.ContainsKey($_) }).Count -ne 0 -or
-        [string] $query.v -ne "1" -or
+        [string] $query.v -ne "2" -or
+        [string] $query.endpoint -ne [string] $Credential.endpoint -or
         [string] $query.username -ne [string] $Credential.username -or
         [string] $query.appPassword -ne [string] $Credential.app_password -or
         [string] $query.vaultId -ne [string] $Credential.vault_id -or
         [string] $query.vaultKey -ne [string] $Credential.vault_key) {
-        throw "坚果云配置深链字段与 Credential Manager 身份不一致"
+        throw "WebDAV 配置深链字段与 Credential Manager 身份不一致"
     }
 
     Click-Control -Control $pair
-    Wait-ForCondition -Description "隐藏坚果云配置二维码" -Condition {
+    Wait-ForCondition -Description "隐藏 WebDAV 配置二维码" -Condition {
         -not [WooTodoSmokeNative]::IsWindowVisible($qr) -and
         -not [WooTodoSmokeNative]::IsWindowVisible($copy) -and
         [WooTodoSmokeNative]::SendMessageW(
@@ -1177,7 +1178,7 @@ function Assert-WebDavConfigurationQr {
     }
 
     Click-Control -Control $pair
-    Wait-ForCondition -Description "重新生成坚果云配置二维码" -Condition {
+    Wait-ForCondition -Description "重新生成 WebDAV 配置二维码" -Condition {
         [WooTodoSmokeNative]::SendMessageW(
             $qr,
             0x0173,
@@ -1193,16 +1194,16 @@ function Assert-WebDavConfigurationQr {
             [IntPtr]::Zero,
             [IntPtr]::Zero
         ) -ne [IntPtr]::Zero) {
-        throw "离开同步页后没有清除坚果云配置二维码位图"
+        throw "离开同步页后没有清除 WebDAV 配置二维码位图"
     }
     Select-SyncSection -Main $Main
     if ([WooTodoSmokeNative]::IsWindowVisible($qr) -or
         [WooTodoSmokeNative]::IsWindowVisible($copy) -or
         (Get-ControlText -Control $pair) -ne "生成配置码") {
-        throw "重新进入同步页后仍保留坚果云配置二维码状态"
+        throw "重新进入同步页后仍保留 WebDAV 配置二维码状态"
     }
     Assert-SensitiveFieldsEmpty -Main $Main
-    Add-Diagnostic "坚果云配置二维码生成、复制、字段校验及离页清除通过"
+    Add-Diagnostic "WebDAV 配置二维码生成、复制、字段校验及离页清除通过"
 }
 
 function Set-SmokeSensitiveFields {
@@ -1583,6 +1584,7 @@ try {
     $credentialMayHaveBeenCreated = $true
     $webDavCredential = [ordered] @{
         mode = "webDav"
+        endpoint = "https://dav.example.com/remote.php/dav/files/person/woo-todo/"
         username = "windows-runner@example.com"
         app_password = "Runner-WebDAV-Application-Password"
         vault_id = "vault-windows-runner"

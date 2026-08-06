@@ -90,6 +90,7 @@ struct AppRuntimeConfiguration {
         let webDavCredentialsStore = InMemoryWebDavCredentialsStore()
         if initialDashboardSection == .sync {
             try webDavCredentialsStore.save(WebDavCredentials(
+                endpoint: URL(string: "https://dav.example.invalid/woo-todo/")!,
                 username: "ui-test@example.invalid",
                 appPassword: "ui-test-only",
                 vaultId: "vault-ui-test",

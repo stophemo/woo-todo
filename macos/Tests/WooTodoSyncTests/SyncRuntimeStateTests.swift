@@ -60,7 +60,7 @@ struct InitiatorPairingStateTests {
 
         let claim = PairingClaimInfo(
             deviceId: "android-device",
-            name: "Galaxy S23 Ultra",
+            name: "Android 测试设备",
             platform: .android,
             publicKey: "claim-public-key",
             claimedAt: 1_000

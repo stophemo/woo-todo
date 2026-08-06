@@ -11,7 +11,6 @@ use woo_todo_core::WebDavOperation;
 use crate::credentials::SyncCredentials;
 use crate::http::{EndpointScope, HttpRequest, HttpResponse, HttpTransport, ValidatedEndpoint};
 
-const ENDPOINT: &str = "https://dav.jianguoyun.com/dav/";
 const MAXIMUM_OBJECT_BYTES: usize = 64 * 1_024;
 const MAXIMUM_PROPFIND_BYTES: usize = 2 * 1_024 * 1_024;
 const RETRY_DELAYS: [Duration; 3] = [
@@ -50,9 +49,12 @@ impl<T: HttpTransport> WebDavClient<T> {
         credentials.validate()?;
         let (username, app_password) = credentials
             .webdav_login()
-            .ok_or_else(|| "当前安全凭据不是坚果云同步方式".to_owned())?;
+            .ok_or_else(|| "当前安全凭据不是 WebDAV 同步方式".to_owned())?;
+        let endpoint = credentials
+            .endpoint()
+            .ok_or_else(|| "WebDAV 同步凭据缺少服务地址".to_owned())?;
         Ok(Self {
-            endpoint: ValidatedEndpoint::parse(ENDPOINT, EndpointScope::Jianguoyun)?,
+            endpoint: ValidatedEndpoint::parse(endpoint, EndpointScope::WebDav)?,
             username: username.to_owned(),
             app_password: app_password.to_owned(),
             vault_id: credentials.vault_id().to_owned(),
@@ -85,9 +87,9 @@ impl<T: HttpTransport> WebDavClient<T> {
     pub fn put(&self, operation: &WebDavOperation) -> Result<(), String> {
         operation
             .validate()
-            .map_err(|error| format!("坚果云同步对象无效：{error}"))?;
+            .map_err(|error| format!("WebDAV 同步对象无效：{error}"))?;
         if operation.vault_id != self.vault_id || operation.device_id != self.device_id {
-            return Err("坚果云同步对象与当前身份不匹配".to_owned());
+            return Err("WebDAV 同步对象与当前身份不匹配".to_owned());
         }
         let body = canonical_operation_json(operation)?;
         let path = operation_path(&operation.vault_id, &operation.op_id)?;
@@ -108,7 +110,7 @@ impl<T: HttpTransport> WebDavClient<T> {
         if matches!(response.status, 405 | 409 | 412) {
             let existing = self.get(&path)?;
             if existing != body {
-                return Err(format!("坚果云对象发生冲突：{}", path.join("/")));
+                return Err(format!("WebDAV 对象发生冲突：{}", path.join("/")));
             }
         }
         Ok(())
@@ -153,14 +155,14 @@ impl<T: HttpTransport> WebDavClient<T> {
     pub fn get_operation(&self, path: &[String]) -> Result<WebDavOperation, String> {
         let source = self.get(path)?;
         let operation: WebDavOperation = serde_json::from_slice(&source)
-            .map_err(|_| "坚果云同步对象 JSON 格式无效".to_owned())?;
+            .map_err(|_| "WebDAV 同步对象 JSON 格式无效".to_owned())?;
         operation
             .validate()
-            .map_err(|error| format!("坚果云同步对象无效：{error}"))?;
+            .map_err(|error| format!("WebDAV 同步对象无效：{error}"))?;
         if operation.vault_id != self.vault_id
             || operation_path(&operation.vault_id, &operation.op_id)? != path
         {
-            return Err("坚果云同步对象路径或空间不匹配".to_owned());
+            return Err("WebDAV 同步对象路径或空间不匹配".to_owned());
         }
         Ok(operation)
     }
@@ -183,7 +185,7 @@ impl<T: HttpTransport> WebDavClient<T> {
             &[207],
             MAXIMUM_PROPFIND_BYTES,
         )?;
-        parse_propfind_hrefs(&response.body)
+        parse_propfind_hrefs(&response.body, self.endpoint.as_str())
     }
 
     fn request(
@@ -218,7 +220,7 @@ impl<T: HttpTransport> WebDavClient<T> {
             }
             if !is_retryable_http_status(response.status) || retry_index >= self.retry_delays.len()
             {
-                return Err(format!("坚果云 WebDAV 返回 HTTP {}", response.status));
+                return Err(format!("WebDAV 服务返回 HTTP {}", response.status));
             }
             (self.retry_sleep)(self.retry_delays[retry_index]);
             retry_index += 1;
@@ -233,10 +235,10 @@ fn is_retryable_http_status(status: u16) -> bool {
 pub fn canonical_operation_json(operation: &WebDavOperation) -> Result<Vec<u8>, String> {
     operation
         .validate()
-        .map_err(|error| format!("坚果云同步对象无效：{error}"))?;
+        .map_err(|error| format!("WebDAV 同步对象无效：{error}"))?;
     let value = serde_json::to_value(operation)
-        .map_err(|error| format!("无法编码坚果云同步对象：{error}"))?;
-    serde_json::to_vec(&value).map_err(|error| format!("无法编码坚果云同步对象：{error}"))
+        .map_err(|error| format!("无法编码 WebDAV 同步对象：{error}"))?;
+    serde_json::to_vec(&value).map_err(|error| format!("无法编码 WebDAV 同步对象：{error}"))
 }
 
 pub fn operation_path(vault_id: &str, operation_id: &str) -> Result<Vec<String>, String> {
@@ -244,7 +246,7 @@ pub fn operation_path(vault_id: &str, operation_id: &str) -> Result<Vec<String>,
         || operation_id.len() < 2
         || !valid_path_component(operation_id)
     {
-        return Err("坚果云同步对象标识无效".to_owned());
+        return Err("WebDAV 同步对象标识无效".to_owned());
     }
     Ok(vec![
         "v1".to_owned(),
@@ -267,7 +269,7 @@ fn valid_shard(value: &str) -> bool {
     value.len() == 2 && valid_path_component(value)
 }
 
-fn parse_propfind_hrefs(source: &[u8]) -> Result<Vec<Vec<String>>, String> {
+fn parse_propfind_hrefs(source: &[u8], endpoint: &str) -> Result<Vec<Vec<String>>, String> {
     let mut reader = Reader::from_reader(source);
     reader.config_mut().trim_text(true);
     let mut current: Option<String> = None;
@@ -278,7 +280,7 @@ fn parse_propfind_hrefs(source: &[u8]) -> Result<Vec<Vec<String>>, String> {
                 if element.local_name().as_ref().eq_ignore_ascii_case(b"href") =>
             {
                 if current.is_some() {
-                    return Err("坚果云 PROPFIND href 嵌套无效".to_owned());
+                    return Err("WebDAV PROPFIND href 嵌套无效".to_owned());
                 }
                 current = Some(String::new());
             }
@@ -286,9 +288,9 @@ fn parse_propfind_hrefs(source: &[u8]) -> Result<Vec<Vec<String>>, String> {
                 if let Some(current) = &mut current {
                     let decoded = text
                         .xml_content()
-                        .map_err(|_| "坚果云 PROPFIND 文本编码无效".to_owned())?;
+                        .map_err(|_| "WebDAV PROPFIND 文本编码无效".to_owned())?;
                     let decoded = quick_xml::escape::unescape(&decoded)
-                        .map_err(|_| "坚果云 PROPFIND 转义无效".to_owned())?;
+                        .map_err(|_| "WebDAV PROPFIND 转义无效".to_owned())?;
                     current.push_str(&decoded);
                 }
             }
@@ -297,7 +299,7 @@ fn parse_propfind_hrefs(source: &[u8]) -> Result<Vec<Vec<String>>, String> {
                     current.push_str(
                         &text
                             .decode()
-                            .map_err(|_| "坚果云 PROPFIND CDATA 编码无效".to_owned())?,
+                            .map_err(|_| "WebDAV PROPFIND CDATA 编码无效".to_owned())?,
                     );
                 }
             }
@@ -306,48 +308,129 @@ fn parse_propfind_hrefs(source: &[u8]) -> Result<Vec<Vec<String>>, String> {
             {
                 let value = current
                     .take()
-                    .ok_or_else(|| "坚果云 PROPFIND href 结构无效".to_owned())?;
+                    .ok_or_else(|| "WebDAV PROPFIND href 结构无效".to_owned())?;
                 hrefs.push(value);
             }
             Ok(Event::DocType(_)) => {
-                return Err("坚果云 PROPFIND 不允许 DTD".to_owned());
+                return Err("WebDAV PROPFIND 不允许 DTD".to_owned());
             }
             Ok(Event::Eof) => break,
             Ok(_) => {}
-            Err(_) => return Err("坚果云 PROPFIND XML 无法解析".to_owned()),
+            Err(_) => return Err("WebDAV PROPFIND XML 无法解析".to_owned()),
         }
     }
     if current.is_some() {
-        return Err("坚果云 PROPFIND href 未闭合".to_owned());
+        return Err("WebDAV PROPFIND href 未闭合".to_owned());
     }
-    let base = Url::parse(ENDPOINT).expect("固定坚果云地址必须有效");
+    let base = Url::parse(endpoint).map_err(|_| "WebDAV 服务地址无效".to_owned())?;
+    let base_components = base
+        .path_segments()
+        .ok_or_else(|| "WebDAV 服务地址缺少路径".to_owned())?
+        .filter(|value| !value.is_empty())
+        .map(decode_path_segment)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut join_base = base.clone();
+    if !join_base.path().ends_with('/') {
+        join_base.set_path(&format!("{}/", join_base.path()));
+    }
     let mut paths = BTreeSet::new();
     for raw in hrefs {
         let value = raw.trim();
         if value.is_empty() {
-            return Err("坚果云 PROPFIND href 为空".to_owned());
+            return Err("WebDAV PROPFIND href 为空".to_owned());
         }
+        validate_href_reference(value)?;
         let url = Url::parse(value)
-            .or_else(|_| base.join(value))
-            .map_err(|_| "坚果云 PROPFIND href 无效".to_owned())?;
+            .or_else(|_| join_base.join(value))
+            .map_err(|_| "WebDAV PROPFIND href 无效".to_owned())?;
         let components = url
             .path_segments()
-            .ok_or_else(|| "坚果云 PROPFIND href 缺少路径".to_owned())?
+            .ok_or_else(|| "WebDAV PROPFIND href 缺少路径".to_owned())?
             .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-        let Some(start) = components.iter().position(|value| *value == "v1") else {
+            .map(decode_path_segment)
+            .collect::<Result<Vec<_>, _>>()?;
+        if !components.starts_with(&base_components) {
             continue;
-        };
-        let path = components[start..]
+        }
+        let path = components[base_components.len()..]
             .iter()
             .map(|value| (*value).to_owned())
             .collect::<Vec<_>>();
+        if path.first().map(String::as_str) != Some("v1") {
+            continue;
+        }
         if path.iter().any(|value| !valid_path_component(value)) {
-            return Err("坚果云 PROPFIND href 包含无效路径".to_owned());
+            return Err("WebDAV PROPFIND href 包含无效路径".to_owned());
         }
         paths.insert(path);
     }
     Ok(paths.into_iter().collect())
+}
+
+fn validate_href_reference(value: &str) -> Result<(), String> {
+    if !has_valid_percent_encoding(value) {
+        return Err("WebDAV PROPFIND href 百分号转义无效".to_owned());
+    }
+    let path_reference = value.split(['?', '#']).next().unwrap_or(value);
+    for segment in path_reference.split('/') {
+        let decoded = decode_path_segment(segment)?;
+        if matches!(decoded.as_str(), "." | "..") || decoded.contains('/') || decoded.contains('\\')
+        {
+            return Err("WebDAV PROPFIND href 包含无效路径".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn has_valid_percent_encoding(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            index += 1;
+            continue;
+        }
+        if index + 2 >= bytes.len()
+            || !bytes[index + 1].is_ascii_hexdigit()
+            || !bytes[index + 2].is_ascii_hexdigit()
+        {
+            return false;
+        }
+        index += 3;
+    }
+    true
+}
+
+fn decode_path_segment(value: &str) -> Result<String, String> {
+    let source = value.as_bytes();
+    let mut output = Vec::with_capacity(source.len());
+    let mut index = 0;
+    while index < source.len() {
+        if source[index] == b'%' {
+            if index + 2 >= source.len() {
+                return Err("WebDAV PROPFIND href 百分号转义无效".to_owned());
+            }
+            let high = hex_value(source[index + 1])
+                .ok_or_else(|| "WebDAV PROPFIND href 百分号转义无效".to_owned())?;
+            let low = hex_value(source[index + 2])
+                .ok_or_else(|| "WebDAV PROPFIND href 百分号转义无效".to_owned())?;
+            output.push((high << 4) | low);
+            index += 3;
+        } else {
+            output.push(source[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(output).map_err(|_| "WebDAV PROPFIND href 路径编码无效".to_owned())
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -394,6 +477,7 @@ mod tests {
 
     fn credentials() -> SyncCredentials {
         SyncCredentials::WebDav {
+            endpoint: "https://dav.example.com/remote.php/dav/files/person/woo-todo/".to_owned(),
             username: "user@example.com".to_owned(),
             app_password: "app-password".to_owned(),
             vault_id: "vault-windows".to_owned(),
@@ -471,7 +555,7 @@ mod tests {
 
         assert_eq!(
             client.ensure_collections().unwrap_err(),
-            "坚果云 WebDAV 返回 HTTP 503"
+            "WebDAV 服务返回 HTTP 503"
         );
     }
 
@@ -504,17 +588,51 @@ mod tests {
     #[test]
     fn propfind_parser_handles_namespaces_absolute_urls_and_entities() {
         let source = br#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
-          <d:response><d:href>https://dav.jianguoyun.com/dav/v1/vault-windows/ops/op/</d:href></d:response>
-          <d:response><d:href>/dav/v1/vault-windows/ops/op/op-windows-0001.json</d:href></d:response>
+          <d:response><d:href>https://dav.example.com/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/</d:href></d:response>
+          <d:response><d:href>/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/op-windows-0001.json</d:href></d:response>
+          <d:response><d:href>v1/vault-windows/ops/re/relative.json</d:href></d:response>
         </d:multistatus>"#;
         assert_eq!(
-            parse_propfind_hrefs(source).unwrap(),
+            parse_propfind_hrefs(
+                source,
+                "https://dav.example.com/remote.php/dav/files/person/woo-todo/",
+            )
+            .unwrap(),
             vec![
                 vec!["v1", "vault-windows", "ops", "op"],
                 vec!["v1", "vault-windows", "ops", "op", "op-windows-0001.json"],
+                vec!["v1", "vault-windows", "ops", "re", "relative.json"],
             ]
         );
-        assert!(parse_propfind_hrefs(br#"<!DOCTYPE foo><d:href>/v1/a</d:href>"#).is_err());
+        assert!(
+            parse_propfind_hrefs(
+                br#"<!DOCTYPE foo><d:href>/v1/a</d:href>"#,
+                "https://dav.example.com/woo-todo/",
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn propfind_parser_rejects_unsafe_percent_encoded_paths() {
+        for href in [
+            "/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/%2e%2e/operation.json",
+            "/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/operation%2fescape.json",
+            "/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/operation%5cescape.json",
+            "/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/operation%ZZ.json",
+        ] {
+            let source = format!(
+                r#"<d:multistatus xmlns:d="DAV:"><d:response><d:href>{href}</d:href></d:response></d:multistatus>"#
+            );
+            assert!(
+                parse_propfind_hrefs(
+                    source.as_bytes(),
+                    "https://dav.example.com/remote.php/dav/files/person/woo-todo/",
+                )
+                .is_err(),
+                "{href}"
+            );
+        }
     }
 
     #[test]
@@ -559,13 +677,13 @@ mod tests {
     #[test]
     fn list_paths_scans_only_valid_shards_and_objects() {
         let root = br#"<d:multistatus xmlns:d="DAV:">
-          <d:response><d:href>/dav/v1/vault-windows/ops/</d:href></d:response>
-          <d:response><d:href>/dav/v1/vault-windows/ops/op/</d:href></d:response>
-          <d:response><d:href>/dav/v1/vault-windows/ops/toolong/</d:href></d:response>
+          <d:response><d:href>/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/</d:href></d:response>
+          <d:response><d:href>/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/</d:href></d:response>
+          <d:response><d:href>/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/toolong/</d:href></d:response>
         </d:multistatus>"#;
         let shard = br#"<d:multistatus xmlns:d="DAV:">
-          <d:response><d:href>/dav/v1/vault-windows/ops/op/op-windows-0001.json</d:href></d:response>
-          <d:response><d:href>/dav/v1/vault-windows/ops/op/ignored.txt</d:href></d:response>
+          <d:response><d:href>/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/op-windows-0001.json</d:href></d:response>
+          <d:response><d:href>/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/ignored.txt</d:href></d:response>
         </d:multistatus>"#;
         let transport = MockTransport::with([
             HttpResponse {
@@ -593,10 +711,10 @@ mod tests {
     #[test]
     fn highest_lamport_reads_remote_operations() {
         let root = br#"<d:multistatus xmlns:d="DAV:">
-          <d:response><d:href>/dav/v1/vault-windows/ops/op/</d:href></d:response>
+          <d:response><d:href>/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/</d:href></d:response>
         </d:multistatus>"#;
         let shard = br#"<d:multistatus xmlns:d="DAV:">
-          <d:response><d:href>/dav/v1/vault-windows/ops/op/op-windows-0001.json</d:href></d:response>
+          <d:response><d:href>/remote.php/dav/files/person/woo-todo/v1/vault-windows/ops/op/op-windows-0001.json</d:href></d:response>
         </d:multistatus>"#;
         let transport = MockTransport::with([
             HttpResponse {

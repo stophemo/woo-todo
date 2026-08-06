@@ -62,7 +62,7 @@ test("认领配对必须携带 32 字节令牌和 X25519 公钥", () => {
     pairingSecret: encodedBytes(32, 1),
     deviceToken: encodedBytes(32, 2),
     device: {
-      name: "Galaxy S23 Ultra",
+      name: "Android 测试设备",
       platform: "android",
       publicKey: encodedBytes(32, 3),
     },

@@ -363,7 +363,7 @@ test("vault、配对、密文同步、幂等与撤销形成完整闭环", async 
       pairingSecret,
       deviceToken: androidToken,
       device: {
-        name: "Galaxy S23 Ultra",
+        name: "Android 测试设备",
         platform: "android",
         publicKey: encodedBytes(32, 3),
       },

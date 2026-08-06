@@ -71,7 +71,7 @@ struct SyncSettingsView: View {
                     Task { await store.enableLocalNetworkSync(replacingWebDav: true) }
                 }
             case .webDav:
-                Button("切换到坚果云同步") {
+                Button("切换到第三方 WebDAV") {
                     syncSwitchTarget = nil
                     Task { await webDavStore.configure(replacingWorkerSync: true) }
                 }
@@ -92,7 +92,7 @@ struct SyncSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("同步方式")
                         .font(.title2.weight(.semibold))
-                    Text("任务始终先写入本地数据库。可直接在同一网络同步，也可使用坚果云或自建 Worker。")
+                    Text("任务始终先写入本地数据库。无互联网时可在同一网络同步；联网时可使用第三方 WebDAV 或自建服务。")
                         .foregroundStyle(.secondary)
                 }
 
@@ -190,7 +190,7 @@ struct SyncSettingsView: View {
             switch store.localNetworkHostState {
             case .disabled:
                 if webDavStore.connection != nil {
-                    Label("当前正在使用坚果云同步。切换后会保留本地任务，并用新的局域网空间重新同步。", systemImage: "arrow.left.arrow.right")
+                    Label("当前正在使用第三方 WebDAV。切换后会保留本地任务，并用新的局域网空间重新同步。", systemImage: "arrow.left.arrow.right")
                         .font(.caption)
                         .foregroundStyle(.orange)
                     Button {
@@ -251,8 +251,7 @@ struct SyncSettingsView: View {
     }
 
     private var webDavCard: some View {
-        SettingsCard(title: "坚果云自动同步", systemImage: "externaldrive.connected.to.line.below") {
-            LabeledContent("WebDAV 地址", value: WebDavEndpointPolicy.endpoint.absoluteString)
+        SettingsCard(title: "第三方 WebDAV", systemImage: "externaldrive.connected.to.line.below") {
             if store.isCreatingVault
                 || store.localNetworkHostState == .starting {
                 Label(
@@ -264,15 +263,23 @@ struct SyncSettingsView: View {
             } else {
                 if hasWorkerOrLocalSync {
                     Label(
-                        "当前正在使用\(store.isLocalNetworkConnection ? "同一网络" : "Worker")同步。填写坚果云配置后可以直接切换。",
+                        "当前正在使用\(store.isLocalNetworkConnection ? "同一网络" : "自建服务")同步。填写 WebDAV 配置后可以直接切换。",
                         systemImage: "arrow.left.arrow.right"
                     )
                     .font(.caption)
                     .foregroundStyle(.orange)
                 }
-                TextField("坚果云账号邮箱", text: $webDavStore.username)
+                TextField(
+                    "https://服务商提供的 WebDAV 根目录",
+                    text: $webDavStore.endpointText
+                )
                     .textFieldStyle(.roundedBorder)
-                SecureField("坚果云应用密码", text: $webDavStore.appPassword)
+                Text("填写服务商提供的 WebDAV 根目录，不要填写产品首页或文件浏览网页。为避免认证凭据外送，只接受 HTTPS 地址。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("WebDAV 账号", text: $webDavStore.username)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("应用密码或访问令牌", text: $webDavStore.appPassword)
                     .textFieldStyle(.roundedBorder)
 
                 if let connection = webDavStore.connection {
@@ -300,12 +307,12 @@ struct SyncSettingsView: View {
                             HStack(alignment: .top, spacing: 16) {
                                 QRCodeView(
                                     payload: setupLink.absoluteString,
-                                    accessibilityLabel: "坚果云配置二维码"
+                                    accessibilityLabel: "WebDAV 配置二维码"
                                 )
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("在 Android 扫码加入")
                                         .font(.headline)
-                                    Text("二维码和配置链接包含坚果云 WebDAV 应用密码与 Woo Todo 同步密钥，等同完整敏感凭据；不含设备身份。Android 打开时确认目标应用确为 Woo Todo，不要使用不可信扫码器。")
+                                    Text("二维码和配置链接包含 WebDAV 地址、认证凭据与 Woo Todo 同步密钥，等同完整敏感配置；不含设备身份。Android 打开时请确认目标应用是 Woo Todo。")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                     Button {
@@ -334,7 +341,7 @@ struct SyncSettingsView: View {
                             } label: {
                                 Label("显示 Android 配置二维码", systemImage: "qrcode")
                             }
-                            Text("二维码含坚果云 WebDAV 应用密码和同步密钥，仅在两台设备旁临时显示。")
+                            Text("二维码含 WebDAV 认证凭据和同步密钥，仅在两台设备旁临时显示。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -347,19 +354,23 @@ struct SyncSettingsView: View {
                             Label(error, systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                         } else {
-                            Label("坚果云已连接", systemImage: "checkmark.circle.fill")
+                            Label("WebDAV 已连接", systemImage: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
                         }
                         Spacer()
                         Button("立即同步") { webDavStore.requestSync(.manual) }
                             .disabled(webDavStore.runtimeSnapshot.isRunning)
                     }
-                    Button("更新账号或应用密码") {
+                    Button("更新服务地址或认证凭据") {
                         webDavSetupLinkRevealed = false
                         webDavSetupLinkCopied = false
                         Task { await webDavStore.configure() }
                     }
-                    .disabled(webDavStore.isSaving || webDavStore.appPassword.isEmpty)
+                    .disabled(
+                        webDavStore.isSaving
+                            || webDavStore.endpointText.isEmpty
+                            || webDavStore.appPassword.isEmpty
+                    )
                 } else {
                     TextField("同步空间名（两端完全相同）", text: $webDavStore.vaultId)
                         .textFieldStyle(.roundedBorder)
@@ -377,7 +388,7 @@ struct SyncSettingsView: View {
                             ProgressView().controlSize(.small)
                         } else {
                             Label(
-                                hasWorkerOrLocalSync ? "切换到坚果云同步" : "保存并连接",
+                                hasWorkerOrLocalSync ? "切换到第三方 WebDAV" : "保存并连接",
                                 systemImage: hasWorkerOrLocalSync ? "arrow.left.arrow.right" : "link"
                             )
                         }
@@ -385,6 +396,7 @@ struct SyncSettingsView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(
                         webDavStore.isSaving
+                            || webDavStore.endpointText.isEmpty
                             || webDavStore.username.isEmpty
                             || webDavStore.appPassword.isEmpty
                             || webDavStore.vaultId.isEmpty
@@ -392,7 +404,7 @@ struct SyncSettingsView: View {
                     )
                 }
 
-                Text("请先安装并登录坚果云官方客户端；网页端仅用于在“账户信息 → 安全选项 → 第三方应用管理”生成应用密码。Woo Todo 使用内置 WebDAV 客户端直连，任务标题只以 AES-256-GCM 密文保存。")
+                Text("请向服务商获取专用 WebDAV HTTPS 根目录和应用密码。Woo Todo 直接连接该目录，只保存 AES-256-GCM 密文；服务地址不能包含账号、查询参数或片段。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let error = webDavStore.actionErrorMessage {
@@ -525,7 +537,7 @@ struct SyncSettingsView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("等待手机扫描")
                             .font(.headline)
-                        Text("在三星手机下拉快捷面板打开「扫描二维码」（或使用相机），扫描左侧二维码，并选择用 Woo Todo 打开。")
+                        Text("在 Android 设备上使用系统相机、二维码扫描入口或 Woo Todo 内置扫码，扫描左侧二维码并用 Woo Todo 打开。")
                             .foregroundStyle(.secondary)
                         Text("打开后，两端都会显示同一个六位核对码；暂时不要关闭任一端。")
                             .foregroundStyle(.secondary)
@@ -714,7 +726,7 @@ struct SyncSettingsView: View {
                 Text("1. 确认 Mac 与手机均可联网，且上方服务地址是 HTTPS Worker。")
             }
             Text("2. 在 Mac 点击“生成配对二维码”。")
-            Text("3. 在三星手机用快捷面板“扫描二维码”扫描，并选择用 Woo Todo 打开。")
+            Text("3. 在 Android 设备上使用系统相机、二维码扫描入口或 Woo Todo 内置扫码，并用 Woo Todo 打开。")
             Text("4. 核对两端六位码完全相同，再回到 Mac 点击“确认绑定”。")
             Text("5. 手机保存密钥后会自动首次同步；任务明文不会上传到服务端。")
         }

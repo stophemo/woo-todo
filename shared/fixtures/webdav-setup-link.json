@@ -1,5 +1,6 @@
 {
-  "v": "1",
+  "v": "2",
+  "endpoint": "https://dav.example.com/remote.php/dav/files/person/woo-todo/",
   "username": "person@example.com",
   "appPassword": "fake-app-password-for-tests",
   "vaultId": "personal-vault",

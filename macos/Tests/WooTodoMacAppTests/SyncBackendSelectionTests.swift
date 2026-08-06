@@ -30,9 +30,10 @@ struct SyncBackendSelectionTests {
     }
 
     @MainActor
-    @Test("坚果云未启用时仍从安全存储回填配置")
+    @Test("WebDAV 未启用时仍从安全存储回填配置")
     func inactiveWebDavConfigurationIsRestored() throws {
         let credentials = WebDavCredentials(
+            endpoint: URL(string: "https://dav.example.com/woo-todo/")!,
             username: "saved@example.com",
             appPassword: "saved-app-password",
             vaultId: "saved-vault",
@@ -50,6 +51,7 @@ struct SyncBackendSelectionTests {
         )
 
         #expect(store.connection == nil)
+        #expect(store.endpointText == credentials.endpoint.absoluteString)
         #expect(store.username == credentials.username)
         #expect(store.appPassword == credentials.appPassword)
         #expect(store.vaultId == credentials.vaultId)
@@ -57,7 +59,7 @@ struct SyncBackendSelectionTests {
     }
 
     @MainActor
-    @Test("切换到坚果云时只停用原同步身份而不删除凭据")
+    @Test("切换到 WebDAV 时只停用原同步身份而不删除凭据")
     func deactivatingWorkerPreservesCredentials() throws {
         let credentials = SyncCredentials(
             endpoint: try #require(URL(string: "http://192.168.8.21:48473")),

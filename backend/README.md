@@ -31,7 +31,7 @@ npx wrangler dev
 
 ## 面向个人的 Cloudflare 免费部署
 
-这是一条自托管的可选路径，坚果云用户不需要执行本节。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人多端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
+这是一条自托管的可选路径，使用第三方 WebDAV 或仅使用同一网络同步的用户不需要执行本节。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人多端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
 
 ### 1. 准备账号和工具
 

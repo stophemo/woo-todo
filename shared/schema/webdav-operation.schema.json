@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woo-todo.dev/schema/webdav-operation.schema.json",
-  "title": "woo-todo 坚果云 WebDAV 密文操作对象",
+  "title": "woo-todo 通用 WebDAV 密文操作对象",
   "type": "object",
   "additionalProperties": false,
   "required": [

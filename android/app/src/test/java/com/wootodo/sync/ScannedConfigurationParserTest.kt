@@ -7,8 +7,9 @@ import org.junit.Test
 
 class ScannedConfigurationParserTest {
     @Test
-    fun `识别Mac生成的坚果云配置并保留预填字段`() {
+    fun `识别桌面端生成的WebDAV配置并保留预填字段`() {
         val setup = WebDavSetupLink(
+            endpoint = "https://dav.example.com/woo-todo/",
             username = "person@example.com",
             appPassword = "app-password",
             vaultId = "personal-vault",

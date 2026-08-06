@@ -13,30 +13,36 @@ public enum WebDavError: Error, Equatable, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidCredentials: "坚果云同步凭据无效"
-        case .invalidEndpoint: "坚果云 WebDAV 地址必须是 https://dav.jianguoyun.com/dav/"
+        case .invalidCredentials: "第三方 WebDAV 同步凭据无效"
+        case .invalidEndpoint: "WebDAV 服务必须使用不含凭据、查询参数或片段的 HTTPS 地址"
         case .encoding(let message): "WebDAV 对象编码失败：\(message)"
-        case .transport(let message): "坚果云网络请求失败：\(message)"
-        case .invalidResponse: "坚果云返回了无效的 HTTP 响应"
-        case .http(let status): "坚果云 WebDAV 返回 HTTP \(status)"
-        case .objectConflict(let path): "坚果云对象发生冲突：\(path)"
-        case .malformedObject(let message): "坚果云同步对象无效：\(message)"
+        case .transport(let message): "WebDAV 网络请求失败：\(message)"
+        case .invalidResponse: "WebDAV 服务返回了无效的 HTTP 响应"
+        case .http(let status): "WebDAV 服务返回 HTTP \(status)"
+        case .objectConflict(let path): "WebDAV 对象发生冲突：\(path)"
+        case .malformedObject(let message): "WebDAV 同步对象无效：\(message)"
         }
     }
 }
 
 public enum WebDavEndpointPolicy {
-    public static let endpoint = URL(string: "https://dav.jianguoyun.com/dav/")!
-
     public static func isAllowed(_ value: URL) -> Bool {
-        guard value.scheme?.lowercased() == "https",
-              value.host?.lowercased() == "dav.jianguoyun.com",
-              value.user == nil,
-              value.password == nil,
-              value.query == nil,
-              value.fragment == nil else { return false }
-        let path = value.path.hasSuffix("/") ? value.path : value.path + "/"
-        return path == "/dav/"
+        guard value.absoluteString.count <= 2_048,
+              let components = URLComponents(url: value, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https",
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.port.map({ (1...65_535).contains($0) }) ?? true else {
+            return false
+        }
+        return components.percentEncodedPath.split(separator: "/").allSatisfy { segment in
+            guard let decoded = String(segment).removingPercentEncoding else { return false }
+            return decoded != "." && decoded != ".."
+                && !decoded.contains("/") && !decoded.contains("\\")
+        }
     }
 }
 
@@ -49,7 +55,7 @@ public struct WebDavCredentials: Codable, Equatable, Sendable {
     public let vaultKey: Data
 
     public init(
-        endpoint: URL = WebDavEndpointPolicy.endpoint,
+        endpoint: URL,
         username: String,
         appPassword: String,
         vaultId: String,
@@ -65,8 +71,10 @@ public struct WebDavCredentials: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
-        guard WebDavEndpointPolicy.isAllowed(endpoint),
-              (1...320).contains(username.unicodeScalars.count),
+        guard WebDavEndpointPolicy.isAllowed(endpoint) else {
+            throw WebDavError.invalidEndpoint
+        }
+        guard (1...320).contains(username.unicodeScalars.count),
               (1...256).contains(appPassword.unicodeScalars.count),
               username.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
               username.rangeOfCharacter(from: .controlCharacters) == nil,
@@ -79,7 +87,7 @@ public struct WebDavCredentials: Codable, Equatable, Sendable {
     }
 }
 
-/// 坚果云应用密码与同步密钥只进入 Keychain；WebDAV 服务端永远只看到密文对象。
+/// WebDAV 认证凭据与同步密钥只进入 Keychain；第三方服务端永远只看到密文对象。
 public protocol WebDavCredentialsStoring: Sendable {
     func save(_ credentials: WebDavCredentials) throws
     func load() throws -> WebDavCredentials?
@@ -89,13 +97,16 @@ public protocol WebDavCredentialsStoring: Sendable {
 public final class WebDavCredentialsStore: WebDavCredentialsStoring, @unchecked Sendable {
     private let service: String
     private let account: String
+    private let legacyAccount: String?
 
     public init(
         service: String = "dev.woo-todo.webdav",
-        account: String = "jianguoyun"
+        account: String = "generic-webdav",
+        legacyAccount: String? = "jianguoyun"
     ) {
         self.service = service
         self.account = account
+        self.legacyAccount = legacyAccount
     }
 
     public func save(_ credentials: WebDavCredentials) throws {
@@ -106,14 +117,14 @@ public final class WebDavCredentialsStore: WebDavCredentialsStoring, @unchecked 
         } catch {
             throw WebDavError.encoding(error.localizedDescription)
         }
-        var attributes = query()
+        var attributes = query(account: account)
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         attributes[kSecAttrSynchronizable as String] = false
         let status = SecItemAdd(attributes as CFDictionary, nil)
         if status == errSecDuplicateItem {
             let updateStatus = SecItemUpdate(
-                query() as CFDictionary,
+                query(account: account) as CFDictionary,
                 [kSecValueData as String: data] as CFDictionary
             )
             guard updateStatus == errSecSuccess else {
@@ -125,7 +136,17 @@ public final class WebDavCredentialsStore: WebDavCredentialsStoring, @unchecked 
     }
 
     public func load() throws -> WebDavCredentials? {
-        var request = query()
+        if let credentials = try load(account: account) { return credentials }
+        guard let legacyAccount,
+              legacyAccount != account,
+              let credentials = try load(account: legacyAccount) else { return nil }
+        try save(credentials)
+        _ = SecItemDelete(query(account: legacyAccount) as CFDictionary)
+        return credentials
+    }
+
+    private func load(account: String) throws -> WebDavCredentials? {
+        var request = query(account: account)
         request[kSecReturnData as String] = true
         request[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -146,13 +167,16 @@ public final class WebDavCredentialsStore: WebDavCredentialsStoring, @unchecked 
     }
 
     public func delete() throws {
-        let status = SecItemDelete(query() as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw WebDavError.transport("Keychain 错误码 \(status)")
+        let accounts = Set([account, legacyAccount].compactMap { $0 })
+        for account in accounts {
+            let status = SecItemDelete(query(account: account) as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw WebDavError.transport("Keychain 错误码 \(status)")
+            }
         }
     }
 
-    private func query() -> [String: Any] {
+    private func query(account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -418,7 +442,7 @@ public final class WebDavClient: @unchecked Sendable {
             headers: ["Depth": String(depth), "Content-Type": "application/xml"],
             accepted: [207]
         )
-        return try WebDavHrefParser.parse(response.data)
+        return try WebDavHrefParser.parse(response.data, baseURL: baseURL)
     }
 
     private func request(
@@ -440,7 +464,10 @@ public final class WebDavClient: @unchecked Sendable {
         while true {
             try Task.checkCancellation()
             do {
-                let (data, response) = try await session.data(for: request)
+                let (data, response) = try await session.data(
+                    for: request,
+                    delegate: WebDavRedirectBlocker.shared
+                )
                 guard let http = response as? HTTPURLResponse else {
                     throw WebDavError.invalidResponse
                 }
@@ -472,6 +499,21 @@ public final class WebDavClient: @unchecked Sendable {
             retryIndex += 1
             try await retrySleep(delay)
         }
+    }
+}
+
+private final class WebDavRedirectBlocker: NSObject, URLSessionTaskDelegate,
+    @unchecked Sendable {
+    static let shared = WebDavRedirectBlocker()
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }
 
@@ -547,25 +589,72 @@ internal final class WebDavHrefParser: NSObject, XMLParserDelegate {
     private var current: String?
     private var values: [String] = []
 
-    static func parse(_ data: Data) throws -> [[String]] {
+    static func parse(_ data: Data, baseURL: URL) throws -> [[String]] {
         let parser = WebDavHrefParser()
         let xml = XMLParser(data: data)
         xml.delegate = parser
         guard xml.parse() else { throw WebDavError.malformedObject("PROPFIND XML 无法解析") }
+        let baseParts = try pathSegments(of: baseURL)
         var paths: [[String]] = []
         for raw in parser.values {
             let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !value.isEmpty,
-                  let url = URL(string: value),
-                  !url.path.isEmpty,
-                  let decoded = url.path.removingPercentEncoding else {
+                  hasValidPercentEncoding(value),
+                  let components = URLComponents(string: value),
+                  !components.percentEncodedPath.isEmpty else {
                 throw WebDavError.malformedObject("PROPFIND href 无效")
             }
-            let parts = decoded.split(separator: "/").map(String.init)
-            guard let start = parts.firstIndex(of: "v1") else { continue }
-            paths.append(Array(parts[start...]))
+            let parts = try pathSegments(of: components.percentEncodedPath)
+            let isRelativePath = components.scheme == nil
+                && components.host == nil
+                && !components.percentEncodedPath.hasPrefix("/")
+            if isRelativePath {
+                guard parts.first == "v1" else { continue }
+                paths.append(parts)
+                continue
+            }
+            guard parts.starts(with: baseParts) else { continue }
+            let relative = Array(parts.dropFirst(baseParts.count))
+            guard relative.first == "v1" else { continue }
+            paths.append(relative)
         }
         return paths
+    }
+
+    private static func pathSegments(of url: URL) throws -> [String] {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            throw WebDavError.invalidEndpoint
+        }
+        return try pathSegments(of: components.percentEncodedPath)
+    }
+
+    private static func hasValidPercentEncoding(_ value: String) -> Bool {
+        let bytes = Array(value.utf8)
+        var index = 0
+        while index < bytes.count {
+            guard bytes[index] == 0x25 else {
+                index += 1
+                continue
+            }
+            guard index + 2 < bytes.count,
+                  bytes[index + 1].isASCIIHexDigit,
+                  bytes[index + 2].isASCIIHexDigit else {
+                return false
+            }
+            index += 3
+        }
+        return true
+    }
+
+    private static func pathSegments(of encodedPath: String) throws -> [String] {
+        try encodedPath.split(separator: "/").map { segment in
+            guard let decoded = String(segment).removingPercentEncoding,
+                  decoded != ".", decoded != "..",
+                  !decoded.contains("/"), !decoded.contains("\\") else {
+                throw WebDavError.malformedObject("PROPFIND href 无效")
+            }
+            return decoded
+        }
     }
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
@@ -587,5 +676,13 @@ internal final class WebDavHrefParser: NSObject, XMLParserDelegate {
     private static func isHrefElement(_ elementName: String, qualifiedName: String?) -> Bool {
         let candidate = (qualifiedName ?? elementName).split(separator: ":").last.map(String.init)
         return candidate?.caseInsensitiveCompare("href") == .orderedSame
+    }
+}
+
+private extension UInt8 {
+    var isASCIIHexDigit: Bool {
+        (0x30...0x39).contains(self)
+            || (0x41...0x46).contains(self)
+            || (0x61...0x66).contains(self)
     }
 }

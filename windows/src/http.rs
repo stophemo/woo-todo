@@ -8,7 +8,7 @@ const MAXIMUM_REQUEST_BYTES: usize = 3 * 1_024 * 1_024;
 pub enum EndpointScope {
     Worker,
     LocalNetwork,
-    Jianguoyun,
+    WebDav,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +18,9 @@ pub struct ValidatedEndpoint {
 
 impl ValidatedEndpoint {
     pub fn parse(value: &str, scope: EndpointScope) -> Result<Self, String> {
+        if scope == EndpointScope::WebDav {
+            validate_webdav_source(value)?;
+        }
         let url = Url::parse(value).map_err(|_| "同步服务地址格式无效".to_owned())?;
         if !url.username().is_empty()
             || url.password().is_some()
@@ -29,7 +32,7 @@ impl ValidatedEndpoint {
         match scope {
             EndpointScope::Worker => validate_worker(&url)?,
             EndpointScope::LocalNetwork => validate_local_network(&url)?,
-            EndpointScope::Jianguoyun => validate_jianguoyun(&url)?,
+            EndpointScope::WebDav => validate_webdav(&url)?,
         }
         Ok(Self { url })
     }
@@ -155,15 +158,58 @@ fn validate_local_network(url: &Url) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_jianguoyun(url: &Url) -> Result<(), String> {
-    if url.scheme() != "https"
-        || url.host_str() != Some("dav.jianguoyun.com")
-        || url.port_or_known_default() != Some(443)
-        || !matches!(url.path(), "/dav" | "/dav/")
-    {
-        return Err("坚果云 WebDAV 地址必须固定为 https://dav.jianguoyun.com/dav/".to_owned());
+fn validate_webdav(url: &Url) -> Result<(), String> {
+    if url.scheme() != "https" || url.host().is_none() {
+        return Err("WebDAV 服务必须使用有效 HTTPS 地址".to_owned());
     }
     Ok(())
+}
+
+fn validate_webdav_source(value: &str) -> Result<(), String> {
+    if value.len() > 2_048 || value.contains('\\') {
+        return Err("WebDAV 服务地址包含无效路径".to_owned());
+    }
+    let path_and_authority = value.split(['?', '#']).next().unwrap_or(value);
+    for segment in path_and_authority.split('/') {
+        let decoded = decode_percent_encoded_segment(segment)?;
+        if matches!(decoded.as_str(), "." | "..") || decoded.contains('/') || decoded.contains('\\')
+        {
+            return Err("WebDAV 服务地址包含无效路径".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn decode_percent_encoded_segment(value: &str) -> Result<String, String> {
+    let source = value.as_bytes();
+    let mut output = Vec::with_capacity(source.len());
+    let mut index = 0;
+    while index < source.len() {
+        if source[index] != b'%' {
+            output.push(source[index]);
+            index += 1;
+            continue;
+        }
+        if index + 2 >= source.len() {
+            return Err("WebDAV 服务地址百分号转义无效".to_owned());
+        }
+        let high = hex_value(source[index + 1])
+            .ok_or_else(|| "WebDAV 服务地址百分号转义无效".to_owned())?;
+        let low = hex_value(source[index + 2])
+            .ok_or_else(|| "WebDAV 服务地址百分号转义无效".to_owned())?;
+        output.push((high << 4) | low);
+        index += 3;
+    }
+    String::from_utf8(output).map_err(|_| "WebDAV 服务地址路径编码无效".to_owned())
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn is_current_device_host(host: &Host<&str>) -> bool {
@@ -375,7 +421,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn endpoint_policies_separate_remote_local_and_jianguoyun() {
+    fn endpoint_policies_separate_remote_local_and_webdav() {
         assert!(
             ValidatedEndpoint::parse("https://sync.example.com", EndpointScope::Worker).is_ok()
         );
@@ -402,24 +448,41 @@ mod tests {
             );
         }
         assert!(
-            ValidatedEndpoint::parse("https://dav.jianguoyun.com/dav/", EndpointScope::Jianguoyun)
-                .is_ok()
+            ValidatedEndpoint::parse(
+                "https://dav.example.com/remote.php/dav/",
+                EndpointScope::WebDav
+            )
+            .is_ok()
         );
         assert!(
-            ValidatedEndpoint::parse("https://example.com/dav/", EndpointScope::Jianguoyun)
-                .is_err()
+            ValidatedEndpoint::parse("http://dav.example.com/dav/", EndpointScope::WebDav).is_err()
         );
+        for invalid in [
+            "https://dav.example.com/root/../escape/",
+            "https://dav.example.com/root/%2e%2e/escape/",
+            "https://dav.example.com/root/encoded%2fslash/",
+            "https://dav.example.com/root/encoded%5cbackslash/",
+            "https://dav.example.com/root/invalid%ZZescape/",
+            "https://dav.example.com\\escaped",
+        ] {
+            assert!(
+                ValidatedEndpoint::parse(invalid, EndpointScope::WebDav).is_err(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]
     fn path_segments_are_encoded_and_cannot_escape_the_base() {
-        let endpoint =
-            ValidatedEndpoint::parse("https://dav.jianguoyun.com/dav/", EndpointScope::Jianguoyun)
-                .unwrap();
+        let endpoint = ValidatedEndpoint::parse(
+            "https://dav.example.com/remote.php/dav/",
+            EndpointScope::WebDav,
+        )
+        .unwrap();
         let url = endpoint.append_path(&["v1", "vault id", "ops"]).unwrap();
         assert_eq!(
             url.as_str(),
-            "https://dav.jianguoyun.com/dav/v1/vault%20id/ops"
+            "https://dav.example.com/remote.php/dav/v1/vault%20id/ops"
         );
         assert!(endpoint.append_path(&[".."]).is_err());
     }

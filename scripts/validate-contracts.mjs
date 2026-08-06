@@ -84,8 +84,9 @@ if (
 const webDavSetupLink = documents.get("shared/fixtures/webdav-setup-link.json");
 const setupKeys = Object.keys(webDavSetupLink).sort().join(",");
 if (
-  setupKeys !== "appPassword,username,v,vaultId,vaultKey"
-  || webDavSetupLink.v !== "1"
+  setupKeys !== "appPassword,endpoint,username,v,vaultId,vaultKey"
+  || webDavSetupLink.v !== "2"
+  || !isValidWebDavEndpoint(webDavSetupLink.endpoint)
   || typeof webDavSetupLink.username !== "string"
   || webDavSetupLink.username.length < 1
   || webDavSetupLink.username.length > 320
@@ -97,9 +98,8 @@ if (
   || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(webDavSetupLink.vaultId)
   || !/^[A-Za-z0-9_-]{43}$/u.test(webDavSetupLink.vaultKey)
   || Object.hasOwn(webDavSetupLink, "deviceId")
-  || Object.hasOwn(webDavSetupLink, "endpoint")
 ) {
-  throw new Error("坚果云配置深链 fixture 无效");
+  throw new Error("第三方 WebDAV 配置深链 fixture 无效");
 }
 if (Buffer.from(webDavOperation.nonce, "base64url").byteLength !== 12) {
   throw new Error("WebDAV 操作对象 nonce 不是 12 字节");
@@ -204,6 +204,21 @@ if (
 validateTaskPayload(tombstoneBackupSnapshot.tombstones[0]);
 
 console.log(`契约基础校验通过：${files.length} 个文件`);
+
+function isValidWebDavEndpoint(value) {
+  if (typeof value !== "string" || value.length > 2048) return false;
+  try {
+    const endpoint = new URL(value);
+    return endpoint.protocol === "https:"
+      && endpoint.hostname.length > 0
+      && endpoint.username === ""
+      && endpoint.password === ""
+      && endpoint.search === ""
+      && endpoint.hash === "";
+  } catch {
+    return false;
+  }
+}
 
 function isoWeekKey(date) {
   const value = new Date(date);

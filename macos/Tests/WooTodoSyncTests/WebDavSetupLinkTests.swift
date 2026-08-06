@@ -2,8 +2,9 @@ import Foundation
 import Testing
 @testable import WooTodoSync
 
-@Suite("坚果云配置深链")
+@Suite("第三方 WebDAV 配置深链")
 struct WebDavSetupLinkTests {
+    private let endpoint = URL(string: "https://dav.example.com/remote.php/dav/files/person/woo-todo/")!
     private let username = "person@example.com"
     private let appPassword = "app-password-demo"
     private let vaultId = "vault-demo"
@@ -16,6 +17,7 @@ struct WebDavSetupLinkTests {
             from: Data(contentsOf: fixtureURL())
         )
         let value = try WebDavSetupLink(
+            endpoint: try #require(URL(string: fixture.endpoint)),
             username: fixture.username,
             appPassword: fixture.appPassword,
             vaultId: fixture.vaultId,
@@ -31,6 +33,7 @@ struct WebDavSetupLinkTests {
         let source = try String(contentsOf: fixtureURL(named: "webdav-setup-link-uri.txt"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let value = try WebDavSetupLink(
+            endpoint: endpoint,
             username: "person+tag@example.com",
             appPassword: "space and & equals= + slash/",
             vaultId: "personal-vault",
@@ -45,6 +48,7 @@ struct WebDavSetupLinkTests {
     @Test("严格往返且不泄露同步密钥")
     func roundTripAndRedaction() throws {
         let value = try WebDavSetupLink(
+            endpoint: endpoint,
             username: username,
             appPassword: appPassword,
             vaultId: vaultId,
@@ -58,7 +62,9 @@ struct WebDavSetupLinkTests {
         #expect(url.host == "webdav")
         #expect(url.path.isEmpty)
         #expect(!url.absoluteString.contains("deviceId="))
-        #expect(!url.absoluteString.contains("endpoint="))
+        #expect(url.absoluteString.contains("endpoint="))
+        #expect(parsed.endpoint == endpoint)
+        #expect(!value.description.contains(endpoint.absoluteString))
         #expect(!value.description.contains(username))
         #expect(!value.description.contains(appPassword))
         #expect(!value.description.contains(vaultKey))
@@ -67,6 +73,7 @@ struct WebDavSetupLinkTests {
         #expect(!value.debugDescription.contains(vaultKey))
 
         let escaped = try WebDavSetupLink(
+            endpoint: endpoint,
             username: "person+tag@example.com",
             appPassword: "space and & equals=",
             vaultId: vaultId,
@@ -80,7 +87,8 @@ struct WebDavSetupLinkTests {
         let encodedUser = username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
         let encodedKey = vaultKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
         let encodedPassword = appPassword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
-        let base = "wootodo://webdav?v=1&username=\(encodedUser)&appPassword=\(encodedPassword)&vaultId=\(vaultId)&vaultKey=\(encodedKey)"
+        let encodedEndpoint = endpoint.absoluteString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
+        let base = "wootodo://webdav?v=2&endpoint=\(encodedEndpoint)&username=\(encodedUser)&appPassword=\(encodedPassword)&vaultId=\(vaultId)&vaultKey=\(encodedKey)"
 
         #expect(throws: WebDavSetupLinkError.duplicateOrUnknownField) {
             _ = try WebDavSetupLink(url: URL(string: base + "&extra=1")!)
@@ -110,10 +118,20 @@ struct WebDavSetupLinkTests {
     @Test("拒绝错误版本、非法账号、空间名和密钥")
     func rejectsInvalidValues() throws {
         #expect(throws: WebDavSetupLinkError.invalidVersion) {
-            _ = try WebDavSetupLink(url: URL(string: "wootodo://webdav?v=2&username=u&appPassword=p&vaultId=vault-a&vaultKey=\(vaultKey)")!)
+            _ = try WebDavSetupLink(url: URL(string: "wootodo://webdav?v=3&endpoint=https://dav.example.com/&username=u&appPassword=p&vaultId=vault-a&vaultKey=\(vaultKey)")!)
+        }
+        #expect(throws: WebDavSetupLinkError.invalidEndpoint) {
+            _ = try WebDavSetupLink(
+                endpoint: URL(string: "http://dav.example.com/woo-todo/")!,
+                username: username,
+                appPassword: appPassword,
+                vaultId: vaultId,
+                vaultKey: vaultKey
+            )
         }
         #expect(throws: WebDavSetupLinkError.invalidUsername) {
             _ = try WebDavSetupLink(
+                endpoint: endpoint,
                 username: "bad user",
                 appPassword: appPassword,
                 vaultId: vaultId,
@@ -122,6 +140,7 @@ struct WebDavSetupLinkTests {
         }
         #expect(throws: WebDavSetupLinkError.invalidAppPassword) {
             _ = try WebDavSetupLink(
+                endpoint: endpoint,
                 username: username,
                 appPassword: "bad\npassword",
                 vaultId: vaultId,
@@ -130,6 +149,7 @@ struct WebDavSetupLinkTests {
         }
         #expect(throws: WebDavSetupLinkError.invalidUsername) {
             _ = try WebDavSetupLink(
+                endpoint: endpoint,
                 username: String(repeating: "u", count: 321),
                 appPassword: appPassword,
                 vaultId: vaultId,
@@ -138,6 +158,7 @@ struct WebDavSetupLinkTests {
         }
         #expect(throws: WebDavSetupLinkError.invalidAppPassword) {
             _ = try WebDavSetupLink(
+                endpoint: endpoint,
                 username: username,
                 appPassword: String(repeating: "p", count: 257),
                 vaultId: vaultId,
@@ -146,6 +167,7 @@ struct WebDavSetupLinkTests {
         }
         #expect(throws: WebDavSetupLinkError.invalidVaultId) {
             _ = try WebDavSetupLink(
+                endpoint: endpoint,
                 username: username,
                 appPassword: appPassword,
                 vaultId: "../escape",
@@ -154,6 +176,7 @@ struct WebDavSetupLinkTests {
         }
         #expect(throws: WebDavSetupLinkError.invalidVaultKey) {
             _ = try WebDavSetupLink(
+                endpoint: endpoint,
                 username: username,
                 appPassword: appPassword,
                 vaultId: vaultId,
@@ -176,6 +199,7 @@ struct WebDavSetupLinkTests {
 
 private struct SetupLinkFixture: Decodable {
     let v: String
+    let endpoint: String
     let username: String
     let appPassword: String
     let vaultId: String

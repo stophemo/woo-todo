@@ -318,7 +318,7 @@ fn synchronize_webdav<T: HttpTransport>(
     client.ensure_collections()?;
     let pending = repository
         .pending_operations(MAXIMUM_PUSH_BATCH)
-        .map_err(|error| format!("无法读取坚果云待发队列：{error}"))?;
+        .map_err(|error| format!("无法读取 WebDAV 待发队列：{error}"))?;
     for operation in &pending {
         client.put(&WebDavOperation::from_push(
             client.vault_id(),
@@ -334,7 +334,7 @@ fn synchronize_webdav<T: HttpTransport>(
     for chunk in operations.chunks(WEBDAV_APPLY_BATCH) {
         repository
             .apply_webdav_operations(chunk)
-            .map_err(|error| format!("应用坚果云同步操作失败：{error}"))?;
+            .map_err(|error| format!("应用 WebDAV 同步操作失败：{error}"))?;
     }
     repository
         .acknowledge_operations(
@@ -343,7 +343,7 @@ fn synchronize_webdav<T: HttpTransport>(
                 .map(|operation| operation.op_id.clone())
                 .collect::<Vec<_>>(),
         )
-        .map_err(|error| format!("确认坚果云同步操作失败：{error}"))?;
+        .map_err(|error| format!("确认 WebDAV 同步操作失败：{error}"))?;
     Ok(SyncRunSummary {
         pushed: pending.len(),
         pulled: operations.len(),

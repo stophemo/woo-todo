@@ -59,7 +59,6 @@ import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRuntimeState
 import com.wootodo.sync.SecureBytes
 import com.wootodo.sync.WebDavCredentials
-import com.wootodo.sync.WebDavEndpointPolicy
 import com.wootodo.sync.WebDavSetupLink
 import com.wootodo.sync.newWebDavIdentity
 import com.wootodo.update.AppUpdateCheckResult
@@ -593,10 +592,11 @@ class MainActivity : AppCompatActivity() {
                     }
                     enableEditableTextActions()
                 }
-            val endpoint = TextView(this@MainActivity).apply {
-                text = WebDavEndpointPolicy.ENDPOINT
-                setPadding(0, padding / 2, 0, padding / 2)
-                enableReadOnlyTextSelection()
+            val endpoint = field(
+                R.string.webdav_endpoint_hint,
+                setupLink?.endpoint ?: existing?.endpoint.orEmpty(),
+            ).apply {
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             }
             val username = field(
                 R.string.webdav_username_hint,
@@ -645,6 +645,7 @@ class MainActivity : AppCompatActivity() {
                         lifecycleScope.launch {
                             val result = runCatching {
                                 val credentials = WebDavCredentials(
+                                    endpoint = endpoint.text.toString().trim(),
                                     username = username.text.toString().trim(),
                                     appPassword = appPassword.text.toString(),
                                     vaultId = vaultId.text.toString().trim(),

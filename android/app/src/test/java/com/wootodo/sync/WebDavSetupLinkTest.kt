@@ -9,7 +9,9 @@ import org.json.JSONObject
 
 class WebDavSetupLinkTest {
     private val key = ByteArray(Aes256Gcm.KEY_BYTES) { it.toByte() }
+    private val endpoint = "https://dav.example.com/remote.php/dav/files/person/woo-todo/"
     private val link = WebDavSetupLink(
+        endpoint = endpoint,
         username = "person@example.com",
         appPassword = "app password/+",
         vaultId = "personal-vault",
@@ -24,13 +26,14 @@ class WebDavSetupLinkTest {
             ).bufferedReader().use { it.readText() },
         )
         val value = WebDavSetupLink(
+            endpoint = fixture.getString("endpoint"),
             username = fixture.getString("username"),
             appPassword = fixture.getString("appPassword"),
             vaultId = fixture.getString("vaultId"),
             vaultKey = Base64Url.decode(fixture.getString("vaultKey")),
         )
 
-        assertEquals("1", fixture.getString("v"))
+        assertEquals("2", fixture.getString("v"))
         assertEquals(value, WebDavSetupLink.parse(value.toUri()))
     }
 
@@ -42,6 +45,7 @@ class WebDavSetupLinkTest {
 
         val parsed = WebDavSetupLink.parse(source)
 
+        assertEquals(endpoint, parsed.endpoint)
         assertEquals("person+tag@example.com", parsed.username)
         assertEquals("space and & equals= + slash/", parsed.appPassword)
         assertEquals("personal-vault", parsed.vaultId)
@@ -52,6 +56,7 @@ class WebDavSetupLinkTest {
     fun `严格解析五字段并支持规范往返`() {
         val parsed = WebDavSetupLink.parse(link.toUri())
 
+        assertEquals(link.endpoint, parsed.endpoint)
         assertEquals(link.username, parsed.username)
         assertEquals(link.appPassword, parsed.appPassword)
         assertEquals(link.vaultId, parsed.vaultId)
@@ -74,15 +79,15 @@ class WebDavSetupLinkTest {
     }
 
     @Test
-    fun `拒绝缺失重复未知字段以及敏感身份字段`() {
+    fun `严格解析六字段并拒绝缺失重复未知字段以及设备身份`() {
         val base = link.toUri()
         listOf(
             base.replace("&appPassword=app%20password%2F%2B", ""),
             "$base&username=other@example.com",
             "$base&deviceId=device-123456",
-            "$base&endpoint=https%3A%2F%2Fdav.jianguoyun.com%2Fdav%2F",
+            "$base&endpoint=https%3A%2F%2Fother.example.com%2Fdav%2F",
             "$base&",
-            base.replace("v=1", "v=2"),
+            base.replace("v=2", "v=3"),
         ).forEach { source ->
             assertThrows(IllegalArgumentException::class.java) {
                 WebDavSetupLink.parse(source)
@@ -99,6 +104,9 @@ class WebDavSetupLinkTest {
             baseUri("wootodo://user@webdav"),
             baseUri("wootodo://webdav#fragment"),
             baseUri("wootodo://webdav", username = "bad%20user"),
+            baseUri("wootodo://webdav", endpoint = "http%3A%2F%2Fdav.example.com%2F"),
+            baseUri("wootodo://webdav", endpoint = "https%3A%2F%2Fuser%40dav.example.com%2F"),
+            baseUri("wootodo://webdav", endpoint = "https%3A%2F%2Fdav.example.com%2F%3Ftoken%3Dsecret"),
             baseUri("wootodo://webdav", vaultId = "bad%2Fvault"),
             baseUri("wootodo://webdav", appPassword = ""),
             baseUri("wootodo://webdav", appPassword = "bad%0Apassword"),
@@ -116,10 +124,11 @@ class WebDavSetupLinkTest {
 
     private fun baseUri(
         authority: String,
+        endpoint: String = "https%3A%2F%2Fdav.example.com%2Fwoo-todo%2F",
         username: String = "person%40example.com",
         appPassword: String = "app-password",
         vaultId: String = "personal-vault",
         vaultKey: String = Base64Url.encode(key),
-    ): String = "$authority?v=1&username=$username&appPassword=$appPassword&" +
+    ): String = "$authority?v=2&endpoint=$endpoint&username=$username&appPassword=$appPassword&" +
         "vaultId=$vaultId&vaultKey=$vaultKey"
 }

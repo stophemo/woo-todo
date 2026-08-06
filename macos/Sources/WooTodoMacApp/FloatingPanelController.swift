@@ -34,6 +34,15 @@ enum PanelPresentationPolicy {
     }
 }
 
+enum PanelInteractionPolicy {
+    static func clickThroughEnabled(
+        isDesktopWidget: Bool,
+        requestedClickThrough: Bool
+    ) -> Bool {
+        !isDesktopWidget && requestedClickThrough
+    }
+}
+
 enum PanelFramePolicy {
     static let autosaveName = "WooTodoFloatingPanel"
     static let currentLayoutVersion = 2
@@ -118,12 +127,16 @@ final class FloatingPanelController: NSWindowController {
             PreferenceKey.opacity: Double(PanelOpacityPolicy.defaultValue)
         ])
         isBlurEnabled = defaults.bool(forKey: PreferenceKey.blurEnabled)
-        isClickThrough = defaults.bool(forKey: PreferenceKey.clickThrough)
         isDesktopWidget = defaults.bool(forKey: PreferenceKey.desktopWidget)
+        isClickThrough = PanelInteractionPolicy.clickThroughEnabled(
+            isDesktopWidget: isDesktopWidget,
+            requestedClickThrough: defaults.bool(forKey: PreferenceKey.clickThrough)
+        )
         isAlwaysOnTop = !isDesktopWidget && defaults.bool(forKey: PreferenceKey.alwaysOnTop)
         panelOpacity = PanelOpacityPolicy.normalized(
             CGFloat(defaults.double(forKey: PreferenceKey.opacity))
         )
+        defaults.set(isClickThrough, forKey: PreferenceKey.clickThrough)
 
         let panel = FloatingPanel(
             contentRect: NSRect(origin: .zero, size: PanelFramePolicy.defaultSize)
@@ -205,9 +218,11 @@ final class FloatingPanelController: NSWindowController {
         isDesktopWidget.toggle()
         if isDesktopWidget {
             isAlwaysOnTop = false
+            isClickThrough = false
         }
         defaults.set(isDesktopWidget, forKey: PreferenceKey.desktopWidget)
         defaults.set(isAlwaysOnTop, forKey: PreferenceKey.alwaysOnTop)
+        defaults.set(isClickThrough, forKey: PreferenceKey.clickThrough)
         applyVisualState()
     }
 
@@ -232,6 +247,10 @@ final class FloatingPanelController: NSWindowController {
     }
 
     private func setClickThrough(_ enabled: Bool) {
+        if enabled && isDesktopWidget {
+            isDesktopWidget = false
+            defaults.set(false, forKey: PreferenceKey.desktopWidget)
+        }
         isClickThrough = enabled
         defaults.set(enabled, forKey: PreferenceKey.clickThrough)
         applyVisualState()
@@ -277,7 +296,7 @@ final class FloatingPanelController: NSWindowController {
         ).cgColor
         blurTintView.translatesAutoresizingMaskIntoConstraints = false
 
-        let hostingView = NSHostingView(
+        let hostingView = InteractiveHostingView(
             rootView: TodayView(store: store, dayCounterStore: dayCounterStore)
         )
         hostingView.translatesAutoresizingMaskIntoConstraints = false
@@ -414,6 +433,10 @@ private final class FloatingPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+}
+
+final class InteractiveHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 private final class WidgetResizeHandleView: NSView {

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 import WooTodoCore
 @testable import WooTodoMacApp
@@ -41,6 +42,23 @@ struct FloatingPanelOpacityTests {
             isDesktopWidget: false,
             isAlwaysOnTop: true
         ) == .alwaysOnTop)
+    }
+
+    @Test func desktopWidgetAlwaysStartsInteractive() {
+        #expect(!PanelInteractionPolicy.clickThroughEnabled(
+            isDesktopWidget: true,
+            requestedClickThrough: true
+        ))
+        #expect(PanelInteractionPolicy.clickThroughEnabled(
+            isDesktopWidget: false,
+            requestedClickThrough: true
+        ))
+    }
+
+    @MainActor @Test func desktopWidgetContentAcceptsTheFirstMouseClick() {
+        let hostingView = InteractiveHostingView(rootView: Text("任务"))
+
+        #expect(hostingView.acceptsFirstMouse(for: nil))
     }
 
     @MainActor @Test func defaultShortcutsReserveThreeFourAndFiveForPanelModes() {

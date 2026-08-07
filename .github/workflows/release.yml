@@ -272,9 +272,10 @@ jobs:
           Copy-Item -LiteralPath $archive -Destination "windows-experimental/Woo-Todo-$($env:GITHUB_REF_NAME)-windows-x64-experimental.zip"
           $experimentalArchive = Get-ChildItem -LiteralPath "windows-experimental" -Filter "*-experimental.zip" -File |
             Select-Object -First 1
-          Get-FileHash -Algorithm SHA256 $experimentalArchive.FullName |
-            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
-            Set-Content -LiteralPath "windows-experimental/SHA256SUMS-windows-experimental.txt" -Encoding utf8
+          $archiveHash = Get-FileHash -Algorithm SHA256 $experimentalArchive.FullName
+          $checksumPath = Join-Path (Get-Location) "windows-experimental/SHA256SUMS-windows-experimental.txt"
+          $checksumLine = "$($archiveHash.Hash.ToLower())  $([IO.Path]::GetFileName($archiveHash.Path))`n"
+          [IO.File]::WriteAllText($checksumPath, $checksumLine, [Text.UTF8Encoding]::new($false))
 
       - name: 上传 Windows 实验版工作流产物
         uses: actions/upload-artifact@v4

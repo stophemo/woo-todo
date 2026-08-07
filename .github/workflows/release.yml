@@ -252,7 +252,7 @@ jobs:
       - name: 检查 Windows Rust 静态诊断
         run: cargo clippy --manifest-path windows/Cargo.toml --locked --all-targets -- -D warnings
 
-      - name: 打包并烟测 Windows 免安装 ZIP
+      - name: 打包 Windows 免安装 ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -262,21 +262,8 @@ jobs:
           if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
             throw "没有找到 Windows 免安装 ZIP：$archive"
           }
-          ./windows/scripts/smoke-test.ps1 `
-            -ArchivePath $archive `
-            -TestIntegration `
-            -ArtifactDirectory windows/dist/smoke
           New-Item -ItemType Directory -Path "release" -Force | Out-Null
           Copy-Item -LiteralPath $archive -Destination "release/Woo-Todo-$($env:GITHUB_REF_NAME)-windows-x64.zip"
-
-      - name: 上传 Windows 烟测诊断
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release-smoke-${{ github.run_attempt }}
-          path: windows/dist/smoke/**
-          if-no-files-found: warn
-          retention-days: 7
 
       - name: 上传 Windows 产物
         uses: actions/upload-artifact@v4

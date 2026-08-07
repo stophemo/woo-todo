@@ -48,7 +48,7 @@ pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.26
 windows/dist/Woo-Todo-v0.1.26-windows-x64.zip
 ```
 
-正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和 Release 构建，再对最终 ZIP 执行真实 Win32 交互烟测，覆盖 AMD64 PE、启动、原生窗口、单实例、开始菜单身份、协议激活、快速新增、完成/取消完成、显示设置、同步入口、透明度与穿透独立变化、托盘退出及重启持久化。通过烟测的同一份 ZIP 会与 Android APK、macOS ZIP 一起发布；无论成功或失败，Runner 都会上传诊断日志、桌面截图、Windows Application 事件、隔离 SQLite 与设置文件。
+正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和 Release 构建，生成的 ZIP 会与 Android APK、macOS ZIP 一起发布。Windows 界面交互、系统集成和升级流程由真实 Windows 设备手动验证。
 
 ## 功能范围
 
@@ -74,6 +74,6 @@ Windows 提供本地 SQLite 任务、日/周/月/闲时、重复与 Pass、截�
 - `windows/src/local_server.rs`：同一网络主机、设备授权、配对与增量同步 HTTP 服务。
 - `windows/src/integration.rs`：免安装程序的当前用户通知身份与 `wootodo://` 协议注册。
 - `windows/src/update.rs`：Release 解析、WinHTTP 下载、SHA-256 校验和免安装自替换 helper。
-- `windows/scripts`：可复现的 ZIP 打包与 Windows Runner 烟测入口。
+- `windows/scripts`：可复现的 ZIP 打包入口。
 
 首次运行会为当前用户创建带 `stophemo.WooTodo` AppUserModelID 的开始菜单身份，并注册 `wootodo://` 协议；它不会复制程序、创建卸载项或请求管理员权限。移动程序后重新运行一次即可刷新路径。系统提醒被点击时，协议参数会转发给已经运行的单实例应用。

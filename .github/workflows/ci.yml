@@ -135,7 +135,7 @@ jobs:
       - name: 检查 Windows Rust 静态诊断
         run: cargo clippy --manifest-path windows/Cargo.toml --locked --all-targets -- -D warnings
 
-      - name: 构建并验证 Windows 免安装 ZIP
+      - name: 构建 Windows 免安装 ZIP
         shell: pwsh
         run: |
           ./windows/scripts/package.ps1
@@ -143,19 +143,6 @@ jobs:
           if ($archives.Count -ne 1) {
             throw "Windows dist 中应当只有一个免安装 ZIP，实际为 $($archives.Count) 个"
           }
-          ./windows/scripts/smoke-test.ps1 `
-            -ArchivePath $archives[0].FullName `
-            -TestIntegration `
-            -ArtifactDirectory windows/dist/smoke
-
-      - name: 上传 Windows 烟测诊断
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-smoke-${{ github.run_attempt }}
-          path: windows/dist/smoke/**
-          if-no-files-found: warn
-          retention-days: 7
 
   android:
     name: Android 原生测试

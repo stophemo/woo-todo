@@ -29,12 +29,36 @@ jobs:
           set -euo pipefail
           NOTES_FILE=".github/release-notes/${GITHUB_REF_NAME}.md"
           WINDOWS_NOTES_FILE=".github/release-notes/windows-${GITHUB_REF_NAME}-experimental.md"
-          test -s "$NOTES_FILE"
-          test -s "$WINDOWS_NOTES_FILE"
-          grep -Fq '## 本次更新' "$NOTES_FILE"
-          grep -Fq '## 升级说明' "$NOTES_FILE"
-          grep -Fq '## 本次更新' "$WINDOWS_NOTES_FILE"
-          grep -Fq '## 升级说明' "$WINDOWS_NOTES_FILE"
+
+          validate_notes() {
+            local file="$1"
+            test -s "$file"
+
+            local first_line
+            first_line="$(awk 'NF { print; exit }' "$file")"
+            if [[ "$first_line" != "## 功能变更" && "$first_line" != "## 问题修复" ]]; then
+              echo "发布说明必须直接以“功能变更”或“问题修复”开头：$file" >&2
+              exit 1
+            fi
+
+            if ! grep -Eq '^## (功能变更|问题修复)$' "$file"; then
+              echo "发布说明缺少功能变更或问题修复：$file" >&2
+              exit 1
+            fi
+
+            if ! awk '
+              /^#/ && $0 != "## 功能变更" && $0 != "## 问题修复" {
+                print "发布说明包含无关或重复标题：" $0 > "/dev/stderr"
+                invalid = 1
+              }
+              END { exit invalid }
+            ' "$file"; then
+              exit 1
+            fi
+          }
+
+          validate_notes "$NOTES_FILE"
+          validate_notes "$WINDOWS_NOTES_FILE"
 
   android:
     name: 构建 Android 正式安装包

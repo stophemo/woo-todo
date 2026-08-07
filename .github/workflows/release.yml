@@ -23,6 +23,19 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 校验手写发布说明
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOTES_FILE=".github/release-notes/${GITHUB_REF_NAME}.md"
+          WINDOWS_NOTES_FILE=".github/release-notes/windows-${GITHUB_REF_NAME}-experimental.md"
+          test -s "$NOTES_FILE"
+          test -s "$WINDOWS_NOTES_FILE"
+          grep -Fq '## 本次更新' "$NOTES_FILE"
+          grep -Fq '## 升级说明' "$NOTES_FILE"
+          grep -Fq '## 本次更新' "$WINDOWS_NOTES_FILE"
+          grep -Fq '## 升级说明' "$WINDOWS_NOTES_FILE"
+
   android:
     name: 构建 Android 正式安装包
     needs: validate-tag
@@ -293,24 +306,21 @@ jobs:
           $ErrorActionPreference = "Stop"
           $experimentalTag = "windows-$($env:GITHUB_REF_NAME)-experimental"
           $title = "Woo Todo Windows $($env:GITHUB_REF_NAME) 实验版（不保证可用）"
-          @"
-          ## Windows 实验版（不保证可用）
-
-          此构建仅用于开发测试，不属于 Woo Todo 正式发布通道，也不保证能够正常启动或使用。
-          功能可能不完整，并可能存在稳定性或数据兼容风险；请勿用于唯一或重要任务数据。
-          Windows 实验版暂不提供应用内自动更新，后续版本需手动下载并替换 `WooTodo.exe`。
-          "@ | Set-Content -LiteralPath "windows-experimental/RELEASE_NOTES.md" -Encoding utf8
+          $notesFile = ".github/release-notes/$experimentalTag.md"
+          if (-not (Test-Path -LiteralPath $notesFile -PathType Leaf)) {
+            throw "缺少 Windows 实验版发布说明：$notesFile"
+          }
           $experimentalArchive = Get-ChildItem -LiteralPath "windows-experimental" -Filter "*-experimental.zip" -File |
             Select-Object -First 1
           $checksum = Get-Item -LiteralPath "windows-experimental/SHA256SUMS-windows-experimental.txt"
           if (gh release view $experimentalTag 2>$null) {
             gh release upload $experimentalTag $experimentalArchive.FullName $checksum.FullName --clobber
-            gh release edit $experimentalTag --title $title --notes-file windows-experimental/RELEASE_NOTES.md --prerelease
+            gh release edit $experimentalTag --title $title --notes-file $notesFile --prerelease
           } else {
             gh release create $experimentalTag $experimentalArchive.FullName $checksum.FullName `
               --target $env:GITHUB_SHA `
               --title $title `
-              --notes-file windows-experimental/RELEASE_NOTES.md `
+              --notes-file $notesFile `
               --prerelease
           }
 
@@ -353,15 +363,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          NOTES_FILE=".github/release-notes/${GITHUB_REF_NAME}.md"
+          test -s "$NOTES_FILE"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" release/* --clobber
             gh release edit "$GITHUB_REF_NAME" \
-              --title "Woo Todo $GITHUB_REF_NAME"
+              --title "Woo Todo $GITHUB_REF_NAME" \
+              --notes-file "$NOTES_FILE"
           else
             gh release create "$GITHUB_REF_NAME" release/* \
               --verify-tag \
               --title "Woo Todo $GITHUB_REF_NAME" \
-              --generate-notes
+              --notes-file "$NOTES_FILE"
           fi
           if gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | grep -Eiq 'windows|preview|experimental'; then
             echo "正式 Release 中不得包含 Windows、preview 或 experimental 产物" >&2

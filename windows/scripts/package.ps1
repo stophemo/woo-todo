@@ -47,10 +47,11 @@ if ($packageVersion -ne $sourceVersion) {
     throw "请求打包的版本 $packageVersion 与源码版本 $sourceVersion 不一致"
 }
 
-$archiveName = "Woo-Todo-v$packageVersion-windows-x64.zip"
+$archiveName = "Woo-Todo-v$packageVersion-windows-x64-experimental.zip"
 $archivePath = Join-Path $distDirectory $archiveName
 $target = "x86_64-pc-windows-msvc"
 $releaseExecutable = Join-Path ([string] $metadata.target_directory) "$target/release/WooTodo.exe"
+$experimentalNotice = Join-Path $publishDirectory "WINDOWS-EXPERIMENTAL.txt"
 
 # 仅清理脚本固定控制的 publish 目录，避免旧文件混入 ZIP。
 if (Test-Path -LiteralPath $publishDirectory) {
@@ -75,14 +76,26 @@ if (-not (Test-Path -LiteralPath $releaseExecutable -PathType Leaf)) {
     throw "Rust Release 目录缺少 WooTodo.exe：$releaseExecutable"
 }
 Copy-Item -LiteralPath $releaseExecutable -Destination (Join-Path $publishDirectory "WooTodo.exe")
+@"
+Woo Todo Windows 实验版（不保证可用）
 
-Write-Host "正在生成 Windows 10/11 x64 免安装 ZIP..."
+版本：v$packageVersion
+
+此构建仅用于开发测试，不属于 Woo Todo 正式发布通道。
+它可能无法启动、功能不完整，并可能存在稳定性或数据兼容风险。请勿将其用于唯一或重要任务数据。
+后续 Windows 实验版需要手动下载并替换 WooTodo.exe。
+"@ | Set-Content -LiteralPath $experimentalNotice -Encoding utf8
+
+Write-Host "正在生成 Windows 10/11 x64 实验版（不保证可用）免安装 ZIP..."
 Compress-Archive `
-    -LiteralPath (Join-Path $publishDirectory "WooTodo.exe") `
+    -LiteralPath @(
+        (Join-Path $publishDirectory "WooTodo.exe"),
+        $experimentalNotice
+    ) `
     -DestinationPath $archivePath `
     -CompressionLevel Optimal
 if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
     throw "没有生成 Windows ZIP：$archivePath"
 }
 
-Write-Host "Windows 免安装 ZIP 已生成：$archivePath"
+Write-Host "Windows 实验版（不保证可用）免安装 ZIP 已生成：$archivePath"

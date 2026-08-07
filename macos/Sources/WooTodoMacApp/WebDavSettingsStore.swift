@@ -64,7 +64,8 @@ final class WebDavSettingsStore: ObservableObject {
         credentialsStore: any WebDavCredentialsStoring = WebDavCredentialsStore(),
         workerCredentialsStore: any SyncCredentialsStoring,
         workerSyncConfigured: Bool,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        initialCredentials: Result<WebDavCredentials?, Error>? = nil
     ) {
         self.repository = repository
         self.credentialsStore = credentialsStore
@@ -83,15 +84,21 @@ final class WebDavSettingsStore: ObservableObject {
         self.runtimeSnapshot = machine.snapshot
 
         do {
+            let storedCredentials: WebDavCredentials?
+            if let initialCredentials {
+                storedCredentials = try initialCredentials.get()
+            } else {
+                storedCredentials = try credentialsStore.load()
+            }
             if workerSyncConfigured {
-                if let stored = try credentialsStore.load() {
-                    applyDraft(stored)
+                if let storedCredentials {
+                    applyDraft(storedCredentials)
                 } else {
                     makeFreshDraft()
                 }
-            } else if let stored = try credentialsStore.load() {
-                try repository.configureSync(Self.sqliteConfiguration(for: stored))
-                try activate(stored)
+            } else if let storedCredentials {
+                try repository.configureSync(Self.sqliteConfiguration(for: storedCredentials))
+                try activate(storedCredentials)
                 runtimeMachine.setConfigured(true)
                 runtimeSnapshot = runtimeMachine.snapshot
             } else {

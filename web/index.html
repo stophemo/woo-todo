@@ -38,7 +38,7 @@
         <a href="#download">安装</a>
         <a href="https://github.com/stophemo/woo-todo" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
-      <a class="header-download" href="#download">下载 v0.1.26</a>
+      <a class="header-download" href="#download">下载 v0.1.27</a>
     </div>
   </header>
 
@@ -48,14 +48,14 @@
       <div class="hero-rule hero-rule-two" aria-hidden="true"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="release-line"><span>v0.1.26</span> macOS + Android + Windows</p>
+          <p class="release-line"><span>v0.1.27</span> macOS + Android 正式版 · Windows 实验版（不保证可用）</p>
           <h1 id="hero-title">无我待办</h1>
           <p class="hero-tagline">今晚规划，明早开干。</p>
           <p class="hero-support">手机睡前列好明日任务，Mac 或 Windows 电脑次日直接展开今日清单。任务先存本地，断网照常使用；需要时再让三端加密同步。</p>
           <div class="hero-actions" aria-label="下载与项目链接">
-            <a class="button button-primary" aria-label="下载 Android APK" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.26/Woo-Todo-v0.1.26-android.apk"><span class="download-label">下载&nbsp;</span>Android</a>
-            <a class="button button-secondary" aria-label="下载 macOS ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.26/Woo-Todo-v0.1.26-macos-arm64.zip"><span class="download-label">下载&nbsp;</span>macOS</a>
-            <a class="button button-secondary" aria-label="下载 Windows x64 免安装 ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.26/Woo-Todo-v0.1.26-windows-x64.zip"><span class="download-label">下载&nbsp;</span>Windows</a>
+            <a class="button button-primary" aria-label="下载 Android APK" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.27/Woo-Todo-v0.1.27-android.apk"><span class="download-label">下载&nbsp;</span>Android</a>
+            <a class="button button-secondary" aria-label="下载 macOS ZIP" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.27/Woo-Todo-v0.1.27-macos-arm64.zip"><span class="download-label">下载&nbsp;</span>macOS</a>
+            <a class="button button-secondary" aria-label="下载 Windows x64 实验版免安装 ZIP，不保证可用" href="https://github.com/stophemo/woo-todo/releases/download/windows-v0.1.27-experimental/Woo-Todo-v0.1.27-windows-x64-experimental.zip"><span class="download-label">下载&nbsp;</span>Windows 实验版</a>
           </div>
           <p class="hero-meta">MIT 开源 · 无传统账号 · 无应用商店依赖</p>
         </div>
@@ -67,8 +67,8 @@
                 <h2>今日</h2>
               </div>
               <div class="board-date">
-                <span>7月20日</span>
-                <span>周一</span>
+                <span>农历六月廿五</span>
+                <span>立秋</span>
               </div>
             </header>
 
@@ -224,16 +224,16 @@
             <div class="quickstart-card-heading">
               <span>03</span>
               <div>
-                <p>WINDOWS</p>
-                <h3>解压即用，托盘常驻</h3>
+                <p>WINDOWS · 实验版</p>
+                <h3>开发测试包，不保证可用</h3>
               </div>
             </div>
             <ol>
-              <li>解压 Windows ZIP，运行根目录中的 <code>WooTodo.exe</code>；无需安装 .NET、运行库或安装器。</li>
-              <li>任务板支持新增、完成、取消完成、置顶和穿透；托盘可恢复窗口并检查更新。</li>
+              <li>备份数据后解压 Windows 实验包，尝试运行根目录中的 <code>WooTodo.exe</code>；无需安装 .NET、运行库或安装器。</li>
+              <li>任务板计划支持新增、完成、取消完成、置顶和穿透；实验版功能和稳定性尚未确认。</li>
               <li>“同步”可切换自建服务、同一网络与第三方 WebDAV，并管理配对设备。</li>
             </ol>
-            <p class="quickstart-note">任务与设置保存在 <code>%LOCALAPPDATA%\Woo Todo</code>。当前 EXE 未做 Authenticode 签名，请只从本仓库 Release 下载并核对 SHA-256。</p>
+            <p class="quickstart-warning"><strong>Windows 实验版（不保证可用）可能无法启动、功能不完整，并存在稳定性或数据兼容风险，请勿用于唯一或重要任务数据。</strong> 任务与设置保存在 <code>%LOCALAPPDATA%\Woo Todo</code>；当前 EXE 未做 Authenticode 签名。</p>
           </article>
 
           <article class="quickstart-card quickstart-sync">
@@ -300,7 +300,7 @@
             <span class="feature-index">E</span>
             <div>
               <h3>一次点击完成后续更新</h3>
-              <p>macOS、Android 与 Windows 都可在应用内下载并校验后续正式版；平台安装确认和安全提示仍会保留。</p>
+              <p>macOS 与 Android 可在应用内下载并校验后续正式版；Windows 实验版不走正式更新通道，需要手动下载替换。</p>
             </div>
             <span class="feature-tag">应用内更新</span>
           </article>
@@ -330,7 +330,7 @@
             <span role="columnheader">场景</span>
             <strong role="columnheader">macOS</strong>
             <strong role="columnheader">Android</strong>
-            <strong role="columnheader">Windows</strong>
+            <strong role="columnheader">Windows 实验版</strong>
           </div>
           <div class="platform-row" role="row">
             <span role="cell">桌面呈现</span>
@@ -360,7 +360,7 @@
             <span role="cell">后续更新</span>
             <strong role="cell">Sparkle 下载、校验、替换并重启</strong>
             <strong role="cell">应用内下载、验签、系统确认安装</strong>
-            <strong role="cell">托盘下载、校验、替换并重启</strong>
+            <strong role="cell">独立 Prerelease，手动下载替换</strong>
           </div>
         </div>
       </div>
@@ -405,10 +405,10 @@
       <div class="section-inner">
         <div class="download-heading">
           <div>
-            <p class="section-kicker">v0.1.26 · 2026-08-07</p>
+            <p class="section-kicker">v0.1.27 · 2026-08-07</p>
             <h2 id="download-title">现在就装上</h2>
           </div>
-          <p>macOS 和 Windows 下载 ZIP 后直接运行，只有 Android 需要系统安装。三个正式包都来自 GitHub Release，并提供 SHA-256 校验。</p>
+          <p>macOS 与 Android 是正式版；Windows 仅提供独立实验包，不保证可用。所有下载均提供 SHA-256 校验。</p>
         </div>
         <div class="download-grid">
           <article class="download-card download-android">
@@ -417,8 +417,8 @@
               <span>Android 13+</span>
             </div>
             <h3>手机端与今日 Widget</h3>
-            <p>Release APK 使用项目长期升级密钥签名。v0.1.25 可在应用内升级到 v0.1.26，后续版本也会先验签再交给系统确认安装。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.26/Woo-Todo-v0.1.26-android.apk">下载 APK</a>
+            <p>Release APK 使用项目长期升级密钥签名。v0.1.26 可在应用内升级到 v0.1.27，后续版本也会先验签再交给系统确认安装。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.27/Woo-Todo-v0.1.27-android.apk">下载 APK</a>
           </article>
           <article class="download-card download-macos">
             <div class="download-card-top">
@@ -426,27 +426,29 @@
               <span>Apple Silicon</span>
             </div>
             <h3>桌面小组件与完整管理页</h3>
-            <p>ZIP 内是可直接运行的 <code>Woo Todo.app</code>，不是 DMG。v0.1.25 可通过 Sparkle 升级；本版修复任务勾选反馈，并优化局域网同步与新版本提示；v0.1.14 仍需手动覆盖一次。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.26/Woo-Todo-v0.1.26-macos-arm64.zip">下载 macOS ZIP</a>
+            <p>ZIP 内是可直接运行的 <code>Woo Todo.app</code>，不是 DMG。v0.1.26 可通过 Sparkle 升级；本版增加农历日期与节气/节日注释，并让 WebDAV 配置加密保存后自动回填。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.27/Woo-Todo-v0.1.27-macos-arm64.zip">下载 macOS ZIP</a>
           </article>
           <article class="download-card download-windows">
             <div class="download-card-top">
-              <span class="platform-badge">WINDOWS</span>
+              <span class="platform-badge">WINDOWS 实验版</span>
               <span>Windows 10 / 11 · x64</span>
             </div>
-            <h3>悬浮任务板与系统提醒</h3>
-            <p>ZIP 内只有原生 <code>WooTodo.exe</code>，无需安装、.NET 或 Visual C++ Runtime。支持自建服务、同一网络与第三方 WebDAV 加密同步；当前未签名，SmartScreen 可能提示来源。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.26/Woo-Todo-v0.1.26-windows-x64.zip">下载 Windows ZIP</a>
+            <h3>实验版（不保证可用）</h3>
+            <p><strong>可能无法启动、功能不完整，并存在稳定性或数据兼容风险，请勿用于唯一或重要任务数据。</strong> ZIP 内含原生 <code>WooTodo.exe</code> 与风险说明；当前未签名，SmartScreen 可能提示来源。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/windows-v0.1.27-experimental/Woo-Todo-v0.1.27-windows-x64-experimental.zip">下载 Windows 实验包</a>
           </article>
         </div>
         <div class="release-links">
-          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.26">发布说明</a>
-          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.26/SHA256SUMS.txt">SHA-256 校验</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.27">正式版发布说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.27/SHA256SUMS.txt">正式版 SHA-256</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/windows-v0.1.27-experimental">Windows 实验版说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/windows-v0.1.27-experimental/SHA256SUMS-windows-experimental.txt">Windows 实验版 SHA-256</a>
           <a href="#quickstart">安装指南</a>
         </div>
         <aside class="deployment-note upgrade-note">
-          <strong>升级到 v0.1.26</strong>
-          <p>三端的 v0.1.25 都可直接在应用内升级。macOS v0.1.14 因打包问题无法启动，仍需手动下载并覆盖一次；覆盖更新会保留本地任务、设置和同步身份。</p>
+          <strong>升级到 v0.1.27</strong>
+          <p>macOS 与 Android 的 v0.1.26 可直接在应用内升级；Windows 实验版需从独立 Prerelease 手动下载替换。覆盖更新会保留本地任务与设置，但实验版仍可能存在数据兼容风险，请先备份。</p>
         </aside>
         <aside class="deployment-note">
           <strong>关于跨端同步</strong>

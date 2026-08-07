@@ -8,6 +8,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -17,6 +18,7 @@ import androidx.core.widget.doAfterTextChanged
 import com.wootodo.R
 import com.wootodo.display.DayCounterSettings
 import com.wootodo.display.DayCounterText
+import com.wootodo.widget.TodayWidgetPreferences
 import java.time.LocalDate
 
 internal object TodayDisplaySettingsDialog {
@@ -71,8 +73,9 @@ internal object TodayDisplaySettingsDialog {
     fun show(
         activity: AppCompatActivity,
         initial: DayCounterSettings,
+        initialWidgetOpacity: Int,
         today: LocalDate,
-        onSave: (DayCounterSettings) -> Unit,
+        onSave: (DayCounterSettings, Int) -> Unit,
     ) {
         val padding = (20 * activity.resources.displayMetrics.density).toInt()
         val spacing = padding / 2
@@ -124,6 +127,32 @@ internal object TodayDisplaySettingsDialog {
         container.addView(previewSubtitle)
         container.addView(previewHidden)
 
+        val opacityLabel = TextView(activity).apply {
+            setPadding(0, spacing, 0, 0)
+        }
+        val opacitySlider = SeekBar(activity).apply {
+            max = 100
+            progress = TodayWidgetPreferences.normalizeBackgroundOpacity(initialWidgetOpacity)
+        }
+        fun renderOpacity() {
+            opacityLabel.text = activity.getString(
+                R.string.widget_background_opacity,
+                opacitySlider.progress,
+            )
+        }
+        opacitySlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                renderOpacity()
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+        })
+        container.addView(opacityLabel)
+        container.addView(opacitySlider)
+        renderOpacity()
+
         fun currentSettings(): DayCounterSettings = DayCounterSettings(
             headerTemplate = headerInput.text.toString(),
             subtitleTemplate = subtitleInput.text.toString(),
@@ -153,7 +182,9 @@ internal object TodayDisplaySettingsDialog {
             .setView(scrollView)
             .setNegativeButton(R.string.cancel, null)
             .setNeutralButton(R.string.display_restore_default, null)
-            .setPositiveButton(R.string.save) { _, _ -> onSave(currentSettings()) }
+            .setPositiveButton(R.string.save) { _, _ ->
+                onSave(currentSettings(), opacitySlider.progress)
+            }
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
@@ -162,6 +193,7 @@ internal object TodayDisplaySettingsDialog {
                 subtitleInput.setText(defaults.subtitleTemplate)
                 startDate = defaults.startDate
                 deadlineDate = defaults.deadlineDate
+                opacitySlider.progress = TodayWidgetPreferences.DEFAULT_BACKGROUND_OPACITY
                 renderPreview()
             }
         }

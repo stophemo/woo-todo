@@ -56,7 +56,8 @@ struct TodayView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 14) {
+        let traditionalDate = TraditionalCalendarInfo.render(on: dayCounterStore.renderDate)
+        return HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 if let title = dayCounterStore.configuration.headerText(
                     on: dayCounterStore.renderDate
@@ -78,10 +79,13 @@ struct TodayView: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text(dayCounterStore.renderDate, format: .dateTime.month().day())
+                Text(traditionalDate.lunarDate)
                     .font(.system(size: 12))
-                Text(dayCounterStore.renderDate, format: .dateTime.weekday(.wide))
-                    .font(.system(size: 12))
+                if let annotation = traditionalDate.annotation {
+                    Text(annotation)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(WooTodoTheme.purpleLight)
+                }
             }
             .foregroundStyle(WooTodoTheme.mutedOnDark)
         }

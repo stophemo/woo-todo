@@ -5,12 +5,15 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.net.Uri
 import android.view.View
 import android.widget.RemoteViews
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.display.DayCounterPreferences
+import com.wootodo.display.TraditionalCalendarInfo
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskTimeType
 import com.wootodo.ui.EditTaskActivity
@@ -95,9 +98,16 @@ object TodayWidgetUpdater {
     suspend fun update(context: Context, widgetIds: IntArray) {
         if (widgetIds.isEmpty()) return
         val manager = AppWidgetManager.getInstance(context)
+        val today = TaskDateRules.today()
+        val traditionalDate = TraditionalCalendarInfo.render(today)
 
         widgetIds.forEach { widgetId ->
             val remoteViews = RemoteViews(context.packageName, R.layout.widget_today)
+            TodayWidgetAppearance.applyBackground(
+                context,
+                remoteViews,
+                TodayWidgetPreferences.loadBackgroundOpacity(context),
+            )
             remoteViews.setOnClickPendingIntent(
                 R.id.widget_header,
                 activityPendingIntent(context, MainActivity::class.java, widgetId),
@@ -106,7 +116,7 @@ object TodayWidgetUpdater {
                 R.id.widget_add,
                 addTaskPendingIntent(context, widgetId),
             )
-            val display = DayCounterPreferences.render(context)
+            val display = DayCounterPreferences.render(context, today)
             remoteViews.setTextViewText(R.id.widget_title, display.header.orEmpty())
             remoteViews.setViewVisibility(
                 R.id.widget_title,
@@ -116,6 +126,12 @@ object TodayWidgetUpdater {
             remoteViews.setViewVisibility(
                 R.id.widget_counter,
                 if (display.subtitle == null) View.GONE else View.VISIBLE,
+            )
+            remoteViews.setTextViewText(R.id.widget_lunar_date, traditionalDate.lunarDate)
+            remoteViews.setTextViewText(R.id.widget_date_note, traditionalDate.annotation.orEmpty())
+            remoteViews.setViewVisibility(
+                R.id.widget_date_note,
+                if (traditionalDate.annotation == null) View.GONE else View.VISIBLE,
             )
             remoteViews.setPendingIntentTemplate(
                 R.id.widget_list,
@@ -165,4 +181,21 @@ object TodayWidgetUpdater {
         Intent(context, activity),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
+}
+
+internal object TodayWidgetAppearance {
+    fun applyBackground(context: Context, remoteViews: RemoteViews, opacity: Int) {
+        val baseColor = context.getColor(R.color.widget_background)
+        val color = Color.argb(
+            TodayWidgetPreferences.backgroundAlpha(opacity),
+            Color.red(baseColor),
+            Color.green(baseColor),
+            Color.blue(baseColor),
+        )
+        remoteViews.setColorStateList(
+            R.id.widget_root,
+            "setBackgroundTintList",
+            ColorStateList.valueOf(color),
+        )
+    }
 }

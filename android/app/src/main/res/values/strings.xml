@@ -46,6 +46,8 @@
     <string name="delete_failed">只有待办任务可以删除</string>
     <string name="widget_empty">今天还没有任务</string>
     <string name="widget_add">添加</string>
+    <string name="widget_lunar_preview">农历六月廿五</string>
+    <string name="widget_date_note_preview">立秋</string>
     <string name="insights">统计</string>
     <string name="insights_title">历史与统计</string>
     <string name="ended_fulfillment">已结束周期履约率：%1$s</string>
@@ -79,7 +81,8 @@
     <string name="task_reminder_title">待办提醒</string>
     <string name="task_reminder_channel_name">待办提醒</string>
     <string name="task_reminder_channel_description">按每条待办设置的时间发送本地通知</string>
-    <string name="day_counter_settings_title">今日顶部显示</string>
+    <string name="day_counter_settings_title">今日显示与小组件</string>
+    <string name="widget_background_opacity">小组件背景不透明度：%1$d%%</string>
     <string name="display_header_template">标题模板</string>
     <string name="display_header_hint">例如：今日任务</string>
     <string name="display_subtitle_template">副标题模板</string>

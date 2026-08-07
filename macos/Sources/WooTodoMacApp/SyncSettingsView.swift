@@ -659,7 +659,7 @@ struct SyncSettingsView: View {
 
     private var privacyNote: some View {
         Label(
-            "vault key 和设备令牌只保存在本机 Keychain；服务端无法读取任务明文。",
+            "自建服务和同一网络的 vault key、设备令牌保存在本机 Keychain；WebDAV 完整配置以本机加密文件保存。服务端无法读取任务明文。",
             systemImage: "key.fill"
         )
         .font(.caption)

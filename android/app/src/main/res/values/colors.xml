@@ -15,7 +15,7 @@
     <color name="yellow">#F0C85A</color>
     <color name="header_text">#FFFFFF</color>
     <color name="header_muted">#B9BDB7</color>
-    <color name="widget_background">#F2252725</color>
+    <color name="widget_background">#FF252725</color>
     <color name="widget_row_background">#142A2D2A</color>
     <color name="widget_text">#FFFFFFFF</color>
     <color name="widget_muted">#FFAEB2AC</color>

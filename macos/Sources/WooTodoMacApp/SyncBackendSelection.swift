@@ -4,7 +4,7 @@ enum SyncBackendSelection: String {
     case workerOrLocal
     case webDav
 
-    private static let defaultsKey = "sync.active-backend"
+    static let defaultsKey = "sync.active-backend"
 
     static func resolve(
         defaults: UserDefaults,

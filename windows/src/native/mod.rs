@@ -65,6 +65,7 @@ const PERIOD_REFRESH_INTERVAL_MILLIS: u32 = 60_000;
 const SYNC_STATUS_INTERVAL_MILLIS: u32 = 1_000;
 const UPDATE_CHECK_POLL_INTERVAL_MILLIS: u32 = update::FAILED_CHECK_RETRY_INTERVAL_MILLIS as u32;
 const STATIC_LEFT: u32 = 0;
+const STATIC_CENTER: u32 = 1;
 const STATIC_RIGHT: u32 = 2;
 const STATIC_BITMAP: u32 = 14;
 const STATIC_CENTER_IMAGE: u32 = 512;
@@ -74,10 +75,19 @@ const CLIPBOARD_UNICODE_TEXT: u32 = 13;
 const INK: COLORREF = rgb(23, 24, 23);
 const INK_SOFT: COLORREF = rgb(37, 39, 37);
 const PAPER_BRIGHT: COLORREF = rgb(250, 251, 248);
+const PAPER_SOFT: COLORREF = rgb(243, 244, 241);
+const PAPER_CARD: COLORREF = rgb(255, 255, 255);
+const LINE_ON_LIGHT: COLORREF = rgb(220, 222, 217);
+const LINE_ON_DARK: COLORREF = rgb(52, 55, 51);
 const TEXT_ON_DARK: COLORREF = rgb(240, 242, 238);
 const MUTED_ON_DARK: COLORREF = rgb(174, 178, 172);
 const TEXT_ON_LIGHT: COLORREF = rgb(23, 24, 23);
+const MUTED_ON_LIGHT: COLORREF = rgb(99, 102, 96);
+const PURPLE: COLORREF = rgb(107, 86, 200);
 const PURPLE_LIGHT: COLORREF = rgb(169, 154, 232);
+const PURPLE_WASH: COLORREF = rgb(235, 232, 248);
+const GREEN: COLORREF = rgb(56, 184, 120);
+const ORANGE: COLORREF = rgb(210, 82, 48);
 
 const ID_NAV: i32 = 100;
 const ID_TASKS: i32 = 101;
@@ -90,6 +100,7 @@ const ID_DELETE: i32 = 114;
 const ID_UP: i32 = 115;
 const ID_DOWN: i32 = 116;
 const ID_REFRESH: i32 = 117;
+const ID_EMPTY_ADD: i32 = 118;
 const ID_OPACITY: i32 = 120;
 const ID_TOPMOST: i32 = 121;
 const ID_CLICK_THROUGH: i32 = 122;
@@ -145,6 +156,7 @@ const ID_FLOAT_COMPLETE: i32 = 204;
 const ID_FLOAT_PASS: i32 = 205;
 const ID_FLOAT_TASK_EDIT: i32 = 206;
 const ID_FLOAT_DELETE: i32 = 207;
+const ID_FLOAT_EMPTY_ADD: i32 = 208;
 
 const ID_EDITOR_TITLE: i32 = 300;
 const ID_EDITOR_TIME_TYPE: i32 = 301;
@@ -210,11 +222,16 @@ impl Section {
 
 #[derive(Default)]
 struct MainControls {
+    brand: HWND,
     nav: HWND,
     title: HWND,
     subtitle: HWND,
     tasks: HWND,
     content: HWND,
+    empty_icon: HWND,
+    empty_title: HWND,
+    empty_subtitle: HWND,
+    empty_add: HWND,
     add: HWND,
     edit: HWND,
     complete: HWND,
@@ -258,6 +275,10 @@ struct FloatControls {
     subtitle: HWND,
     progress: HWND,
     tasks: HWND,
+    empty_icon: HWND,
+    empty_title: HWND,
+    empty_subtitle: HWND,
+    empty_add: HWND,
     quick_edit: HWND,
     add: HWND,
     open: HWND,
@@ -302,50 +323,40 @@ struct SyncControls {
 
 struct ThemeResources {
     paper_brush: HBRUSH,
+    paper_soft_brush: HBRUSH,
+    paper_card_brush: HBRUSH,
     ink_brush: HBRUSH,
     ink_soft_brush: HBRUSH,
     heading_font: HFONT,
     subheading_font: HFONT,
+    body_font: HFONT,
+    body_semibold_font: HFONT,
+    caption_font: HFONT,
+    nav_font: HFONT,
+    row_height_images: HIMAGELIST,
 }
 
 impl ThemeResources {
     unsafe fn new() -> Self {
-        let face = wide("Segoe UI Variable Display");
+        let dpi = GetDpiForSystem().max(96);
         Self {
             paper_brush: CreateSolidBrush(PAPER_BRIGHT),
+            paper_soft_brush: CreateSolidBrush(PAPER_SOFT),
+            paper_card_brush: CreateSolidBrush(PAPER_CARD),
             ink_brush: CreateSolidBrush(INK),
             ink_soft_brush: CreateSolidBrush(INK_SOFT),
-            heading_font: CreateFontW(
-                -25,
+            heading_font: create_ui_font(dpi, 27, FW_BOLD as i32),
+            subheading_font: create_ui_font(dpi, 14, FW_SEMIBOLD as i32),
+            body_font: create_ui_font(dpi, 14, FW_NORMAL as i32),
+            body_semibold_font: create_ui_font(dpi, 14, FW_SEMIBOLD as i32),
+            caption_font: create_ui_font(dpi, 12, FW_NORMAL as i32),
+            nav_font: create_ui_font(dpi, 14, FW_SEMIBOLD as i32),
+            row_height_images: ImageList_Create(
+                1,
+                (38 * dpi as i32 / 96).max(38),
+                ILC_COLOR32,
+                1,
                 0,
-                0,
-                0,
-                FW_SEMIBOLD as i32,
-                0,
-                0,
-                0,
-                u32::from(DEFAULT_CHARSET),
-                u32::from(OUT_DEFAULT_PRECIS),
-                u32::from(CLIP_DEFAULT_PRECIS),
-                u32::from(CLEARTYPE_QUALITY),
-                u32::from(DEFAULT_PITCH | FF_DONTCARE),
-                face.as_ptr(),
-            ),
-            subheading_font: CreateFontW(
-                -17,
-                0,
-                0,
-                0,
-                FW_SEMIBOLD as i32,
-                0,
-                0,
-                0,
-                u32::from(DEFAULT_CHARSET),
-                u32::from(OUT_DEFAULT_PRECIS),
-                u32::from(CLIP_DEFAULT_PRECIS),
-                u32::from(CLEARTYPE_QUALITY),
-                u32::from(DEFAULT_PITCH | FF_DONTCARE),
-                face.as_ptr(),
             ),
         }
     }
@@ -355,12 +366,41 @@ impl Drop for ThemeResources {
     fn drop(&mut self) {
         unsafe {
             DeleteObject(self.paper_brush);
+            DeleteObject(self.paper_soft_brush);
+            DeleteObject(self.paper_card_brush);
             DeleteObject(self.ink_brush);
             DeleteObject(self.ink_soft_brush);
             DeleteObject(self.heading_font);
             DeleteObject(self.subheading_font);
+            DeleteObject(self.body_font);
+            DeleteObject(self.body_semibold_font);
+            DeleteObject(self.caption_font);
+            DeleteObject(self.nav_font);
+            if self.row_height_images != 0 {
+                ImageList_Destroy(self.row_height_images);
+            }
         }
     }
+}
+
+unsafe fn create_ui_font(dpi: u32, pixels: i32, weight: i32) -> HFONT {
+    let face = wide("Microsoft YaHei UI");
+    CreateFontW(
+        -(pixels * dpi as i32 / 96),
+        0,
+        0,
+        0,
+        weight,
+        0,
+        0,
+        0,
+        u32::from(DEFAULT_CHARSET),
+        u32::from(OUT_DEFAULT_PRECIS),
+        u32::from(CLIP_DEFAULT_PRECIS),
+        u32::from(CLEARTYPE_QUALITY),
+        u32::from(DEFAULT_PITCH | FF_DONTCARE),
+        face.as_ptr(),
+    )
 }
 
 struct App {
@@ -937,11 +977,18 @@ unsafe fn create_child(
 unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
     let parent = app.main;
     let visible = WS_VISIBLE;
+    app.main_controls.brand =
+        create_child(parent, "STATIC", "Woo Todo", visible | STATIC_LEFT, 0, 0)?;
     app.main_controls.nav = create_child(
         parent,
         "LISTBOX",
         "",
-        visible | WS_VSCROLL | LBS_NOTIFY as u32,
+        visible
+            | WS_VSCROLL
+            | LBS_NOTIFY as u32
+            | LBS_HASSTRINGS as u32
+            | LBS_OWNERDRAWFIXED as u32
+            | LBS_NOINTEGRALHEIGHT as u32,
         0,
         ID_NAV,
     )?;
@@ -965,13 +1012,14 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         );
     }
     SendMessageW(app.main_controls.nav, LB_SETCURSEL, 0, 0);
+    SendMessageW(app.main_controls.nav, LB_SETITEMHEIGHT, 0, 38);
     app.main_controls.title = create_child(parent, "STATIC", "今日", visible | STATIC_LEFT, 0, 0)?;
     app.main_controls.subtitle = create_child(parent, "STATIC", "", visible | STATIC_LEFT, 0, 0)?;
     app.main_controls.tasks = create_child(
         parent,
         "SysListView32",
         "",
-        visible | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+        visible | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOCOLUMNHEADER,
         0,
         ID_TASKS,
     )?;
@@ -979,30 +1027,45 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         app.main_controls.tasks,
         LVM_SETEXTENDEDLISTVIEWSTYLE,
         0,
-        (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_CHECKBOXES) as isize,
+        (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_CHECKBOXES | LVS_EX_LABELTIP) as isize,
     );
-    add_list_column(app.main_controls.tasks, 0, "状态", 80);
-    add_list_column(app.main_controls.tasks, 1, "任务", 390);
-    add_list_column(app.main_controls.tasks, 2, "周期", 130);
-    add_list_column(app.main_controls.tasks, 3, "级别", 90);
-    add_list_column(app.main_controls.tasks, 4, "提醒与截止", 210);
+    SendMessageW(
+        app.main_controls.tasks,
+        LVM_SETIMAGELIST,
+        LVSIL_SMALL as usize,
+        app.theme.row_height_images,
+    );
+    add_list_column(app.main_controls.tasks, 0, "任务", 760);
     app.main_controls.content = create_child(
         parent,
         "EDIT",
         "",
-        WS_BORDER | WS_VSCROLL | ES_MULTILINE as u32 | ES_READONLY as u32 | ES_AUTOVSCROLL as u32,
-        WS_EX_CLIENTEDGE,
+        WS_VSCROLL | ES_MULTILINE as u32 | ES_READONLY as u32 | ES_AUTOVSCROLL as u32,
+        0,
         ID_CONTENT,
     )?;
 
-    app.main_controls.add = button(parent, "新增", ID_ADD)?;
-    app.main_controls.edit = button(parent, "编辑", ID_EDIT)?;
-    app.main_controls.complete = button(parent, "完成", ID_COMPLETE)?;
-    app.main_controls.pass = button(parent, "Pass", ID_PASS)?;
-    app.main_controls.delete = button(parent, "删除", ID_DELETE)?;
-    app.main_controls.up = button(parent, "上移", ID_UP)?;
-    app.main_controls.down = button(parent, "下移", ID_DOWN)?;
-    app.main_controls.refresh = button(parent, "刷新", ID_REFRESH)?;
+    app.main_controls.empty_icon = create_child(parent, "STATIC", "✓", STATIC_CENTER, 0, 0)?;
+    app.main_controls.empty_title =
+        create_child(parent, "STATIC", "暂无任务", STATIC_CENTER, 0, 0)?;
+    app.main_controls.empty_subtitle = create_child(
+        parent,
+        "STATIC",
+        "点击右上角新增任务。",
+        STATIC_CENTER,
+        0,
+        0,
+    )?;
+    app.main_controls.empty_add = hidden_button(parent, "+  新增任务", ID_EMPTY_ADD)?;
+
+    app.main_controls.add = styled_button(parent, "+  新增", ID_ADD)?;
+    app.main_controls.edit = styled_button(parent, "编辑", ID_EDIT)?;
+    app.main_controls.complete = styled_button(parent, "完成", ID_COMPLETE)?;
+    app.main_controls.pass = styled_button(parent, "Pass", ID_PASS)?;
+    app.main_controls.delete = styled_button(parent, "删除", ID_DELETE)?;
+    app.main_controls.up = styled_button(parent, "上移", ID_UP)?;
+    app.main_controls.down = styled_button(parent, "下移", ID_DOWN)?;
+    app.main_controls.refresh = styled_button(parent, "刷新", ID_REFRESH)?;
 
     app.main_controls.opacity_label =
         create_child(parent, "STATIC", "不透明度", STATIC_LEFT, 0, 0)?;
@@ -1235,9 +1298,9 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
     app.sync_controls.backup_export = hidden_button(parent, "导出 .wootodo", ID_BACKUP_EXPORT)?;
     app.sync_controls.backup_import = hidden_button(parent, "恢复 .wootodo", ID_BACKUP_IMPORT)?;
 
-    set_control_font(app.main_controls.title, app.theme.heading_font);
-    set_control_font(app.main_controls.subtitle, app.theme.subheading_font);
-    set_list_palette(app.main_controls.tasks, PAPER_BRIGHT, TEXT_ON_LIGHT);
+    apply_main_fonts(app);
+    set_list_palette(app.main_controls.tasks, PAPER_CARD, TEXT_ON_LIGHT);
+    apply_light_control_theme(app.main_controls.tasks);
 
     layout_main(app);
     Ok(())
@@ -1280,9 +1343,27 @@ unsafe fn create_float_controls(app: &mut App) -> Result<(), String> {
         app.float_controls.tasks,
         LVM_SETEXTENDEDLISTVIEWSTYLE,
         0,
-        (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_CHECKBOXES) as isize,
+        (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_CHECKBOXES | LVS_EX_LABELTIP) as isize,
+    );
+    SendMessageW(
+        app.float_controls.tasks,
+        LVM_SETIMAGELIST,
+        LVSIL_SMALL as usize,
+        app.theme.row_height_images,
     );
     add_list_column(app.float_controls.tasks, 0, "任务", 300);
+    app.float_controls.empty_icon = create_child(parent, "STATIC", "☾", STATIC_CENTER, 0, 0)?;
+    app.float_controls.empty_title =
+        create_child(parent, "STATIC", "今天还没有任务", STATIC_CENTER, 0, 0)?;
+    app.float_controls.empty_subtitle = create_child(
+        parent,
+        "STATIC",
+        "今晚列好明日事项，明天直接开干。",
+        STATIC_CENTER,
+        0,
+        0,
+    )?;
+    app.float_controls.empty_add = hidden_button(parent, "+  新增任务", ID_FLOAT_EMPTY_ADD)?;
     app.float_controls.quick_edit = create_child(
         parent,
         "EDIT",
@@ -1291,11 +1372,9 @@ unsafe fn create_float_controls(app: &mut App) -> Result<(), String> {
         WS_EX_CLIENTEDGE,
         ID_FLOAT_EDIT,
     )?;
-    app.float_controls.add = button(parent, "添加", ID_FLOAT_ADD)?;
-    app.float_controls.open = button(parent, "详情", ID_FLOAT_OPEN)?;
-    set_control_font(app.float_controls.heading, app.theme.heading_font);
-    set_control_font(app.float_controls.subtitle, app.theme.subheading_font);
-    set_control_font(app.float_controls.progress, app.theme.subheading_font);
+    app.float_controls.add = styled_button(parent, "+", ID_FLOAT_ADD)?;
+    app.float_controls.open = styled_button(parent, "详情", ID_FLOAT_OPEN)?;
+    apply_float_fonts(app);
     set_list_palette(app.float_controls.tasks, INK_SOFT, TEXT_ON_DARK);
     apply_dark_control_theme(app.float_controls.tasks);
     apply_dark_control_theme(app.float_controls.quick_edit);
@@ -1322,12 +1401,23 @@ unsafe fn button(parent: HWND, text: &str, id: i32) -> Result<HWND, String> {
     )
 }
 
+unsafe fn styled_button(parent: HWND, text: &str, id: i32) -> Result<HWND, String> {
+    create_child(
+        parent,
+        "BUTTON",
+        text,
+        WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW as u32,
+        0,
+        id,
+    )
+}
+
 unsafe fn hidden_button(parent: HWND, text: &str, id: i32) -> Result<HWND, String> {
     create_child(
         parent,
         "BUTTON",
         text,
-        WS_TABSTOP | BS_PUSHBUTTON as u32,
+        WS_TABSTOP | BS_OWNERDRAW as u32,
         0,
         id,
     )
@@ -1338,80 +1428,106 @@ unsafe fn layout_main(app: &App) {
     GetClientRect(app.main, &mut area);
     let width = area.right.max(820);
     let height = area.bottom.max(560);
-    let nav_width = 190;
+    let nav_width = 220;
+    MoveWindow(app.main_controls.brand, 24, 22, nav_width - 42, 34, 1);
     MoveWindow(
         app.main_controls.nav,
-        16,
-        18,
-        nav_width - 28,
-        height - 36,
+        20,
+        70,
+        nav_width - 40,
+        height - 92,
         1,
     );
     MoveWindow(
         app.main_controls.title,
-        nav_width + 22,
-        20,
-        width - nav_width - 180,
-        30,
+        nav_width + 24,
+        24,
+        width - nav_width - 190,
+        36,
         1,
     );
     MoveWindow(
         app.main_controls.subtitle,
-        nav_width + 22,
-        52,
-        width - nav_width - 44,
-        22,
+        nav_width + 24,
+        64,
+        width - nav_width - 48,
+        24,
         1,
     );
+    MoveWindow(app.main_controls.add, width - 184, 24, 94, 34, 1);
+    MoveWindow(app.main_controls.refresh, width - 82, 24, 58, 34, 1);
     MoveWindow(
         app.main_controls.tasks,
-        nav_width + 22,
-        88,
-        width - nav_width - 44,
-        height - 148,
+        nav_width + 24,
+        106,
+        width - nav_width - 48,
+        height - 170,
         1,
     );
-    let task_list_width = width - nav_width - 44;
-    let title_column_width = (task_list_width - 72 - 120 - 72 - 160).max(170);
-    for (column, column_width) in [
-        (0, 72),
-        (1, title_column_width),
-        (2, 120),
-        (3, 72),
-        (4, 160),
-    ] {
-        SendMessageW(
-            app.main_controls.tasks,
-            LVM_SETCOLUMNWIDTH,
-            column,
-            column_width as isize,
-        );
-    }
+    SendMessageW(
+        app.main_controls.tasks,
+        LVM_SETCOLUMNWIDTH,
+        0,
+        (width - nav_width - 72).max(260) as isize,
+    );
     MoveWindow(
         app.main_controls.content,
-        nav_width + 22,
-        88,
-        width - nav_width - 44,
-        height - 110,
+        nav_width + 24,
+        106,
+        width - nav_width - 48,
+        height - 132,
+        1,
+    );
+    let empty_left = nav_width + 54;
+    let empty_width = width - nav_width - 108;
+    let empty_top = 190;
+    MoveWindow(
+        app.main_controls.empty_icon,
+        empty_left,
+        empty_top,
+        empty_width,
+        44,
+        1,
+    );
+    MoveWindow(
+        app.main_controls.empty_title,
+        empty_left,
+        empty_top + 54,
+        empty_width,
+        30,
+        1,
+    );
+    MoveWindow(
+        app.main_controls.empty_subtitle,
+        empty_left,
+        empty_top + 88,
+        empty_width,
+        26,
+        1,
+    );
+    MoveWindow(
+        app.main_controls.empty_add,
+        empty_left + (empty_width - 124) / 2,
+        empty_top + 126,
+        124,
+        34,
         1,
     );
 
-    let mut x = nav_width + 22;
+    let mut x = nav_width + 24;
     for control in [
-        app.main_controls.add,
         app.main_controls.edit,
         app.main_controls.complete,
         app.main_controls.pass,
         app.main_controls.up,
         app.main_controls.down,
         app.main_controls.delete,
-        app.main_controls.refresh,
     ] {
-        MoveWindow(control, x, height - 48, 72, 30, 1);
-        x += 78;
+        MoveWindow(control, x, height - 52, 82, 34, 1);
+        x += 90;
     }
-    let settings_left = nav_width + 30;
-    let settings_width = width - settings_left - 22;
+    let settings_left = nav_width + 32;
+    let settings_width = width - settings_left - 28;
     MoveWindow(
         app.main_controls.display_heading,
         settings_left,
@@ -1790,41 +1906,59 @@ unsafe fn layout_floating(app: &App) {
     GetClientRect(app.floating, &mut area);
     let width = area.right.max(320);
     let height = area.bottom.max(360);
-    MoveWindow(app.float_controls.heading, 18, 14, width / 2 - 24, 30, 1);
+    MoveWindow(app.float_controls.heading, 24, 20, width / 2 - 34, 34, 1);
     MoveWindow(
         app.float_controls.date,
-        width / 2 - 2,
-        18,
-        width / 2 - 16,
-        22,
+        width / 2,
+        20,
+        width / 2 - 24,
+        46,
         1,
     );
-    MoveWindow(app.float_controls.subtitle, 18, 45, width - 36, 20, 1);
-    MoveWindow(app.float_controls.progress, 18, 70, width - 36, 22, 1);
+    MoveWindow(app.float_controls.subtitle, 24, 54, width / 2 - 34, 22, 1);
+    MoveWindow(app.float_controls.progress, 24, 84, width - 48, 24, 1);
     MoveWindow(
         app.float_controls.tasks,
-        18,
-        98,
-        width - 36,
-        height - 156,
+        24,
+        122,
+        width - 48,
+        height - 184,
         1,
     );
     SendMessageW(
         app.float_controls.tasks,
         LVM_SETCOLUMNWIDTH,
         0,
-        (width - 42) as isize,
+        (width - 54) as isize,
+    );
+    MoveWindow(app.float_controls.empty_icon, 24, 172, width - 48, 42, 1);
+    MoveWindow(app.float_controls.empty_title, 24, 224, width - 48, 28, 1);
+    MoveWindow(
+        app.float_controls.empty_subtitle,
+        24,
+        258,
+        width - 48,
+        24,
+        1,
+    );
+    MoveWindow(
+        app.float_controls.empty_add,
+        (width - 132) / 2,
+        296,
+        132,
+        34,
+        1,
     );
     MoveWindow(
         app.float_controls.quick_edit,
-        18,
-        height - 46,
-        width - 184,
-        28,
+        24,
+        height - 54,
+        width - 188,
+        34,
         1,
     );
-    MoveWindow(app.float_controls.open, width - 154, height - 46, 62, 28, 1);
-    MoveWindow(app.float_controls.add, width - 86, height - 46, 68, 28, 1);
+    MoveWindow(app.float_controls.open, width - 154, height - 54, 62, 34, 1);
+    MoveWindow(app.float_controls.add, width - 84, height - 54, 60, 34, 1);
 }
 
 unsafe fn refresh_all(app: &mut App) {
@@ -1927,6 +2061,45 @@ unsafe fn show_tasks(app: &mut App, section: Section, today: NaiveDate) {
     app.populating_main_tasks = true;
     populate_task_list(app.main_controls.tasks, &app.visible_tasks, section, today);
     app.populating_main_tasks = false;
+    let empty = app.visible_tasks.is_empty();
+    ShowWindow(
+        app.main_controls.tasks,
+        if empty { SW_HIDE } else { SW_SHOW },
+    );
+    if empty {
+        let (empty_title, empty_subtitle) = match section {
+            Section::Today => (
+                "今天还没有任务",
+                "点击右上角新增任务，安排今天要完成的事项。",
+            ),
+            Section::Tomorrow => ("明天还没有任务", "提前安排任务，明天可以直接开始。"),
+            Section::History => ("暂无历史记录", "完成或 Pass 的任务会显示在这里。"),
+            _ => ("暂无任务", "点击右上角新增任务。"),
+        };
+        set_text(app.main_controls.empty_title, empty_title);
+        set_text(app.main_controls.empty_subtitle, empty_subtitle);
+        for control in [
+            app.main_controls.empty_icon,
+            app.main_controls.empty_title,
+            app.main_controls.empty_subtitle,
+        ] {
+            ShowWindow(control, SW_SHOW);
+        }
+        ShowWindow(
+            app.main_controls.empty_add,
+            if history { SW_HIDE } else { SW_SHOW },
+        );
+        for control in [
+            app.main_controls.edit,
+            app.main_controls.complete,
+            app.main_controls.pass,
+            app.main_controls.delete,
+            app.main_controls.up,
+            app.main_controls.down,
+        ] {
+            ShowWindow(control, SW_HIDE);
+        }
+    }
     update_main_action_state(app);
 }
 
@@ -2116,6 +2289,14 @@ unsafe fn hide_settings(app: &App) {
         ShowWindow(control, SW_HIDE);
     }
     for control in sync_settings_controls(app) {
+        ShowWindow(control, SW_HIDE);
+    }
+    for control in [
+        app.main_controls.empty_icon,
+        app.main_controls.empty_title,
+        app.main_controls.empty_subtitle,
+        app.main_controls.empty_add,
+    ] {
         ShowWindow(control, SW_HIDE);
     }
 }
@@ -2489,7 +2670,8 @@ unsafe fn refresh_floating(app: &mut App) {
         app.float_controls.subtitle,
         subtitle.as_deref().unwrap_or(""),
     );
-    set_text(app.float_controls.date, &date_with_weekday(today));
+    let date_label = date_with_weekday(today).replacen(' ', "\r\n", 1);
+    set_text(app.float_controls.date, &date_label);
     app.floating_tasks = app
         .repository
         .fetch_scope(TimeType::Day, today, true)
@@ -2507,11 +2689,39 @@ unsafe fn refresh_floating(app: &mut App) {
     SendMessageW(app.float_controls.tasks, LVM_DELETEALLITEMS, 0, 0);
     SendMessageW(app.float_controls.tasks, LVM_REMOVEALLGROUPS, 0, 0);
     if app.floating_tasks.is_empty() {
-        SendMessageW(app.float_controls.tasks, LVM_ENABLEGROUPVIEW, 0, 0);
-        insert_list_item(app.float_controls.tasks, 0, 0, "今日暂无任务");
-        set_list_state_image(app.float_controls.tasks, 0, 0);
-        EnableWindow(app.float_controls.tasks, 0);
+        ShowWindow(app.float_controls.tasks, SW_HIDE);
+        for control in [
+            app.float_controls.empty_icon,
+            app.float_controls.empty_title,
+            app.float_controls.empty_subtitle,
+            app.float_controls.empty_add,
+        ] {
+            ShowWindow(control, SW_SHOW);
+        }
+        for control in [
+            app.float_controls.quick_edit,
+            app.float_controls.open,
+            app.float_controls.add,
+        ] {
+            ShowWindow(control, SW_HIDE);
+        }
     } else {
+        ShowWindow(app.float_controls.tasks, SW_SHOW);
+        for control in [
+            app.float_controls.empty_icon,
+            app.float_controls.empty_title,
+            app.float_controls.empty_subtitle,
+            app.float_controls.empty_add,
+        ] {
+            ShowWindow(control, SW_HIDE);
+        }
+        for control in [
+            app.float_controls.quick_edit,
+            app.float_controls.open,
+            app.float_controls.add,
+        ] {
+            ShowWindow(control, SW_SHOW);
+        }
         EnableWindow(app.float_controls.tasks, 1);
         SendMessageW(app.float_controls.tasks, LVM_ENABLEGROUPVIEW, 1, 0);
         for (index, line) in [QuestLine::Main, QuestLine::Side, QuestLine::Extra]
@@ -2562,17 +2772,24 @@ unsafe fn populate_task_list(list: HWND, tasks: &[TodoTask], section: Section, t
         insert_list_group(list, index as i32, *id, label);
     }
     for (index, task) in tasks.iter().enumerate() {
+        let mut metadata = vec![
+            quest_line_label(task.quest_line).to_owned(),
+            period_label(task),
+        ];
+        if task.state != TaskState::Pending {
+            metadata.push(state_label(task.state).to_owned());
+        }
+        let badges = task_badges(task, today);
+        if !badges.is_empty() {
+            metadata.push(badges);
+        }
         insert_grouped_list_item(
             list,
             index as i32,
             0,
-            state_label(task.state),
+            &format!("{}    · {}", task.title, metadata.join(" · ")),
             task_group_id(task, section, today),
         );
-        set_list_subitem(list, index as i32, 1, &task.title);
-        set_list_subitem(list, index as i32, 2, &period_label(task));
-        set_list_subitem(list, index as i32, 3, quest_line_label(task.quest_line));
-        set_list_subitem(list, index as i32, 4, &task_badges(task, today));
         set_list_checked(list, index as i32, task.state == TaskState::Completed);
     }
 }
@@ -2668,18 +2885,6 @@ unsafe fn add_list_column(list: HWND, index: i32, title: &str, width: i32) {
     );
 }
 
-unsafe fn insert_list_item(list: HWND, row: i32, column: i32, text: &str) {
-    let mut text = wide(text);
-    let item = LVITEMW {
-        mask: LVIF_TEXT,
-        iItem: row,
-        iSubItem: column,
-        pszText: text.as_mut_ptr(),
-        ..Default::default()
-    };
-    SendMessageW(list, LVM_INSERTITEMW, 0, &item as *const _ as isize);
-}
-
 unsafe fn insert_grouped_list_item(list: HWND, row: i32, column: i32, text: &str, group_id: i32) {
     let mut text = wide(text);
     let item = LVITEMW {
@@ -2708,22 +2913,6 @@ unsafe fn insert_list_group(list: HWND, index: i32, id: i32, header: &str) {
         LVM_INSERTGROUP,
         index as usize,
         &group as *const _ as isize,
-    );
-}
-
-unsafe fn set_list_subitem(list: HWND, row: i32, column: i32, text: &str) {
-    let mut text = wide(text);
-    let item = LVITEMW {
-        iItem: row,
-        iSubItem: column,
-        pszText: text.as_mut_ptr(),
-        ..Default::default()
-    };
-    SendMessageW(
-        list,
-        LVM_SETITEMTEXTW,
-        row as usize,
-        &item as *const _ as isize,
     );
 }
 
@@ -4634,6 +4823,7 @@ unsafe fn handle_main_command(app: &mut App, id: i32, notification: u16) {
             refresh_main(app);
         }
         ID_ADD => create_task(app, None),
+        ID_EMPTY_ADD => create_task(app, None),
         ID_EDIT => {
             if let Some(task) = selected_main_task(app) {
                 edit_task(app, task, app.main);
@@ -4812,6 +5002,7 @@ unsafe fn handle_float_command(app: &mut App, id: i32) {
                 set_text(app.float_controls.quick_edit, "");
             }
         }
+        ID_FLOAT_EMPTY_ADD => create_task(app, None),
         ID_FLOAT_OPEN => show_main(app),
         ID_FLOAT_COMPLETE => {
             if let Some(task) = selected_float_task(app) {
@@ -5426,8 +5617,15 @@ unsafe extern "system" fn main_window_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     };
     match message {
+        WM_PAINT => paint_main_window(app, hwnd),
+        WM_DRAWITEM => {
+            if lparam == 0 {
+                return 0;
+            }
+            draw_owner_control(app, &*(lparam as *const DRAWITEMSTRUCT), false)
+        }
         WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX => {
-            paint_main_control(app, message, wparam)
+            paint_main_control(app, message, wparam, lparam)
         }
         WM_SIZE => {
             layout_main(app);
@@ -5476,6 +5674,9 @@ unsafe extern "system" fn main_window_proc(
             }
             let header = &*(lparam as *const NMHDR);
             if header.idFrom == ID_TASKS as usize {
+                if header.code == NM_CUSTOMDRAW {
+                    return draw_task_list_notification(app, lparam, false).unwrap_or(0);
+                }
                 if header.code == LVN_ITEMCHANGED {
                     handle_main_item_changed(app, &*(lparam as *const NMLISTVIEW));
                 }
@@ -5587,6 +5788,13 @@ unsafe extern "system" fn float_window_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     };
     match message {
+        WM_PAINT => paint_float_window(app, hwnd),
+        WM_DRAWITEM => {
+            if lparam == 0 {
+                return 0;
+            }
+            draw_owner_control(app, &*(lparam as *const DRAWITEMSTRUCT), true)
+        }
         WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN => {
             paint_floating_control(app, message, wparam, lparam)
         }
@@ -5626,6 +5834,9 @@ unsafe extern "system" fn float_window_proc(
             }
             let header = &*(lparam as *const NMHDR);
             if header.idFrom == ID_FLOAT_LIST as usize {
+                if header.code == NM_CUSTOMDRAW {
+                    return draw_task_list_notification(app, lparam, true).unwrap_or(0);
+                }
                 if header.code == LVN_ITEMCHANGED {
                     handle_float_item_changed(app, &*(lparam as *const NMLISTVIEW));
                 }
@@ -6256,7 +6467,9 @@ fn resource_id(value: u16) -> *const u16 {
 fn is_main_app_message(message: u32) -> bool {
     matches!(
         message,
-        WM_SIZE
+        WM_PAINT
+            | WM_DRAWITEM
+            | WM_SIZE
             | WM_CTLCOLORSTATIC
             | WM_CTLCOLOREDIT
             | WM_CTLCOLORBTN
@@ -6282,7 +6495,9 @@ fn is_main_app_message(message: u32) -> bool {
 fn is_float_app_message(message: u32) -> bool {
     matches!(
         message,
-        WM_SIZE
+        WM_PAINT
+            | WM_DRAWITEM
+            | WM_SIZE
             | WM_CTLCOLORSTATIC
             | WM_CTLCOLOREDIT
             | WM_CTLCOLORBTN
@@ -6326,6 +6541,99 @@ unsafe fn set_control_font(control: HWND, font: HFONT) {
     }
 }
 
+unsafe fn apply_main_fonts(app: &App) {
+    for control in [
+        app.main_controls.brand,
+        app.main_controls.nav,
+        app.main_controls.title,
+        app.main_controls.subtitle,
+        app.main_controls.tasks,
+        app.main_controls.content,
+        app.main_controls.empty_icon,
+        app.main_controls.empty_title,
+        app.main_controls.empty_subtitle,
+        app.main_controls.empty_add,
+        app.main_controls.add,
+        app.main_controls.edit,
+        app.main_controls.complete,
+        app.main_controls.pass,
+        app.main_controls.delete,
+        app.main_controls.up,
+        app.main_controls.down,
+        app.main_controls.refresh,
+    ] {
+        set_control_font(control, app.theme.body_font);
+    }
+    for control in settings_controls(app)
+        .into_iter()
+        .chain(sync_settings_controls(app))
+    {
+        set_control_font(control, app.theme.body_font);
+    }
+    set_control_font(app.main_controls.brand, app.theme.subheading_font);
+    set_control_font(app.main_controls.nav, app.theme.nav_font);
+    set_control_font(app.main_controls.title, app.theme.heading_font);
+    set_control_font(app.main_controls.subtitle, app.theme.caption_font);
+    set_control_font(app.main_controls.empty_icon, app.theme.heading_font);
+    set_control_font(app.main_controls.empty_title, app.theme.subheading_font);
+    set_control_font(app.main_controls.empty_subtitle, app.theme.caption_font);
+    for control in [
+        app.main_controls.empty_add,
+        app.main_controls.add,
+        app.main_controls.edit,
+        app.main_controls.complete,
+        app.main_controls.pass,
+        app.main_controls.delete,
+        app.main_controls.up,
+        app.main_controls.down,
+        app.main_controls.refresh,
+        app.main_controls.display_save,
+        app.main_controls.shortcut_save,
+        app.sync_controls.setup,
+        app.sync_controls.save,
+        app.sync_controls.sync_now,
+    ] {
+        set_control_font(control, app.theme.body_semibold_font);
+    }
+    for control in [
+        app.main_controls.display_heading,
+        app.main_controls.shortcut_heading,
+        app.sync_controls.heading,
+        app.sync_controls.backup_heading,
+    ] {
+        set_control_font(control, app.theme.subheading_font);
+    }
+}
+
+unsafe fn apply_float_fonts(app: &App) {
+    for control in [
+        app.float_controls.heading,
+        app.float_controls.date,
+        app.float_controls.subtitle,
+        app.float_controls.progress,
+        app.float_controls.tasks,
+        app.float_controls.empty_icon,
+        app.float_controls.empty_title,
+        app.float_controls.empty_subtitle,
+        app.float_controls.empty_add,
+        app.float_controls.quick_edit,
+        app.float_controls.add,
+        app.float_controls.open,
+    ] {
+        set_control_font(control, app.theme.body_font);
+    }
+    set_control_font(app.float_controls.heading, app.theme.heading_font);
+    set_control_font(app.float_controls.date, app.theme.caption_font);
+    set_control_font(app.float_controls.subtitle, app.theme.caption_font);
+    set_control_font(app.float_controls.progress, app.theme.caption_font);
+    set_control_font(app.float_controls.empty_icon, app.theme.heading_font);
+    set_control_font(app.float_controls.empty_title, app.theme.subheading_font);
+    set_control_font(app.float_controls.empty_subtitle, app.theme.caption_font);
+    set_control_font(app.float_controls.empty_add, app.theme.body_semibold_font);
+    set_control_font(app.float_controls.add, app.theme.body_semibold_font);
+    set_control_font(app.float_controls.open, app.theme.body_semibold_font);
+}
+
 unsafe fn set_list_palette(list: HWND, background: COLORREF, text: COLORREF) {
     SendMessageW(list, LVM_SETBKCOLOR, 0, background as isize);
     SendMessageW(list, LVM_SETTEXTBKCOLOR, 0, background as isize);
@@ -6337,9 +6645,288 @@ unsafe fn apply_dark_control_theme(control: HWND) {
     SetWindowTheme(control, theme.as_ptr(), null());
 }
 
-unsafe fn paint_main_control(app: &App, message: u32, wparam: WPARAM) -> LRESULT {
+unsafe fn apply_light_control_theme(control: HWND) {
+    let theme = wide("Explorer");
+    SetWindowTheme(control, theme.as_ptr(), null());
+}
+
+unsafe fn paint_main_window(app: &App, hwnd: HWND) -> LRESULT {
+    let mut paint: PAINTSTRUCT = zeroed();
+    let context = BeginPaint(hwnd, &mut paint);
+    let mut area: RECT = zeroed();
+    GetClientRect(hwnd, &mut area);
+    FillRect(context, &area, app.theme.paper_brush);
+    let sidebar = RECT {
+        left: 0,
+        top: 0,
+        right: 220,
+        bottom: area.bottom,
+    };
+    FillRect(context, &sidebar, app.theme.paper_soft_brush);
+    let divider = RECT {
+        left: 219,
+        top: 0,
+        right: 220,
+        bottom: area.bottom,
+    };
+    let divider_brush = CreateSolidBrush(LINE_ON_LIGHT);
+    FillRect(context, &divider, divider_brush);
+    DeleteObject(divider_brush);
+    EndPaint(hwnd, &paint);
+    0
+}
+
+unsafe fn paint_float_window(app: &App, hwnd: HWND) -> LRESULT {
+    let mut paint: PAINTSTRUCT = zeroed();
+    let context = BeginPaint(hwnd, &mut paint);
+    let mut area: RECT = zeroed();
+    GetClientRect(hwnd, &mut area);
+    FillRect(context, &area, app.theme.ink_brush);
+    let separator = RECT {
+        left: 24,
+        top: 78,
+        right: area.right - 24,
+        bottom: 79,
+    };
+    let separator_brush = CreateSolidBrush(LINE_ON_DARK);
+    FillRect(context, &separator, separator_brush);
+    DeleteObject(separator_brush);
+    let progress = RECT {
+        left: 24,
+        top: 112,
+        right: area.right - 24,
+        bottom: 114,
+    };
+    let progress_brush = CreateSolidBrush(GREEN);
+    FillRect(context, &progress, progress_brush);
+    DeleteObject(progress_brush);
+    EndPaint(hwnd, &paint);
+    0
+}
+
+unsafe fn draw_owner_control(app: &App, draw: &DRAWITEMSTRUCT, floating: bool) -> LRESULT {
+    if draw.CtlType == ODT_LISTBOX && draw.CtlID == ID_NAV as u32 {
+        draw_navigation_item(app, draw);
+        return 1;
+    }
+    if draw.CtlType == ODT_BUTTON {
+        draw_button(app, draw, floating);
+        return 1;
+    }
+    0
+}
+
+unsafe fn draw_navigation_item(app: &App, draw: &DRAWITEMSTRUCT) {
+    if draw.itemID == u32::MAX {
+        return;
+    }
+    let labels = [
+        "今日",
+        "明日",
+        "本周",
+        "本月",
+        "闲时",
+        "历史",
+        "统计",
+        "显示与快捷键",
+        "同步",
+    ];
+    let Some(label) = labels.get(draw.itemID as usize) else {
+        return;
+    };
+    FillRect(draw.hDC, &draw.rcItem, app.theme.paper_soft_brush);
+    let selected = draw.itemState & ODS_SELECTED != 0;
+    let mut rect = draw.rcItem;
+    rect.left += 6;
+    rect.right -= 6;
+    rect.top += 3;
+    rect.bottom -= 3;
+    if selected {
+        let brush = CreateSolidBrush(PURPLE_WASH);
+        FillRect(draw.hDC, &rect, brush);
+        DeleteObject(brush);
+        let accent = RECT {
+            left: rect.left,
+            top: rect.top + 8,
+            right: rect.left + 3,
+            bottom: rect.bottom - 8,
+        };
+        let accent_brush = CreateSolidBrush(PURPLE);
+        FillRect(draw.hDC, &accent, accent_brush);
+        DeleteObject(accent_brush);
+    }
+    let mut text_rect = rect;
+    text_rect.left += 18;
+    SetBkMode(draw.hDC, TRANSPARENT as i32);
+    SetTextColor(draw.hDC, if selected { PURPLE } else { MUTED_ON_LIGHT });
+    let old_font = SelectObject(draw.hDC, app.theme.nav_font);
+    let mut text = wide(label);
+    DrawTextW(
+        draw.hDC,
+        text.as_mut_ptr(),
+        -1,
+        &mut text_rect,
+        DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+    );
+    SelectObject(draw.hDC, old_font);
+}
+
+unsafe fn draw_button(app: &App, draw: &DRAWITEMSTRUCT, floating: bool) {
+    let id = draw.CtlID as i32;
+    let primary = matches!(
+        id,
+        ID_ADD
+            | ID_EMPTY_ADD
+            | ID_DISPLAY_SAVE
+            | ID_SHORTCUT_SAVE
+            | ID_SYNC_SAVE
+            | ID_FLOAT_ADD
+            | ID_FLOAT_EMPTY_ADD
+    );
+    let destructive = matches!(id, ID_DELETE | ID_FLOAT_DELETE);
+    let disabled = draw.itemState & ODS_DISABLED != 0;
+    let pressed = draw.itemState & ODS_SELECTED != 0;
+    let background = if floating {
+        if primary { PURPLE } else { INK_SOFT }
+    } else if primary {
+        PURPLE
+    } else {
+        PAPER_CARD
+    };
+    let background = if disabled {
+        if floating { INK_SOFT } else { PAPER_SOFT }
+    } else if pressed {
+        if primary {
+            rgb(86, 68, 169)
+        } else {
+            rgb(232, 233, 229)
+        }
+    } else {
+        background
+    };
+    let text_color = if disabled {
+        if floating {
+            MUTED_ON_DARK
+        } else {
+            rgb(158, 161, 155)
+        }
+    } else if primary {
+        TEXT_ON_DARK
+    } else if destructive {
+        ORANGE
+    } else if floating {
+        TEXT_ON_DARK
+    } else {
+        TEXT_ON_LIGHT
+    };
+    let parent_background = if floating { INK } else { PAPER_BRIGHT };
+    let parent_brush = CreateSolidBrush(parent_background);
+    FillRect(draw.hDC, &draw.rcItem, parent_brush);
+    DeleteObject(parent_brush);
+    let mut rect = draw.rcItem;
+    rect.left += 1;
+    rect.top += 2;
+    rect.right -= 1;
+    rect.bottom -= 2;
+    let brush = CreateSolidBrush(background);
+    let border = CreatePen(
+        PS_SOLID,
+        1,
+        if primary {
+            background
+        } else if floating {
+            rgb(76, 80, 74)
+        } else {
+            LINE_ON_LIGHT
+        },
+    );
+    let old_brush = SelectObject(draw.hDC, brush);
+    let old_pen = SelectObject(draw.hDC, border);
+    RoundRect(draw.hDC, rect.left, rect.top, rect.right, rect.bottom, 6, 6);
+    SelectObject(draw.hDC, old_brush);
+    SelectObject(draw.hDC, old_pen);
+    DeleteObject(brush);
+    DeleteObject(border);
+    let mut text_rect = rect;
+    text_rect.left += 8;
+    text_rect.right -= 8;
+    SetBkMode(draw.hDC, TRANSPARENT as i32);
+    SetTextColor(draw.hDC, text_color);
+    let old_font = SelectObject(draw.hDC, app.theme.body_semibold_font);
+    let text = get_text(draw.hwndItem);
+    let mut value = wide(&text);
+    DrawTextW(
+        draw.hDC,
+        value.as_mut_ptr(),
+        -1,
+        &mut text_rect,
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
+    );
+    SelectObject(draw.hDC, old_font);
+    if draw.itemState & ODS_FOCUS != 0 {
+        DrawFocusRect(draw.hDC, &rect);
+    }
+}
+
+unsafe fn draw_task_list_notification(
+    app: &App,
+    lparam: LPARAM,
+    floating: bool,
+) -> Option<LRESULT> {
+    let custom = (lparam as *mut NMLVCUSTOMDRAW).as_mut()?;
+    match custom.nmcd.dwDrawStage {
+        CDDS_PREPAINT => Some(CDRF_NOTIFYITEMDRAW as isize),
+        CDDS_ITEMPREPAINT => {
+            let index = custom.nmcd.dwItemSpec;
+            let completed = if floating {
+                app.floating_tasks
+                    .get(index)
+                    .is_some_and(|task| task.state != TaskState::Pending)
+            } else {
+                app.visible_tasks
+                    .get(index)
+                    .is_some_and(|task| task.state != TaskState::Pending)
+            };
+            let selected = custom.nmcd.uItemState & CDIS_SELECTED != 0;
+            custom.clrText = if completed {
+                if floating {
+                    MUTED_ON_DARK
+                } else {
+                    rgb(145, 148, 142)
+                }
+            } else if floating {
+                TEXT_ON_DARK
+            } else {
+                TEXT_ON_LIGHT
+            };
+            custom.clrTextBk = if selected {
+                if floating {
+                    rgb(57, 51, 73)
+                } else {
+                    PURPLE_WASH
+                }
+            } else if floating {
+                INK_SOFT
+            } else {
+                PAPER_CARD
+            };
+            SelectObject(custom.nmcd.hdc, app.theme.body_font);
+            Some(CDRF_NEWFONT as isize)
+        }
+        _ => Some(CDRF_DODEFAULT as isize),
+    }
+}
+
+unsafe fn paint_main_control(app: &App, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let context = wparam as HDC;
-    SetTextColor(context, TEXT_ON_LIGHT);
+    SetTextColor(
+        context,
+        if lparam as HWND == app.main_controls.empty_icon {
+            PURPLE
+        } else {
+            TEXT_ON_LIGHT
+        },
+    );
     SetBkColor(context, PAPER_BRIGHT);
     if message == WM_CTLCOLORSTATIC {
         SetBkMode(context, TRANSPARENT as i32);
@@ -6356,13 +6943,17 @@ unsafe fn paint_floating_control(
     let context = wparam as HDC;
     let control = lparam as HWND;
     if message == WM_CTLCOLOREDIT {
-        SetTextColor(context, TEXT_ON_LIGHT);
-        SetBkColor(context, PAPER_BRIGHT);
-        return app.theme.paper_brush as LRESULT;
+        SetTextColor(context, TEXT_ON_DARK);
+        SetBkColor(context, INK_SOFT);
+        return app.theme.ink_soft_brush as LRESULT;
     }
-    let text = if control == app.float_controls.date || control == app.float_controls.progress {
+    let text = if control == app.float_controls.date
+        || control == app.float_controls.progress
+        || control == app.float_controls.subtitle
+        || control == app.float_controls.empty_subtitle
+    {
         MUTED_ON_DARK
-    } else if control == app.float_controls.heading {
+    } else if control == app.float_controls.heading || control == app.float_controls.empty_title {
         TEXT_ON_DARK
     } else {
         PURPLE_LIGHT

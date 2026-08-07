@@ -59,6 +59,30 @@ struct SyncBackendSelectionTests {
     }
 
     @MainActor
+    @Test("启动已预读取的 WebDAV 凭据时不再重复访问安全存储")
+    func preloadedWebDavCredentialsAvoidSecondKeychainRead() throws {
+        let credentials = WebDavCredentials(
+            endpoint: URL(string: "https://dav.example.com/woo-todo/")!,
+            username: "saved@example.com",
+            appPassword: "saved-app-password",
+            vaultId: "saved-vault",
+            deviceId: "saved-device-01",
+            vaultKey: Data(repeating: 7, count: AES256GCM.keyByteCount)
+        )
+        let webDavStore = TestWebDavCredentialsStore()
+        _ = WebDavSettingsStore(
+            repository: try SQLiteTaskRepository(path: ":memory:"),
+            credentialsStore: webDavStore,
+            workerCredentialsStore: TestSyncCredentialsStore(),
+            workerSyncConfigured: true,
+            defaults: try testDefaults(),
+            initialCredentials: .success(credentials)
+        )
+
+        #expect(webDavStore.loadCount == 0)
+    }
+
+    @MainActor
     @Test("切换到 WebDAV 时只停用原同步身份而不删除凭据")
     func deactivatingWorkerPreservesCredentials() throws {
         let credentials = SyncCredentials(
@@ -101,12 +125,16 @@ struct SyncBackendSelectionTests {
 
 private final class TestWebDavCredentialsStore: WebDavCredentialsStoring, @unchecked Sendable {
     private var credentials: WebDavCredentials?
+    private(set) var loadCount = 0
 
     func save(_ credentials: WebDavCredentials) throws {
         self.credentials = credentials
     }
 
-    func load() throws -> WebDavCredentials? { credentials }
+    func load() throws -> WebDavCredentials? {
+        loadCount += 1
+        return credentials
+    }
 
     func delete() throws { credentials = nil }
 }

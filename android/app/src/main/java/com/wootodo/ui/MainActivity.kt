@@ -69,6 +69,7 @@ import com.wootodo.update.AppUpdatePreferences
 import com.wootodo.update.AppUpdateViewModel
 import com.wootodo.update.ApkUpdateInstaller
 import com.wootodo.update.GitHubRelease
+import com.wootodo.widget.TodayWidgetPreferences
 import com.wootodo.widget.TodayWidgetUpdater
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -710,10 +711,15 @@ class MainActivity : AppCompatActivity() {
         TodayDisplaySettingsDialog.show(
             activity = this,
             initial = DayCounterPreferences.load(this),
+            initialWidgetOpacity = TodayWidgetPreferences.loadBackgroundOpacity(this),
             today = TaskDateRules.today(),
-        ) { settings ->
+        ) { settings, widgetOpacity ->
             lifecycleScope.launch {
                 val recorded = withContext(Dispatchers.IO) {
+                    TodayWidgetPreferences.saveBackgroundOpacity(
+                        this@MainActivity,
+                        widgetOpacity,
+                    )
                     DayCounterPreferences.save(this@MainActivity, settings)
                 }
                 renderDayCounter()

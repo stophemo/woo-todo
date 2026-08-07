@@ -34,9 +34,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let webDavCredentialsStore = runtime.webDavCredentialsStore
             let activeCredentials: SyncCredentials?
             let syncActivationError: Error?
+            var webDavCredentialsResult = Result<WebDavCredentials?, Error>.success(nil)
             do {
-                let workerOrLocalCredentials = try credentialsStore.load()
-                let hasWebDavCredentials = (try? webDavCredentialsStore.load()) != nil
+                let preferredBackend = runtime.defaults.string(
+                    forKey: SyncBackendSelection.defaultsKey
+                ).flatMap(SyncBackendSelection.init(rawValue:))
+                let workerOrLocalCredentials: SyncCredentials?
+                if preferredBackend == .webDav {
+                    let result = Result { try webDavCredentialsStore.load() }
+                    webDavCredentialsResult = result
+                    switch result {
+                    case .success(let stored) where stored == nil:
+                        // WebDAV 已被选中但凭据不存在时，允许从旧版本留下的本地身份恢复。
+                        workerOrLocalCredentials = try credentialsStore.load()
+                    case .success, .failure:
+                        // 当前 WebDAV 凭据存在或读取失败时，不访问闲置的旧 Keychain 项。
+                        workerOrLocalCredentials = nil
+                    }
+                } else {
+                    webDavCredentialsResult = Result { try webDavCredentialsStore.load() }
+                    workerOrLocalCredentials = try credentialsStore.load()
+                }
+                let hasWebDavCredentials = (try? webDavCredentialsResult.get()) != nil
                 let selectedBackend = SyncBackendSelection.resolve(
                     defaults: runtime.defaults,
                     hasWorkerOrLocalCredentials: workerOrLocalCredentials != nil,
@@ -76,7 +95,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 credentialsStore: webDavCredentialsStore,
                 workerCredentialsStore: credentialsStore,
                 workerSyncConfigured: activeCredentials != nil,
-                defaults: runtime.defaults
+                defaults: runtime.defaults,
+                initialCredentials: webDavCredentialsResult
             )
             let store = TodayStore(repository: repository)
             let dayCounterStore = DayCounterStore(

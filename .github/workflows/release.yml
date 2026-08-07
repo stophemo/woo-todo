@@ -201,10 +201,12 @@ jobs:
         run: security delete-keychain "$MACOS_SIGNING_KEYCHAIN"
 
   windows:
-    name: 构建 Windows x64 原生包
+    name: 发布 Windows x64 实验版（不保证可用）
     needs: validate-tag
     runs-on: windows-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -252,26 +254,64 @@ jobs:
       - name: 检查 Windows Rust 静态诊断
         run: cargo clippy --manifest-path windows/Cargo.toml --locked --all-targets -- -D warnings
 
-      - name: 打包 Windows 免安装 ZIP
+      - name: 打包 Windows 实验版（不保证可用）免安装 ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $version = $env:GITHUB_REF_NAME -replace "^v", ""
           ./windows/scripts/package.ps1 -Version $version
-          $archive = "windows/dist/Woo-Todo-v$version-windows-x64.zip"
+          $archive = "windows/dist/Woo-Todo-v$version-windows-x64-experimental.zip"
           if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
-            throw "没有找到 Windows 免安装 ZIP：$archive"
+            throw "没有找到 Windows 实验版 ZIP：$archive"
           }
-          New-Item -ItemType Directory -Path "release" -Force | Out-Null
-          Copy-Item -LiteralPath $archive -Destination "release/Woo-Todo-$($env:GITHUB_REF_NAME)-windows-x64.zip"
+          $entries = @(tar -tf $archive)
+          if ($entries -notcontains "WooTodo.exe" -or $entries -notcontains "WINDOWS-EXPERIMENTAL.txt") {
+            throw "Windows 实验包缺少 WooTodo.exe 或 WINDOWS-EXPERIMENTAL.txt"
+          }
+          New-Item -ItemType Directory -Path "windows-experimental" -Force | Out-Null
+          Copy-Item -LiteralPath $archive -Destination "windows-experimental/Woo-Todo-$($env:GITHUB_REF_NAME)-windows-x64-experimental.zip"
+          $experimentalArchive = Get-ChildItem -LiteralPath "windows-experimental" -Filter "*-experimental.zip" -File |
+            Select-Object -First 1
+          Get-FileHash -Algorithm SHA256 $experimentalArchive.FullName |
+            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content -LiteralPath "windows-experimental/SHA256SUMS-windows-experimental.txt" -Encoding utf8
 
-      - name: 上传 Windows 产物
+      - name: 上传 Windows 实验版工作流产物
         uses: actions/upload-artifact@v4
         with:
-          name: windows-release
-          path: release/*.zip
+          name: windows-experimental
+          path: windows-experimental/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+
+      - name: 创建独立的 Windows 实验版 GitHub Prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $experimentalTag = "windows-$($env:GITHUB_REF_NAME)-experimental"
+          $title = "Woo Todo Windows $($env:GITHUB_REF_NAME) 实验版（不保证可用）"
+          @"
+          ## Windows 实验版（不保证可用）
+
+          此构建仅用于开发测试，不属于 Woo Todo 正式发布通道，也不保证能够正常启动或使用。
+          功能可能不完整，并可能存在稳定性或数据兼容风险；请勿用于唯一或重要任务数据。
+          Windows 实验版暂不提供应用内自动更新，后续版本需手动下载并替换 `WooTodo.exe`。
+          "@ | Set-Content -LiteralPath "windows-experimental/RELEASE_NOTES.md" -Encoding utf8
+          $experimentalArchive = Get-ChildItem -LiteralPath "windows-experimental" -Filter "*-experimental.zip" -File |
+            Select-Object -First 1
+          $checksum = Get-Item -LiteralPath "windows-experimental/SHA256SUMS-windows-experimental.txt"
+          if (gh release view $experimentalTag 2>$null) {
+            gh release upload $experimentalTag $experimentalArchive.FullName $checksum.FullName --clobber
+            gh release edit $experimentalTag --title $title --notes-file windows-experimental/RELEASE_NOTES.md --prerelease
+          } else {
+            gh release create $experimentalTag $experimentalArchive.FullName $checksum.FullName `
+              --target $env:GITHUB_SHA `
+              --title $title `
+              --notes-file windows-experimental/RELEASE_NOTES.md `
+              --prerelease
+          }
 
   publish:
     name: 创建 GitHub Release
@@ -287,18 +327,24 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 下载发布产物
+      - name: 下载 Android 正式版产物
         uses: actions/download-artifact@v4
         with:
-          pattern: "*-release"
+          name: android-release
           path: release
-          merge-multiple: true
+
+      - name: 下载 macOS 正式版产物
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release
+          path: release
 
       - name: 生成 SHA-256 校验文件
         run: |
           set -euo pipefail
           cd release
-          test "$(find . -maxdepth 1 -type f \( -name '*.apk' -o -name '*.zip' \) | wc -l | tr -d ' ')" = "3"
+          test "$(find . -maxdepth 1 -type f \( -name '*.apk' -o -name '*.zip' \) | wc -l | tr -d ' ')" = "2"
+          test -z "$(find . -maxdepth 1 -type f \( -iname '*windows*' -o -iname '*preview*' -o -iname '*experimental*' \) -print -quit)"
           shasum -a 256 ./*.apk ./*.zip > SHA256SUMS.txt
 
       - name: 发布产物
@@ -315,4 +361,8 @@ jobs:
               --verify-tag \
               --title "Woo Todo $GITHUB_REF_NAME" \
               --generate-notes
+          fi
+          if gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | grep -Eiq 'windows|preview|experimental'; then
+            echo "正式 Release 中不得包含 Windows、preview 或 experimental 产物" >&2
+            exit 1
           fi

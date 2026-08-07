@@ -3,8 +3,11 @@ package com.wootodo.widget
 import android.Manifest
 import android.content.ComponentName
 import android.content.Context
+import android.graphics.Color
 import android.widget.CheckBox
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.RemoteViews
 import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -65,6 +68,17 @@ class TodayWidgetContractInstrumentedTest {
                 view.findViewById<TextView>(R.id.widget_group_title).text.toString(),
             )
         }
+    }
+
+    @Test
+    fun `小组件背景不透明度可由RemoteViews安全应用`() {
+        val remoteViews = RemoteViews(context.packageName, R.layout.widget_today)
+        TodayWidgetAppearance.applyBackground(context, remoteViews, 40)
+
+        val view = remoteViews.apply(context, LinearLayout(context))
+        val tint = view.findViewById<LinearLayout>(R.id.widget_root).backgroundTintList
+
+        assertEquals(TodayWidgetPreferences.backgroundAlpha(40), Color.alpha(tint?.defaultColor ?: 0))
     }
 
     private fun task(id: String, status: TaskStatus) = Task(

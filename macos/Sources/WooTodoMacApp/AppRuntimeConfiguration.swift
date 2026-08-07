@@ -28,13 +28,18 @@ struct AppRuntimeConfiguration {
                 appropriateFor: nil,
                 create: true
             )
+            let applicationData = applicationSupport
+                .appendingPathComponent("WooTodo", isDirectory: true)
             return Self(
-                databaseURL: applicationSupport
-                    .appendingPathComponent("WooTodo", isDirectory: true)
-                    .appendingPathComponent("tasks.sqlite"),
+                databaseURL: applicationData.appendingPathComponent("tasks.sqlite"),
                 defaults: .standard,
                 syncCredentialsStore: KeychainCredentialsStore(),
-                webDavCredentialsStore: WebDavCredentialsStore(),
+                webDavCredentialsStore: EncryptedFileWebDavCredentialsStore(
+                    directoryURL: applicationData.appendingPathComponent(
+                        "Secure",
+                        isDirectory: true
+                    )
+                ),
                 allowsExternalServices: true,
                 initialDashboardSection: nil,
                 shouldSeedUITestFixtures: false,

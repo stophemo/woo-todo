@@ -1,5 +1,7 @@
 # Woo Todo Windows 原生客户端
 
+> **Windows 客户端当前为实验版（不保证可用）。** 它可能无法启动、功能不完整，并可能存在稳定性或数据兼容风险。版本标签、压缩包文件名和包内说明文件都会明确标注 `experimental`；请勿用于唯一或重要任务数据。
+
 Windows 客户端使用 Rust、`windows-rs`、`windows-sys`、Win32 和 WinRT 通知 API 实现，不包含 Electron、WebView、跨端 UI 框架或 .NET 桌面运行时。Windows crate 直接依赖 `shared/core-rust/`，领域、SQLite 仓储与通知计划不经过 C ABI 或 JSON。任务读写始终落在本地 SQLite；网络不可用不会阻塞本地操作。
 
 ## 系统要求
@@ -7,7 +9,7 @@ Windows 客户端使用 Rust、`windows-rs`、`windows-sys`、Win32 和 WinRT �
 - 运行：Windows 10 版本 2004（build 19041）或更高版本，x64 架构。
 - 开发：Windows x64 与 Rust stable（包含 `rustfmt`、`clippy` 和 MSVC 工具链）。
 
-GitHub Release 提供 x64 免安装 ZIP，解压后直接运行根目录的 `WooTodo.exe`。Release 可执行文件静态链接 MSVC CRT，直接使用 Windows 自带的 Win32/WinRT 系统组件，目标机器不需要安装 Woo Todo、.NET 或 Visual C++ Runtime。
+GitHub Windows Prerelease 提供 x64 实验版免安装 ZIP，解压后可尝试运行根目录的 `WooTodo.exe`。实验包还包含 `WINDOWS-EXPERIMENTAL.txt`，再次说明它不保证可用。可执行文件静态链接 MSVC CRT，直接使用 Windows 自带的 Win32/WinRT 系统组件，目标机器不需要安装 Woo Todo、.NET 或 Visual C++ Runtime。
 
 当前程序未做代码签名，Windows SmartScreen 可能在首次下载或启动时显示来源提示。
 
@@ -20,7 +22,7 @@ GitHub Release 提供 x64 免安装 ZIP，解压后直接运行根目录的 `Woo
 
 `settings.json` 只保存窗口、显示、快捷键和本机是否承载局域网服务等非敏感设置，不写入设备令牌、应用密码或同步密钥。
 
-托盘菜单可直接检查更新。发现新版本后，应用会下载免安装 ZIP、核对 GitHub Release 的 SHA-256 digest，再由临时 helper 在主进程退出后替换 `WooTodo.exe` 并重启；失败时保留当前程序。手动替换或移动 `WooTodo.exe` 也不会删除本地任务和设置；Rust 版本继续兼容旧客户端的数据库路径和 PascalCase 设置字段。
+Windows 实验版不参与正式版应用内自动更新。托盘菜单检查到只有 macOS/Android 正式包时会明确提示 Windows 仍是实验版；后续 Windows 版本需要从对应 Prerelease 手动下载并替换 `WooTodo.exe`。手动替换或移动程序不会删除本地任务和设置；Rust 版本继续兼容旧客户端的数据库路径和 PascalCase 设置字段。
 
 ## 构建与测试
 
@@ -35,20 +37,20 @@ cargo run --manifest-path windows/Cargo.toml
 
 ## 生成发布包
 
-`package.ps1` 会锁定 `Cargo.lock`，为 MSVC x64 目标构建 Release，并生成只包含一个原生 `WooTodo.exe` 的 ZIP：
+`package.ps1` 会锁定 `Cargo.lock`，为 MSVC x64 目标构建实验版，并生成包含原生 `WooTodo.exe` 和 `WINDOWS-EXPERIMENTAL.txt` 的 ZIP：
 
 ```powershell
 pwsh -NoProfile -File windows/scripts/package.ps1
-pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.26
+pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.27
 ```
 
 输出文件为：
 
 ```text
-windows/dist/Woo-Todo-v0.1.26-windows-x64.zip
+windows/dist/Woo-Todo-v0.1.27-windows-x64-experimental.zip
 ```
 
-正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和 Release 构建，生成的 ZIP 会与 Android APK、macOS ZIP 一起发布。Windows 界面交互、系统集成和升级流程由真实 Windows 设备手动验证。
+正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和优化构建，但 Windows ZIP 会发布到独立的 `windows-vX.Y.Z-experimental` GitHub Prerelease，绝不进入 macOS/Android 的正式 Release。Windows 界面交互、系统集成和升级流程仍需真实 Windows 设备手动验证，自动测试通过不代表实验版可正常使用。
 
 ## 功能范围
 

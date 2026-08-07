@@ -59,7 +59,9 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
     }
 
     static func directSessionConfiguration(for endpoint: URL) -> URLSessionConfiguration? {
-        guard SyncEndpointPolicy.scope(of: endpoint) == .localNetwork else { return nil }
+        guard [.localNetwork, .currentDeviceOnly].contains(
+            SyncEndpointPolicy.scope(of: endpoint)
+        ) else { return nil }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.connectionProxyDictionary = [:]
         return configuration

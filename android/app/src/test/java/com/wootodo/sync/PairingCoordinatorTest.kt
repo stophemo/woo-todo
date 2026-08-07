@@ -88,6 +88,37 @@ class PairingCoordinatorTest {
     }
 
     @Test
+    fun `用户确认后可用新二维码替换已清理的旧设备凭据`() = runBlocking {
+        val fixture = PairingFixture()
+        val oldCredentials = SyncCredentials(
+            endpoint = "http://192.168.1.10:48473",
+            vaultId = "old-vault",
+            deviceId = "old-device",
+            deviceToken = Base64Url.encode(ByteArray(32) { 3 }),
+            vaultKey = ByteArray(32) { 4 },
+        )
+        val store = MemoryCredentialsStore().apply { credentials = oldCredentials }
+        val coordinator = PairingCoordinator(
+            transportFactory = { fixture.transport },
+            credentialsStore = store,
+            keyPairFactory = { fixture.claimant },
+            tokenFactory = { fixture.deviceToken.copyOf() },
+            clockMillis = { fixture.now },
+            pause = {},
+        )
+
+        val completion = coordinator.pair(
+            link = fixture.link,
+            deviceName = "Android 设备",
+            replaceExistingCredentials = true,
+        )
+
+        assertTrue(completion.replacedExistingCredentials)
+        assertEquals(fixture.deviceId, store.credentials?.deviceId)
+        assertEquals(fixture.vaultId, store.credentials?.vaultId)
+    }
+
+    @Test
     fun `手机拒绝连接只属于当前设备的回环地址`() = runBlocking {
         var transportCreated = false
         val localLink = PairingDeepLink(

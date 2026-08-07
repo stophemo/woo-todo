@@ -57,6 +57,7 @@ import com.wootodo.sync.ScannedConfigurationParser
 import com.wootodo.sync.SyncBackend
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRuntimeState
+import com.wootodo.sync.SyncTransportMode
 import com.wootodo.sync.SecureBytes
 import com.wootodo.sync.WebDavCredentials
 import com.wootodo.sync.WebDavSetupLink
@@ -89,7 +90,10 @@ class MainActivity : AppCompatActivity() {
     private var pairingMessageView: TextView? = null
     private var pairingCodeView: TextView? = null
     private var pairingEntryJob: Job? = null
+    private var syncTransportModeJob: Job? = null
     private val pairingEntryGeneration = PairingSessionGeneration()
+    private var latestSyncState: SyncRuntimeState = SyncRuntimeState.Loading
+    private var syncTransportMode: SyncTransportMode? = null
     private var deepLinkIntentConsumed = false
     private var updateProgressDialog: AlertDialog? = null
     private var updateDownloadJob: Job? = null
@@ -204,6 +208,7 @@ class MainActivity : AppCompatActivity() {
         syncButton.setOnClickListener { handleSyncAction() }
         // 凭据在 Application 的后台初始化中读取；先按当前快照渲染，避免启动窗口仍可点击。
         renderSyncState((application as WooTodoApplication).syncRuntime.state.value)
+        refreshSyncTransportMode()
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -275,6 +280,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         viewModel.refresh()
         renderDayCounter()
+        refreshSyncTransportMode()
     }
 
     override fun onStart() {
@@ -296,6 +302,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         pairingEntryJob?.cancel()
+        syncTransportModeJob?.cancel()
         pairingDialog?.dismiss()
         pairingSwitchDialog?.dismiss()
         updateProgressDialog?.dismiss()
@@ -494,6 +501,7 @@ class MainActivity : AppCompatActivity() {
                     val app = application as WooTodoApplication
                     val result = runCatching {
                         app.switchToSavedWorkerOrLocalSync()
+                        refreshSyncTransportMode()
                         when (val syncResult = app.synchronizeManually()) {
                             is SyncExecutionResult.Succeeded ->
                                 getString(R.string.sync_switched_to_saved_worker)
@@ -657,6 +665,7 @@ class MainActivity : AppCompatActivity() {
                                     credentials,
                                     replacingWorkerSync = workerSyncConfigured,
                                 )
+                                refreshSyncTransportMode()
                                 when (val syncResult = app.synchronizeManually()) {
                                     is SyncExecutionResult.Succeeded ->
                                         getString(R.string.webdav_saved_and_synced)
@@ -910,20 +919,29 @@ class MainActivity : AppCompatActivity() {
         pairingViewModel.prepareForNewPairing()
         showTransientMessage(R.string.pairing_link_received, Snackbar.LENGTH_LONG)
         pairingEntryJob = lifecycleScope.launch {
-            val replacingWebDav = withContext(Dispatchers.IO) {
+            val activeBackend = withContext(Dispatchers.IO) {
                 runCatching {
-                    (application as WooTodoApplication).activeSyncBackend() == SyncBackend.WEB_DAV
-                }.getOrDefault(false)
+                    (application as WooTodoApplication).activeSyncBackend()
+                }.getOrNull()
             }
             if (!pairingEntryGeneration.isCurrent(generation)) return@launch
             val begin = {
                 if (pairingEntryGeneration.isCurrent(generation)) {
-                    pairingViewModel.begin(link, deviceDisplayName())
+                    pairingViewModel.begin(
+                        link = link,
+                        deviceName = deviceDisplayName(),
+                        replaceExistingCredentials = activeBackend != null,
+                    )
                 }
             }
-            if (replacingWebDav) {
+            if (activeBackend == SyncBackend.WEB_DAV) {
                 pairingSwitchDialog = showSyncSwitchConfirmation(
                     messageRes = R.string.sync_switch_to_worker_message,
+                    onConfirm = begin,
+                )
+            } else if (activeBackend == SyncBackend.WORKER_OR_LOCAL) {
+                pairingSwitchDialog = showSyncSwitchConfirmation(
+                    messageRes = R.string.sync_replace_worker_message,
                     onConfirm = begin,
                 )
             } else {
@@ -1002,6 +1020,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderSyncState(state: SyncRuntimeState) {
+        latestSyncState = state
         syncButton.isEnabled = state != SyncRuntimeState.Loading && state != SyncRuntimeState.Running
         syncButton.setText(
             if (state == SyncRuntimeState.Unpaired) {
@@ -1010,7 +1029,7 @@ class MainActivity : AppCompatActivity() {
                 R.string.sync_now
             },
         )
-        syncStatus.text = when (state) {
+        val statusText = when (state) {
             SyncRuntimeState.Loading -> getString(R.string.sync_loading)
             SyncRuntimeState.Unpaired -> getString(R.string.sync_unpaired)
             SyncRuntimeState.Idle -> getString(R.string.sync_ready)
@@ -1022,7 +1041,40 @@ class MainActivity : AppCompatActivity() {
             )
             is SyncRuntimeState.Failed -> state.message
         }
+        syncStatus.text = if (state == SyncRuntimeState.Loading ||
+            state == SyncRuntimeState.Unpaired || syncTransportMode == null
+        ) {
+            statusText
+        } else {
+            getString(
+                R.string.sync_status_with_method,
+                syncTransportModeLabel(requireNotNull(syncTransportMode)),
+                statusText,
+            )
+        }
     }
+
+    private fun refreshSyncTransportMode() {
+        syncTransportModeJob?.cancel()
+        syncTransportModeJob = lifecycleScope.launch {
+            val mode = withContext(Dispatchers.IO) {
+                runCatching {
+                    (application as WooTodoApplication).activeSyncTransportMode()
+                }.getOrNull()
+            }
+            syncTransportMode = mode
+            renderSyncState(latestSyncState)
+            syncTransportModeJob = null
+        }
+    }
+
+    private fun syncTransportModeLabel(mode: SyncTransportMode): String = getString(
+        when (mode) {
+            SyncTransportMode.LOCAL_NETWORK -> R.string.sync_method_local_network
+            SyncTransportMode.SELF_HOSTED_SERVICE -> R.string.sync_method_self_hosted
+            SyncTransportMode.WEB_DAV -> R.string.sync_method_webdav
+        },
+    )
 
     private fun renderPairingState(state: PairingUiState) {
         when (state) {
@@ -1053,6 +1105,7 @@ class MainActivity : AppCompatActivity() {
             )
             is PairingUiState.Succeeded -> {
                 dismissPairingProgress()
+                refreshSyncTransportMode()
                 showTransientMessage(R.string.pairing_succeeded, Snackbar.LENGTH_LONG)
                 pairingViewModel.acknowledgeTerminalState()
             }

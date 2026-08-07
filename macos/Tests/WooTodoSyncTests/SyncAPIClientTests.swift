@@ -9,6 +9,7 @@ struct SyncAPIClientTests {
         for source in [
             "http://woo-todo.local:48473",
             "http://192.168.1.20:48473",
+            "http://127.0.0.1:48473",
         ] {
             let endpoint = try #require(URL(string: source))
             let configuration = try #require(

@@ -64,6 +64,36 @@ struct PairingDeepLinkTests {
         )
     }
 
+    @Test("局域网地址优先使用私有 IPv4，热点环境不依赖 mDNS")
+    func localEndpointCandidatesPreferIPv4() {
+        #expect(
+            LocalNetworkSyncEndpointResolver.candidateHosts(
+                localHost: "woo-mac.local",
+                privateIPv4: "192.168.43.12"
+            ) == ["192.168.43.12", "woo-mac.local"]
+        )
+        #expect(
+            LocalNetworkSyncEndpointResolver.candidateHosts(
+                localHost: "woo-mac.local",
+                privateIPv4: nil
+            ) == ["woo-mac.local"]
+        )
+    }
+
+    @Test("Mac 主机通过回环访问局域网服务且保留对外端口")
+    func localHostClientEndpointUsesLoopback() throws {
+        let advertised = try #require(URL(string: "http://10.100.68.172:48473"))
+        let hostClient = LocalNetworkSyncEndpointResolver.hostClientEndpoint(
+            for: advertised
+        )
+        #expect(hostClient == URL(string: "http://127.0.0.1:48473"))
+
+        let remote = try #require(URL(string: "https://sync.example.test/root"))
+        #expect(
+            LocalNetworkSyncEndpointResolver.hostClientEndpoint(for: remote) == remote
+        )
+    }
+
     @Test("创建双端空间时拒绝回环地址与 API 子路径")
     func crossDeviceSetupPolicy() {
         #expect(SyncEndpointSetupPolicy.assess("   ") == .empty)

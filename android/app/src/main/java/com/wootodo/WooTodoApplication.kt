@@ -23,6 +23,8 @@ import com.wootodo.sync.SyncJobScheduler
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRunner
 import com.wootodo.sync.SyncRuntime
+import com.wootodo.sync.SyncTransportMode
+import com.wootodo.sync.SyncTransportModePolicy
 import com.wootodo.sync.WebDavClient
 import com.wootodo.sync.WebDavCredentials
 import com.wootodo.sync.WebDavSyncRunner
@@ -105,6 +107,15 @@ class WooTodoApplication : Application() {
         workerOrLocal = syncCredentialsStore.load(),
         webDav = webDavCredentialsStore.load(),
     )
+
+    fun activeSyncTransportMode(): SyncTransportMode? {
+        val workerOrLocal = syncCredentialsStore.load()
+        val webDav = webDavCredentialsStore.load()
+        return SyncTransportModePolicy.resolve(
+            backend = resolveSyncBackend(workerOrLocal, webDav),
+            workerEndpoint = workerOrLocal?.endpoint,
+        )
+    }
 
     fun canSwitchToSavedWorkerOrLocalSync(): Boolean =
         activeSyncBackend() == SyncBackend.WEB_DAV && syncCredentialsStore.load() != null
@@ -229,7 +240,10 @@ class WooTodoApplication : Application() {
         }
     }
 
-    suspend fun finalizePairing(completion: PairingCompletion) {
+    suspend fun finalizePairing(
+        completion: PairingCompletion,
+        previousCredentials: SyncCredentials?,
+    ) {
         check(completion.deviceId.isNotBlank() && completion.vaultId.isNotBlank())
         syncRuntime.withExclusiveConfiguration {
             try {
@@ -246,7 +260,9 @@ class WooTodoApplication : Application() {
                     ensureDisplayConfigurationStored()
                     val previousWebDav = webDavCredentialsStore.load()
                     val previousBackend = resolveSyncBackend(credentials, previousWebDav)
-                    if (previousBackend != SyncBackend.WEB_DAV) {
+                    if (!completion.replacedExistingCredentials &&
+                        previousBackend != SyncBackend.WEB_DAV
+                    ) {
                         SQLiteSyncStore(
                             database = database,
                             credentials = credentials,
@@ -268,7 +284,13 @@ class WooTodoApplication : Application() {
                 // 凭据已完整落盘时保留它；下次启动会继续完成数据库绑定。
                 throw error
             } catch (error: Exception) {
-                runCatching { syncCredentialsStore.delete() }
+                runCatching {
+                    if (previousCredentials == null) {
+                        syncCredentialsStore.delete()
+                    } else {
+                        syncCredentialsStore.save(previousCredentials)
+                    }
+                }
                 val fallbackConfigured = withContext(Dispatchers.IO) {
                     runCatching { activeSyncBackend() != null }.getOrDefault(false)
                 }

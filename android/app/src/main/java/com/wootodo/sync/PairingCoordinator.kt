@@ -19,6 +19,7 @@ sealed interface PairingProgress {
 data class PairingCompletion(
     val vaultId: String,
     val deviceId: String,
+    val replacedExistingCredentials: Boolean = false,
 )
 
 sealed class PairingException(message: String) : Exception(message) {
@@ -60,9 +61,13 @@ class PairingCoordinator(
     suspend fun pair(
         link: PairingDeepLink,
         deviceName: String,
+        replaceExistingCredentials: Boolean = false,
         onProgress: (PairingProgress) -> Unit = {},
     ): PairingCompletion {
-        if (credentialsStore.load() != null) throw PairingException.AlreadyPaired
+        val previousCredentials = credentialsStore.load()
+        if (previousCredentials != null && !replaceExistingCredentials) {
+            throw PairingException.AlreadyPaired
+        }
         if (!SyncEndpointPolicy.isCrossDevice(URI(link.endpoint))) {
             throw PairingException.CurrentDeviceOnlyEndpoint
         }
@@ -141,10 +146,16 @@ class PairingCoordinator(
                         )
                         currentCoroutineContext().ensureActive()
                         onProgress(PairingProgress.SavingCredentials)
-                        if (!credentialsStore.saveIfAbsent(credentials)) {
+                        if (replaceExistingCredentials) {
+                            credentialsStore.save(credentials)
+                        } else if (!credentialsStore.saveIfAbsent(credentials)) {
                             throw PairingException.AlreadyPaired
                         }
-                        return PairingCompletion(credentials.vaultId, credentials.deviceId)
+                        return PairingCompletion(
+                            vaultId = credentials.vaultId,
+                            deviceId = credentials.deviceId,
+                            replacedExistingCredentials = previousCredentials != null,
+                        )
                     }
 
                     PairingStatus.EXPIRED -> throw PairingException.Expired

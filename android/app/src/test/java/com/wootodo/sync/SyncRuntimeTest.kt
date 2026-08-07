@@ -120,9 +120,10 @@ class SyncRuntimeTest {
 
     @Test
     fun `仅网络和可恢复服务错误进入退避重试`() {
-        assertTrue(
-            SyncFailurePolicy.describe(SyncApiException.Transport(IOException("offline"))).retryable,
-        )
+        val transportFailure =
+            SyncFailurePolicy.describe(SyncApiException.Transport(IOException("offline")))
+        assertTrue(transportFailure.retryable)
+        assertEquals("同步服务暂时不可达，网络恢复后会自动重试", transportFailure.message)
         assertTrue(
             SyncFailurePolicy.describe(serverError(503)).retryable,
         )

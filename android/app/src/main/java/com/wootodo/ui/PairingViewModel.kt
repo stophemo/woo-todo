@@ -13,6 +13,7 @@ import com.wootodo.sync.PairingProgress
 import com.wootodo.sync.SyncApiClient
 import com.wootodo.sync.SyncApiException
 import com.wootodo.sync.SyncCredentialsStore
+import com.wootodo.sync.SyncCredentials
 import com.wootodo.sync.SyncCryptoException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -59,7 +60,7 @@ internal class PairingSessionGeneration {
 class PairingViewModel(
     private val coordinator: PairingCoordinator,
     private val credentialsStore: SyncCredentialsStore,
-    private val finalizePairing: suspend (PairingCompletion) -> Unit,
+    private val finalizePairing: suspend (PairingCompletion, SyncCredentials?) -> Unit,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow<PairingUiState>(PairingUiState.Idle)
     val state: StateFlow<PairingUiState> = mutableState.asStateFlow()
@@ -76,23 +77,37 @@ class PairingViewModel(
         mutableState.value = PairingUiState.Idle
     }
 
-    fun begin(link: PairingDeepLink, deviceName: String) {
+    fun begin(
+        link: PairingDeepLink,
+        deviceName: String,
+        replaceExistingCredentials: Boolean = false,
+    ) {
         prepareForNewPairing()
         val generation = sessionGeneration.current()
         pairingJob = viewModelScope.launch {
             mutableState.value = PairingUiState.Claiming
             try {
-                val completion = withContext(Dispatchers.IO) {
-                    coordinator.pair(link, deviceName) { progress ->
+                val attempt = withContext(Dispatchers.IO) {
+                    val previousCredentials = if (replaceExistingCredentials) {
+                        credentialsStore.load()
+                    } else {
+                        null
+                    }
+                    val completion = coordinator.pair(
+                        link = link,
+                        deviceName = deviceName,
+                        replaceExistingCredentials = replaceExistingCredentials,
+                    ) { progress ->
                         if (sessionGeneration.isCurrent(generation)) {
                             mutableState.value = progress.toUiState()
                         }
                     }
+                    PairingAttempt(completion, previousCredentials)
                 }
                 if (!sessionGeneration.isCurrent(generation)) return@launch
-                finalizePairing(completion)
+                finalizePairing(attempt.completion, attempt.previousCredentials)
                 if (sessionGeneration.isCurrent(generation)) {
-                    mutableState.value = PairingUiState.Succeeded(completion.deviceId)
+                    mutableState.value = PairingUiState.Succeeded(attempt.completion.deviceId)
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -128,9 +143,13 @@ class PairingViewModel(
                 }
             } else {
                 if (!sessionGeneration.isCurrent(generation)) return@launch
-                val completion = PairingCompletion(credentials.vaultId, credentials.deviceId)
+                val completion = PairingCompletion(
+                    vaultId = credentials.vaultId,
+                    deviceId = credentials.deviceId,
+                    replacedExistingCredentials = true,
+                )
                 try {
-                    finalizePairing(completion)
+                    finalizePairing(completion, null)
                     if (sessionGeneration.isCurrent(generation)) {
                         mutableState.value = PairingUiState.Succeeded(completion.deviceId)
                     }
@@ -195,6 +214,11 @@ class PairingViewModel(
         const val TAG = "WooTodoPairing"
     }
 }
+
+private data class PairingAttempt(
+    val completion: PairingCompletion,
+    val previousCredentials: SyncCredentials?,
+)
 
 internal object PairingErrorMessage {
     fun from(error: Exception): String = when (error) {

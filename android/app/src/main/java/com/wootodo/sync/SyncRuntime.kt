@@ -59,7 +59,7 @@ object SyncFailurePolicy {
             SyncFailureDescription(message, retryable)
         }
         is WebDavException -> SyncFailureDescription(error.message ?: "WebDAV 同步数据校验失败", false)
-        is SyncApiException.Transport -> SyncFailureDescription("网络不可用，联网后会自动重试", true)
+        is SyncApiException.Transport -> SyncFailureDescription("同步服务暂时不可达，网络恢复后会自动重试", true)
         is SyncApiException.Server -> {
             val capacityReached = error.payload.code == "VAULT_CAPACITY_REACHED"
             val retryable = !capacityReached && (

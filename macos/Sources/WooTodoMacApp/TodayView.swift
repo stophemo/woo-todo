@@ -124,6 +124,7 @@ struct TodayView: View {
                 let group = store.tasks.filter { $0.tier == tier }
                 let pending = group.filter { $0.status == .pending }
                 let settled = group.filter { $0.status != .pending }
+                let ordered = pending + settled
                 if !group.isEmpty {
                     Section {
                         HStack(spacing: 7) {
@@ -144,14 +145,19 @@ struct TodayView: View {
                         .listRowBackground(Color.clear)
                         .accessibilityAddTraits(.isHeader)
 
-                        ForEach(pending) { task in
+                        ForEach(ordered) { task in
                             TaskRow(
                                 task: task,
                                 toggle: { store.toggleCompletion(id: task.id) },
-                                pass: { store.pass(id: task.id) },
+                                pass: {
+                                    if task.status == .pending {
+                                        store.pass(id: task.id)
+                                    }
+                                },
                                 edit: { editingTask = task },
                                 delete: { store.delete(id: task.id) }
                             )
+                            .moveDisabled(task.status != .pending)
                         }
                         .onMove { offsets, destination in
                             store.move(
@@ -159,16 +165,6 @@ struct TodayView: View {
                                 fromOffsets: offsets,
                                 toOffset: destination
                             )
-                        }
-                        ForEach(settled) { task in
-                            TaskRow(
-                                task: task,
-                                toggle: { store.toggleCompletion(id: task.id) },
-                                pass: {},
-                                edit: { editingTask = task },
-                                delete: { store.delete(id: task.id) }
-                            )
-                            .moveDisabled(true)
                         }
                     }
                 }
@@ -213,13 +209,21 @@ private struct TaskRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button(action: toggle) {
-                statusIndicator
-                    .frame(width: 20, height: 20)
-            }
-            .buttonStyle(.plain)
-            .disabled(task.status == .pass)
-            .help(task.status == .completed ? "撤销完成" : "标记完成")
+            statusIndicator
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    toggleIfAllowed()
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    task.status == .completed ? "撤销完成" : "标记完成"
+                )
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction {
+                    toggleIfAllowed()
+                }
+                .help(task.status == .completed ? "撤销完成" : "标记完成")
 
             Text(task.title)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -232,6 +236,10 @@ private struct TaskRow: View {
                         ? WooTodoTheme.taskOnDark
                         : WooTodoTheme.settledOnDark
                 )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    toggleIfAllowed()
+                }
             if case .repeating = task.recurrence {
                 Text("每日")
                     .font(.system(size: 10))
@@ -254,10 +262,6 @@ private struct TaskRow: View {
                     )
                     .help("截止日期：\(deadline.formatted(.dateTime.year().month().day()))")
             }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            if task.status == .pending { edit() }
         }
         .contextMenu {
             if task.status == .pending {
@@ -303,6 +307,10 @@ private struct TaskRow: View {
         case .completed: WooTodoTheme.green
         case .pass: WooTodoTheme.orange
         }
+    }
+
+    private func toggleIfAllowed() {
+        if task.status != .pass { toggle() }
     }
 }
 

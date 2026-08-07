@@ -860,7 +860,8 @@ public enum LocalNetworkSyncEndpointResolver {
             }
             return nil
         }()
-        for host in [localHost, privateIPv4Address()].compactMap({ $0 }) {
+        // 手机热点通常不转发 mDNS，优先公布私有 IPv4；`.local` 仅作为回退。
+        for host in candidateHosts(localHost: localHost, privateIPv4: privateIPv4Address()) {
             var components = URLComponents()
             components.scheme = "http"
             components.host = host
@@ -870,6 +871,23 @@ public enum LocalNetworkSyncEndpointResolver {
             }
         }
         throw LocalSyncServerError.cannotResolveEndpoint
+    }
+
+    static func candidateHosts(localHost: String?, privateIPv4: String?) -> [String] {
+        [privateIPv4, localHost].compactMap { $0 }
+    }
+
+    /// Mac 作为局域网主机时通过回环访问自己的服务；对外公布的地址仍供其他设备使用。
+    public static func hostClientEndpoint(for advertisedEndpoint: URL) -> URL {
+        guard SyncEndpointPolicy.scope(of: advertisedEndpoint) == .localNetwork,
+              var components = URLComponents(
+                url: advertisedEndpoint,
+                resolvingAgainstBaseURL: false
+              ) else {
+            return advertisedEndpoint
+        }
+        components.host = "127.0.0.1"
+        return components.url ?? advertisedEndpoint
     }
 
     private static func isValidLocalLabel(_ value: String) -> Bool {

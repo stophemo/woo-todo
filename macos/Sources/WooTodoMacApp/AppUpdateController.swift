@@ -18,6 +18,7 @@ final class AppUpdateController: NSObject, SPUUpdaterDelegate, @preconcurrency S
 
     var onStateChange: ((AppUpdateState) -> Void)?
     var onMessage: ((String, String) -> Void)?
+    var onUpdateAvailable: ((String) -> Void)?
 
     private let defaults: UserDefaults
     private var updaterController: SPUStandardUpdaterController!
@@ -279,6 +280,6 @@ final class AppUpdateController: NSObject, SPUUpdaterDelegate, @preconcurrency S
     private func announceAvailableVersion(_ version: String) {
         guard lastNotifiedVersion != version else { return }
         lastNotifiedVersion = version
-        onMessage?("发现新版本 v\(version)", "已显示在菜单中，点击即可一键更新。")
+        onUpdateAvailable?(version)
     }
 }

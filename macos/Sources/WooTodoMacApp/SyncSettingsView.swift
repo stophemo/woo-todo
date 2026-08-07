@@ -11,7 +11,6 @@ private enum SyncSwitchTarget {
 struct SyncSettingsView: View {
     @ObservedObject var store: SyncSettingsStore
     @ObservedObject var webDavStore: WebDavSettingsStore
-    @State private var devicePendingRevocation: DeviceInfo?
     @State private var pairingLinkCopied = false
     @State private var webDavSetupLinkCopied = false
     @State private var webDavSetupLinkRevealed = false
@@ -35,26 +34,6 @@ struct SyncSettingsView: View {
         .onDisappear {
             webDavSetupLinkRevealed = false
             webDavSetupLinkCopied = false
-        }
-        .confirmationDialog(
-            "确认撤销这台设备？",
-            isPresented: Binding(
-                get: { devicePendingRevocation != nil },
-                set: { if !$0 { devicePendingRevocation = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let device = devicePendingRevocation {
-                Button("撤销 \(device.name)", role: .destructive) {
-                    devicePendingRevocation = nil
-                    Task { await store.revokeDevice(device) }
-                }
-            }
-            Button("取消", role: .cancel) {
-                devicePendingRevocation = nil
-            }
-        } message: {
-            Text("撤销后，该设备的同步凭据会立即失效；设备上的本地任务不会被远程删除。")
         }
         .confirmationDialog(
             "确认切换同步方式？",
@@ -624,7 +603,7 @@ struct SyncSettingsView: View {
     private var devicesCard: some View {
         SettingsCard(title: "已绑定设备", systemImage: "laptopcomputer.and.iphone") {
             HStack {
-                Text("撤销只会使对应设备无法继续同步，不会删除它的本地数据。")
+                Text("清理会立即移除设备绑定；设备上的本地任务不会被删除。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -660,21 +639,17 @@ struct SyncSettingsView: View {
                                         .padding(.vertical, 2)
                                         .background(.quaternary, in: Capsule())
                                 }
-                                if device.revokedAt != nil {
-                                    Text("已撤销")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
                             }
                             Text(deviceDetail(device))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if !isCurrentDevice(device), device.revokedAt == nil {
-                            Button("撤销", role: .destructive) {
-                                devicePendingRevocation = device
+                        if !isCurrentDevice(device) {
+                            Button("清理", role: .destructive) {
+                                Task { await store.cleanDevice(device) }
                             }
+                            .disabled(store.cleaningDeviceIDs.contains(device.id))
                         }
                     }
                 }

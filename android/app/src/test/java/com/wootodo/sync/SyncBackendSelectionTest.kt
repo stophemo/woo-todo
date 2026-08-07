@@ -5,6 +5,28 @@ import org.junit.Test
 
 class SyncBackendSelectionTest {
     @Test
+    fun `活动同步方式明确区分局域网自建服务和WebDAV`() {
+        assertEquals(
+            SyncTransportMode.LOCAL_NETWORK,
+            SyncTransportModePolicy.resolve(
+                SyncBackend.WORKER_OR_LOCAL,
+                "http://192.168.43.12:48473",
+            ),
+        )
+        assertEquals(
+            SyncTransportMode.SELF_HOSTED_SERVICE,
+            SyncTransportModePolicy.resolve(
+                SyncBackend.WORKER_OR_LOCAL,
+                "https://sync.example.test",
+            ),
+        )
+        assertEquals(
+            SyncTransportMode.WEB_DAV,
+            SyncTransportModePolicy.resolve(SyncBackend.WEB_DAV, null),
+        )
+    }
+
+    @Test
     fun `显式选择决定同时保存两套凭据时启用哪一套`() {
         assertEquals(
             SyncBackend.WORKER_OR_LOCAL,

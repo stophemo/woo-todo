@@ -1,6 +1,7 @@
 package com.wootodo.sync
 
 import android.content.Context
+import java.net.URI
 
 enum class SyncBackend(val persistedValue: String) {
     WORKER_OR_LOCAL("workerOrLocal"),
@@ -10,6 +11,29 @@ enum class SyncBackend(val persistedValue: String) {
     companion object {
         fun fromPersistedValue(value: String?): SyncBackend? =
             entries.firstOrNull { it.persistedValue == value }
+    }
+}
+
+enum class SyncTransportMode {
+    LOCAL_NETWORK,
+    SELF_HOSTED_SERVICE,
+    WEB_DAV,
+}
+
+internal object SyncTransportModePolicy {
+    fun resolve(backend: SyncBackend?, workerEndpoint: String?): SyncTransportMode? = when (backend) {
+        SyncBackend.WEB_DAV -> SyncTransportMode.WEB_DAV
+        SyncBackend.WORKER_OR_LOCAL -> {
+            val endpoint = workerEndpoint?.let { runCatching { URI(it) }.getOrNull() }
+            if (endpoint != null &&
+                SyncEndpointPolicy.scope(endpoint) == SyncEndpointScope.LOCAL_NETWORK
+            ) {
+                SyncTransportMode.LOCAL_NETWORK
+            } else {
+                SyncTransportMode.SELF_HOSTED_SERVICE
+            }
+        }
+        null -> null
     }
 }
 

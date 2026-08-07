@@ -53,7 +53,7 @@ private enum SyncUserAction: Equatable {
     case createVault
     case pairDevice
     case loadDevices
-    case revokeDevice
+    case cleanDevice
     case synchronize
 
     var label: String {
@@ -61,7 +61,7 @@ private enum SyncUserAction: Equatable {
         case .createVault: "创建同步空间"
         case .pairDevice: "设备配对"
         case .loadDevices: "获取设备列表"
-        case .revokeDevice: "撤销设备"
+        case .cleanDevice: "清理设备"
         case .synchronize: "同步"
         }
     }
@@ -91,6 +91,7 @@ final class SyncSettingsStore: ObservableObject {
     @Published private(set) var runtimeSnapshot: SyncRuntimeSnapshot
     @Published private(set) var lastRunSummary: SyncRunSummary?
     @Published private(set) var devices: [DeviceInfo] = []
+    @Published private(set) var cleaningDeviceIDs = Set<String>()
     @Published private(set) var isCreatingVault = false
     @Published private(set) var isLoadingDevices = false
     @Published private(set) var pairingPhase: InitiatorPairingPhase = .idle
@@ -185,6 +186,8 @@ final class SyncSettingsStore: ObservableObject {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
+
+        refreshLocalNetworkEndpointIfNeeded()
 
         let pathMonitor = NWPathMonitor()
         self.pathMonitor = pathMonitor
@@ -295,7 +298,7 @@ final class SyncSettingsStore: ObservableObject {
                 )
             }
             try newCredentials.validate()
-            let preparedClient = try SyncAPIClient(endpoint: newCredentials.endpoint)
+            let preparedClient = try Self.apiClient(for: newCredentials.endpoint)
             if !replacingWebDav {
                 try repository.validateSyncBinding(
                     vaultId: newCredentials.vaultId,
@@ -410,7 +413,7 @@ final class SyncSettingsStore: ObservableObject {
                 throw SyncSetupError.credentialsAlreadyStored
             }
             let endpoint = try validatedEndpoint()
-            let client = try SyncAPIClient(endpoint: endpoint)
+            let client = try Self.apiClient(for: endpoint)
             let vaultKey = try SecureRandom.bytes(count: AES256GCM.keyByteCount)
             let created = try await client.createVault(
                 CreateVaultRequest(device: DeviceRegistration(
@@ -697,34 +700,70 @@ final class SyncSettingsStore: ObservableObject {
         do {
             devices = try await apiClient.listDevices(
                 deviceToken: credentials.deviceToken
-            ).devices
+            ).devices.filter { $0.revokedAt == nil }
         } catch {
             actionErrorMessage = userFacingMessage(for: error, action: .loadDevices)
             logger.error("获取设备列表失败：\(error.localizedDescription, privacy: .public)")
         }
     }
 
-    func revokeDevice(_ device: DeviceInfo) async {
+    func cleanDevice(_ device: DeviceInfo) async {
         guard !device.isCurrent,
               device.id != credentials?.deviceId,
+              !cleaningDeviceIDs.contains(device.id),
               let credentials,
               let apiClient else { return }
+        cleaningDeviceIDs.insert(device.id)
+        defer { cleaningDeviceIDs.remove(device.id) }
         actionErrorMessage = nil
         do {
             _ = try await apiClient.revokeDevice(
                 deviceId: device.id,
                 deviceToken: credentials.deviceToken
             )
+            devices.removeAll { $0.id == device.id }
             await refreshDevices()
         } catch {
-            actionErrorMessage = userFacingMessage(for: error, action: .revokeDevice)
-            logger.error("撤销设备失败：\(error.localizedDescription, privacy: .public)")
+            actionErrorMessage = userFacingMessage(for: error, action: .cleanDevice)
+            logger.error("清理设备失败：\(error.localizedDescription, privacy: .public)")
         }
     }
 
     private func activate(_ credentials: SyncCredentials) throws {
-        let client = try SyncAPIClient(endpoint: credentials.endpoint)
+        let client = try Self.apiClient(for: credentials.endpoint)
         activate(credentials, client: client)
+    }
+
+    /// 启动时核对当前私有 IPv4。手机热点通常无法解析 mDNS，且切换网络后
+    /// 旧 IPv4 也会失效；更新地址时保持设备身份和同步空间不变。
+    private func refreshLocalNetworkEndpointIfNeeded() {
+        guard let credentials,
+              SyncEndpointPolicy.scope(of: credentials.endpoint) == .localNetwork,
+              let endpoint = try? LocalNetworkSyncEndpointResolver.preferredEndpoint(),
+              endpoint != credentials.endpoint else {
+            return
+        }
+
+        let updated = SyncCredentials(
+            endpoint: endpoint,
+            vaultId: credentials.vaultId,
+            deviceId: credentials.deviceId,
+            deviceToken: credentials.deviceToken,
+            vaultKey: credentials.vaultKey
+        )
+        do {
+            let client = try Self.apiClient(for: endpoint)
+            try credentialsStore.save(updated)
+            activate(updated, client: client)
+            defaults.set(endpoint.absoluteString, forKey: Self.endpointDefaultsKey)
+            logger.notice(
+                "已将局域网同步地址更新为当前私有 IPv4：\(endpoint.absoluteString, privacy: .public)"
+            )
+        } catch {
+            logger.error(
+                "迁移局域网同步地址失败，继续使用原地址：\(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     private func activate(_ credentials: SyncCredentials, client: SyncAPIClient) {
@@ -1072,6 +1111,14 @@ final class SyncSettingsStore: ObservableObject {
             vaultId: credentials.vaultId,
             deviceId: credentials.deviceId,
             vaultKey: credentials.vaultKey
+        )
+    }
+
+    private static func apiClient(for advertisedEndpoint: URL) throws -> SyncAPIClient {
+        try SyncAPIClient(
+            endpoint: LocalNetworkSyncEndpointResolver.hostClientEndpoint(
+                for: advertisedEndpoint
+            )
         )
     }
 

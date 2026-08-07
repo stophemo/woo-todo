@@ -151,6 +151,7 @@
     <string name="sync_switch_to_webdav">切换到第三方 WebDAV</string>
     <string name="sync_switch_to_webdav_message">本地任务和显示设置会保留，并作为快照重新同步到 WebDAV 空间。旧方式的加密凭据和设备身份会保留，之后可直接切回。</string>
     <string name="sync_switch_to_worker_message">本地任务和显示设置会保留。桌面端确认配对后，本机会切换到自建服务或同一网络同步；WebDAV 凭据会保留，之后可直接切回。</string>
+    <string name="sync_replace_worker_message">将使用新二维码替换当前自建服务或同一网络同步身份。本地任务和显示设置会保留，并重新同步到桌面端当前空间。</string>
     <string name="sync_switch_to_saved_worker_message">将复用之前保存的 Worker 或同一网络身份、设备令牌和同步密钥，不需要重新配对。本地任务和显示设置会保留并重新同步。</string>
     <string name="sync_switch_confirm">保留本地数据并切换</string>
     <string name="sync_switched_to_saved_worker">已切回原同步方式，无需重新配对；首次同步完成</string>
@@ -168,6 +169,10 @@
     <string name="sync_ready">已连接 · 等待同步</string>
     <string name="sync_running">正在同步…</string>
     <string name="sync_succeeded">同步完成 · 上传 %1$d，下载 %2$d</string>
+    <string name="sync_status_with_method">%1$s · %2$s</string>
+    <string name="sync_method_local_network">同一网络同步</string>
+    <string name="sync_method_self_hosted">自建服务同步</string>
+    <string name="sync_method_webdav">第三方 WebDAV</string>
     <string name="sync_scan_pairing_first">请先点击“配对”选择连接方式</string>
     <string name="check_for_updates">检查更新</string>
     <string name="update_checking">正在检查更新…</string>

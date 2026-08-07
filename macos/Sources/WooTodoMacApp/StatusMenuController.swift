@@ -133,6 +133,33 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         refreshState()
     }
 
+    func showUpdateAvailable(version: String) {
+        messageDismissTask?.cancel()
+        messagePopover?.close()
+        let controller = UpdatePromptViewController(
+            version: version,
+            onInstall: { [weak self] in
+                self?.messagePopover?.close()
+                self?.messagePopover = nil
+                self?.checkForUpdatesAction()
+            },
+            onLater: { [weak self] in
+                self?.messagePopover?.close()
+                self?.messagePopover = nil
+            }
+        )
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = controller.contentSize
+        popover.contentViewController = controller
+        messagePopover = popover
+
+        DispatchQueue.main.async { [weak self, weak popover] in
+            guard let self, let popover, let button = self.statusItem.button else { return }
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
     func showTransientMessage(title: String, message: String) {
         messageDismissTask?.cancel()
         messagePopover?.close()
@@ -325,5 +352,125 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+}
+
+@MainActor
+final class UpdatePromptViewController: NSViewController {
+    private static let contentWidth: CGFloat = 292
+
+    private let version: String
+    private let onInstall: () -> Void
+    private let onLater: () -> Void
+
+    init(
+        version: String,
+        onInstall: @escaping () -> Void,
+        onLater: @escaping () -> Void
+    ) {
+        self.version = version
+        self.onInstall = onInstall
+        self.onLater = onLater
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    var contentSize: NSSize {
+        _ = view
+        view.layoutSubtreeIfNeeded()
+        return NSSize(
+            width: Self.contentWidth,
+            height: ceil(view.fittingSize.height)
+        )
+    }
+
+    override func loadView() {
+        let iconView = NSImageView(image: NSImage(
+            systemSymbolName: "arrow.down.circle.fill",
+            accessibilityDescription: "有可用更新"
+        ) ?? NSImage())
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(
+            pointSize: 22,
+            weight: .medium
+        )
+        iconView.contentTintColor = .controlAccentColor
+        iconView.setContentHuggingPriority(.required, for: .horizontal)
+        iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let titleLabel = NSTextField(labelWithString: "Woo Todo v\(version) 可用")
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        let detailLabel = NSTextField(
+            wrappingLabelWithString: "下载完成后会自动安装并重新打开。"
+        )
+        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.maximumNumberOfLines = 2
+        detailLabel.preferredMaxLayoutWidth = 218
+
+        let textStack = NSStackView(views: [titleLabel, detailLabel])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 4
+
+        let headerStack = NSStackView(views: [iconView, textStack])
+        headerStack.orientation = .horizontal
+        headerStack.alignment = .centerY
+        headerStack.spacing = 10
+
+        let installButton = NSButton(title: "立即更新", target: self, action: #selector(install))
+        installButton.bezelStyle = .rounded
+        installButton.controlSize = .small
+        installButton.keyEquivalent = "\r"
+        installButton.identifier = NSUserInterfaceItemIdentifier("update.install")
+
+        let laterButton = NSButton(title: "稍后", target: self, action: #selector(later))
+        laterButton.controlSize = .small
+        laterButton.isBordered = false
+        laterButton.attributedTitle = NSAttributedString(
+            string: "稍后",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
+        laterButton.identifier = NSUserInterfaceItemIdentifier("update.later")
+
+        let buttonSpacer = NSView()
+        buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let buttonStack = NSStackView(views: [buttonSpacer, laterButton, installButton])
+        buttonStack.orientation = .horizontal
+        buttonStack.alignment = .centerY
+        buttonStack.spacing = 8
+        buttonStack.distribution = .fill
+
+        let contentView = NSStackView(views: [headerStack, buttonStack])
+        contentView.orientation = .vertical
+        contentView.alignment = .width
+        contentView.spacing = 10
+        contentView.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+
+        view = NSView(frame: NSRect(x: 0, y: 0, width: Self.contentWidth, height: 1))
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(contentView)
+        NSLayoutConstraint.activate([
+            contentView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentView.topAnchor.constraint(equalTo: view.topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentView.widthAnchor.constraint(equalToConstant: Self.contentWidth),
+        ])
+    }
+
+    @objc private func install() {
+        onInstall()
+    }
+
+    @objc private func later() {
+        onLater()
     }
 }

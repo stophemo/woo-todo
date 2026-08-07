@@ -830,7 +830,13 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     }
 
     public func applyWebDavOperations(_ operations: [WebDavOperation]) async throws {
-        try applyWebDavOperationsSynchronously(operations)
+        // WebDAV 远端对象可能很多；小批次落地避免长时间独占本地写锁，
+        // 让用户操作可以在同步期间继续写入任务。
+        for start in stride(from: 0, to: operations.count, by: Self.webDavApplyBatchSize) {
+            let end = min(start + Self.webDavApplyBatchSize, operations.count)
+            try applyWebDavOperationsSynchronously(Array(operations[start..<end]))
+            await Task.yield()
+        }
     }
 
     public func pendingWebDavOperationIDs(_ operationIDs: [String]) async throws -> Set<String> {
@@ -983,6 +989,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             }
         }
     }
+
+    private static let webDavApplyBatchSize = 25
 
     private func validate(_ configuration: SQLiteSyncConfiguration) throws {
         guard !configuration.vaultId.isEmpty,

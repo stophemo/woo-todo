@@ -88,10 +88,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 : nil
             store.reload()
             store.onTasksChanged = { [weak self] in
-                self?.dashboardWindowController?.reload()
-                self?.syncSettingsStore?.requestSync(.localChange)
-                self?.webDavSettingsStore?.requestSync(.localChange)
-                self?.refreshTaskNotifications()
+                // 先让本地列表完成渲染，再启动同步和通知调度；网络不可成为勾选反馈的前置条件。
+                Task { @MainActor [weak self] in
+                    await Task.yield()
+                    guard let self else { return }
+                    self.dashboardWindowController?.reload()
+                    self.syncSettingsStore?.requestSync(.localChange)
+                    self.webDavSettingsStore?.requestSync(.localChange)
+                    self.refreshTaskNotifications()
+                }
             }
 
             let panelController = FloatingPanelController(
@@ -167,6 +172,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             appUpdateController?.onMessage = { [weak statusMenuController] title, message in
                 statusMenuController?.showTransientMessage(title: title, message: message)
+            }
+            appUpdateController?.onUpdateAvailable = { [weak statusMenuController] version in
+                statusMenuController?.showUpdateAvailable(version: version)
             }
             appUpdateController?.checkOnLaunch()
             if runtime.allowsExternalServices {

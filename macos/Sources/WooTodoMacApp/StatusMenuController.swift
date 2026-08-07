@@ -164,26 +164,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         messageDismissTask?.cancel()
         messagePopover?.close()
 
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        let messageLabel = NSTextField(wrappingLabelWithString: message)
-        messageLabel.font = .systemFont(ofSize: 12)
-        messageLabel.textColor = .secondaryLabelColor
-        messageLabel.maximumNumberOfLines = 3
-
-        let stack = NSStackView(views: [titleLabel, messageLabel])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 5
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
-
-        let controller = NSViewController()
-        controller.view = stack
-        stack.frame = NSRect(x: 0, y: 0, width: 280, height: 72)
+        let controller = TransientMessageViewController(title: title, message: message)
 
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentSize = stack.frame.size
+        popover.contentSize = controller.contentSize
         popover.contentViewController = controller
         messagePopover = popover
 
@@ -356,8 +341,95 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 }
 
 @MainActor
+final class TransientMessageViewController: NSViewController {
+    private static let horizontalInset: CGFloat = 12
+    private static let minimumContentWidth: CGFloat = 136
+    private static let maximumContentWidth: CGFloat = 260
+    private static let titleFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    private static let messageFont = NSFont.systemFont(ofSize: 12)
+
+    private let messageTitle: String
+    private let message: String
+    private let contentWidth: CGFloat
+
+    init(title: String, message: String) {
+        messageTitle = title
+        self.message = message
+        let titleWidth = ceil((title as NSString).size(
+            withAttributes: [.font: Self.titleFont]
+        ).width)
+        let messageWidth = ceil((message as NSString).size(
+            withAttributes: [.font: Self.messageFont]
+        ).width)
+        contentWidth = min(
+            max(
+                max(titleWidth, messageWidth) + Self.horizontalInset * 2,
+                Self.minimumContentWidth
+            ),
+            Self.maximumContentWidth
+        )
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    var contentSize: NSSize {
+        _ = view
+        view.layoutSubtreeIfNeeded()
+        return NSSize(
+            width: contentWidth,
+            height: ceil(view.fittingSize.height)
+        )
+    }
+
+    override func loadView() {
+        let titleLabel = NSTextField(labelWithString: messageTitle)
+        titleLabel.font = Self.titleFont
+        titleLabel.identifier = NSUserInterfaceItemIdentifier("transient.title")
+
+        let messageLabel = NSTextField(wrappingLabelWithString: message)
+        messageLabel.font = Self.messageFont
+        messageLabel.textColor = .secondaryLabelColor
+        messageLabel.maximumNumberOfLines = 3
+        messageLabel.preferredMaxLayoutWidth = contentWidth - Self.horizontalInset * 2
+        messageLabel.identifier = NSUserInterfaceItemIdentifier("transient.message")
+
+        let contentView = NSStackView(views: [titleLabel, messageLabel])
+        contentView.orientation = .vertical
+        contentView.alignment = .leading
+        contentView.spacing = 2
+        contentView.edgeInsets = NSEdgeInsets(
+            top: 9,
+            left: Self.horizontalInset,
+            bottom: 9,
+            right: Self.horizontalInset
+        )
+
+        view = NSView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 1))
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(contentView)
+        NSLayoutConstraint.activate([
+            contentView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentView.topAnchor.constraint(equalTo: view.topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentView.widthAnchor.constraint(equalToConstant: contentWidth),
+        ])
+    }
+}
+
+@MainActor
 final class UpdatePromptViewController: NSViewController {
-    private static let contentWidth: CGFloat = 292
+    private static let contentWidth: CGFloat = 356
+    private static let accentColor = NSColor(
+        calibratedRed: 107 / 255,
+        green: 86 / 255,
+        blue: 200 / 255,
+        alpha: 1
+    )
 
     private let version: String
     private let onInstall: () -> Void
@@ -389,75 +461,128 @@ final class UpdatePromptViewController: NSViewController {
     }
 
     override func loadView() {
+        let iconBackground = NSView()
+        iconBackground.wantsLayer = true
+        iconBackground.layer?.backgroundColor = Self.accentColor.withAlphaComponent(0.14).cgColor
+        iconBackground.layer?.borderColor = Self.accentColor.withAlphaComponent(0.32).cgColor
+        iconBackground.layer?.borderWidth = 1
+        iconBackground.layer?.cornerRadius = 12
+        iconBackground.translatesAutoresizingMaskIntoConstraints = false
+
         let iconView = NSImageView(image: NSImage(
-            systemSymbolName: "arrow.down.circle.fill",
+            systemSymbolName: "arrow.down.to.line.compact",
             accessibilityDescription: "有可用更新"
         ) ?? NSImage())
         iconView.symbolConfiguration = NSImage.SymbolConfiguration(
-            pointSize: 22,
-            weight: .medium
+            pointSize: 20,
+            weight: .semibold
         )
-        iconView.contentTintColor = .controlAccentColor
-        iconView.setContentHuggingPriority(.required, for: .horizontal)
-        iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        iconView.contentTintColor = Self.accentColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconBackground.addSubview(iconView)
 
-        let titleLabel = NSTextField(labelWithString: "Woo Todo v\(version) 可用")
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        let statusLabel = NSTextField(labelWithString: "新版本可用")
+        statusLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        statusLabel.textColor = Self.accentColor
+        statusLabel.identifier = NSUserInterfaceItemIdentifier("update.status")
+
+        let titleLabel = NSTextField(labelWithString: "Woo Todo v\(version)")
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.identifier = NSUserInterfaceItemIdentifier("update.title")
 
         let detailLabel = NSTextField(
-            wrappingLabelWithString: "下载完成后会自动安装并重新打开。"
+            wrappingLabelWithString: "下载完成后会自动安装，完成后重新打开 Woo Todo。"
         )
-        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.font = .systemFont(ofSize: 12)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.maximumNumberOfLines = 2
-        detailLabel.preferredMaxLayoutWidth = 218
+        detailLabel.preferredMaxLayoutWidth = 246
+        detailLabel.identifier = NSUserInterfaceItemIdentifier("update.detail")
 
-        let textStack = NSStackView(views: [titleLabel, detailLabel])
+        let textStack = NSStackView(views: [statusLabel, titleLabel, detailLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
-        textStack.spacing = 4
+        textStack.spacing = 3
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let headerStack = NSStackView(views: [iconView, textStack])
+        let headerStack = NSStackView(views: [iconBackground, textStack])
         headerStack.orientation = .horizontal
-        headerStack.alignment = .centerY
-        headerStack.spacing = 10
+        headerStack.alignment = .top
+        headerStack.spacing = 14
+
+        let reassuranceIcon = NSImageView(image: NSImage(
+            systemSymbolName: "checkmark.circle.fill",
+            accessibilityDescription: nil
+        ) ?? NSImage())
+        reassuranceIcon.symbolConfiguration = NSImage.SymbolConfiguration(
+            pointSize: 11,
+            weight: .medium
+        )
+        reassuranceIcon.contentTintColor = .systemGreen
+        reassuranceIcon.setContentHuggingPriority(.required, for: .horizontal)
+
+        let reassuranceLabel = NSTextField(labelWithString: "本地任务和设置会保留")
+        reassuranceLabel.font = .systemFont(ofSize: 11)
+        reassuranceLabel.textColor = .secondaryLabelColor
+        reassuranceLabel.identifier = NSUserInterfaceItemIdentifier("update.reassurance")
+
+        let reassuranceStack = NSStackView(views: [reassuranceIcon, reassuranceLabel])
+        reassuranceStack.orientation = .horizontal
+        reassuranceStack.alignment = .centerY
+        reassuranceStack.spacing = 5
 
         let installButton = NSButton(title: "立即更新", target: self, action: #selector(install))
         installButton.bezelStyle = .rounded
-        installButton.controlSize = .small
+        installButton.controlSize = .regular
+        installButton.font = .systemFont(ofSize: 13, weight: .semibold)
+        installButton.bezelColor = Self.accentColor
         installButton.keyEquivalent = "\r"
         installButton.identifier = NSUserInterfaceItemIdentifier("update.install")
 
         let laterButton = NSButton(title: "稍后", target: self, action: #selector(later))
-        laterButton.controlSize = .small
         laterButton.isBordered = false
+        laterButton.controlSize = .regular
+        laterButton.wantsLayer = true
+        laterButton.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+        laterButton.layer?.cornerRadius = 7
         laterButton.attributedTitle = NSAttributedString(
             string: "稍后",
             attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.secondaryLabelColor,
+                .font: NSFont.systemFont(ofSize: 13),
+                .foregroundColor: NSColor.labelColor,
             ]
         )
         laterButton.identifier = NSUserInterfaceItemIdentifier("update.later")
 
         let buttonSpacer = NSView()
         buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let buttonStack = NSStackView(views: [buttonSpacer, laterButton, installButton])
+        let buttonStack = NSStackView(
+            views: [reassuranceStack, buttonSpacer, laterButton, installButton]
+        )
         buttonStack.orientation = .horizontal
         buttonStack.alignment = .centerY
         buttonStack.spacing = 8
         buttonStack.distribution = .fill
 
-        let contentView = NSStackView(views: [headerStack, buttonStack])
+        let separator = NSBox()
+        separator.boxType = .separator
+
+        let contentView = NSStackView(views: [headerStack, separator, buttonStack])
         contentView.orientation = .vertical
         contentView.alignment = .width
-        contentView.spacing = 10
-        contentView.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        contentView.spacing = 14
+        contentView.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 18, right: 20)
 
         view = NSView(frame: NSRect(x: 0, y: 0, width: Self.contentWidth, height: 1))
         contentView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(contentView)
         NSLayoutConstraint.activate([
+            iconBackground.widthAnchor.constraint(equalToConstant: 50),
+            iconBackground.heightAnchor.constraint(equalToConstant: 50),
+            iconView.centerXAnchor.constraint(equalTo: iconBackground.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: iconBackground.centerYAnchor),
+            laterButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64),
+            installButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 96),
             contentView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentView.topAnchor.constraint(equalTo: view.topAnchor),

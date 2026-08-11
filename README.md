@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://woo-todo.vercel.app/">产品主页</a> ·
-  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.29">下载 v0.1.29</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.30">下载 v0.1.30</a> ·
   <a href="#装好以后从这里开始">安装指南</a> ·
   <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
 </p>
@@ -50,29 +50,29 @@ macOS 的原生任务小组件停留在桌面层，也可切换为普通或置�
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.1.29`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.29)，正式提供 macOS ZIP 与 Android APK。Windows 同步提供独立的实验版免安装 ZIP，但不属于正式发布通道，也不保证能够正常启动或使用。
+当前稳定版是 [`v0.1.30`](https://github.com/stophemo/woo-todo/releases/tag/v0.1.30)，正式提供 macOS ZIP 与 Android APK。Windows 同步提供独立的实验版免安装 ZIP，但不属于正式发布通道，也不保证能够正常启动或使用。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、完整任务管理与统计 | `v0.1.29` 正式版 |
-| Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.1.29` 正式版 |
-| Windows 10 build 19041+ / Windows 11（仅 x64） | 原生悬浮任务板、完整任务管理、统计与加密同步 | `v0.1.29` 实验版（不保证可用） |
+| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、完整任务管理与统计 | `v0.1.30` 正式版 |
+| Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.1.30` 正式版 |
+| Windows 10 build 19041+ / Windows 11（仅 x64） | 原生悬浮任务板、完整任务管理、统计与加密同步 | `v0.1.30` 实验版（不保证可用） |
 
 Windows 已支持自建服务、同一网络与第三方 WebDAV 三种互斥同步方式，以及设备配对和撤销。同步凭据保存在 Windows Credential Manager，不写入 `settings.json`。
 
 > **Windows 实验版（不保证可用）：** 该构建仅用于开发测试，可能无法启动、功能不完整，并可能存在稳定性或数据兼容风险。请勿用于唯一或重要任务数据。它发布到独立 GitHub Prerelease，文件名带 `windows-x64-experimental`，不会混入 macOS/Android 正式 Release，也不走正式版自动更新通道。
 
-## 下载 v0.1.29
+## 下载 v0.1.30
 
 | 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.1.29-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.29/Woo-Todo-v0.1.29-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
-| Android | [Woo-Todo-v0.1.29-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.29/Woo-Todo-v0.1.29-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| Windows 实验版 | [Woo-Todo-v0.1.29-windows-x64-experimental.zip](https://github.com/stophemo/woo-todo/releases/download/windows-v0.1.29-experimental/Woo-Todo-v0.1.29-windows-x64-experimental.zip) | **不保证可用。** ZIP 内含 `WooTodo.exe` 与 `WINDOWS-EXPERIMENTAL.txt`；当前程序未签名，SmartScreen 可能提示来源未知。请先备份重要数据。 |
-| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.29/SHA256SUMS.txt) | 校验 macOS 与 Android 正式包。 |
-| Windows 实验版校验 | [SHA256SUMS-windows-experimental.txt](https://github.com/stophemo/woo-todo/releases/download/windows-v0.1.29-experimental/SHA256SUMS-windows-experimental.txt) | 校验独立 Windows 实验包。 |
+| macOS | [Woo-Todo-v0.1.30-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.1.30/Woo-Todo-v0.1.30-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.1.30-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.1.30/Woo-Todo-v0.1.30-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| Windows 实验版 | [Woo-Todo-v0.1.30-windows-x64-experimental.zip](https://github.com/stophemo/woo-todo/releases/download/windows-v0.1.30-experimental/Woo-Todo-v0.1.30-windows-x64-experimental.zip) | **不保证可用。** ZIP 内含 `WooTodo.exe` 与 `WINDOWS-EXPERIMENTAL.txt`；当前程序未签名，SmartScreen 可能提示来源未知。请先备份重要数据。 |
+| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.1.30/SHA256SUMS.txt) | 校验 macOS 与 Android 正式包。 |
+| Windows 实验版校验 | [SHA256SUMS-windows-experimental.txt](https://github.com/stophemo/woo-todo/releases/download/windows-v0.1.30-experimental/SHA256SUMS-windows-experimental.txt) | 校验独立 Windows 实验包。 |
 
-`v0.1.29` 修复逾期一次性任务完成后立即消失的问题：完成当天会继续保留并显示删除线，下一周期才退出列表；macOS 与 Android 同时扩大勾选区域，Android Widget 也会正确显示完成状态。macOS 与 Android 的 `v0.1.28` 可在应用内升级；Windows 仅提供独立实验包，不参与正式版自动更新。
+`v0.1.30` 为 macOS、Android 与 Windows 增加清除全部和多选清除历史记录，调整 Android Widget 的添加入口，并修复一次性任务跨周期撤销完成时的同步拒绝问题。macOS 与 Android 的 `v0.1.29` 可在应用内升级；Windows 仅提供独立实验包，不参与正式版自动更新。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名，自建服务或同一网络身份在更新后仍可能再次请求 Keychain 授权；第三方 WebDAV 配置会在首次迁移后改由本机加密文件自动回填。Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -92,7 +92,7 @@ Windows 已支持自建服务、同一网络与第三方 WebDAV 三种互斥同�
 
 ### Windows
 
-1. Windows 当前仅提供 `Woo-Todo-v0.1.29-windows-x64-experimental.zip` 实验包；它不保证可用。备份数据后解压并运行 `WooTodo.exe`，若 SmartScreen 拦截，请核对独立实验版校验和。
+1. Windows 当前仅提供 `Woo-Todo-v0.1.30-windows-x64-experimental.zip` 实验包；它不保证可用。备份数据后解压并运行 `WooTodo.exe`，若 SmartScreen 拦截，请核对独立实验版校验和。
 2. 在悬浮任务板快速新增、完成或编辑任务；选中已完成任务后可“取消完成”，右键也可 `Pass` 或删除。
 3. 托盘菜单负责完整窗口、任务板显隐、鼠标穿透和检查更新；默认全局快捷键为 `Ctrl + Alt + 1` 至 `Ctrl + Alt + 6`，其中 `5/6` 调整任务板不透明度。完整窗口的“同步”可配置三种同步方式。任务提醒由 Windows 系统调度，应用退出后仍可触发。
 

@@ -156,9 +156,13 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 return scoped.filter { task in
                     guard let taskPeriod = task.period else { return false }
                     let overlaps = taskPeriod.start < period.end && taskPeriod.end > period.start
-                    let overdueOnce = includeOverdueOnce && task.status == .pending &&
-                        task.recurrence == .once && taskPeriod.end <= period.start
-                    return overlaps || overdueOnce
+                    let carriedOnce = includeOverdueOnce && task.recurrence == .once &&
+                        taskPeriod.end <= period.start && (
+                            task.status == .pending ||
+                                (task.status == .completed &&
+                                    task.completedAt.map { period.contains($0) } == true)
+                        )
+                    return overlaps || carriedOnce
                 }
             }
 

@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.graphics.Color
+import android.text.Spanned
+import android.text.style.StrikethroughSpan
 import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -55,6 +57,12 @@ class TodayWidgetContractInstrumentedTest {
         assertFalse(pendingView.findViewById<CheckBox>(R.id.widget_task_check).isChecked)
         assertEquals("completed", completedView.findViewById<TextView>(R.id.widget_task_title).text.toString())
         assertTrue(completedView.findViewById<CheckBox>(R.id.widget_task_check).isChecked)
+        assertTrue(
+            completedView.findViewById<TextView>(R.id.widget_task_title).text
+                .let { it as Spanned }
+                .getSpans(0, "completed".length, StrikethroughSpan::class.java)
+                .isNotEmpty(),
+        )
     }
 
     @Test

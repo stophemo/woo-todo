@@ -5,6 +5,7 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import com.wootodo.domain.QuestLine
 import com.wootodo.domain.Recurrence
+import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
 import com.wootodo.sync.SQLiteLocalMutationRecorder
@@ -90,7 +91,8 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         .map {
             val selection = if (includeOverdueOnce) {
                 "time_type = ? AND (target_date = ? OR " +
-                    "(target_date < ? AND status = ? AND recurrence = ?))"
+                    "(target_date < ? AND recurrence = ? AND " +
+                    "(status = ? OR (status = ? AND settled_at >= ? AND settled_at < ?))))"
             } else {
                 "time_type = ? AND target_date = ?"
             }
@@ -98,9 +100,13 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
                 add(timeType.rawValue)
                 add(targetDate.toString())
                 if (includeOverdueOnce) {
+                    val (periodStart, periodEnd) = settlementWindow(timeType, targetDate)
                     add(targetDate.toString())
-                    add(TaskStatus.PENDING.rawValue)
                     add(Recurrence.ONCE.rawValue)
+                    add(TaskStatus.PENDING.rawValue)
+                    add(TaskStatus.COMPLETED.rawValue)
+                    add(periodStart.toString())
+                    add(periodEnd.toString())
                 }
             }.toTypedArray()
             queryTasks(selection = selection, selectionArgs = arguments)
@@ -120,17 +126,22 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
 
     override suspend fun getForDay(date: LocalDate): List<TaskEntity> =
         withContext(Dispatchers.IO) {
+            val (periodStart, periodEnd) = settlementWindow(TaskTimeType.DAY, date)
             queryTasks(
                 selection = "time_type = ? AND ((target_date = ? AND status IN (?, ?)) OR " +
-                    "(target_date < ? AND status = ? AND recurrence = ?))",
+                    "(target_date < ? AND recurrence = ? AND " +
+                    "(status = ? OR (status = ? AND settled_at >= ? AND settled_at < ?))))",
                 selectionArgs = arrayOf(
                     TaskTimeType.DAY.rawValue,
                     date.toString(),
                     TaskStatus.PENDING.rawValue,
                     TaskStatus.COMPLETED.rawValue,
                     date.toString(),
-                    TaskStatus.PENDING.rawValue,
                     Recurrence.ONCE.rawValue,
+                    TaskStatus.PENDING.rawValue,
+                    TaskStatus.COMPLETED.rawValue,
+                    periodStart.toString(),
+                    periodEnd.toString(),
                 ),
             )
         }
@@ -472,5 +483,16 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
 
     private companion object {
         const val TABLE_TASKS = "tasks"
+
+        fun settlementWindow(timeType: TaskTimeType, start: LocalDate): Pair<Long, Long> {
+            val end = when (timeType) {
+                TaskTimeType.DAY -> start.plusDays(1)
+                TaskTimeType.WEEK -> start.plusWeeks(1)
+                TaskTimeType.MONTH -> start.plusMonths(1)
+                TaskTimeType.LEISURE -> error("闲时任务没有结算周期")
+            }
+            return start.atStartOfDay(TaskDateRules.zoneId).toInstant().toEpochMilli() to
+                end.atStartOfDay(TaskDateRules.zoneId).toInstant().toEpochMilli()
+        }
     }
 }

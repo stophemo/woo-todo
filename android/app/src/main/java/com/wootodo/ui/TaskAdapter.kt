@@ -167,6 +167,13 @@ internal class TaskAdapter(
             taskCheck.setOnCheckedChangeListener(null)
             taskCheck.isChecked = task.status == TaskStatus.COMPLETED
             taskCheck.isEnabled = task.status != TaskStatus.PASS
+            taskCheck.contentDescription = itemView.context.getString(
+                if (task.status == TaskStatus.COMPLETED) {
+                    R.string.reopen_completed
+                } else {
+                    R.string.mark_completed
+                },
+            )
             taskCheck.setOnClickListener {
                 if (task.status != TaskStatus.PASS) onComplete(task)
             }

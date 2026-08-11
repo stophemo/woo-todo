@@ -7,10 +7,12 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wootodo.domain.QuestLine
 import com.wootodo.domain.Recurrence
+import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
 import java.time.LocalTime
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -64,6 +66,52 @@ class TaskDatabaseInstrumentedTest {
         }
 
         assertEquals(task, store.getById(task.id))
+    }
+
+    @Test
+    fun `逾期一次性任务完成当天仍在今日查询且次日退出`() = runBlocking {
+        val completedDate = LocalDate.of(2026, 7, 18)
+        val settledAt = completedDate.atTime(10, 30)
+            .atZone(TaskDateRules.zoneId)
+            .toInstant()
+            .toEpochMilli()
+        val task = TaskEntity(
+            id = "completed-overdue-once",
+            seriesId = "completed-overdue-once",
+            title = "昨日待办",
+            timeType = TaskTimeType.DAY,
+            targetDate = completedDate.minusDays(1),
+            questLine = QuestLine.MAIN,
+            status = TaskStatus.COMPLETED,
+            recurrence = Recurrence.ONCE,
+            sortOrder = 0,
+            createdAt = settledAt - 86_400_000,
+            updatedAt = settledAt,
+            settledAt = settledAt,
+        )
+        val store = SQLiteTaskStore(database)
+        store.insert(task)
+
+        assertEquals(
+            listOf(task.id),
+            store.observeForPeriod(
+                TaskTimeType.DAY,
+                completedDate,
+                includeOverdueOnce = true,
+            ).first().map { it.id },
+        )
+        assertEquals(listOf(task.id), store.getForDay(completedDate).map { it.id })
+
+        val nextDate = completedDate.plusDays(1)
+        assertEquals(
+            emptyList<String>(),
+            store.observeForPeriod(
+                TaskTimeType.DAY,
+                nextDate,
+                includeOverdueOnce = true,
+            ).first().map { it.id },
+        )
+        assertEquals(emptyList<String>(), store.getForDay(nextDate).map { it.id })
     }
 
     @Test

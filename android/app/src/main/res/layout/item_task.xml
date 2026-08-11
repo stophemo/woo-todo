@@ -11,10 +11,11 @@
 
     <CheckBox
         android:id="@+id/task_check"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="56dp"
+        android:layout_height="48dp"
         android:buttonTint="@color/task_check_tint"
-        android:contentDescription="@string/status_completed" />
+        android:contentDescription="@string/mark_completed"
+        android:gravity="center" />
 
     <LinearLayout
         android:layout_width="0dp"

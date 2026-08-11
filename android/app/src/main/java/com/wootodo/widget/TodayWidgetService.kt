@@ -2,6 +2,9 @@ package com.wootodo.widget
 
 import android.content.Context
 import android.content.Intent
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.StrikethroughSpan
 import android.util.Log
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
@@ -127,8 +130,19 @@ internal object TodayWidgetRowViews {
     fun create(context: Context, task: Task): RemoteViews =
         RemoteViews(context.packageName, R.layout.item_widget_task).apply {
             val completed = task.status == TaskStatus.COMPLETED
-            setTextViewText(R.id.widget_task_title, task.title)
+            val title = SpannableString(task.title).apply {
+                if (completed) {
+                    setSpan(StrikethroughSpan(), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+            }
+            setTextViewText(R.id.widget_task_title, title)
             setCompoundButtonChecked(R.id.widget_task_check, completed)
+            setContentDescription(
+                R.id.widget_task_check,
+                context.getString(
+                    if (completed) R.string.reopen_completed else R.string.mark_completed,
+                ),
+            )
             if (task.status != TaskStatus.PASS) {
                 setOnClickFillInIntent(
                     R.id.widget_task_check,

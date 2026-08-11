@@ -83,7 +83,7 @@ struct SQLiteTaskRepositoryTests {
         #expect(try repository.fetchTasks(scope: .anytime, in: nil) == [task])
     }
 
-    @Test("只有显式请求当前列表时才带入过期一次性任务")
+    @Test("过期一次性任务会保留待办或完成当天")
     func overdueOnceRequiresExplicitInclusion() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
         let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
@@ -106,6 +106,31 @@ struct SQLiteTaskRepositoryTests {
                 in: todayPeriod,
                 includeOverdueOnce: true
             ) == [task]
+        )
+
+        var completed = task
+        completed.status = .completed
+        completed.completedAt = today
+        completed.updatedAt = today
+        try repository.save(completed)
+
+        #expect(try repository.fetchTasks(scope: .daily, in: todayPeriod).isEmpty)
+        #expect(
+            try repository.fetchTasks(
+                scope: .daily,
+                in: todayPeriod,
+                includeOverdueOnce: true
+            ) == [completed]
+        )
+
+        let tomorrow = today.addingTimeInterval(86_400)
+        let tomorrowPeriod = try #require(engine.period(containing: tomorrow, for: .daily))
+        #expect(
+            try repository.fetchTasks(
+                scope: .daily,
+                in: tomorrowPeriod,
+                includeOverdueOnce: true
+            ).isEmpty
         )
     }
 

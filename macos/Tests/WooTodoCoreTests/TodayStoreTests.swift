@@ -260,6 +260,37 @@ struct TodayStoreTests {
         #expect(store.tasks.isEmpty)
         #expect(repository.tasks.only?.status == .pass)
     }
+
+    @Test("过期一次性任务当天完成后仍可见且可撤销")
+    func overdueOneTimeTaskRemainsVisibleAfterCompletion() throws {
+        let now = try #require(
+            ISO8601DateFormatter().date(from: "2026-07-18T10:00:00+08:00")
+        )
+        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
+        let yesterday = try #require(
+            engine.period(containing: now.addingTimeInterval(-86_400), for: .daily)
+        )
+        let task = try TodoTask(
+            title: "昨日待办",
+            timeScope: .daily,
+            tier: .mainline,
+            period: yesterday,
+            createdAt: yesterday.start
+        )
+        let repository = TodayMemoryTaskRepository(tasks: [task])
+        let store = TodayStore(repository: repository, engine: engine, now: { now })
+        store.reload()
+
+        store.toggleCompletion(id: task.id)
+
+        #expect(store.tasks.only?.status == .completed)
+        #expect(store.tasks.only?.completedAt == now)
+
+        store.toggleCompletion(id: task.id)
+
+        #expect(store.tasks.only?.status == .pending)
+        #expect(store.tasks.only?.completedAt == nil)
+    }
 }
 
 private extension Array {
@@ -285,9 +316,13 @@ private final class TodayMemoryTaskRepository: TaskRepository {
             guard let period else { return true }
             guard let taskPeriod = task.period else { return false }
             let overlaps = taskPeriod.start < period.end && taskPeriod.end > period.start
-            let overdueOnce = includeOverdueOnce && task.status == .pending &&
-                task.recurrence == .once && taskPeriod.end <= period.start
-            return overlaps || overdueOnce
+            let carriedOnce = includeOverdueOnce && task.recurrence == .once &&
+                taskPeriod.end <= period.start && (
+                    task.status == .pending ||
+                        (task.status == .completed &&
+                            task.completedAt.map { period.contains($0) } == true)
+                )
+            return overlaps || carriedOnce
         }
     }
 

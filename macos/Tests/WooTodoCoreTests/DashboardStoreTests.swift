@@ -38,6 +38,40 @@ struct DashboardStoreTests {
         #expect(someday.period == nil)
         #expect(someday.recurrence == .once)
     }
+
+    @Test("过期一次性任务仅在完成当天留在当前列表")
+    func completedOverdueOnceRemainsVisibleForCurrentDay() throws {
+        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
+        let now = ISO8601DateFormatter().date(from: "2026-07-18T10:00:00+08:00")!
+        let yesterday = try #require(
+            engine.period(containing: now.addingTimeInterval(-86_400), for: .daily)
+        )
+        var completedToday = try TodoTask(
+            title: "今日完成的逾期任务",
+            timeScope: .daily,
+            tier: .mainline,
+            period: yesterday,
+            createdAt: yesterday.start
+        )
+        completedToday.status = .completed
+        completedToday.completedAt = now.addingTimeInterval(-60)
+        var completedYesterday = try TodoTask(
+            title: "昨日已完成",
+            timeScope: .daily,
+            tier: .mainline,
+            period: yesterday,
+            createdAt: yesterday.start.addingTimeInterval(1)
+        )
+        completedYesterday.status = .completed
+        completedYesterday.completedAt = yesterday.start.addingTimeInterval(60)
+        let repository = MemoryTaskRepository()
+        repository.tasks = [completedToday, completedYesterday]
+        let store = DashboardStore(repository: repository, engine: engine, now: { now })
+
+        store.reload()
+
+        #expect(store.tasks(for: .daily).map(\.id) == [completedToday.id])
+    }
 }
 
 private final class MemoryTaskRepository: TaskRepository {

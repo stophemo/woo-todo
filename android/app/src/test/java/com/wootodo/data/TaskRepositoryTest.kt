@@ -3,6 +3,7 @@ package com.wootodo.data
 import com.wootodo.domain.QuestLine
 import com.wootodo.domain.Recurrence
 import com.wootodo.domain.TaskDraft
+import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
 import java.time.Clock
@@ -155,6 +156,22 @@ class TaskRepositoryTest {
     }
 
     @Test
+    fun `过期一次性任务完成当天仍可见且次日退出今日列表`() = runBlocking {
+        val overdueId = repository.create(
+            TaskDraft(title = "昨日待办", targetDate = date.minusDays(1)),
+        )
+
+        assertTrue(repository.toggleCompletion(overdueId, date))
+
+        assertEquals(
+            listOf(TaskStatus.COMPLETED),
+            repository.observeForScope(TaskTimeType.DAY, date).first().map { it.status },
+        )
+        assertEquals(listOf(overdueId), repository.tasksForToday(date).map { it.id })
+        assertTrue(repository.tasksForToday(date.plusDays(1)).isEmpty())
+    }
+
+    @Test
     fun `一次性任务保留截止日期且重复任务会清除截止日期`() = runBlocking {
         val deadline = date.plusDays(7)
         val onceId = repository.create(
@@ -299,7 +316,9 @@ private class FakeTaskStore : TaskStore {
             task.timeType == timeType &&
                 (task.targetDate == targetDate ||
                     (includeOverdueOnce && task.targetDate?.isBefore(targetDate) == true &&
-                        task.status == TaskStatus.PENDING && task.recurrence == Recurrence.ONCE))
+                        task.recurrence == Recurrence.ONCE &&
+                        (task.status == TaskStatus.PENDING ||
+                            task.completedInPeriod(timeType, targetDate))))
         }
     }
 
@@ -311,8 +330,9 @@ private class FakeTaskStore : TaskStore {
         items.value.filter {
             it.timeType == TaskTimeType.DAY &&
                 ((it.targetDate == date && it.status != TaskStatus.PASS) ||
-                    (it.targetDate?.isBefore(date) == true && it.status == TaskStatus.PENDING &&
-                        it.recurrence == Recurrence.ONCE))
+                    (it.targetDate?.isBefore(date) == true && it.recurrence == Recurrence.ONCE &&
+                        (it.status == TaskStatus.PENDING ||
+                            it.completedInPeriod(TaskTimeType.DAY, date))))
         }
 
     override suspend fun getExpiredPending(
@@ -401,5 +421,24 @@ private class FakeTaskStore : TaskStore {
             order[task.id]?.let { task.copy(sortOrder = it, updatedAt = updatedAt) } ?: task
         }
         return idsInOrder.isNotEmpty()
+    }
+
+    private fun TaskEntity.completedInPeriod(
+        timeType: TaskTimeType,
+        periodStart: LocalDate,
+    ): Boolean {
+        if (status != TaskStatus.COMPLETED) return false
+        val settledDate = settledAt
+            ?.let(Instant::ofEpochMilli)
+            ?.atZone(TaskDateRules.zoneId)
+            ?.toLocalDate()
+            ?: return false
+        val periodEnd = when (timeType) {
+            TaskTimeType.DAY -> periodStart.plusDays(1)
+            TaskTimeType.WEEK -> periodStart.plusWeeks(1)
+            TaskTimeType.MONTH -> periodStart.plusMonths(1)
+            TaskTimeType.LEISURE -> return false
+        }
+        return settledDate >= periodStart && settledDate < periodEnd
     }
 }

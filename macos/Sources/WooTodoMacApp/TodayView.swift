@@ -210,23 +210,28 @@ private struct TaskRow: View {
     let pass: () -> Void
     let edit: () -> Void
     let delete: () -> Void
+    @State private var isStatusHovered = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            statusIndicator
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    toggleIfAllowed()
+        HStack(spacing: 2) {
+            Button {
+                toggleIfAllowed()
+            } label: {
+                statusIndicator
+                    .frame(width: 40, height: 39)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.white.opacity(isStatusHovered ? 0.08 : 0))
+                    )
+                    .contentShape(Rectangle())
+            }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    isStatusHovered = hovering && task.status != .pass
                 }
-                .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
                     task.status == .completed ? "撤销完成" : "标记完成"
                 )
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction {
-                    toggleIfAllowed()
-                }
                 .help(task.status == .completed ? "撤销完成" : "标记完成")
 
             Text(task.title)

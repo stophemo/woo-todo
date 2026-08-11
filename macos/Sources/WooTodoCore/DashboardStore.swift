@@ -50,7 +50,14 @@ public final class DashboardStore: ObservableObject {
                     guard task.timeScope == scope else { return false }
                     if scope == .anytime { return true }
                     if task.period.map({ $0.end > date }) ?? false { return true }
-                    return task.status == .pending && task.recurrence == .once
+                    guard task.recurrence == .once else { return false }
+                    if task.status == .pending { return true }
+                    guard task.status == .completed,
+                          let completedAt = task.completedAt,
+                          let currentPeriod = engine.period(containing: date, for: scope) else {
+                        return false
+                    }
+                    return currentPeriod.contains(completedAt)
                 }
                 sections[scope] = tasks.sorted(by: dashboardOrder)
             }

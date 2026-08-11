@@ -29,6 +29,8 @@
     <string name="status_completed">已完成</string>
     <string name="status_passed">已 Pass</string>
     <string name="status_pending">待完成</string>
+    <string name="mark_completed">标记完成</string>
+    <string name="reopen_completed">撤销完成</string>
     <string name="main_quest">主线</string>
     <string name="side_quest">支线</string>
     <string name="extra_quest">外传</string>

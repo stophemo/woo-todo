@@ -6,9 +6,12 @@ import android.content.Context
 import android.graphics.Color
 import android.text.Spanned
 import android.text.style.StrikethroughSpan
+import android.view.Gravity
+import android.view.LayoutInflater
 import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.RemoteViews
 import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
@@ -87,6 +90,22 @@ class TodayWidgetContractInstrumentedTest {
         val tint = view.findViewById<LinearLayout>(R.id.widget_root).backgroundTintList
 
         assertEquals(TodayWidgetPreferences.backgroundAlpha(40), Color.alpha(tint?.defaultColor ?: 0))
+    }
+
+    @Test
+    fun `添加入口固定在内容区后的右下角`() {
+        val view = LayoutInflater.from(context)
+            .inflate(R.layout.widget_today, FrameLayout(context), false)
+        val root = view.findViewById<LinearLayout>(R.id.widget_root)
+        val header = view.findViewById<LinearLayout>(R.id.widget_header)
+        val list = view.findViewById<ListView>(R.id.widget_list)
+        val add = view.findViewById<TextView>(R.id.widget_add)
+        val layoutParams = add.layoutParams as LinearLayout.LayoutParams
+
+        assertEquals(root, add.parent)
+        assertFalse(header.findViewById<TextView>(R.id.widget_add) != null)
+        assertTrue(root.indexOfChild(add) > root.indexOfChild(list))
+        assertEquals(Gravity.END, layoutParams.gravity)
     }
 
     private fun task(id: String, status: TaskStatus) = Task(

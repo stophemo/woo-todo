@@ -70,14 +70,6 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/widget_add"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:padding="8dp"
-            android:text="@string/widget_add"
-            android:textColor="@color/widget_text"
-            android:textStyle="bold" />
     </LinearLayout>
 
     <ListView
@@ -97,5 +89,18 @@
         android:gravity="center"
         android:text="@string/widget_empty"
         android:textColor="@color/widget_text" />
+
+    <TextView
+        android:id="@+id/widget_add"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:gravity="center"
+        android:minHeight="36dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:text="@string/widget_add"
+        android:textColor="@color/widget_text"
+        android:textStyle="bold" />
 
 </LinearLayout>

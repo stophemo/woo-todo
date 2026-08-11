@@ -64,19 +64,27 @@ struct PairingDeepLinkTests {
         )
     }
 
-    @Test("局域网地址优先使用私有 IPv4，热点环境不依赖 mDNS")
-    func localEndpointCandidatesPreferIPv4() {
+    @Test("局域网地址优先使用可随 IP 变化解析的本地主机名")
+    func localEndpointCandidatesPreferStableHostname() {
         #expect(
             LocalNetworkSyncEndpointResolver.candidateHosts(
                 localHost: "woo-mac.local",
                 privateIPv4: "192.168.43.12"
-            ) == ["192.168.43.12", "woo-mac.local"]
+            ) == ["woo-mac.local", "192.168.43.12"]
         )
         #expect(
             LocalNetworkSyncEndpointResolver.candidateHosts(
                 localHost: "woo-mac.local",
                 privateIPv4: nil
             ) == ["woo-mac.local"]
+        )
+    }
+
+    @Test("Bonjour 仅公布不可逆的同步空间指纹")
+    func localNetworkVaultFingerprint() {
+        #expect(
+            LocalNetworkSyncConstants.vaultFingerprint("vault-local-network")
+                == "RfUwop7bTtqyqSTnYPOC59GEb1TR5lF0zufaM5aoNGE"
         )
     }
 

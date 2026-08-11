@@ -6,7 +6,12 @@ import Network
 public enum LocalNetworkSyncConstants {
     public static let defaultPort: UInt16 = 48_473
     public static let bonjourServiceType = "_wootodo._tcp"
+    public static let vaultFingerprintTXTKey = "vault"
     public static let pairingLifetimeMilliseconds: Int64 = 10 * 60 * 1_000
+
+    public static func vaultFingerprint(_ vaultId: String) -> String {
+        Base64URL.encode(Data(SHA256.hash(data: Data(vaultId.utf8))))
+    }
 }
 
 public struct LocalSyncHTTPRequest: Sendable {
@@ -860,7 +865,7 @@ public enum LocalNetworkSyncEndpointResolver {
             }
             return nil
         }()
-        // 手机热点通常不转发 mDNS，优先公布私有 IPv4；`.local` 仅作为回退。
+        // `.local` 主机名会随 mDNS 解析到当前地址，不把 DHCP 分配的 IPv4 固化进配对身份。
         for host in candidateHosts(localHost: localHost, privateIPv4: privateIPv4Address()) {
             var components = URLComponents()
             components.scheme = "http"
@@ -874,7 +879,7 @@ public enum LocalNetworkSyncEndpointResolver {
     }
 
     static func candidateHosts(localHost: String?, privateIPv4: String?) -> [String] {
-        [privateIPv4, localHost].compactMap { $0 }
+        [localHost, privateIPv4].compactMap { $0 }
     }
 
     /// Mac 作为局域网主机时通过回环访问自己的服务；对外公布的地址仍供其他设备使用。
@@ -965,7 +970,8 @@ public final class LocalNetworkSyncHTTPServer: @unchecked Sendable {
     public init(
         store: LocalSyncServerStore,
         endpoint: URL,
-        serviceName: String = "Woo Todo"
+        serviceName: String = "Woo Todo",
+        discoveryVaultId: String? = nil
     ) throws {
         guard SyncEndpointPolicy.scope(of: endpoint) == .localNetwork,
               let rawPort = endpoint.port,
@@ -978,10 +984,21 @@ public final class LocalNetworkSyncHTTPServer: @unchecked Sendable {
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
         let listener = try NWListener(using: parameters, on: port)
-        listener.service = NWListener.Service(
-            name: serviceName,
-            type: LocalNetworkSyncConstants.bonjourServiceType
-        )
+        if let discoveryVaultId {
+            listener.service = NWListener.Service(
+                name: serviceName,
+                type: LocalNetworkSyncConstants.bonjourServiceType,
+                txtRecord: NWTXTRecord([
+                    LocalNetworkSyncConstants.vaultFingerprintTXTKey:
+                        LocalNetworkSyncConstants.vaultFingerprint(discoveryVaultId)
+                ])
+            )
+        } else {
+            listener.service = NWListener.Service(
+                name: serviceName,
+                type: LocalNetworkSyncConstants.bonjourServiceType
+            )
+        }
         self.listener = listener
     }
 

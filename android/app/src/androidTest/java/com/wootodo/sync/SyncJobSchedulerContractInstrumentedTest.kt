@@ -25,5 +25,9 @@ class SyncJobSchedulerContractInstrumentedTest {
             packageInfo.requestedPermissions.orEmpty()
                 .contains(Manifest.permission.ACCESS_NETWORK_STATE),
         )
+        assertTrue(
+            packageInfo.requestedPermissions.orEmpty()
+                .contains(Manifest.permission.CHANGE_WIFI_MULTICAST_STATE),
+        )
     }
 }

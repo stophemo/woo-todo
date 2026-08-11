@@ -320,7 +320,8 @@ final class SyncSettingsStore: ObservableObject {
             let localServer = try LocalNetworkSyncHTTPServer(
                 store: localStore,
                 endpoint: endpoint,
-                serviceName: "Woo Todo · \(Self.localDeviceName)"
+                serviceName: "Woo Todo · \(Self.localDeviceName)",
+                discoveryVaultId: newCredentials.vaultId
             )
             server = localServer
             try await localServer.start()
@@ -734,8 +735,7 @@ final class SyncSettingsStore: ObservableObject {
         activate(credentials, client: client)
     }
 
-    /// 启动时核对当前私有 IPv4。手机热点通常无法解析 mDNS，且切换网络后
-    /// 旧 IPv4 也会失效；更新地址时保持设备身份和同步空间不变。
+    /// 启动时迁移到当前首选局域网地址；更新地址时保持设备身份和同步空间不变。
     private func refreshLocalNetworkEndpointIfNeeded() {
         guard let credentials,
               SyncEndpointPolicy.scope(of: credentials.endpoint) == .localNetwork,
@@ -757,7 +757,7 @@ final class SyncSettingsStore: ObservableObject {
             activate(updated, client: client)
             defaults.set(endpoint.absoluteString, forKey: Self.endpointDefaultsKey)
             logger.notice(
-                "已将局域网同步地址更新为当前私有 IPv4：\(endpoint.absoluteString, privacy: .public)"
+                "已将局域网同步地址更新为当前稳定地址：\(endpoint.absoluteString, privacy: .public)"
             )
         } catch {
             logger.error(
@@ -827,7 +827,8 @@ final class SyncSettingsStore: ObservableObject {
             let server = try LocalNetworkSyncHTTPServer(
                 store: localStore,
                 endpoint: credentials.endpoint,
-                serviceName: "Woo Todo · \(Self.localDeviceName)"
+                serviceName: "Woo Todo · \(Self.localDeviceName)",
+                discoveryVaultId: credentials.vaultId
             )
             try await server.start()
             localNetworkServer = server

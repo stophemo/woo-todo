@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.core.content.edit
 
 object TodayWidgetPreferences {
-    const val DEFAULT_BACKGROUND_OPACITY = 95
+    const val DEFAULT_BACKGROUND_OPACITY = 70
     private const val FILE_NAME = "today_widget_preferences"
     private const val KEY_BACKGROUND_OPACITY = "background_opacity"
 

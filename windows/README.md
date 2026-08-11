@@ -41,13 +41,13 @@ cargo run --manifest-path windows/Cargo.toml
 
 ```powershell
 pwsh -NoProfile -File windows/scripts/package.ps1
-pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.30
+pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.31
 ```
 
 输出文件为：
 
 ```text
-windows/dist/Woo-Todo-v0.1.30-windows-x64-experimental.zip
+windows/dist/Woo-Todo-v0.1.31-windows-x64-experimental.zip
 ```
 
 正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和优化构建，但 Windows ZIP 会发布到独立的 `windows-vX.Y.Z-experimental` GitHub Prerelease，绝不进入 macOS/Android 的正式 Release。Windows 界面交互、系统集成和升级流程仍需真实 Windows 设备手动验证，自动测试通过不代表实验版可正常使用。

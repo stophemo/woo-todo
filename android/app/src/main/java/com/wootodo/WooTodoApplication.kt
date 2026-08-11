@@ -8,17 +8,21 @@ import com.wootodo.display.DayCounterPreferences
 import com.wootodo.reminder.NotificationHelper
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.reminder.TaskReminderScheduler
+import com.wootodo.sync.AndroidLocalNetworkServiceResolver
 import com.wootodo.sync.AndroidSyncBackendSelection
 import com.wootodo.sync.AndroidSyncCredentialsStore
 import com.wootodo.sync.AndroidWebDavCredentialsStore
 import com.wootodo.sync.BearerCredential
 import com.wootodo.sync.PairingCompletion
 import com.wootodo.sync.PairingException
+import com.wootodo.sync.RecoveringLocalNetworkSyncTransport
 import com.wootodo.sync.SQLiteSyncStore
 import com.wootodo.sync.SyncApiClient
 import com.wootodo.sync.SyncBackend
 import com.wootodo.sync.SyncCoordinator
 import com.wootodo.sync.SyncCredentials
+import com.wootodo.sync.SyncEndpointPolicy
+import com.wootodo.sync.SyncEndpointScope
 import com.wootodo.sync.SyncJobScheduler
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRunner
@@ -36,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import java.net.URI
 import java.util.concurrent.CancellationException
 
 class WooTodoApplication : Application() {
@@ -96,10 +101,46 @@ class WooTodoApplication : Application() {
             onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
         )
         return SyncCoordinator(
-            transport = SyncApiClient(credentials.endpoint),
+            transport = createSyncTransport(credentials),
             outbox = syncStore,
             remoteApplyStore = syncStore,
             credential = BearerCredential(credentials.deviceToken),
+        )
+    }
+
+    private fun createSyncTransport(credentials: SyncCredentials) =
+        if (SyncEndpointPolicy.scope(URI(credentials.endpoint)) == SyncEndpointScope.LOCAL_NETWORK) {
+            RecoveringLocalNetworkSyncTransport(
+                initialEndpoint = credentials.endpoint,
+                vaultId = credentials.vaultId,
+                resolver = AndroidLocalNetworkServiceResolver(this),
+                onEndpointRecovered = { endpoint ->
+                    persistRecoveredLocalNetworkEndpoint(credentials, endpoint)
+                },
+            )
+        } else {
+            SyncApiClient(credentials.endpoint)
+        }
+
+    private fun persistRecoveredLocalNetworkEndpoint(
+        expected: SyncCredentials,
+        endpoint: String,
+    ) {
+        val current = syncCredentialsStore.load() ?: return
+        if (current.vaultId != expected.vaultId ||
+            current.deviceId != expected.deviceId ||
+            current.deviceToken != expected.deviceToken
+        ) {
+            return
+        }
+        syncCredentialsStore.save(
+            SyncCredentials(
+                endpoint = endpoint,
+                vaultId = current.vaultId,
+                deviceId = current.deviceId,
+                deviceToken = current.deviceToken,
+                vaultKey = current.vaultKey,
+            ),
         )
     }
 

@@ -12,6 +12,8 @@ public protocol TaskRepository: AnyObject {
     @discardableResult
     func reopenCompleted(id: UUID, at date: Date) throws -> Bool
     func delete(id: UUID) throws
+    @discardableResult
+    func clearHistory(ids: Set<UUID>?) throws -> Int
 }
 
 public extension TaskRepository {

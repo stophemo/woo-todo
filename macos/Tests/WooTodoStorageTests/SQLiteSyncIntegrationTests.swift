@@ -110,6 +110,54 @@ struct SQLiteSyncIntegrationTests {
         #expect(payload.settledAt == nil)
     }
 
+    @Test("批量清除历史会为每条记录写入 tombstone")
+    func clearHistoryEntersOutbox() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let start = date("2026-07-15T08:00:00+08:00")
+        var completed = try makeTask(title: "已完成", createdAt: start)
+        var passed = try makeTask(
+            title: "已 Pass",
+            createdAt: start.addingTimeInterval(1),
+            sortIndex: 1
+        )
+        let pending = try makeTask(
+            title: "保留待办",
+            createdAt: start.addingTimeInterval(2),
+            sortIndex: 2
+        )
+        try repository.save([completed, passed, pending])
+        completed.status = .completed
+        completed.completedAt = start.addingTimeInterval(3)
+        completed.updatedAt = start.addingTimeInterval(3)
+        passed.status = .pass
+        passed.completedAt = start.addingTimeInterval(4)
+        passed.updatedAt = start.addingTimeInterval(4)
+        try repository.save([completed, passed])
+        let existing = try await repository.pendingOperations(limit: 50)
+        try await repository.acknowledgeOperations(opIds: existing.map(\.opId))
+
+        #expect(try repository.clearHistory(ids: nil) == 2)
+        #expect(try repository.clearHistory(ids: nil) == 0)
+
+        let deletions = try await repository.pendingOperations(limit: 50)
+        #expect(deletions.map(\.kind) == [.delete, .delete])
+        let tombstoneIDs = try Set(deletions.map { operation -> String in
+            guard case .tombstone(let tombstone) = try open(
+                operation,
+                configuration: configuration
+            ) else {
+                throw SQLiteRepositoryError.invalidRecord("历史清除操作应为 tombstone")
+            }
+            return tombstone.id
+        })
+        #expect(tombstoneIDs == Set([completed.id, passed.id].map { $0.uuidString.lowercased() }))
+        #expect(try repository.fetchAll().map(\.id) == [pending.id])
+    }
+
     @Test("首次绑定为既有任务生成一次基线快照")
     func firstBindingCreatesOneBaseline() async throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
@@ -1212,8 +1260,8 @@ struct SQLiteSyncIntegrationTests {
         #expect(try pendingThenCompleted.fetchAll() == [completed])
     }
 
-    @Test("较新的显式 reopen 可以同步恢复当前周期完成项")
-    func explicitReopenRestoresPendingTask() async throws {
+    @Test("较新的显式 reopen 可以同步恢复跨周期一次性完成项")
+    func explicitReopenRestoresExpiredOnceTask() async throws {
         let configuration = syncConfiguration()
         let repository = try SQLiteTaskRepository(
             path: ":memory:",
@@ -1233,7 +1281,7 @@ struct SQLiteSyncIntegrationTests {
             id: id,
             title: "误点完成",
             createdAt: createdAt,
-            updatedAt: date("2026-07-15T21:00:00+08:00")
+            updatedAt: date("2026-07-16T00:00:00+08:00")
         )
 
         try await repository.applyRemoteOperations([
@@ -1260,6 +1308,60 @@ struct SQLiteSyncIntegrationTests {
         let result = try #require(try repository.fetchAll().first)
         #expect(result.status == .pending)
         #expect(result.completedAt == nil)
+    }
+
+    @Test("显式 reopen 仍拒绝跨周期重复任务")
+    func explicitReopenRejectsExpiredRepeatingTask() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let id = UUID()
+        let createdAt = date("2026-07-15T08:00:00+08:00")
+        let completed = try makeTask(
+            id: id,
+            title: "每日复盘",
+            status: .completed,
+            recurrence: .repeating(RepeatRule(frequency: .daily)),
+            createdAt: createdAt,
+            updatedAt: date("2026-07-15T20:00:00+08:00"),
+            settledAt: date("2026-07-15T20:00:00+08:00")
+        )
+        let reopened = try makeTask(
+            id: id,
+            title: "每日复盘",
+            recurrence: .repeating(RepeatRule(frequency: .daily)),
+            createdAt: createdAt,
+            updatedAt: date("2026-07-16T00:00:00+08:00")
+        )
+
+        try await repository.applyRemoteOperations([
+            try remoteTaskOperation(
+                completed,
+                kind: .complete,
+                lamport: 2,
+                serverSequence: 1,
+                deviceID: "device-completed",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+
+        await #expect(throws: SQLiteRepositoryError.self) {
+            try await repository.applyRemoteOperations([
+                try remoteTaskOperation(
+                    reopened,
+                    kind: .reopen,
+                    lamport: 9,
+                    serverSequence: 2,
+                    deviceID: "device-reopen",
+                    configuration: configuration
+                ),
+            ], advancingCursorTo: 2)
+        }
+        let cursor = try await repository.currentCursor()
+        #expect(cursor == 1)
+        #expect(try repository.fetchAll() == [completed])
     }
 
     @Test("左闭右开周期的截止瞬间 completed 不享有领域优先级")
@@ -1360,6 +1462,7 @@ private func makeTask(
     id: UUID = UUID(),
     title: String,
     status: TaskStatus = .pending,
+    recurrence: RecurrenceRule = .once,
     createdAt: Date,
     updatedAt: Date? = nil,
     settledAt: Date? = nil,
@@ -1372,7 +1475,7 @@ private func makeTask(
         timeScope: .daily,
         tier: .mainline,
         status: status,
-        recurrence: .once,
+        recurrence: recurrence,
         period: PeriodEngine(timeZone: timeZone).period(containing: createdAt, for: .daily),
         sortIndex: sortIndex,
         createdAt: createdAt,
@@ -1411,6 +1514,11 @@ private func remoteTaskOperation(
     case .completed: state = .completed
     case .pass: state = .pass
     }
+    let recurrence: WireRecurrence
+    switch task.recurrence {
+    case .once: recurrence = .once
+    case .repeating: recurrence = .repeatRule
+    }
     let formatter = DateFormatter()
     formatter.calendar = Calendar(identifier: .gregorian)
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -1425,7 +1533,7 @@ private func remoteTaskOperation(
         timezone: configuration.timeZone.identifier,
         questLine: .main,
         state: state,
-        recurrence: .once,
+        recurrence: recurrence,
         sortOrder: Int64(task.sortIndex),
         createdAt: milliseconds(task.createdAt),
         updatedAt: milliseconds(task.updatedAt),

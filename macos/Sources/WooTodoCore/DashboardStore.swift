@@ -30,6 +30,18 @@ public final class DashboardStore: ObservableObject {
 
     public var recentHistory: [TodoTask] { statistics.recentHistory }
 
+    public var history: [TodoTask] {
+        allTasks
+            .filter { $0.status == .completed || $0.status == .pass }
+            .sorted { lhs, rhs in
+                let lhsDate = lhs.completedAt ?? lhs.updatedAt
+                let rhsDate = rhs.completedAt ?? rhs.updatedAt
+                if lhsDate != rhsDate { return lhsDate > rhsDate }
+                if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+    }
+
     public func tasks(for scope: TimeScope) -> [TodoTask] {
         sectionTasks[scope] ?? []
     }
@@ -158,6 +170,15 @@ public final class DashboardStore: ObservableObject {
         guard allTasks.first(where: { $0.id == id })?.status == .pending else { return }
         mutate {
             try repository.delete(id: id)
+        }
+    }
+
+    public func clearHistory(ids: Set<UUID>? = nil) {
+        let available = Set(history.map(\.id))
+        let targets = ids.map { $0.intersection(available) } ?? available
+        guard !targets.isEmpty else { return }
+        mutate {
+            _ = try repository.clearHistory(ids: targets)
         }
     }
 

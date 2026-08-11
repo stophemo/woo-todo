@@ -59,7 +59,14 @@ object SyncFailurePolicy {
             SyncFailureDescription(message, retryable)
         }
         is WebDavException -> SyncFailureDescription(error.message ?: "WebDAV 同步数据校验失败", false)
-        is SyncApiException.Transport -> SyncFailureDescription("同步服务暂时不可达，网络恢复后会自动重试", true)
+        is SyncApiException.Transport -> SyncFailureDescription(
+            if (error.localNetwork) {
+                "局域网同步地址暂时不可达；若 Mac 的 IP 已变化，请重新扫描 Mac 当前的同步二维码"
+            } else {
+                "同步服务暂时不可达，网络恢复后会自动重试"
+            },
+            true,
+        )
         is SyncApiException.Server -> {
             val capacityReached = error.payload.code == "VAULT_CAPACITY_REACHED"
             val retryable = !capacityReached && (

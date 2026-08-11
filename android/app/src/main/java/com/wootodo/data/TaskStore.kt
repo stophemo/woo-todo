@@ -59,6 +59,8 @@ interface TaskStore {
 
     suspend fun deletePending(id: String, deletedAt: Long): Boolean
 
+    suspend fun deleteSettled(ids: Set<String>?, deletedAt: Long): Int
+
     suspend fun settleAndSchedule(
         id: String,
         status: TaskStatus,
@@ -263,6 +265,48 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         if (changed) invalidate()
         changed
     }
+
+    override suspend fun deleteSettled(ids: Set<String>?, deletedAt: Long): Int =
+        withContext(Dispatchers.IO) {
+            if (ids?.isEmpty() == true) return@withContext 0
+            val sqlite = database.writableDatabase
+            var deletedCount = 0
+            sqlite.beginTransaction()
+            try {
+                val requestedIds = ids?.mapTo(HashSet()) { it.lowercase() }
+                val settledIds = sqlite.rawQuery(
+                    "SELECT id FROM $TABLE_TASKS WHERE status IN (?, ?)",
+                    arrayOf(TaskStatus.COMPLETED.rawValue, TaskStatus.PASS.rawValue),
+                ).use { cursor ->
+                    buildList {
+                        while (cursor.moveToNext()) {
+                            val id = cursor.getString(0)
+                            if (requestedIds == null || id.lowercase() in requestedIds) add(id)
+                        }
+                    }
+                }
+                settledIds.forEach { id ->
+                    val deleted = sqlite.delete(
+                        TABLE_TASKS,
+                        "id = ? AND status IN (?, ?)",
+                        arrayOf(
+                            id,
+                            TaskStatus.COMPLETED.rawValue,
+                            TaskStatus.PASS.rawValue,
+                        ),
+                    ) == 1
+                    if (deleted) {
+                        SQLiteLocalMutationRecorder.recordDeletion(sqlite, id, deletedAt)
+                        deletedCount += 1
+                    }
+                }
+                sqlite.setTransactionSuccessful()
+            } finally {
+                sqlite.endTransaction()
+            }
+            if (deletedCount > 0) invalidate()
+            deletedCount
+        }
 
     override suspend fun settleAndSchedule(
         id: String,

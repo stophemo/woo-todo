@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -326,6 +327,51 @@ fn local_mutations_enqueue_atomically_and_deferred_changes_recover_once() {
 }
 
 #[test]
+fn clearing_history_enqueues_one_tombstone_per_record() {
+    let (_directory, mut repository) = open_repository();
+    let completed_id = create_task(&mut repository, "已完成", 100);
+    let passed_id = create_task(&mut repository, "已 Pass", 101);
+    let pending_id = create_task(&mut repository, "保留待办", 102);
+    repository.complete(&completed_id, 200).unwrap();
+    repository.pass(&passed_id, 201).unwrap();
+    let configuration = sync_configuration("vault-clear-history", "device-clear-history", 12);
+    repository.configure_sync(configuration.clone()).unwrap();
+    let baseline = repository.pending_operations(100).unwrap();
+    repository
+        .acknowledge_operations(
+            &baseline
+                .iter()
+                .map(|operation| operation.op_id.clone())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+    assert_eq!(repository.clear_history(None, 300).unwrap(), 2);
+    assert_eq!(repository.clear_history(None, 301).unwrap(), 0);
+
+    let operations = repository.pending_operations(100).unwrap();
+    assert_eq!(operations.len(), 2);
+    assert!(
+        operations
+            .iter()
+            .all(|operation| operation.kind == OperationKind::Delete)
+    );
+    let tombstone_ids = operations
+        .iter()
+        .map(|operation| {
+            let WireEntity::Tombstone(tombstone) =
+                OperationCodec::open_push(operation, &configuration).unwrap()
+            else {
+                panic!("历史清除操作应携带 tombstone");
+            };
+            tombstone.id
+        })
+        .collect::<HashSet<_>>();
+    assert_eq!(tombstone_ids, HashSet::from([completed_id, passed_id]));
+    assert!(repository.find(&pending_id).unwrap().is_some());
+}
+
+#[test]
 fn replacing_binding_preserves_tasks_and_builds_a_fresh_baseline() {
     let (_directory, mut repository) = open_repository();
     let id = create_task(&mut repository, "保留任务", 100);
@@ -571,6 +617,75 @@ fn completed_and_pass_conflicts_converge_independent_of_arrival_order() {
     assert_eq!(first_task, second_task);
     assert_eq!(first_task.state, TaskState::Completed);
     assert_eq!(first_task.settled_at, Some(200));
+}
+
+#[test]
+fn remote_reopen_allows_expired_once_and_rejects_expired_repeat() {
+    let source_configuration = sync_configuration("vault-reopen", "device-source", 8);
+    let identifier = "00000000-0000-4000-8000-000000000903";
+    let mut once = TodoTask::create(
+        "跨周期一次性任务",
+        TimeType::Day,
+        today_shanghai(),
+        QuestLine::Main,
+        false,
+        0,
+        100,
+        None,
+        None,
+        Some(identifier.to_owned()),
+    )
+    .unwrap();
+    once.updated_at = 8_000_000_000_000_000;
+    let once_reopen = pulled(
+        &source_configuration,
+        &WireEntity::Task(WireTaskPayload::from_task(&once).unwrap()),
+        identifier,
+        OperationKind::Reopen,
+        2,
+        "op-reopen-once",
+        1,
+    );
+    let (_once_directory, mut once_target) = open_repository();
+    once_target
+        .configure_sync(sync_configuration("vault-reopen", "device-once-target", 8))
+        .unwrap();
+    once_target
+        .apply_remote_operations(&[once_reopen], 1)
+        .unwrap();
+    assert_eq!(
+        once_target.find(identifier).unwrap().unwrap().state,
+        TaskState::Pending
+    );
+
+    let mut repeating = once;
+    repeating.id = "00000000-0000-4000-8000-000000000904".to_owned();
+    repeating.series_id = repeating.id.clone();
+    repeating.recurrence = Recurrence::Repeat;
+    let repeat_reopen = pulled(
+        &source_configuration,
+        &WireEntity::Task(WireTaskPayload::from_task(&repeating).unwrap()),
+        &repeating.id,
+        OperationKind::Reopen,
+        3,
+        "op-reopen-repeat",
+        1,
+    );
+    let (_repeat_directory, mut repeat_target) = open_repository();
+    repeat_target
+        .configure_sync(sync_configuration(
+            "vault-reopen",
+            "device-repeat-target",
+            8,
+        ))
+        .unwrap();
+    assert!(
+        repeat_target
+            .apply_remote_operations(&[repeat_reopen], 1)
+            .is_err()
+    );
+    assert_eq!(repeat_target.current_cursor().unwrap(), 0);
+    assert!(repeat_target.find(&repeating.id).unwrap().is_none());
 }
 
 #[test]

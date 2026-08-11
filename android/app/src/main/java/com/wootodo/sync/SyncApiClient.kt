@@ -10,7 +10,10 @@ import java.nio.charset.StandardCharsets
 
 sealed class SyncApiException(message: String, cause: Throwable? = null) : Exception(message, cause) {
     class InvalidEndpoint : SyncApiException("同步服务地址无效")
-    class Transport(cause: Throwable) : SyncApiException("网络请求失败", cause)
+    class Transport(
+        cause: Throwable,
+        val localNetwork: Boolean = false,
+    ) : SyncApiException("网络请求失败", cause)
     class Decoding(cause: Throwable) : SyncApiException("响应解析失败", cause)
     class Server(
         val statusCode: Int,
@@ -160,7 +163,10 @@ class SyncApiClient(
                 }
             }
         } catch (error: IOException) {
-            throw SyncApiException.Transport(error)
+            throw SyncApiException.Transport(
+                error,
+                localNetwork = SyncProxyPolicy.requiresDirectConnection(endpoint),
+            )
         }
 
         try {
@@ -186,7 +192,10 @@ class SyncApiClient(
         } catch (error: SyncApiException) {
             throw error
         } catch (error: IOException) {
-            throw SyncApiException.Transport(error)
+            throw SyncApiException.Transport(
+                error,
+                localNetwork = SyncProxyPolicy.requiresDirectConnection(endpoint),
+            )
         } finally {
             connection.disconnect()
         }

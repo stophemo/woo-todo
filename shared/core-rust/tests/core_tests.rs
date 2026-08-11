@@ -379,6 +379,65 @@ fn repository_rejects_deleted_and_mutated_settled_tasks_transactionally() {
 }
 
 #[test]
+fn repository_clears_selected_and_all_history_idempotently() {
+    let directory = tempdir().expect("应创建临时目录");
+    let database = directory.path().join("clear-history.sqlite3");
+    let mut repository = TaskRepository::open(&database).expect("应打开数据库");
+    let completed_id = repository
+        .create(
+            "已完成",
+            TimeType::Day,
+            date("2026-07-24"),
+            QuestLine::Main,
+            false,
+            None,
+            None,
+            1,
+        )
+        .unwrap();
+    let passed_id = repository
+        .create(
+            "已 Pass",
+            TimeType::Day,
+            date("2026-07-24"),
+            QuestLine::Side,
+            false,
+            None,
+            None,
+            2,
+        )
+        .unwrap();
+    let pending_id = repository
+        .create(
+            "保留待办",
+            TimeType::Day,
+            date("2026-07-24"),
+            QuestLine::Extra,
+            false,
+            None,
+            None,
+            3,
+        )
+        .unwrap();
+    assert!(repository.complete(&completed_id, 4).unwrap());
+    assert!(repository.pass(&passed_id, 5).unwrap());
+
+    let selected = HashSet::from([completed_id.clone(), pending_id.clone()]);
+    assert_eq!(repository.clear_history(Some(&selected), 6).unwrap(), 1);
+    assert_eq!(repository.clear_history(Some(&selected), 7).unwrap(), 0);
+    assert!(repository.find(&pending_id).unwrap().is_some());
+    assert!(repository.find(&passed_id).unwrap().is_some());
+
+    assert_eq!(repository.clear_history(None, 8).unwrap(), 1);
+    assert_eq!(repository.clear_history(None, 9).unwrap(), 0);
+    assert_eq!(repository.fetch_all().unwrap().len(), 1);
+    assert_eq!(
+        repository.deleted_task_ids().unwrap(),
+        HashSet::from([completed_id, passed_id])
+    );
+}
+
+#[test]
 fn repository_reopens_only_current_completed_tasks_and_resettles_idempotently() {
     let directory = tempdir().expect("应创建临时目录");
     let database = directory.path().join("tasks.sqlite3");

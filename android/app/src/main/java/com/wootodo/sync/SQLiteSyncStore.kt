@@ -139,6 +139,7 @@ object TaskMergePolicy {
 
     fun isValidReopen(task: TaskInstancePayload): Boolean {
         if (task.state != WireTaskState.PENDING || task.settledAt != null) return false
+        if (task.recurrence == WireRecurrence.ONCE) return true
         if (task.timeType == WireTimeType.SOMEDAY) return true
         val periodStart = task.periodStart?.let(LocalDate::parse) ?: return false
         val periodEnd = when (task.timeType) {

@@ -67,6 +67,49 @@ struct SQLiteTaskRepositoryTests {
         #expect(try repository.fetchAll() == [task])
     }
 
+    @Test("历史记录可批量清除并生成幂等删除记录")
+    func clearHistory() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let now = ISO8601DateFormatter().date(from: "2026-07-15T12:00:00+08:00")!
+        var completed = try TodoTask(
+            title: "已完成",
+            timeScope: .anytime,
+            tier: .mainline,
+            period: nil,
+            createdAt: now
+        )
+        var passed = try TodoTask(
+            title: "已 Pass",
+            timeScope: .anytime,
+            tier: .side,
+            period: nil,
+            createdAt: now.addingTimeInterval(1)
+        )
+        let pending = try TodoTask(
+            title: "保留待办",
+            timeScope: .anytime,
+            tier: .extra,
+            period: nil,
+            createdAt: now.addingTimeInterval(2)
+        )
+        try repository.save([completed, passed, pending])
+        completed.status = .completed
+        completed.completedAt = now.addingTimeInterval(3)
+        completed.updatedAt = now.addingTimeInterval(3)
+        passed.status = .pass
+        passed.completedAt = now.addingTimeInterval(4)
+        passed.updatedAt = now.addingTimeInterval(4)
+        try repository.save([completed, passed])
+
+        #expect(try repository.clearHistory(ids: [completed.id, pending.id]) == 1)
+        #expect(try repository.clearHistory(ids: [completed.id]) == 0)
+        #expect(Set(try repository.fetchAll().map(\.id)) == [pending.id, passed.id])
+        #expect(try repository.clearHistory(ids: nil) == 1)
+        #expect(try repository.clearHistory(ids: nil) == 0)
+        #expect(try repository.fetchAll().map(\.id) == [pending.id])
+        #expect(try repository.deletedTaskIDs() == [completed.id, passed.id])
+    }
+
     @Test("闲时任务可以无周期保存")
     func anytimeTaskRoundTrip() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")

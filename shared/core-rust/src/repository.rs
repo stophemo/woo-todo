@@ -294,6 +294,63 @@ impl TaskRepository {
         Ok(changed)
     }
 
+    pub fn clear_history(&mut self, ids: Option<&HashSet<String>>, now: i64) -> CoreResult<usize> {
+        if ids.is_some_and(HashSet::is_empty) {
+            return Ok(0);
+        }
+        let requested_ids = ids.map(|values| {
+            values
+                .iter()
+                .map(|id| canonical_entity_id(id))
+                .collect::<HashSet<_>>()
+        });
+        let target_ids = {
+            let mut statement = self
+                .connection
+                .prepare("SELECT id FROM tasks WHERE status IN ('completed', 'pass')")?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter(|id| {
+                    requested_ids
+                        .as_ref()
+                        .is_none_or(|values| values.contains(&canonical_entity_id(id)))
+                })
+                .collect::<Vec<_>>()
+        };
+        if target_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let configuration = self.sync_configuration.clone();
+        let transaction = self.connection.transaction()?;
+        let mut deleted_count = 0;
+        for id in target_ids {
+            let changed = transaction.execute(
+                "DELETE FROM tasks WHERE id = ?1 AND status IN ('completed', 'pass')",
+                [&id],
+            )? == 1;
+            if !changed {
+                continue;
+            }
+            transaction.execute(
+                "INSERT OR REPLACE INTO deleted_tasks(id, deleted_at) VALUES(?1, ?2)",
+                params![id, now],
+            )?;
+            let entity_id = canonical_entity_id(&id);
+            if let Some(configuration) = configuration.as_ref() {
+                enqueue_local_tombstone(&transaction, &entity_id, now, configuration)?;
+            } else {
+                remove_deferred_upsert(&transaction, &entity_id)?;
+                record_deferred_deletion(&transaction, &entity_id, now)?;
+            }
+            deleted_count += 1;
+        }
+        transaction.commit()?;
+        Ok(deleted_count)
+    }
+
     pub fn settle_expired(
         &mut self,
         reference_date: NaiveDate,
@@ -1721,10 +1778,11 @@ fn period_end_millis(task: &TodoTask) -> Option<i64> {
 fn valid_remote_reopen(task: &TodoTask) -> bool {
     task.state == TaskState::Pending
         && task.settled_at.is_none()
-        && match period_end_millis(task) {
-            Some(end) => task.updated_at < end,
-            None => task.time_type == TimeType::Someday,
-        }
+        && (task.recurrence == Recurrence::Once
+            || match period_end_millis(task) {
+                Some(end) => task.updated_at < end,
+                None => task.time_type == TimeType::Someday,
+            })
 }
 
 fn completion_within_period(task: &TodoTask) -> bool {

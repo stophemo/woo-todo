@@ -124,6 +124,14 @@ class SyncRuntimeTest {
             SyncFailurePolicy.describe(SyncApiException.Transport(IOException("offline")))
         assertTrue(transportFailure.retryable)
         assertEquals("同步服务暂时不可达，网络恢复后会自动重试", transportFailure.message)
+        val localTransportFailure = SyncFailurePolicy.describe(
+            SyncApiException.Transport(IOException("offline"), localNetwork = true),
+        )
+        assertTrue(localTransportFailure.retryable)
+        assertEquals(
+            "局域网同步地址暂时不可达；若 Mac 的 IP 已变化，请重新扫描 Mac 当前的同步二维码",
+            localTransportFailure.message,
+        )
         assertTrue(
             SyncFailurePolicy.describe(serverError(503)).retryable,
         )

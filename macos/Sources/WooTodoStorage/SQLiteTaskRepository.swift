@@ -364,6 +364,49 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
+    @discardableResult
+    public func clearHistory(ids: Set<UUID>?) throws -> Int {
+        if ids?.isEmpty == true { return 0 }
+        return try withLock {
+            let settled = try query(
+                """
+                SELECT id, series_id, title, time_scope, tier, status,
+                       recurrence_json, period_start, period_end, sort_index,
+                       created_at, updated_at, completed_at, reminder_time, deadline_date
+                FROM tasks WHERE status IN ('completed', 'pass')
+                """
+            )
+            let targets = settled.filter { task in
+                ids == nil || ids?.contains(task.id) == true
+            }
+            guard !targets.isEmpty else { return 0 }
+
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                let deletedAt = Date()
+                for task in targets {
+                    let entityID = canonicalEntityID(task.id.uuidString)
+                    try deleteTaskRow(entityID: entityID)
+                    if let configuration = syncConfiguration {
+                        try enqueueLocalTombstone(
+                            entityID: entityID,
+                            deletedAt: deletedAt,
+                            configuration: configuration
+                        )
+                    } else {
+                        try removeDeferredUpsert(entityID: entityID)
+                        try recordDeferredDeletion(entityID: entityID, deletedAt: deletedAt)
+                    }
+                }
+                try execute("COMMIT")
+                return targets.count
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
     private func migrate() throws {
         try execute(
             """
@@ -1839,6 +1882,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
 
     private func isValidReopen(_ task: TodoTask) -> Bool {
         guard task.status == .pending, task.completedAt == nil else { return false }
+        if case .once = task.recurrence { return true }
         guard let deadline = task.period?.end else { return task.timeScope == .anytime }
         return task.updatedAt < deadline
     }

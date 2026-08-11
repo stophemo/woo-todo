@@ -117,12 +117,34 @@ class TaskMergePolicyTest {
     }
 
     @Test
-    fun `无本地版本时仍拒绝超出周期的reopen`() {
+    fun `一次性任务跨周期的reopen仍可恢复pending`() {
+        val expiredReopen = task(
+            title = "跨周期恢复",
+            state = WireTaskState.PENDING,
+            settledAt = null,
+            updatedAt = periodEnd,
+        )
+
+        val accepted = TaskMergePolicy.resolve(
+            currentTask = null,
+            currentVersion = null,
+            incomingTask = expiredReopen,
+            incomingVersion = newer,
+            incomingKind = SyncOperationKind.REOPEN,
+        )
+
+        assertEquals(WireTaskState.PENDING, accepted.resolvedTask?.state)
+        assertEquals(newer, accepted.resolvedVersion)
+    }
+
+    @Test
+    fun `无本地版本时仍拒绝重复任务超出周期的reopen`() {
         val expiredReopen = task(
             title = "过期恢复",
             state = WireTaskState.PENDING,
             settledAt = null,
             updatedAt = periodEnd,
+            recurrence = WireRecurrence.REPEAT,
         )
 
         assertThrows(IllegalArgumentException::class.java) {
@@ -141,6 +163,7 @@ class TaskMergePolicyTest {
         state: WireTaskState,
         settledAt: Long?,
         updatedAt: Long,
+        recurrence: WireRecurrence = WireRecurrence.ONCE,
     ): TaskInstancePayload = TaskInstancePayload(
         id = "550e8400-e29b-41d4-a716-446655440000",
         seriesId = "550e8400-e29b-41d4-a716-446655440000",
@@ -150,7 +173,7 @@ class TaskMergePolicyTest {
         timezone = "Asia/Shanghai",
         questLine = WireQuestLine.MAIN,
         state = state,
-        recurrence = WireRecurrence.ONCE,
+        recurrence = recurrence,
         sortOrder = 0,
         createdAt = instant("2026-07-15", 8, 0),
         updatedAt = updatedAt,

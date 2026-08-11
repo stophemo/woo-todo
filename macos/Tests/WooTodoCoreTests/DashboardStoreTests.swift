@@ -72,6 +72,37 @@ struct DashboardStoreTests {
 
         #expect(store.tasks(for: .daily).map(\.id) == [completedToday.id])
     }
+
+    @Test("可以多选清除历史且保留待办")
+    func clearSelectedHistory() throws {
+        let now = ISO8601DateFormatter().date(from: "2026-07-18T10:00:00+08:00")!
+        var completed = try TodoTask(
+            title: "已完成",
+            timeScope: .anytime,
+            tier: .mainline,
+            period: nil,
+            createdAt: now
+        )
+        completed.status = .completed
+        completed.completedAt = now
+        let pending = try TodoTask(
+            title: "待办",
+            timeScope: .anytime,
+            tier: .side,
+            period: nil,
+            createdAt: now
+        )
+        let repository = MemoryTaskRepository()
+        repository.tasks = [completed, pending]
+        let store = DashboardStore(repository: repository, now: { now })
+        store.reload()
+
+        store.clearHistory(ids: [completed.id, pending.id])
+        store.clearHistory(ids: [completed.id])
+
+        #expect(repository.tasks.map(\.id) == [pending.id])
+        #expect(store.history.isEmpty)
+    }
 }
 
 private final class MemoryTaskRepository: TaskRepository {
@@ -114,5 +145,13 @@ private final class MemoryTaskRepository: TaskRepository {
 
     func delete(id: UUID) throws {
         tasks.removeAll { $0.id == id }
+    }
+
+    func clearHistory(ids: Set<UUID>?) throws -> Int {
+        let before = tasks.count
+        tasks.removeAll { task in
+            task.status != .pending && (ids == nil || ids?.contains(task.id) == true)
+        }
+        return before - tasks.count
     }
 }

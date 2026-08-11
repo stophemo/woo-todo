@@ -218,6 +218,45 @@ class SQLiteSyncStoreInstrumentedTest {
     }
 
     @Test
+    fun `批量清除历史会原子写入tombstone且保留待办`() = runBlocking {
+        val syncStore = SQLiteSyncStore(database, credentials)
+        val taskStore = SQLiteTaskStore(database)
+        val completed = localTask("task-clear-completed", "已完成")
+        val passed = localTask("task-clear-passed", "已 Pass")
+        val pending = localTask("task-clear-pending", "保留待办")
+        listOf(completed, passed, pending).forEach { taskStore.insert(it) }
+        assertTrue(
+            taskStore.settleAndSchedule(
+                completed.id,
+                TaskStatus.COMPLETED,
+                settledAt = 4_000,
+                nextTask = { null },
+            ),
+        )
+        assertTrue(
+            taskStore.settleAndSchedule(
+                passed.id,
+                TaskStatus.PASS,
+                settledAt = 4_001,
+                nextTask = { null },
+            ),
+        )
+        syncStore.acknowledgeOperations(syncStore.pendingOperations(50).map { it.opId })
+
+        assertEquals(2, taskStore.deleteSettled(ids = null, deletedAt = 5_000))
+        assertEquals(0, taskStore.deleteSettled(ids = null, deletedAt = 5_001))
+
+        val deletions = syncStore.pendingOperations(50)
+        assertEquals(listOf(SyncOperationKind.DELETE, SyncOperationKind.DELETE), deletions.map { it.kind })
+        assertEquals(
+            setOf(completed.id, passed.id),
+            deletions.map { (decrypt(it) as TombstonePayload).id }.toSet(),
+        )
+        assertEquals(pending.title, taskTitle(pending.id))
+        assertEquals(2, rowCount("sync_tombstones"))
+    }
+
+    @Test
     fun `未绑定删除后同ID任务在重启后也不能复活`() = runBlocking {
         val entityId = "task-terminal-before-binding"
         val taskStore = SQLiteTaskStore(database)

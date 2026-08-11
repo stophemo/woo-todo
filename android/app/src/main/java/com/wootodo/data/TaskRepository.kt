@@ -117,6 +117,11 @@ class TaskRepository(
 
     suspend fun delete(id: String): Boolean = store.deletePending(id, clock.millis())
 
+    suspend fun clearHistory(ids: Set<String>? = null): Int {
+        if (ids?.isEmpty() == true) return 0
+        return store.deleteSettled(ids, clock.millis())
+    }
+
     suspend fun settle(id: String, status: TaskStatus): Boolean {
         require(status == TaskStatus.COMPLETED || status == TaskStatus.PASS)
         val now = clock.millis()

@@ -1,8 +1,13 @@
 package com.wootodo.ui
 
 import android.os.Bundle
+import android.view.View
+import android.widget.Button
+import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -17,6 +22,7 @@ import com.wootodo.domain.Task
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskTimeType
 import com.wootodo.domain.TrendBucket
+import com.wootodo.data.TaskRepository
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -30,6 +36,14 @@ class InsightsActivity : AppCompatActivity() {
     private lateinit var timeTypeCounts: TextView
     private lateinit var questLineCounts: TextView
     private lateinit var recentHistoryList: LinearLayout
+    private lateinit var historySelectButton: Button
+    private lateinit var historyDeleteSelectedButton: Button
+    private lateinit var historyClearAllButton: Button
+    private lateinit var repository: TaskRepository
+    private var historyTasks: List<Task> = emptyList()
+    private val selectedHistoryIds = linkedSetOf<String>()
+    private var selectingHistory = false
+    private var clearingHistory = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +57,14 @@ class InsightsActivity : AppCompatActivity() {
         timeTypeCounts = findViewById(R.id.time_type_counts)
         questLineCounts = findViewById(R.id.quest_line_counts)
         recentHistoryList = findViewById(R.id.recent_history_list)
+        historySelectButton = findViewById(R.id.history_select_button)
+        historyDeleteSelectedButton = findViewById(R.id.history_delete_selected_button)
+        historyClearAllButton = findViewById(R.id.history_clear_all_button)
+        historySelectButton.setOnClickListener { toggleHistorySelection() }
+        historyDeleteSelectedButton.setOnClickListener {
+            confirmClearHistory(selectedHistoryIds.toSet())
+        }
+        historyClearAllButton.setOnClickListener { confirmClearHistory(ids = null) }
         listOf(
             endedRate,
             mainRate,
@@ -53,14 +75,20 @@ class InsightsActivity : AppCompatActivity() {
             questLineCounts,
         ).forEach { it.enableReadOnlyTextSelection() }
 
-        val repository = (application as WooTodoApplication).taskRepository
+        repository = (application as WooTodoApplication).taskRepository
         lifecycleScope.launch {
             if (repository.autoPassExpired() > 0) {
                 (application as WooTodoApplication).notifyLocalMutation()
             }
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 repository.observeAllTasks().collect { tasks ->
-                    render(StatisticsEngine.calculate(tasks, TaskDateRules.today()))
+                    render(
+                        StatisticsEngine.calculate(
+                            tasks,
+                            TaskDateRules.today(),
+                            recentHistoryLimit = Int.MAX_VALUE,
+                        ),
+                    )
                 }
             }
         }
@@ -84,13 +112,103 @@ class InsightsActivity : AppCompatActivity() {
         questLineCounts.text = QuestLine.entries.joinToString("\n") { line ->
             formatCounts(getString(line.labelRes()), snapshot.byQuestLine.getValue(line))
         }
+        historyTasks = snapshot.recentHistory
+        val availableIds = historyTasks.mapTo(HashSet(), Task::id)
+        selectedHistoryIds.retainAll(availableIds)
+        if (historyTasks.isEmpty()) selectingHistory = false
+        renderHistory()
+    }
+
+    private fun renderHistory() {
         recentHistoryList.removeAllViews()
-        if (snapshot.recentHistory.isEmpty()) {
+        if (historyTasks.isEmpty()) {
             recentHistoryList.addView(historyText(getString(R.string.no_history)))
         } else {
-            snapshot.recentHistory.forEach { task ->
-                recentHistoryList.addView(historyText(formatHistory(task)))
+            historyTasks.forEach { task ->
+                recentHistoryList.addView(historyRow(task))
             }
+        }
+        historySelectButton.visibility = if (historyTasks.isEmpty()) View.GONE else View.VISIBLE
+        historySelectButton.setText(
+            if (selectingHistory) R.string.exit_selection else R.string.select_multiple,
+        )
+        historyDeleteSelectedButton.visibility =
+            if (selectingHistory) View.VISIBLE else View.GONE
+        historyDeleteSelectedButton.text = getString(
+            R.string.clear_selected_count,
+            selectedHistoryIds.size,
+        )
+        historyDeleteSelectedButton.isEnabled = selectedHistoryIds.isNotEmpty() && !clearingHistory
+        historyClearAllButton.visibility =
+            if (historyTasks.isEmpty() || selectingHistory) View.GONE else View.VISIBLE
+        historySelectButton.isEnabled = !clearingHistory
+        historyClearAllButton.isEnabled = !clearingHistory
+    }
+
+    private fun historyRow(task: Task): View = if (selectingHistory) {
+        CheckBox(this).apply {
+            text = formatHistory(task)
+            textSize = 16f
+            setPadding(0, 14, 0, 14)
+            isChecked = task.id in selectedHistoryIds
+            setOnCheckedChangeListener { _, checked ->
+                if (checked) selectedHistoryIds.add(task.id) else selectedHistoryIds.remove(task.id)
+                historyDeleteSelectedButton.text = getString(
+                    R.string.clear_selected_count,
+                    selectedHistoryIds.size,
+                )
+                historyDeleteSelectedButton.isEnabled =
+                    selectedHistoryIds.isNotEmpty() && !clearingHistory
+            }
+        }
+    } else {
+        historyText(formatHistory(task))
+    }
+
+    private fun toggleHistorySelection() {
+        selectingHistory = !selectingHistory
+        selectedHistoryIds.clear()
+        renderHistory()
+    }
+
+    private fun confirmClearHistory(ids: Set<String>?) {
+        val count = ids?.count { selected -> historyTasks.any { it.id == selected } }
+            ?: historyTasks.size
+        if (count == 0 || clearingHistory) return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.clear_history_title)
+            .setMessage(getString(R.string.clear_history_message, count))
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.delete) { _, _ -> clearHistory(ids) }
+            .show()
+    }
+
+    private fun clearHistory(ids: Set<String>?) {
+        clearingHistory = true
+        renderHistory()
+        lifecycleScope.launch {
+            runCatching { repository.clearHistory(ids) }
+                .onSuccess { count ->
+                    if (count > 0) {
+                        selectedHistoryIds.clear()
+                        selectingHistory = false
+                        (application as WooTodoApplication).notifyLocalMutation()
+                        Toast.makeText(
+                            this@InsightsActivity,
+                            getString(R.string.history_cleared, count),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                .onFailure {
+                    Toast.makeText(
+                        this@InsightsActivity,
+                        R.string.clear_history_failed,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            clearingHistory = false
+            renderHistory()
         }
     }
 

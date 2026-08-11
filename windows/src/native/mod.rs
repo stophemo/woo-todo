@@ -1,6 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::ffi::c_void;
 use std::fs;
 use std::mem::{size_of, zeroed};
@@ -101,9 +102,11 @@ const ID_UP: i32 = 115;
 const ID_DOWN: i32 = 116;
 const ID_REFRESH: i32 = 117;
 const ID_EMPTY_ADD: i32 = 118;
+const ID_HISTORY_DELETE_SELECTED: i32 = 119;
 const ID_OPACITY: i32 = 120;
 const ID_TOPMOST: i32 = 121;
 const ID_CLICK_THROUGH: i32 = 122;
+const ID_HISTORY_CLEAR_ALL: i32 = 123;
 const ID_DISPLAY_HEADER: i32 = 130;
 const ID_DISPLAY_SUBTITLE: i32 = 131;
 const ID_DISPLAY_ELAPSED_DATE: i32 = 132;
@@ -240,6 +243,8 @@ struct MainControls {
     up: HWND,
     down: HWND,
     refresh: HWND,
+    history_delete_selected: HWND,
+    history_clear_all: HWND,
     opacity_label: HWND,
     opacity: HWND,
     opacity_value: HWND,
@@ -1066,6 +1071,9 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
     app.main_controls.up = styled_button(parent, "上移", ID_UP)?;
     app.main_controls.down = styled_button(parent, "下移", ID_DOWN)?;
     app.main_controls.refresh = styled_button(parent, "刷新", ID_REFRESH)?;
+    app.main_controls.history_delete_selected =
+        hidden_button(parent, "清除所选", ID_HISTORY_DELETE_SELECTED)?;
+    app.main_controls.history_clear_all = hidden_button(parent, "清除全部", ID_HISTORY_CLEAR_ALL)?;
 
     app.main_controls.opacity_label =
         create_child(parent, "STATIC", "不透明度", STATIC_LEFT, 0, 0)?;
@@ -1526,6 +1534,22 @@ unsafe fn layout_main(app: &App) {
         MoveWindow(control, x, height - 52, 82, 34, 1);
         x += 90;
     }
+    MoveWindow(
+        app.main_controls.history_delete_selected,
+        nav_width + 24,
+        height - 52,
+        108,
+        34,
+        1,
+    );
+    MoveWindow(
+        app.main_controls.history_clear_all,
+        nav_width + 140,
+        height - 52,
+        108,
+        34,
+        1,
+    );
     let settings_left = nav_width + 32;
     let settings_width = width - settings_left - 28;
     MoveWindow(
@@ -2020,7 +2044,11 @@ unsafe fn show_tasks(app: &mut App, section: Section, today: NaiveDate) {
             let mut tasks = app.repository.fetch_all().unwrap_or_default();
             tasks.retain(|task| task.state != TaskState::Pending);
             tasks.sort_by_key(|task| Reverse(task.settled_at));
-            ("历史", "已完成与 Pass 的只读记录".to_owned(), Ok(tasks))
+            (
+                "历史",
+                "勾选多条记录后清除，或清除全部历史".to_owned(),
+                Ok(tasks),
+            )
         }
         _ => return,
     };
@@ -2041,6 +2069,12 @@ unsafe fn show_tasks(app: &mut App, section: Section, today: NaiveDate) {
     ] {
         ShowWindow(control, SW_SHOW);
     }
+    for control in [
+        app.main_controls.history_delete_selected,
+        app.main_controls.history_clear_all,
+    ] {
+        ShowWindow(control, SW_HIDE);
+    }
     if history {
         for control in [
             app.main_controls.add,
@@ -2052,6 +2086,12 @@ unsafe fn show_tasks(app: &mut App, section: Section, today: NaiveDate) {
             app.main_controls.down,
         ] {
             ShowWindow(control, SW_HIDE);
+        }
+        for control in [
+            app.main_controls.history_delete_selected,
+            app.main_controls.history_clear_all,
+        ] {
+            ShowWindow(control, SW_SHOW);
         }
     }
     app.visible_tasks = result.unwrap_or_else(|error| {
@@ -2096,6 +2136,8 @@ unsafe fn show_tasks(app: &mut App, section: Section, today: NaiveDate) {
             app.main_controls.delete,
             app.main_controls.up,
             app.main_controls.down,
+            app.main_controls.history_delete_selected,
+            app.main_controls.history_clear_all,
         ] {
             ShowWindow(control, SW_HIDE);
         }
@@ -2657,6 +2699,8 @@ unsafe fn hide_action_buttons(app: &App) {
         app.main_controls.up,
         app.main_controls.down,
         app.main_controls.refresh,
+        app.main_controls.history_delete_selected,
+        app.main_controls.history_clear_all,
     ] {
         ShowWindow(control, SW_HIDE);
     }
@@ -2790,7 +2834,11 @@ unsafe fn populate_task_list(list: HWND, tasks: &[TodoTask], section: Section, t
             &format!("{}    · {}", task.title, metadata.join(" · ")),
             task_group_id(task, section, today),
         );
-        set_list_checked(list, index as i32, task.state == TaskState::Completed);
+        set_list_checked(
+            list,
+            index as i32,
+            section != Section::History && task.state == TaskState::Completed,
+        );
     }
 }
 
@@ -2926,6 +2974,23 @@ unsafe fn selected_main_task(app: &App) -> Option<TodoTask> {
     app.visible_tasks.get(index as usize).cloned()
 }
 
+unsafe fn selected_history_task_ids(app: &App) -> HashSet<String> {
+    app.visible_tasks
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            let state = SendMessageW(
+                app.main_controls.tasks,
+                LVM_GETITEMSTATE,
+                *index,
+                LVIS_STATEIMAGEMASK as isize,
+            ) as u32;
+            (state & LVIS_STATEIMAGEMASK) >> 12 == 2
+        })
+        .map(|(_, task)| task.id.clone())
+        .collect()
+}
+
 unsafe fn selected_float_task(app: &App) -> Option<TodoTask> {
     let index = SendMessageW(
         app.float_controls.tasks,
@@ -2963,6 +3028,18 @@ unsafe fn toggle_task_completion(app: &mut App, task: TodoTask) {
 }
 
 unsafe fn update_main_action_state(app: &App) {
+    if app.section == Section::History {
+        let has_selection = !selected_history_task_ids(app).is_empty();
+        EnableWindow(
+            app.main_controls.history_delete_selected,
+            has_selection as i32,
+        );
+        EnableWindow(
+            app.main_controls.history_clear_all,
+            (!app.visible_tasks.is_empty()) as i32,
+        );
+        return;
+    }
     let selected = selected_main_task(app);
     let pending = selected
         .as_ref()
@@ -3002,7 +3079,7 @@ unsafe fn handle_main_item_changed(app: &mut App, notification: &NMLISTVIEW) {
         return;
     };
     if app.section == Section::History {
-        refresh_main(app);
+        update_main_action_state(app);
         return;
     }
     let valid_transition = (new_check == 2 && task.state == TaskState::Pending)
@@ -4846,6 +4923,41 @@ unsafe fn handle_main_command(app: &mut App, id: i32, notification: u16) {
                 mutate(app, |repo| repo.delete(&id, now_millis()));
             }
         }
+        ID_HISTORY_DELETE_SELECTED => {
+            let ids = selected_history_task_ids(app);
+            if !ids.is_empty()
+                && show_message(
+                    app.main,
+                    "确认清除历史记录？",
+                    &format!(
+                        "将清除 {} 条历史记录。删除会同步到其他设备，且无法恢复。",
+                        ids.len()
+                    ),
+                    MB_YESNO | MB_ICONWARNING,
+                ) == IDYES
+            {
+                mutate(app, |repo| {
+                    repo.clear_history(Some(&ids), now_millis())
+                        .map(|count| count > 0)
+                });
+            }
+        }
+        ID_HISTORY_CLEAR_ALL => {
+            let count = app.visible_tasks.len();
+            if count > 0
+                && show_message(
+                    app.main,
+                    "确认清除全部历史记录？",
+                    &format!("将清除 {count} 条历史记录。删除会同步到其他设备，且无法恢复。"),
+                    MB_YESNO | MB_ICONWARNING,
+                ) == IDYES
+            {
+                mutate(app, |repo| {
+                    repo.clear_history(None, now_millis())
+                        .map(|deleted| deleted > 0)
+                });
+            }
+        }
         ID_UP => {
             if let Some(task) = selected_main_task(app) {
                 let id = task.id;
@@ -6561,6 +6673,8 @@ unsafe fn apply_main_fonts(app: &App) {
         app.main_controls.up,
         app.main_controls.down,
         app.main_controls.refresh,
+        app.main_controls.history_delete_selected,
+        app.main_controls.history_clear_all,
     ] {
         set_control_font(control, app.theme.body_font);
     }
@@ -6587,6 +6701,8 @@ unsafe fn apply_main_fonts(app: &App) {
         app.main_controls.up,
         app.main_controls.down,
         app.main_controls.refresh,
+        app.main_controls.history_delete_selected,
+        app.main_controls.history_clear_all,
         app.main_controls.display_save,
         app.main_controls.shortcut_save,
         app.sync_controls.setup,

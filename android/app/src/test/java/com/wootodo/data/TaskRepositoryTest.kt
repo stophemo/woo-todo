@@ -222,6 +222,23 @@ class TaskRepositoryTest {
     }
 
     @Test
+    fun `历史记录可批量清除且重复操作保持幂等`() = runBlocking {
+        val pendingId = repository.create(TaskDraft(title = "保留待办", targetDate = date))
+        val completedId = repository.create(TaskDraft(title = "已完成", targetDate = date))
+        val passedId = repository.create(TaskDraft(title = "已 Pass", targetDate = date))
+        assertTrue(repository.settle(completedId, TaskStatus.COMPLETED))
+        assertTrue(repository.settle(passedId, TaskStatus.PASS))
+
+        assertEquals(1, repository.clearHistory(setOf(completedId, pendingId)))
+        assertEquals(0, repository.clearHistory(setOf(completedId)))
+        assertEquals(listOf(pendingId, passedId).sorted(), store.items.value.map { it.id }.sorted())
+
+        assertEquals(1, repository.clearHistory())
+        assertEquals(0, repository.clearHistory())
+        assertEquals(listOf(pendingId), store.items.value.map { it.id })
+    }
+
+    @Test
     fun `重排会保存同组任务顺序`() = runBlocking {
         val first = repository.create(TaskDraft(title = "一", targetDate = date))
         val second = repository.create(TaskDraft(title = "二", targetDate = date))
@@ -380,6 +397,15 @@ private class FakeTaskStore : TaskStore {
         if (task.status != TaskStatus.PENDING) return false
         items.value = items.value.filterNot { it.id == id }
         return true
+    }
+
+    override suspend fun deleteSettled(ids: Set<String>?, deletedAt: Long): Int {
+        if (ids?.isEmpty() == true) return 0
+        val before = items.value.size
+        items.value = items.value.filterNot { task ->
+            task.status != TaskStatus.PENDING && (ids == null || task.id in ids)
+        }
+        return before - items.value.size
     }
 
     override suspend fun settleAndSchedule(

@@ -350,4 +350,12 @@ private final class TodayMemoryTaskRepository: TaskRepository {
     func delete(id: UUID) throws {
         tasks.removeAll { $0.id == id }
     }
+
+    func clearHistory(ids: Set<UUID>?) throws -> Int {
+        let before = tasks.count
+        tasks.removeAll { task in
+            task.status != .pending && (ids == nil || ids?.contains(task.id) == true)
+        }
+        return before - tasks.count
+    }
 }

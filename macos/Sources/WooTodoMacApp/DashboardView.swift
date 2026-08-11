@@ -204,7 +204,7 @@ struct DashboardView: View {
                 delete: store.delete
             )
         case .history:
-            HistoryView(tasks: store.recentHistory)
+            HistoryView(tasks: store.history, clear: store.clearHistory)
         case .statistics:
             StatisticsView(snapshot: store.statistics)
         case .sync:
@@ -405,36 +405,132 @@ private struct TaskBadge: View {
 
 private struct HistoryView: View {
     let tasks: [TodoTask]
+    let clear: (Set<UUID>?) -> Void
+    @State private var isSelecting = false
+    @State private var selectedIDs = Set<UUID>()
+    @State private var pendingDeletionIDs = Set<UUID>()
+    @State private var showingConfirmation = false
 
     var body: some View {
-        if tasks.isEmpty {
-            ContentUnavailableView(
-                "暂无历史",
-                systemImage: "clock.arrow.circlepath",
-                description: Text("完成或 Pass 的任务会出现在这里。")
-            )
-        } else {
-            List(tasks) { task in
-                HStack(spacing: 12) {
-                    Image(systemName: task.status == .completed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(
-                            task.status == .completed ? WooTodoTheme.green : WooTodoTheme.orange
-                        )
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(task.title)
-                        HStack(spacing: 6) {
-                            TaskBadge(text: task.status.displayName)
-                            TaskBadge(text: task.timeScope.displayName)
-                            TaskBadge(text: task.tier.displayName)
-                            TaskBadge(text: TaskPeriodText.text(for: task))
+        VStack(spacing: 0) {
+            if !tasks.isEmpty {
+                HStack(spacing: 10) {
+                    Text(isSelecting ? "已选择 \(selectedIDs.count) 条" : "共 \(tasks.count) 条历史记录")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if isSelecting {
+                        Button(selectedIDs.count == tasks.count ? "取消全选" : "全选") {
+                            selectedIDs = selectedIDs.count == tasks.count
+                                ? []
+                                : Set(tasks.map(\.id))
+                        }
+                        Button(role: .destructive) {
+                            requestDeletion(selectedIDs)
+                        } label: {
+                            Label("清除所选", systemImage: "trash")
+                        }
+                        .disabled(selectedIDs.isEmpty)
+                    } else {
+                        Button(role: .destructive) {
+                            requestDeletion(Set(tasks.map(\.id)))
+                        } label: {
+                            Label("清除全部", systemImage: "trash")
                         }
                     }
-                    Spacer()
+                    Button {
+                        isSelecting.toggle()
+                        selectedIDs.removeAll()
+                    } label: {
+                        Label(
+                            isSelecting ? "取消多选" : "多选",
+                            systemImage: isSelecting ? "xmark" : "checklist"
+                        )
+                    }
                 }
-                .padding(.vertical, 3)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                Divider()
             }
-            .listStyle(.inset)
+
+            if tasks.isEmpty {
+                ContentUnavailableView(
+                    "暂无历史",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("完成或 Pass 的任务会出现在这里。")
+                )
+            } else {
+                List(tasks) { task in
+                    if isSelecting {
+                        Button {
+                            toggleSelection(task.id)
+                        } label: {
+                            historyRow(task, selected: selectedIDs.contains(task.id))
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        historyRow(task, selected: nil)
+                    }
+                }
+                .listStyle(.inset)
+            }
         }
+        .alert("确认清除历史记录？", isPresented: $showingConfirmation) {
+            Button("取消", role: .cancel) {}
+            Button("清除 \(pendingDeletionIDs.count) 条记录", role: .destructive) {
+                clear(pendingDeletionIDs)
+                selectedIDs.removeAll()
+                pendingDeletionIDs.removeAll()
+                isSelecting = false
+            }
+        } message: {
+            Text("删除会同步到其他设备，且无法恢复。")
+        }
+        .onChange(of: tasks.map(\.id)) { _, ids in
+            selectedIDs.formIntersection(ids)
+            if ids.isEmpty { isSelecting = false }
+        }
+    }
+
+    private func requestDeletion(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        pendingDeletionIDs = ids
+        showingConfirmation = true
+    }
+
+    private func toggleSelection(_ id: UUID) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    private func historyRow(_ task: TodoTask, selected: Bool?) -> some View {
+        HStack(spacing: 12) {
+            if let selected {
+                Image(systemName: selected ? "checkmark.square.fill" : "square")
+                    .font(.title3)
+                    .foregroundStyle(selected ? WooTodoTheme.purple : Color.secondary)
+            }
+            Image(systemName: task.status == .completed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(
+                    task.status == .completed ? WooTodoTheme.green : WooTodoTheme.orange
+                )
+            VStack(alignment: .leading, spacing: 5) {
+                Text(task.title)
+                    .foregroundStyle(.primary)
+                HStack(spacing: 6) {
+                    TaskBadge(text: task.status.displayName)
+                    TaskBadge(text: task.timeScope.displayName)
+                    TaskBadge(text: task.tier.displayName)
+                    TaskBadge(text: TaskPeriodText.text(for: task))
+                }
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .padding(.vertical, 3)
     }
 }
 

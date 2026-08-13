@@ -148,6 +148,14 @@ jobs:
             throw "Windows 实验包缺少 WooTodo.exe 或 WINDOWS-EXPERIMENTAL.txt"
           }
 
+      - name: 上传 Windows 实验版测试包
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-experimental
+          path: windows/dist/Woo-Todo-v*-windows-x64-experimental.zip
+          if-no-files-found: error
+          retention-days: 30
+
   android:
     name: Android 原生测试
     runs-on: ubuntu-latest

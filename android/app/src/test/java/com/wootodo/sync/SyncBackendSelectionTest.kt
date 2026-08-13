@@ -1,9 +1,27 @@
 package com.wootodo.sync
 
+import android.app.job.JobInfo
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SyncBackendSelectionTest {
+    @Test
+    fun `局域网待发送任务使用固定短退避且周期任务不额外重试`() {
+        assertEquals(
+            JobInfo.BACKOFF_POLICY_LINEAR,
+            SyncJobRetryPolicy.backoffPolicy(SyncTransportMode.LOCAL_NETWORK),
+        )
+        assertEquals(
+            JobInfo.BACKOFF_POLICY_EXPONENTIAL,
+            SyncJobRetryPolicy.backoffPolicy(SyncTransportMode.SELF_HOSTED_SERVICE),
+        )
+        assertTrue(SyncJobRetryPolicy.shouldReschedule(isImmediate = true, retryable = true))
+        assertFalse(SyncJobRetryPolicy.shouldReschedule(isImmediate = false, retryable = true))
+        assertFalse(SyncJobRetryPolicy.shouldReschedule(isImmediate = true, retryable = false))
+    }
+
     @Test
     fun `活动同步方式明确区分局域网自建服务和WebDAV`() {
         assertEquals(

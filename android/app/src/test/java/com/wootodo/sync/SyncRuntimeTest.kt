@@ -119,6 +119,25 @@ class SyncRuntimeTest {
     }
 
     @Test
+    fun `自动同步请求跨周期合并并保留网络恢复优先级`() {
+        val gate = AutomaticSyncRequestGate()
+
+        assertTrue(gate.request(replacePendingJob = false))
+        assertFalse(gate.request(replacePendingJob = false))
+        assertFalse(gate.request(replacePendingJob = true))
+        assertEquals(AutomaticSyncRequest(replacePendingJob = true), gate.takeNext())
+
+        assertFalse(gate.request(replacePendingJob = false))
+        assertFalse(gate.request(replacePendingJob = true))
+        assertEquals(AutomaticSyncRequest(replacePendingJob = true), gate.takeNext())
+        assertEquals(null, gate.takeNext())
+
+        assertTrue(gate.request(replacePendingJob = false))
+        assertEquals(AutomaticSyncRequest(replacePendingJob = false), gate.takeNext())
+        assertEquals(null, gate.takeNext())
+    }
+
+    @Test
     fun `仅网络和可恢复服务错误进入退避重试`() {
         val transportFailure =
             SyncFailurePolicy.describe(SyncApiException.Transport(IOException("offline")))

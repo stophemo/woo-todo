@@ -3,6 +3,7 @@ import Foundation
 public enum SyncTrigger: String, CaseIterable, Equatable, Sendable {
     case launch
     case localChange
+    case remoteChange
     case wake
     case networkRestored
     case fallback

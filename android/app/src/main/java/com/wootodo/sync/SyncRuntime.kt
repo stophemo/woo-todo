@@ -44,6 +44,37 @@ data class SyncFailureDescription(
     val retryable: Boolean,
 )
 
+internal data class AutomaticSyncRequest(
+    val replacePendingJob: Boolean,
+)
+
+internal class AutomaticSyncRequestGate {
+    private var draining = false
+    private var pending = false
+    private var replacePendingJob = false
+
+    @Synchronized
+    fun request(replacePendingJob: Boolean): Boolean {
+        pending = true
+        this.replacePendingJob = this.replacePendingJob || replacePendingJob
+        if (draining) return false
+        draining = true
+        return true
+    }
+
+    @Synchronized
+    fun takeNext(): AutomaticSyncRequest? {
+        if (!pending) {
+            draining = false
+            return null
+        }
+        val request = AutomaticSyncRequest(replacePendingJob)
+        pending = false
+        replacePendingJob = false
+        return request
+    }
+}
+
 object SyncFailurePolicy {
     fun describe(error: Exception): SyncFailureDescription = when (error) {
         is WebDavException.Transport -> SyncFailureDescription("WebDAV 服务暂时不可达，网络恢复后会自动重试", true)

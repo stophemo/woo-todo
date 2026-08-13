@@ -13,9 +13,11 @@ struct SyncRuntimeStateTests {
         machine.setConfigured(true)
         let startsLaunch = machine.request(.launch)
         let startsLocalChange = machine.request(.localChange)
+        let startsRemoteChange = machine.request(.remoteChange)
         let startsManual = machine.request(.manual)
         #expect(startsLaunch)
         #expect(!startsLocalChange)
+        #expect(!startsRemoteChange)
         #expect(!startsManual)
         #expect(machine.snapshot.hasPendingRun)
 

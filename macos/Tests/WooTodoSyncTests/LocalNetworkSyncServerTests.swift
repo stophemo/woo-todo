@@ -172,10 +172,14 @@ struct LocalNetworkSyncServerTests {
             .appendingPathComponent("woo-todo-lan-pairing-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let credentials = try fixtureCredentials()
+        let remoteOperations = RemoteOperationsRecorder()
         let store = try LocalSyncServerStore(
             fileURL: directory.appendingPathComponent("state.json"),
             bootstrapCredentials: credentials,
-            now: { 10_000 }
+            now: { 10_000 },
+            onRemoteOperationsStored: { deviceId, inserted in
+                remoteOperations.record(deviceId: deviceId, inserted: inserted)
+            }
         )
         let initiatorPublicKey = Base64URL.encode(Data(repeating: 3, count: 32))
         let createdResponse = await store.handle(request(
@@ -231,8 +235,16 @@ struct LocalNetworkSyncServerTests {
         #expect(result.deviceId == claim.deviceId)
         #expect(result.vaultKeyEnvelope == envelope)
 
+        let operation = SyncPushOperation(
+            opId: "op-android-remote-change",
+            entityId: "task-android-remote-change",
+            kind: .upsert,
+            lamport: 1,
+            ciphertext: Base64URL.encode(Data(repeating: 8, count: 32)),
+            nonce: Base64URL.encode(Data(repeating: 9, count: 12))
+        )
         let syncBody = try JSONEncoder().encode(
-            SyncRequest(cursor: 0, ack: 0, pullLimit: 100, push: [])
+            SyncRequest(cursor: 0, ack: 0, pullLimit: 100, push: [operation])
         )
         let beforeRevocation = await store.handle(request(
             path: "/v1/sync",
@@ -240,6 +252,61 @@ struct LocalNetworkSyncServerTests {
             body: syncBody
         ))
         #expect(beforeRevocation.statusCode == 200)
+        #expect(remoteOperations.events == [
+            RemoteOperationsRecorder.Event(deviceId: claim.deviceId, inserted: 1)
+        ])
+
+        let replay = await store.handle(request(
+            path: "/v1/sync",
+            token: deviceToken,
+            body: syncBody
+        ))
+        #expect(replay.statusCode == 200)
+        #expect(remoteOperations.events == [
+            RemoteOperationsRecorder.Event(deviceId: claim.deviceId, inserted: 1)
+        ])
+
+        let deleteOperation = SyncPushOperation(
+            opId: "op-android-remote-delete",
+            entityId: operation.entityId,
+            kind: .delete,
+            lamport: 2,
+            ciphertext: Base64URL.encode(Data(repeating: 12, count: 32)),
+            nonce: Base64URL.encode(Data(repeating: 13, count: 12))
+        )
+        let remoteDelete = await store.handle(request(
+            path: "/v1/sync",
+            token: deviceToken,
+            body: try JSONEncoder().encode(
+                SyncRequest(cursor: 1, ack: 1, pullLimit: 100, push: [deleteOperation])
+            )
+        ))
+        #expect(remoteDelete.statusCode == 200)
+        #expect(remoteOperations.events == [
+            RemoteOperationsRecorder.Event(deviceId: claim.deviceId, inserted: 1),
+            RemoteOperationsRecorder.Event(deviceId: claim.deviceId, inserted: 1)
+        ])
+
+        let hostOperation = SyncPushOperation(
+            opId: "op-macos-local-change",
+            entityId: "task-macos-local-change",
+            kind: .upsert,
+            lamport: 3,
+            ciphertext: Base64URL.encode(Data(repeating: 10, count: 32)),
+            nonce: Base64URL.encode(Data(repeating: 11, count: 12))
+        )
+        let hostSync = await store.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(
+                SyncRequest(cursor: 0, ack: 0, pullLimit: 100, push: [hostOperation])
+            )
+        ))
+        #expect(hostSync.statusCode == 200)
+        #expect(remoteOperations.events == [
+            RemoteOperationsRecorder.Event(deviceId: claim.deviceId, inserted: 1),
+            RemoteOperationsRecorder.Event(deviceId: claim.deviceId, inserted: 1)
+        ])
 
         let revokeResponse = await store.handle(request(
             path: "/v1/devices/\(claim.deviceId)/revoke",
@@ -292,4 +359,26 @@ private struct SuccessEnvelope<Value: Decodable>: Decodable {
 
 private struct FailureEnvelope: Decodable {
     let error: ServerErrorPayload
+}
+
+private final class RemoteOperationsRecorder: @unchecked Sendable {
+    struct Event: Equatable {
+        let deviceId: String
+        let inserted: Int
+    }
+
+    private let lock = NSLock()
+    private var storedEvents: [Event] = []
+
+    var events: [Event] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedEvents
+    }
+
+    func record(deviceId: String, inserted: Int) {
+        lock.lock()
+        storedEvents.append(Event(deviceId: deviceId, inserted: inserted))
+        lock.unlock()
+    }
 }

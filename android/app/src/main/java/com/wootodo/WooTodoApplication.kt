@@ -1,6 +1,10 @@
 package com.wootodo
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import com.wootodo.data.SQLiteTaskStore
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskRepository
@@ -12,6 +16,7 @@ import com.wootodo.sync.AndroidLocalNetworkServiceResolver
 import com.wootodo.sync.AndroidSyncBackendSelection
 import com.wootodo.sync.AndroidSyncCredentialsStore
 import com.wootodo.sync.AndroidWebDavCredentialsStore
+import com.wootodo.sync.AutomaticSyncRequestGate
 import com.wootodo.sync.BearerCredential
 import com.wootodo.sync.PairingCompletion
 import com.wootodo.sync.PairingException
@@ -45,6 +50,12 @@ import java.util.concurrent.CancellationException
 
 class WooTodoApplication : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val automaticSyncGate = AutomaticSyncRequestGate()
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            requestNetworkRestoredSync()
+        }
+    }
     val database: TaskDatabase by lazy { TaskDatabase(this) }
     val taskStore: SQLiteTaskStore by lazy { SQLiteTaskStore(database) }
     val taskRepository: TaskRepository by lazy { TaskRepository(taskStore) }
@@ -354,7 +365,11 @@ class WooTodoApplication : Application() {
     suspend fun synchronizeManually(): SyncExecutionResult {
         val result = syncRuntime.synchronize()
         if (result is SyncExecutionResult.Failed && result.retryable) {
-            SyncJobScheduler.enqueueImmediate(this)
+            withContext(Dispatchers.IO) {
+                SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
+            }
+        } else {
+            SyncJobScheduler.cancelImmediate(this)
         }
         return result
     }
@@ -362,15 +377,55 @@ class WooTodoApplication : Application() {
     /** 本地写入已经落入 SQLite outbox，联网后由持久化 Job 发送。 */
     fun notifyLocalMutation() {
         TaskReminderScheduler.scheduleAllAsync(this)
+        requestAutomaticSync()
+    }
+
+    fun notifyAppForegrounded() {
+        requestAutomaticSync()
+    }
+
+    private fun requestNetworkRestoredSync() {
         applicationScope.launch {
-            val configured = runCatching {
-                activeSyncBackend() != null
-            }.getOrDefault(false)
-            if (configured) {
-                syncRuntime.refreshConfiguration(configured = true)
-                SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
-                SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
+            if (runCatching { activeSyncTransportMode() }.getOrNull() ==
+                SyncTransportMode.LOCAL_NETWORK
+            ) {
+                requestAutomaticSync(replacePendingJob = true)
             }
+        }
+    }
+
+    private fun requestAutomaticSync(replacePendingJob: Boolean = false) {
+        if (!automaticSyncGate.request(replacePendingJob)) return
+        applicationScope.launch {
+            while (true) {
+                val request = automaticSyncGate.takeNext() ?: break
+                try {
+                    synchronizeAutomatically(request.replacePendingJob)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    // 状态与持久化 Job 已在同步入口内更新，保留下一次自动触发。
+                }
+            }
+        }
+    }
+
+    private suspend fun synchronizeAutomatically(replacePendingJob: Boolean = false) {
+        val configured = runCatching { activeSyncBackend() != null }.getOrDefault(false)
+        syncRuntime.refreshConfiguration(configured)
+        if (!configured) {
+            SyncJobScheduler.cancel(this)
+            return
+        }
+        SyncJobScheduler.ensurePeriodic(this)
+        SyncJobScheduler.enqueueImmediate(this, replaceExisting = replacePendingJob)
+        when (val result = syncRuntime.synchronize()) {
+            is SyncExecutionResult.Failed -> {
+                if (!result.retryable) SyncJobScheduler.cancelImmediate(this)
+            }
+            SyncExecutionResult.NotConfigured,
+            is SyncExecutionResult.Succeeded,
+            -> SyncJobScheduler.cancelImmediate(this)
         }
     }
 
@@ -378,6 +433,14 @@ class WooTodoApplication : Application() {
         super.onCreate()
         NotificationHelper.createChannel(this)
         ReminderScheduler.schedule(this)
+        getSystemService(ConnectivityManager::class.java)
+            ?.registerNetworkCallback(
+                NetworkRequest.Builder()
+                    .clearCapabilities()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                    .build(),
+                networkCallback,
+            )
         applicationScope.launch {
             val configured = runCatching {
                 activeSyncBackend() != null

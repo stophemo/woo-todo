@@ -160,6 +160,8 @@ public actor LocalSyncServerStore {
 
     private let fileURL: URL
     private let now: @Sendable () -> Int64
+    private let hostDeviceId: String
+    private let onRemoteOperationsStored: @Sendable (_ deviceId: String, _ inserted: Int) -> Void
     private var state: LocalSyncPersistedState
     private var pairings: [String: LocalSyncPairingSession] = [:]
 
@@ -168,7 +170,11 @@ public actor LocalSyncServerStore {
         bootstrapCredentials: SyncCredentials,
         now: @escaping @Sendable () -> Int64 = {
             Int64((Date().timeIntervalSince1970 * 1_000).rounded())
-        }
+        },
+        onRemoteOperationsStored: @escaping @Sendable (
+            _ deviceId: String,
+            _ inserted: Int
+        ) -> Void = { _, _ in }
     ) throws {
         do {
             try bootstrapCredentials.validate()
@@ -177,6 +183,8 @@ public actor LocalSyncServerStore {
         }
         self.fileURL = fileURL
         self.now = now
+        self.hostDeviceId = bootstrapCredentials.deviceId
+        self.onRemoteOperationsStored = onRemoteOperationsStored
 
         let tokenHash = Self.credentialHash(bootstrapCredentials.deviceToken)
         if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -600,6 +608,9 @@ public actor LocalSyncServerStore {
             throw error
         }
         state = updatedState
+        if inserted > 0, device.id != hostDeviceId {
+            onRemoteOperationsStored(device.id, inserted)
+        }
 
         let candidates = state.operations.filter { $0.serverSeq > input.cursor }
         let page = Array(candidates.prefix(pullLimit))

@@ -313,7 +313,8 @@ final class SyncSettingsStore: ObservableObject {
             }
             let localStore = try LocalSyncServerStore(
                 fileURL: stateURL,
-                bootstrapCredentials: newCredentials
+                bootstrapCredentials: newCredentials,
+                onRemoteOperationsStored: remoteOperationsHandler()
             )
             let remoteLamportFloor = await localStore.maximumLamport()
             if reusableCredentials == nil { createdStateURL = stateURL }
@@ -822,7 +823,8 @@ final class SyncSettingsStore: ObservableObject {
         do {
             let localStore = try LocalSyncServerStore(
                 fileURL: Self.localNetworkStateURL(),
-                bootstrapCredentials: credentials
+                bootstrapCredentials: credentials,
+                onRemoteOperationsStored: remoteOperationsHandler()
             )
             let server = try LocalNetworkSyncHTTPServer(
                 store: localStore,
@@ -1016,6 +1018,14 @@ final class SyncSettingsStore: ObservableObject {
             }
         } else if !isLocalNetworkConnection || localNetworkServer?.isReady == true {
             requestSync(trigger)
+        }
+    }
+
+    private func remoteOperationsHandler() -> @Sendable (String, Int) -> Void {
+        { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.requestSync(.remoteChange)
+            }
         }
     }
 

@@ -36,7 +36,8 @@ const demoSnapshot = {
     { id: "demo-5", title: "学会弹吉他", timeType: "day", periodStart: "2026-08-12", questLine: "extra", state: "pending", recurrence: "once", periodLabel: "2026年8月12日" },
   ],
   statistics: { endedPeriods: { completed: 0, pass: 0 }, byTimeType: {}, byQuestLine: {} },
-  board: { opacityPercent: 100, alwaysOnTop: true, clickThrough: false, desktopWidget: false },
+  board: { opacityPercent: 80, alwaysOnTop: true, clickThrough: false, desktopWidget: false },
+  displayConfig: { headerTemplate: "今日任务", subtitleTemplate: "", startDate: "2026-08-17", deadlineDate: "2026-08-17" },
   sync: { configuredMode: null, running: false, pending: false, lastSuccessfulAt: null, lastError: null },
   localSync: { enabled: false, endpoint: null, vaultId: null, pairing: null },
   shortcutError: null,
@@ -229,7 +230,14 @@ function settingsPage() {
     return `<section class="page"><div class="page-heading compact-heading"><div><span class="eyebrow">COMMANDS</span><h1>快捷键</h1><p>让常用操作保持在手边。</p></div></div><div class="section-panel shortcut-list">${shortcuts.map(({ label, display, icon: symbol }) => `<div class="shortcut-row">${icon(symbol, 17)}<span>${escapeHtml(label)}</span><kbd aria-label="${escapeHtml(display)}">${escapeHtml(display)}</kbd></div>`).join("")}</div></section>`;
   }
   const board = state.snapshot.board;
-  return `<section class="page"><div class="page-heading compact-heading"><div><span class="eyebrow">APPEARANCE</span><h1>显示</h1><p>调整悬浮任务板的存在感和交互方式。</p></div><button class="button primary" data-action="save-board">${icon("check", 15)}<span>应用设置</span></button></div><div class="section-panel settings-form"><label class="range-label"><span>不透明度</span><strong id="opacity-value">${board.opacityPercent}%</strong></label><input id="opacity-input" type="range" min="20" max="100" step="10" value="${board.opacityPercent}" /><label class="toggle-row"><span><strong>任务板始终置顶</strong><small>保持在其他窗口上方</small></span><input id="topmost-input" type="checkbox" ${board.alwaysOnTop ? "checked" : ""} /><i></i></label><label class="toggle-row"><span><strong>鼠标穿透</strong><small>显示内容但不拦截桌面操作</small></span><input id="through-input" type="checkbox" ${board.clickThrough ? "checked" : ""} /><i></i></label><label class="toggle-row"><span><strong>桌面小组件模式</strong><small>保持在普通窗口底层</small></span><input id="widget-input" type="checkbox" ${board.desktopWidget ? "checked" : ""} /><i></i></label></div></section>`;
+  const dc = state.snapshot.displayConfig || { headerTemplate: "", subtitleTemplate: "", startDate: "", deadlineDate: "" };
+  const displayTokens = [
+    ["星期几", "{weekday}"], ["星期简写", "{weekdayShort}"], ["英文星期", "{weekdayEn}"], ["英文简写", "{weekdayEnShort}"],
+    ["日期", "{date}"], ["中文日期", "{dateLong}"], ["年份", "{year}"], ["月份", "{month}"], ["两位月份", "{monthPadded}"], ["日", "{day}"], ["两位日", "{dayPadded}"],
+    ["开始日期", "{startDate}"], ["截止日期", "{deadlineDate}"],
+    ["已过天数", "{elapsedDays}"], ["距截止天数", "{deadlineDays}"], ["已过月天", "{elapsedMonthsDays}"], ["距截止月天", "{deadlineMonthsDays}"],
+  ];
+  return `<section class="page"><div class="page-heading compact-heading"><div><span class="eyebrow">APPEARANCE</span><h1>显示</h1><p>调整悬浮任务板的存在感和交互方式。</p></div><button class="button primary" data-action="save-board">${icon("check", 15)}<span>应用设置</span></button></div><div class="section-panel settings-form"><div class="section-panel-title"><h2>今日标题与副标题</h2><span>模板变量插入光标处，随任务一起同步到其他设备</span></div><label class="field-label">标题模板<input id="header-template-input" maxlength="80" spellcheck="false" value="${escapeHtml(dc.headerTemplate || "")}" /></label><label class="field-label">副标题模板<input id="subtitle-template-input" maxlength="160" spellcheck="false" placeholder="如：DDL · {deadlineMonthsDays}" value="${escapeHtml(dc.subtitleTemplate || "")}" /></label><div class="token-row">${displayTokens.map(([label, token]) => `<button type="button" class="token-chip" data-insert-token="${token}">${label}</button>`).join("")}</div><div class="field-grid"><label class="field-label">开始日期（已过天数基准）<input id="display-start-date" type="date" value="${escapeHtml(dc.startDate || "")}" /></label><label class="field-label">截止日期（距截止天数基准）<input id="display-deadline-date" type="date" value="${escapeHtml(dc.deadlineDate || "")}" /></label></div><button class="button primary" data-action="save-display">${icon("check", 15)}<span>应用标题设置</span></button></div><div class="section-panel settings-form"><label class="range-label"><span>不透明度</span><strong id="opacity-value">${board.opacityPercent}%</strong></label><input id="opacity-input" type="range" min="20" max="100" step="10" value="${board.opacityPercent}" /><label class="toggle-row"><span><strong>任务板始终置顶</strong><small>保持在其他窗口上方</small></span><input id="topmost-input" type="checkbox" ${board.alwaysOnTop ? "checked" : ""} /><i></i></label><label class="toggle-row"><span><strong>鼠标穿透</strong><small>显示内容但不拦截桌面操作</small></span><input id="through-input" type="checkbox" ${board.clickThrough ? "checked" : ""} /><i></i></label><label class="toggle-row"><span><strong>桌面小组件模式</strong><small>保持在普通窗口底层</small></span><input id="widget-input" type="checkbox" ${board.desktopWidget ? "checked" : ""} /><i></i></label></div></section>`;
 }
 
 function mainView() {
@@ -239,14 +247,20 @@ function mainView() {
     .map(([value, label]) => `<option value="${value}" ${editing?.timeType === value ? "selected" : ""}>${label}</option>`).join("");
   const questOptions = [["main", "主线"], ["side", "支线"], ["extra", "外传"]]
     .map(([value, label]) => `<option value="${value}" ${editing?.questLine === value ? "selected" : ""}>${label}</option>`).join("");
-  return `<div class="window-shell">${titlebar()}<div class="workspace">${sidebar()}<main class="main-content">${state.error ? `<div class="error-banner">${icon("triangle-alert", 16)}<span>${escapeHtml(state.error)}</span></div>` : ""}${content}</main></div></div><dialog id="task-dialog"><form method="dialog" id="task-form"><div class="dialog-heading"><div><span class="eyebrow">${editing ? "EDIT TASK" : "NEW TASK"}</span><h2>${editing ? "编辑任务" : "新增任务"}</h2></div><button class="icon-button" value="cancel" aria-label="关闭">${icon("x", 18)}</button></div><label class="field-label">任务内容<input name="title" required maxlength="120" autofocus placeholder="下一件要完成的事" value="${escapeHtml(editing?.title || "")}" /></label><div class="field-grid"><label class="field-label">时间范围<select name="timeType">${timeOptions}</select></label><label class="field-label">级别<select name="questLine">${questOptions}</select></label></div><label class="field-label">目标日期<input name="targetDate" type="date" value="${editing?.periodStart || state.snapshot.referenceDate}" required /></label><label class="toggle-row dialog-toggle"><span><strong>重复任务</strong><small>在同一时间范围继续出现</small></span><input name="repeats" type="checkbox" ${editing?.recurrence === "repeat" ? "checked" : ""} /><i></i></label><div class="dialog-actions"><button class="button secondary" value="cancel">取消</button><button class="button primary" value="default" type="submit">${icon(editing ? "check" : "plus", 15)}<span>${editing ? "保存" : "创建任务"}</span></button></div></form></dialog>`;
+  return `<div class="window-shell">${titlebar()}<div class="workspace">${sidebar()}<main class="main-content">${state.error ? `<div class="error-banner">${icon("triangle-alert", 16)}<span>${escapeHtml(state.error)}</span></div>` : ""}${content}</main></div></div><dialog id="task-dialog"><form method="dialog" id="task-form"><div class="dialog-heading"><div><span class="eyebrow">${editing ? "EDIT TASK" : "NEW TASK"}</span><h2>${editing ? "编辑任务" : "新增任务"}</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="关闭">${icon("x", 18)}</button></div><label class="field-label">任务内容<input name="title" required maxlength="120" autofocus placeholder="下一件要完成的事" value="${escapeHtml(editing?.title || "")}" /></label><div class="field-grid"><label class="field-label">时间范围<select name="timeType">${timeOptions}</select></label><label class="field-label">级别<select name="questLine">${questOptions}</select></label></div><label class="field-label">目标日期<input name="targetDate" type="date" value="${editing?.periodStart || state.snapshot.referenceDate}" required /></label><label class="toggle-row dialog-toggle"><span><strong>重复任务</strong><small>在同一时间范围继续出现</small></span><input name="repeats" type="checkbox" ${editing?.recurrence === "repeat" ? "checked" : ""} /><i></i></label><div class="dialog-actions"><button class="button secondary" type="button" data-close-dialog>取消</button><button class="button primary" value="default" type="submit">${icon(editing ? "check" : "plus", 15)}<span>${editing ? "保存" : "创建任务"}</span></button></div></form></dialog>`;
 }
 
 function boardView() {
   const tasks = (state.snapshot?.tasks || []).filter((task) => task.timeType === "day" && task.state === "pending");
   const total = (state.snapshot?.tasks || []).filter((task) => task.timeType === "day").length;
   const completed = total - tasks.length;
-  return `<div class="board-window"><div class="board-content" data-tauri-drag-region="deep" style="opacity:${Math.max(.2, (state.snapshot?.board?.opacityPercent || 100) / 100)}"><header class="board-header"><div><h1>${escapeHtml(state.snapshot?.header || "今日任务")}</h1><p>${escapeHtml(state.snapshot?.subtitle || "")}</p></div><div class="board-date"><strong>${escapeHtml(state.snapshot?.lunarDate || "")}</strong><span>${escapeHtml(state.snapshot?.lunarAnnotation || "")}</span></div></header><div class="board-progress"><div><span>今日进度</span><strong>${completed} / ${total}</strong></div><div class="progress-line"><i style="width:${total ? (completed / total) * 100 : 0}%"></i></div></div><div class="board-list" data-tauri-drag-region="false">${tasks.length ? tasks.map((task) => taskRow(task, true)).join("") : `<div class="board-empty">${icon("check-circle-2", 25)}<span>今天暂时没有待办</span></div>`}</div></div></div>`;
+  const widget = Boolean(state.snapshot?.board?.desktopWidget);
+  // 滑块控制背景透明程度；文字始终完全不透明，保证可读。
+  // 小组件模式背景整体更实，避免被桌面内容干扰。
+  const percent = Math.max(20, Math.min(100, state.snapshot?.board?.opacityPercent || 100));
+  const alpha = widget ? 0.55 + 0.45 * (percent / 100) : 0.3 + 0.6 * (percent / 100);
+  const gradient = `linear-gradient(150deg, rgba(48,58,62,${alpha}) 0%, rgba(25,31,34,${(alpha * 0.92).toFixed(3)}) 55%, rgba(18,23,26,${alpha}) 100%)`;
+  return `<div class="board-window"><div class="board-content${widget ? " is-widget" : ""}" data-tauri-drag-region="deep" style="background:${gradient}"><header class="board-header"><div><h1>${escapeHtml(state.snapshot?.header || "今日任务")}</h1><p>${escapeHtml(state.snapshot?.subtitle || "")}</p></div><div class="board-date"><strong>${escapeHtml(state.snapshot?.lunarDate || "")}</strong><span>${escapeHtml(state.snapshot?.lunarAnnotation || "")}</span></div></header><div class="board-progress"><div><span>今日进度</span><strong>${completed} / ${total}</strong></div><div class="progress-line"><i style="width:${total ? (completed / total) * 100 : 0}%"></i></div></div><div class="board-list" data-tauri-drag-region="false">${tasks.length ? tasks.map((task) => taskRow(task, true)).join("") : `<div class="board-empty">${icon("check-circle-2", 25)}<span>今天暂时没有待办</span></div>`}</div></div></div>`;
 }
 
 function render() {
@@ -265,8 +279,20 @@ function bindEvents() {
   document.querySelectorAll("[data-section]").forEach((button) => button.addEventListener("click", () => { state.section = button.dataset.section; render(); }));
   document.querySelectorAll("[data-window]").forEach((button) => button.addEventListener("click", () => callWindow(button.dataset.window)));
   document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id)));
+  document.querySelectorAll("#header-template-input, #subtitle-template-input").forEach((input) => input.addEventListener("focus", () => { state.lastTemplateField = input.id; }));
+  document.querySelectorAll("[data-insert-token]").forEach((button) => button.addEventListener("click", () => {
+    const target = document.querySelector(state.lastTemplateField === "subtitle-template-input" ? "#subtitle-template-input" : "#header-template-input");
+    if (!target) return;
+    const token = button.dataset.insertToken || "";
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? target.value.length;
+    target.value = target.value.slice(0, start) + token + target.value.slice(end);
+    target.focus();
+    target.setSelectionRange(start + token.length, start + token.length);
+  }));
   const form = document.querySelector("#task-form");
   if (form) form.addEventListener("submit", submitTask);
+  document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => document.querySelector("#task-dialog")?.close()));
   const opacity = document.querySelector("#opacity-input");
   if (opacity) opacity.addEventListener("input", () => { document.querySelector("#opacity-value").textContent = `${opacity.value}%`; });
 }
@@ -296,6 +322,22 @@ async function handleAction(action, id) {
   if (action === "delete" && id && !window.confirm("删除这条任务？")) return;
   if (["toggle", "pass", "delete"].includes(action) && id) await runCommand(`${action}_task`, { id });
   if (action === "save-board") await saveBoardPreferences();
+  if (action === "save-display") {
+    try {
+      await runCommand("save_display_configuration", {
+        input: {
+          headerTemplate: document.querySelector("#header-template-input")?.value || "",
+          subtitleTemplate: document.querySelector("#subtitle-template-input")?.value || "",
+          startDate: document.querySelector("#display-start-date")?.value || state.snapshot.displayConfig?.startDate || state.snapshot.referenceDate,
+          deadlineDate: document.querySelector("#display-deadline-date")?.value || state.snapshot.displayConfig?.deadlineDate || state.snapshot.referenceDate,
+        },
+      });
+      notify("标题设置已应用");
+    } catch (error) {
+      notify(`应用失败：${error?.message || error}`);
+    }
+    return;
+  }
 }
 
 async function runCommand(command, payload) {
@@ -321,8 +363,27 @@ function openTaskDialog(task) {
   document.querySelector("#task-dialog")?.showModal();
 }
 
+let toastTimer = null;
+function notify(message) {
+  let toast = document.querySelector("#app-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "app-toast";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
+}
+
 async function saveBoardPreferences() {
-  await runCommand("save_board_preferences", { input: { opacityPercent: Number(document.querySelector("#opacity-input")?.value || 100), alwaysOnTop: Boolean(document.querySelector("#topmost-input")?.checked), clickThrough: Boolean(document.querySelector("#through-input")?.checked), desktopWidget: Boolean(document.querySelector("#widget-input")?.checked) } });
+  try {
+    await runCommand("save_board_preferences", { input: { opacityPercent: Number(document.querySelector("#opacity-input")?.value || 100), alwaysOnTop: Boolean(document.querySelector("#topmost-input")?.checked), clickThrough: Boolean(document.querySelector("#through-input")?.checked), desktopWidget: Boolean(document.querySelector("#widget-input")?.checked) } });
+    notify("显示设置已应用");
+  } catch (error) {
+    notify(`应用失败：${error?.message || error}`);
+  }
 }
 
 async function joinSyncSpace() {

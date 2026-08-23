@@ -86,7 +86,6 @@ struct ActivePairing {
     expires_at: i64,
     state: Arc<Mutex<LocalPairingState>>,
     stop_flag: Arc<AtomicBool>,
-    poll_handle: Option<JoinHandle<()>>,
 }
 
 enum LocalPairingState {
@@ -216,6 +215,9 @@ impl LocalSyncHost {
             Arc::clone(&state),
             Arc::clone(&stop_flag),
         );
+        // 轮询线程持有自身的凭据与事件句柄副本，在 stop_flag 或过期后
+        // 自行退出；这里分离句柄，避免在 local_host 锁内 join 卡顿。
+        drop(poll_handle);
         let active = ActivePairing {
             key_pair,
             pairing_id: created.pairing_id,
@@ -223,7 +225,6 @@ impl LocalSyncHost {
             expires_at,
             state,
             stop_flag,
-            poll_handle: Some(poll_handle),
         };
         *self
             .pairing
@@ -316,7 +317,10 @@ impl LocalSyncHost {
     }
 
     fn cancel_pairing(&self) {
-        let Some(mut active) = self
+        // 只置停止标志并释放会话，不阻塞等待轮询线程：线程持有自身的
+        // 凭据与事件句柄副本，会在下一次轮询间隔（≤2 秒）内自然退出。
+        // 避免在 local_host 锁内长时间 join 导致 get_snapshot 卡顿。
+        let Some(active) = self
             .pairing
             .lock()
             .ok()
@@ -325,9 +329,6 @@ impl LocalSyncHost {
             return;
         };
         active.stop_flag.store(true, Ordering::Release);
-        if let Some(handle) = active.poll_handle.take() {
-            let _ = handle.join();
-        }
     }
 }
 

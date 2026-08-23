@@ -24,9 +24,9 @@
       },
       {
         "label": "board",
-        "title": "今日任务",
+        "title": "浠婃棩浠诲姟",
         "url": "index.html?view=board",
-        "width": 610,
+        "width": 500,
         "height": 440,
         "minWidth": 360,
         "minHeight": 360,

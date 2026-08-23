@@ -10,7 +10,7 @@ use tauri::{
 };
 use woo_todo_core::{
     QuestLine, Recurrence, ReminderTime, StatisticsSnapshot, TaskRepository, TaskState, TimeType,
-    TodoTask, calculate_statistics, today_shanghai,
+    TodoTask, WireDisplayConfigurationPayload, calculate_statistics, today_shanghai,
 };
 
 use crate::credentials::{SyncCredentialStore, SyncCredentials, SyncMode, WindowsCredentialStore};
@@ -52,6 +52,7 @@ struct AppSnapshot {
     tasks: Vec<TaskView>,
     statistics: StatisticsSnapshot,
     board: BoardPreferences,
+    display_config: DisplayConfigView,
     sync: SyncSummary,
     local_sync: LocalSyncSummary,
     shortcuts: Vec<ShortcutView>,
@@ -106,6 +107,24 @@ struct BoardPreferences {
     always_on_top: bool,
     click_through: bool,
     desktop_widget: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisplayConfigView {
+    header_template: String,
+    subtitle_template: String,
+    start_date: NaiveDate,
+    deadline_date: NaiveDate,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveDisplayConfigInput {
+    header_template: String,
+    subtitle_template: String,
+    start_date: NaiveDate,
+    deadline_date: NaiveDate,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -481,6 +500,30 @@ fn respond_local_pairing(
 }
 
 #[tauri::command]
+fn save_display_configuration(
+    app: AppHandle,
+    state: State<'_, RuntimeState>,
+    input: SaveDisplayConfigInput,
+) -> Result<AppSnapshot, String> {
+    let payload = WireDisplayConfigurationPayload::new(
+        input.header_template.trim().to_owned(),
+        input.subtitle_template.trim().to_owned(),
+        input.start_date,
+        input.deadline_date,
+    )
+    .map_err(|error| error.to_string())?;
+    {
+        let mut repository = lock(&state.repository, "任务库")?;
+        repository
+            .save_display_configuration(&payload)
+            .map_err(|error| error.to_string())?;
+    }
+    after_task_change(&state);
+    notify_frontends(&app, "tray://refresh");
+    snapshot(&state)
+}
+
+#[tauri::command]
 fn toggle_board(app: AppHandle) -> Result<(), String> {
     let board = app
         .get_webview_window("board")
@@ -660,6 +703,16 @@ pub fn run() -> Result<(), String> {
             }
         }))
         .manage(state)
+        .on_window_event(|window, event| {
+            // 主窗口的关闭（X、Alt+F4）改为隐藏到托盘，托盘菜单可随时恢复；
+            // 避免窗口被销毁后“设置/任务详情/快速新增”找不到窗口而打不开。
+            if window.label() == "main"
+                && let tauri::WindowEvent::CloseRequested { api, .. } = event
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             let _ = crate::integration::ensure_registered();
             install_hotkey_handler(app.handle())?;
@@ -856,6 +909,7 @@ pub fn run() -> Result<(), String> {
             toggle_board,
             show_main,
             save_board_preferences,
+            save_display_configuration,
             window_action,
         ])
         .run(tauri::generate_context!())
@@ -1016,6 +1070,12 @@ fn snapshot(state: &RuntimeState) -> Result<AppSnapshot, String> {
         tasks: tasks.into_iter().map(TaskView::from).collect(),
         statistics,
         board,
+        display_config: DisplayConfigView {
+            header_template: display.header_template,
+            subtitle_template: display.subtitle_template,
+            start_date: display.start_date,
+            deadline_date: display.deadline_date,
+        },
         sync: SyncSummary {
             configured_mode: sync.configured_mode.map(sync_mode_name),
             running: sync.running,

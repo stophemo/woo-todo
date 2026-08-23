@@ -12,16 +12,18 @@ pub enum ShortcutCommand {
     ToggleClickThrough,
     IncreaseOpacity,
     DecreaseOpacity,
+    ToggleDesktopWidget,
 }
 
 impl ShortcutCommand {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::QuickAdd,
         Self::ToggleTaskPanel,
         Self::ToggleAlwaysOnTop,
         Self::ToggleClickThrough,
         Self::IncreaseOpacity,
         Self::DecreaseOpacity,
+        Self::ToggleDesktopWidget,
     ];
 }
 
@@ -138,6 +140,10 @@ impl Default for ShortcutConfiguration {
                     ShortcutCommand::DecreaseOpacity,
                     ShortcutBinding::new(modifiers, 0x36),
                 ),
+                (
+                    ShortcutCommand::ToggleDesktopWidget,
+                    ShortcutBinding::new(modifiers, 0x37),
+                ),
             ]
             .into_iter()
             .collect(),
@@ -194,6 +200,52 @@ impl ShortcutConfiguration {
     }
 }
 
+/// Formats a binding for settings surfaces and Windows menu hints with macOS-style modifier glyphs.
+pub fn format_shortcut_binding(binding: &ShortcutBinding) -> String {
+    let mut value = String::new();
+    if binding.modifiers.contains(ShortcutModifiers::CONTROL) {
+        value.push('⌃');
+    }
+    if binding.modifiers.contains(ShortcutModifiers::ALT) {
+        value.push('⌥');
+    }
+    if binding.modifiers.contains(ShortcutModifiers::SHIFT) {
+        value.push('⇧');
+    }
+    if binding.modifiers.contains(ShortcutModifiers::WINDOWS) {
+        value.push('⊞');
+    }
+    value.push_str(&virtual_key_label(binding.virtual_key));
+    value
+}
+
+pub fn command_label(command: ShortcutCommand) -> &'static str {
+    match command {
+        ShortcutCommand::QuickAdd => "快速新增",
+        ShortcutCommand::ToggleTaskPanel => "显示任务板",
+        ShortcutCommand::ToggleAlwaysOnTop => "切换置顶",
+        ShortcutCommand::ToggleClickThrough => "切换穿透",
+        ShortcutCommand::IncreaseOpacity => "增加不透明度",
+        ShortcutCommand::DecreaseOpacity => "降低不透明度",
+        ShortcutCommand::ToggleDesktopWidget => "桌面小组件",
+    }
+}
+
+fn virtual_key_label(key: u32) -> String {
+    match key {
+        0x30..=0x39 | 0x41..=0x5a => char::from_u32(key).unwrap_or('?').to_string(),
+        0x70..=0x7a => format!("F{}", key - 0x6f),
+        0x09 => "Tab".to_owned(),
+        0x0d => "Enter".to_owned(),
+        0x20 => "Space".to_owned(),
+        0x25 => "Left".to_owned(),
+        0x26 => "Up".to_owned(),
+        0x27 => "Right".to_owned(),
+        0x28 => "Down".to_owned(),
+        _ => format!("VK-{key:02X}"),
+    }
+}
+
 fn is_modifier_virtual_key(virtual_key: u32) -> bool {
     matches!(
         virtual_key,
@@ -221,9 +273,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_contain_all_six_commands() {
+    fn defaults_contain_all_seven_commands() {
         let configuration = ShortcutConfiguration::default();
-        assert_eq!(configuration.bindings.len(), 6);
+        assert_eq!(configuration.bindings.len(), 7);
         assert_eq!(configuration.validate(), Ok(()));
 
         for (offset, command) in ShortcutCommand::ALL.into_iter().enumerate() {
@@ -235,6 +287,18 @@ mod tests {
                 ))
             );
         }
+    }
+
+    #[test]
+    fn formatter_uses_modifier_glyphs() {
+        let binding = ShortcutBinding::new(
+            ShortcutModifiers::CONTROL
+                | ShortcutModifiers::ALT
+                | ShortcutModifiers::SHIFT
+                | ShortcutModifiers::WINDOWS,
+            0x41,
+        );
+        assert_eq!(format_shortcut_binding(&binding), "⌃⌥⇧⊞A");
     }
 
     #[test]

@@ -32,7 +32,7 @@
 
 ### 第二天 · 打开电脑直接开始
 
-macOS 的原生任务小组件停留在桌面层，也可切换为普通或置顶任务板，并支持毛玻璃、鼠标穿透和拖动调整宽高；Android Widget 留在手机桌面；Windows 则提供托盘与可置顶、可穿透的悬浮任务板。三个平台各自贴近系统，不把浏览器运行时带进日常工作流。
+macOS 的原生任务小组件停留在桌面层，也可切换为普通或置顶任务板，并支持毛玻璃、鼠标穿透和拖动调整宽高；Android Widget 留在手机桌面；Windows 则通过 Tauri 2 提供可置顶、可穿透的悬浮任务板。
 
 ### 周期结束 · 完成，或者诚实 Pass
 
@@ -41,7 +41,7 @@ macOS 的原生任务小组件停留在桌面层，也可切换为普通或置�
 ## 它刻意做少，但把这些做好
 
 - **本地优先**：新增、编辑、完成、排序都只依赖本机数据库，断网照常使用。
-- **原生而轻量**：macOS 使用 AppKit/SwiftUI，Android 使用 Kotlin/RemoteViews，Windows 使用 Rust、`windows-rs` 与 Win32；领域规则由 Rust 共享，没有 Electron、Flutter、WebView 或 .NET 桌面运行时。
+- **轻量且贴近平台**：macOS 使用 AppKit/SwiftUI，Android 使用 Kotlin/RemoteViews，Windows 使用 Tauri 2、WebView2 与 Rust；领域规则继续由 Rust 共享，不引入 Electron、Flutter 或 .NET 桌面运行时。
 - **适合真实生活的周期**：支持日、周、月、闲时，一次性或重复任务，以及主线、支线、外传。
 - **看见真实结果，也允许纠错**：完成、`Pass`、历史与履约统计都会保留；当前周期内误点完成时，再点一次即可撤销。
 - **设置跟着设备走**：三端的今日标题、副标题和计时模板可随任务一起加密同步，更新应用后不用重设。
@@ -56,7 +56,7 @@ macOS 的原生任务小组件停留在桌面层，也可切换为普通或置�
 | --- | --- | --- |
 | macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、完整任务管理与统计 | `v0.1.31` 正式版 |
 | Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.1.31` 正式版 |
-| Windows 10 build 19041+ / Windows 11（仅 x64） | 原生悬浮任务板、完整任务管理、统计与加密同步 | `v0.1.31` 实验版（不保证可用） |
+| Windows 10 build 19041+ / Windows 11（仅 x64） | Tauri 悬浮任务板、任务管理、统计与加密同步 | `v0.1.31` 实验版（不保证可用） |
 
 Windows 已支持自建服务、同一网络与第三方 WebDAV 三种互斥同步方式，以及设备配对和撤销。同步凭据保存在 Windows Credential Manager，不写入 `settings.json`。
 
@@ -93,8 +93,8 @@ Windows 已支持自建服务、同一网络与第三方 WebDAV 三种互斥同�
 ### Windows
 
 1. Windows 当前仅提供 `Woo-Todo-v0.1.31-windows-x64-experimental.zip` 实验包；它不保证可用。备份数据后解压并运行 `WooTodo.exe`，若 SmartScreen 拦截，请核对独立实验版校验和。
-2. 在悬浮任务板快速新增、完成或编辑任务；选中已完成任务后可“取消完成”，右键也可 `Pass` 或删除。
-3. 托盘菜单负责完整窗口、任务板显隐、鼠标穿透和检查更新；默认全局快捷键为 `Ctrl + Alt + 1` 至 `Ctrl + Alt + 6`，其中 `5/6` 调整任务板不透明度。完整窗口的“同步”可配置三种同步方式。任务提醒由 Windows 系统调度，应用退出后仍可触发。
+2. 主窗口支持今日、明日、本周、本月、闲时、历史和统计；可新增、编辑、完成、撤销、`Pass`、删除及同级排序任务。
+3. 工具栏可显示独立悬浮任务板；“显示”页面可调整任务板不透明度、置顶与鼠标穿透。同步运行时和任务提醒继续由 Rust 与 Windows 系统组件负责。
 
 ## 同步，按自己的信任边界选
 
@@ -115,7 +115,7 @@ Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；�
 
 ## 开发
 
-三端保持原生 UI、彼此不直接依赖；领域、SQLite 语义与通知计划逐步收敛到 `shared/core-rust/`，同步协议继续通过 `shared/schema/` 与 `shared/fixtures/` 对齐。常用检查命令：
+三端 UI 彼此不直接依赖；macOS 与 Android 保持原生实现，Windows 使用 Tauri 2。领域、SQLite 语义与通知计划逐步收敛到 `shared/core-rust/`，同步协议继续通过 `shared/schema/` 与 `shared/fixtures/` 对齐。常用检查命令：
 
 ```bash
 npm install

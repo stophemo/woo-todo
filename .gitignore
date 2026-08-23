@@ -112,6 +112,7 @@ captures/
 *.suo
 *.user
 /windows/dist/
+/windows/gen/
 
 # Rust 共享核心
 /shared/core-rust/target/

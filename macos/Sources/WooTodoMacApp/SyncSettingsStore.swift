@@ -609,7 +609,8 @@ final class SyncSettingsStore: ObservableObject {
                 endpoint: credentials.endpoint,
                 pairingId: created.pairingId,
                 pairingSecret: created.pairingSecret,
-                initiatorPublicKey: created.initiatorPublicKey
+                initiatorPublicKey: created.initiatorPublicKey,
+                vaultId: credentials.vaultId
             )
             pairingContext = PairingContext(
                 keyPair: keyPair,

@@ -15,10 +15,12 @@ class PairingDeepLinkTest {
             pairingId = "pair-001",
             pairingSecret = Base64Url.encode(ByteArray(32) { 4 }),
             initiatorPublicKey = Base64Url.encode(ByteArray(32) { 5 }),
+            vaultId = "vault-demo-001",
         )
 
         val uri = link.toUri()
         assertEquals(link, PairingDeepLink.parse(uri))
+        assertTrue(uri.contains("vaultId=vault-demo-001"))
         assertTrue(uri.contains("initiatorPublicKey="))
         assertFalse(uri.contains("publicKey="))
         assertFalse(link.toString().contains(link.pairingSecret))
@@ -56,6 +58,11 @@ class PairingDeepLinkTest {
                 "wootodo://pair?endpoint=http%3A%2F%2F192.168.8.21%3A48473$suffix",
             ).endpoint,
         )
+        assertThrows(IllegalArgumentException::class.java) {
+            PairingDeepLink.parse(
+                "wootodo://PAIR?endpoint=https%3A%2F%2Fsync.example.test%2Fv1$suffix",
+            )
+        }
     }
 
     @Test

@@ -1,9 +1,13 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::thread;
+use std::time::Duration;
 use woo_todo_core::{
-    EncryptedEnvelope, SyncData, SyncRequest, base64url_decode, base64url_encode, random_bytes,
+    EncryptedEnvelope, PairingKeyPair, SyncData, SyncRequest, base64url_decode, base64url_encode,
+    open_pairing_vault_key, random_bytes,
 };
+use zeroize::Zeroize;
 
 use crate::credentials::{SyncCredentials, SyncMode};
 use crate::http::{EndpointScope, HttpRequest, HttpResponse, HttpTransport, ValidatedEndpoint};
@@ -99,6 +103,96 @@ pub struct WorkerClient<T: HttpTransport> {
     transport: T,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingLink {
+    pub endpoint: String,
+    pub pairing_id: String,
+    pub pairing_secret: String,
+    pub initiator_public_key: String,
+    pub vault_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JoinedPairing {
+    pub vault_id: String,
+    pub device_id: String,
+    pub device_token: String,
+    pub vault_key: String,
+}
+
+impl PairingLink {
+    pub fn parse(source: &str) -> Result<Self, String> {
+        let url = url::Url::parse(source).map_err(|_| "配对链接格式无效".to_owned())?;
+        if !url.scheme().eq_ignore_ascii_case("wootodo")
+            || !url
+                .host_str()
+                .is_some_and(|host| host.eq_ignore_ascii_case("pair"))
+            || url.path() != ""
+            || url.fragment().is_some()
+        {
+            return Err("配对链接格式无效".to_owned());
+        }
+        let mut values = std::collections::BTreeMap::new();
+        for (key, value) in url.query_pairs() {
+            if !matches!(
+                key.as_ref(),
+                "endpoint" | "pairingId" | "pairingSecret" | "initiatorPublicKey" | "vaultId"
+            ) || values
+                .insert(key.into_owned(), value.into_owned())
+                .is_some()
+            {
+                return Err("配对链接包含未知或重复字段".to_owned());
+            }
+        }
+        for key in [
+            "endpoint",
+            "pairingId",
+            "pairingSecret",
+            "initiatorPublicKey",
+        ] {
+            if values.get(key).is_none_or(String::is_empty) {
+                return Err(format!("配对链接缺少字段：{key}"));
+            }
+        }
+        let endpoint = values.remove("endpoint").expect("已检查 endpoint");
+        let parsed_endpoint =
+            url::Url::parse(&endpoint).map_err(|_| "配对服务地址无效".to_owned())?;
+        let scope = if parsed_endpoint.scheme().eq_ignore_ascii_case("https") {
+            EndpointScope::Worker
+        } else if parsed_endpoint.scheme().eq_ignore_ascii_case("http") {
+            EndpointScope::LocalNetwork
+        } else {
+            return Err("配对服务只支持 HTTPS 或局域网 HTTP".to_owned());
+        };
+        ValidatedEndpoint::parse(&endpoint, scope)?;
+        let pairing_id = values.remove("pairingId").expect("已检查 pairingId");
+        validate_pairing_identifier(&pairing_id)?;
+        let pairing_secret = values
+            .remove("pairingSecret")
+            .expect("已检查 pairingSecret");
+        if base64url_decode(&pairing_secret).map_or(true, |value| value.len() != 32) {
+            return Err("配对 secret 必须是 32 字节 Base64URL".to_owned());
+        }
+        let initiator_public_key = values
+            .remove("initiatorPublicKey")
+            .expect("已检查 initiatorPublicKey");
+        if base64url_decode(&initiator_public_key).map_or(true, |value| value.len() != 32) {
+            return Err("配对发起方公钥必须是 32 字节 Base64URL".to_owned());
+        }
+        let vault_id = values.remove("vaultId");
+        if let Some(value) = &vault_id {
+            validate_identifier(value, "vaultId")?;
+        }
+        Ok(Self {
+            endpoint,
+            pairing_id,
+            pairing_secret,
+            initiator_public_key,
+            vault_id,
+        })
+    }
+}
+
 impl<T: HttpTransport> WorkerClient<T> {
     pub fn new(credentials: &SyncCredentials, transport: T) -> Result<Self, String> {
         credentials.validate()?;
@@ -119,6 +213,23 @@ impl<T: HttpTransport> WorkerClient<T> {
                 .device_token()
                 .ok_or_else(|| "同步凭据缺少设备令牌".to_owned())?
                 .to_owned(),
+            transport,
+        })
+    }
+
+    pub fn for_pairing(link: &PairingLink, transport: T) -> Result<Self, String> {
+        let parsed =
+            url::Url::parse(&link.endpoint).map_err(|_| "配对服务地址格式无效".to_owned())?;
+        let scope = if parsed.scheme().eq_ignore_ascii_case("https") {
+            EndpointScope::Worker
+        } else if parsed.scheme().eq_ignore_ascii_case("http") {
+            EndpointScope::LocalNetwork
+        } else {
+            return Err("配对服务只支持 HTTPS 或局域网 HTTP".to_owned());
+        };
+        Ok(Self {
+            endpoint: ValidatedEndpoint::parse(&link.endpoint, scope)?,
+            token: String::new(),
             transport,
         })
     }
@@ -274,6 +385,159 @@ impl<T: HttpTransport> WorkerClient<T> {
         Ok(data)
     }
 
+    pub fn join_pairing(
+        &self,
+        link: &PairingLink,
+        device_name: &str,
+        expected_vault_id: Option<&str>,
+    ) -> Result<JoinedPairing, String> {
+        let key_pair = PairingKeyPair::generate().map_err(|error| error.to_string())?;
+        let mut token_bytes = random_bytes::<32>().map_err(|error| error.to_string())?;
+        let device_token = base64url_encode(&token_bytes);
+        let public_key = key_pair.public_key_base64url();
+        let result = (|| {
+            validate_pairing_identifier(&link.pairing_id)?;
+            validate_device_name(device_name)?;
+            let claim = self.claim_pairing(
+                &link.pairing_id,
+                &link.pairing_secret,
+                &device_token,
+                device_name,
+                &public_key,
+            )?;
+            if claim.pairing_id != link.pairing_id
+                || claim.status != PairingStatus::Claimed
+                || claim.expires_at <= 0
+            {
+                return Err("配对认领响应无效".to_owned());
+            }
+            let session_key = zeroize::Zeroizing::new(
+                key_pair
+                    .session_key_base64url(
+                        &link.initiator_public_key,
+                        &link.pairing_id,
+                        &link.pairing_secret,
+                    )
+                    .map_err(|error| error.to_string())?,
+            );
+            let result = loop {
+                let value =
+                    self.pairing_result(&link.pairing_id, &link.pairing_secret, &device_token)?;
+                if value.pairing_id != link.pairing_id || value.expires_at != claim.expires_at {
+                    return Err("配对结果与当前会话不一致".to_owned());
+                }
+                match value.status {
+                    PairingStatus::Claimed => {
+                        if value.vault_id.is_some()
+                            || value.device_id.is_some()
+                            || value.initiator_public_key.is_some()
+                            || value.vault_key_envelope.is_some()
+                        {
+                            return Err("配对等待结果携带了不应出现的密钥字段".to_owned());
+                        }
+                        if chrono::Utc::now().timestamp_millis()
+                            >= value.expires_at.saturating_add(30_000)
+                        {
+                            return Err("配对二维码已过期，请重新生成".to_owned());
+                        }
+                        thread::sleep(Duration::from_secs(2));
+                    }
+                    PairingStatus::Confirmed => break value,
+                    PairingStatus::Expired => {
+                        return Err("配对二维码已过期，请重新生成".to_owned());
+                    }
+                    PairingStatus::Canceled => {
+                        return Err("配对已取消，请重新生成二维码".to_owned());
+                    }
+                    PairingStatus::Open => return Err("配对结果状态无效".to_owned()),
+                }
+            };
+            let vault_id = result
+                .vault_id
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "配对结果缺少同步空间标识".to_owned())?;
+            validate_identifier(&vault_id, "vaultId")?;
+            if link
+                .vault_id
+                .as_deref()
+                .is_some_and(|value| value != vault_id)
+                || expected_vault_id.is_some_and(|value| value != vault_id)
+            {
+                return Err("配对二维码属于另一个同步空间，Windows 没有切换本地同步身份".to_owned());
+            }
+            let device_id = result
+                .device_id
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "配对结果缺少设备标识".to_owned())?;
+            validate_identifier(&device_id, "deviceId")?;
+            if device_id != claim.device_id {
+                return Err("配对结果中的设备标识与认领响应不一致".to_owned());
+            }
+            if result.initiator_public_key.as_deref() != Some(link.initiator_public_key.as_str()) {
+                return Err("配对结果中的发起方公钥不一致".to_owned());
+            }
+            let envelope = result
+                .vault_key_envelope
+                .ok_or_else(|| "配对结果缺少同步密钥".to_owned())?;
+            let mut vault_key =
+                open_pairing_vault_key(&envelope, &session_key[..], &link.pairing_id, &device_id)
+                    .map_err(|error| error.to_string())?;
+            let encoded_vault_key = base64url_encode(&vault_key);
+            vault_key.zeroize();
+            Ok(JoinedPairing {
+                vault_id,
+                device_id,
+                device_token: device_token.clone(),
+                vault_key: encoded_vault_key,
+            })
+        })();
+        token_bytes.zeroize();
+        result
+    }
+
+    fn claim_pairing(
+        &self,
+        pairing_id: &str,
+        pairing_secret: &str,
+        device_token: &str,
+        device_name: &str,
+        public_key: &str,
+    ) -> Result<PairingClaimData, String> {
+        let data: PairingClaimData = self.send_public_json(
+            "POST",
+            &["v1", "pairings", pairing_id, "claim"],
+            &PairingClaimRequest {
+                pairing_secret: pairing_secret.to_owned(),
+                device_token: device_token.to_owned(),
+                device: DeviceRegistration {
+                    name: device_name.trim().to_owned(),
+                    platform: DevicePlatform::Windows,
+                    public_key: Some(public_key.to_owned()),
+                },
+            },
+            &[202],
+        )?;
+        validate_identifier(&data.device_id, "deviceId")?;
+        Ok(data)
+    }
+
+    fn pairing_result(
+        &self,
+        pairing_id: &str,
+        pairing_secret: &str,
+        device_token: &str,
+    ) -> Result<PairingResultData, String> {
+        self.send_public_json(
+            "POST",
+            &["v1", "pairings", pairing_id, "result"],
+            &PairingResultRequest {
+                pairing_secret: pairing_secret.to_owned(),
+                device_token: device_token.to_owned(),
+            },
+            &[200, 202],
+        )
+    }
+
     pub fn confirm_pairing(
         &self,
         pairing_id: &str,
@@ -301,6 +565,25 @@ impl<T: HttpTransport> WorkerClient<T> {
             return Err("确认配对响应与当前会话不一致".to_owned());
         }
         Ok(())
+    }
+
+    fn send_public_json<Input: Serialize, Output: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        path: &[&str],
+        input: &Input,
+        accepted: &[u16],
+    ) -> Result<Output, String> {
+        let body =
+            serde_json::to_vec(input).map_err(|error| format!("无法编码配对请求：{error}"))?;
+        let response = self.transport.execute(HttpRequest {
+            method,
+            url: self.endpoint.append_path(path)?,
+            headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
+            body,
+            maximum_response_bytes: MAXIMUM_RESPONSE_BYTES,
+        })?;
+        decode_response(response, accepted)
     }
 
     fn send_json<Input: Serialize, Output: DeserializeOwned>(
@@ -347,6 +630,42 @@ struct CreateVaultRequest {
 #[serde(rename_all = "camelCase")]
 struct CreatePairingRequest {
     public_key: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PairingClaimRequest {
+    pairing_secret: String,
+    device_token: String,
+    device: DeviceRegistration,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PairingClaimData {
+    pairing_id: String,
+    status: PairingStatus,
+    device_id: String,
+    expires_at: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PairingResultRequest {
+    pairing_secret: String,
+    device_token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PairingResultData {
+    pairing_id: String,
+    status: PairingStatus,
+    vault_id: Option<String>,
+    device_id: Option<String>,
+    initiator_public_key: Option<String>,
+    vault_key_envelope: Option<EncryptedEnvelope>,
+    expires_at: i64,
 }
 
 #[derive(Serialize)]
@@ -585,6 +904,30 @@ mod tests {
                 r#"{{"ok":true,"data":{{"push":{{"received":0,"inserted":0,"duplicates":0}},"pull":[{{"serverSeq":{cursor},"opId":"operation-{cursor:08}","deviceId":"device-remote-1","entityId":"task-remote-0001","kind":"upsert","lamport":{lamport},"ciphertext":"{ciphertext}","nonce":"{nonce}","createdAt":1000}}],"cursor":{cursor},"hasMore":{has_more},"serverTime":1000}},"requestId":"{request_id}"}}"#
             ),
         )
+    }
+
+    #[test]
+    fn pairing_link_parses_vault_id_and_rejects_unknown_fields() {
+        let secret = base64url_encode(&[4; 32]);
+        let public_key = base64url_encode(&[5; 32]);
+        let source = format!(
+            "wootodo://pair?endpoint=https%3A%2F%2Fsync.example.com&pairingId=pair-demo-001&pairingSecret={secret}&initiatorPublicKey={public_key}&vaultId=vault-demo-001"
+        );
+        let parsed = PairingLink::parse(&source).unwrap();
+        assert_eq!(parsed.endpoint, "https://sync.example.com");
+        assert_eq!(parsed.vault_id.as_deref(), Some("vault-demo-001"));
+        assert!(PairingLink::parse(&format!("{source}&extra=1")).is_err());
+        assert!(PairingLink::parse(&format!("{source}&vaultId=vault-demo-002")).is_err());
+    }
+
+    #[test]
+    fn legacy_pairing_link_without_vault_id_remains_supported() {
+        let secret = base64url_encode(&[4; 32]);
+        let public_key = base64url_encode(&[5; 32]);
+        let source = format!(
+            "wootodo://pair?endpoint=https%3A%2F%2Fsync.example.com&pairingId=pair-demo-001&pairingSecret={secret}&initiatorPublicKey={public_key}"
+        );
+        assert_eq!(PairingLink::parse(&source).unwrap().vault_id, None);
     }
 
     #[test]

@@ -126,11 +126,11 @@ impl HttpTransport for WinHttpTransport {
 }
 
 fn validate_worker(url: &Url) -> Result<(), String> {
-    if url.scheme() != "https" || url.host().is_none() {
+    if !url.scheme().eq_ignore_ascii_case("https") || url.host().is_none() {
         return Err("Worker 同步必须使用有效 HTTPS 地址".to_owned());
     }
-    if !matches!(url.path(), "" | "/") {
-        return Err("Worker 地址只填写根地址，不要附加 /v1 或其他路径".to_owned());
+    if !is_valid_api_base_path(url.path()) {
+        return Err("Worker 地址不能附加 /v1 或其他 API 路径".to_owned());
     }
     let host = url.host().expect("已检查 host");
     if is_current_device_host(&host) {
@@ -140,8 +140,11 @@ fn validate_worker(url: &Url) -> Result<(), String> {
 }
 
 fn validate_local_network(url: &Url) -> Result<(), String> {
-    if url.scheme() != "http" || url.port().is_none() || !matches!(url.path(), "" | "/") {
-        return Err("同一网络同步地址必须是带端口的 HTTP 根地址".to_owned());
+    if !url.scheme().eq_ignore_ascii_case("http")
+        || url.port().is_none()
+        || !is_valid_api_base_path(url.path())
+    {
+        return Err("同一网络同步地址必须是带端口的 HTTP 服务地址".to_owned());
     }
     let Some(host) = url.host() else {
         return Err("同一网络同步地址缺少主机".to_owned());
@@ -159,10 +162,19 @@ fn validate_local_network(url: &Url) -> Result<(), String> {
 }
 
 fn validate_webdav(url: &Url) -> Result<(), String> {
-    if url.scheme() != "https" || url.host().is_none() {
+    if !url.scheme().eq_ignore_ascii_case("https") || url.host().is_none() {
         return Err("WebDAV 服务必须使用有效 HTTPS 地址".to_owned());
     }
     Ok(())
+}
+
+fn is_valid_api_base_path(path: &str) -> bool {
+    let trimmed = path.trim_end_matches('/');
+    trimmed.is_empty()
+        || !trimmed
+            .rsplit('/')
+            .next()
+            .is_some_and(|value| value.eq_ignore_ascii_case("v1"))
 }
 
 fn validate_webdav_source(value: &str) -> Result<(), String> {

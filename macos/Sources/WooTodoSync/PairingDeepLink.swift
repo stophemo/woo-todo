@@ -21,6 +21,10 @@ public enum SyncEndpointPolicy {
         }
 
         let scheme = endpoint.scheme?.lowercased()
+        let apiBasePath = endpoint.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if apiBasePath.split(separator: "/").last?.lowercased() == "v1" {
+            return .invalid
+        }
         let isLoopback = host == "127.0.0.1" || host == "localhost" || host == "::1"
         if isLoopback {
             if scheme == "https" || (scheme == "http" && host == "127.0.0.1") {
@@ -137,12 +141,14 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
     public let pairingId: String
     public let pairingSecret: String
     public let initiatorPublicKey: String
+    public let vaultId: String?
 
     public init(
         endpoint: URL,
         pairingId: String,
         pairingSecret: String,
-        initiatorPublicKey: String
+        initiatorPublicKey: String,
+        vaultId: String? = nil
     ) throws {
         guard SyncEndpointPolicy.isAllowed(endpoint) else {
             throw PairingDeepLinkError.invalidEndpoint
@@ -154,6 +160,12 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
               pairingId.rangeOfCharacter(from: identifierCharacters.inverted) == nil else {
             throw PairingDeepLinkError.invalidPairingId
         }
+        if let vaultId {
+            if !(1...128).contains(vaultId.count) ||
+                vaultId.rangeOfCharacter(from: identifierCharacters.inverted) != nil {
+                throw PairingDeepLinkError.invalidPairingId
+            }
+        }
         guard (try? Base64URL.decode(pairingSecret).count) == 32 else {
             throw PairingDeepLinkError.invalidSecret
         }
@@ -164,19 +176,24 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
         self.pairingId = pairingId
         self.pairingSecret = pairingSecret
         self.initiatorPublicKey = initiatorPublicKey
+        self.vaultId = vaultId
     }
 
     public init(url: URL) throws {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "wootodo",
-              components.host == "pair",
+              components.host?.lowercased() == "pair",
               components.path.isEmpty else {
             throw PairingDeepLinkError.invalidScheme
         }
-        let expectedNames = Set(["endpoint", "pairingId", "pairingSecret", "initiatorPublicKey"])
+        let requiredNames = Set(["endpoint", "pairingId", "pairingSecret", "initiatorPublicKey"])
+        let allowedNames = requiredNames.union(["vaultId"])
         let items = components.queryItems ?? []
-        guard items.count == expectedNames.count,
-              Set(items.map(\.name)) == expectedNames else {
+        let names = items.map(\.name)
+        guard names.count >= requiredNames.count,
+              Set(names).isSuperset(of: requiredNames),
+              Set(names).isSubset(of: allowedNames),
+              names.count == Set(names).count else {
             throw PairingDeepLinkError.duplicateOrUnknownField
         }
         func value(_ name: String) throws -> String {
@@ -188,11 +205,21 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
         guard let endpoint = URL(string: try value("endpoint")) else {
             throw PairingDeepLinkError.invalidEndpoint
         }
+        let vaultId: String?
+        if let vaultItem = items.first(where: { $0.name == "vaultId" }) {
+            guard let value = vaultItem.value, !value.isEmpty else {
+                throw PairingDeepLinkError.missingField("vaultId")
+            }
+            vaultId = value
+        } else {
+            vaultId = nil
+        }
         try self.init(
             endpoint: endpoint,
             pairingId: value("pairingId"),
             pairingSecret: value("pairingSecret"),
-            initiatorPublicKey: value("initiatorPublicKey")
+            initiatorPublicKey: value("initiatorPublicKey"),
+            vaultId: vaultId
         )
     }
 
@@ -205,7 +232,7 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
             URLQueryItem(name: "pairingId", value: pairingId),
             URLQueryItem(name: "pairingSecret", value: pairingSecret),
             URLQueryItem(name: "initiatorPublicKey", value: initiatorPublicKey),
-        ]
+        ] + (vaultId.map { [URLQueryItem(name: "vaultId", value: $0)] } ?? [])
         guard let url = components.url else {
             throw PairingDeepLinkError.cannotEncode
         }

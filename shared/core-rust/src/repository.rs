@@ -456,6 +456,24 @@ impl TaskRepository {
         Ok(())
     }
 
+    /// 清空本地任务（含删除记录），不生成任何同步操作。
+    ///
+    /// 用于加入已有同步空间时以远端数据为准：本地任务从本机移除，
+    /// 同步 outbox 与延迟写入队列一并清空，因此不会上传、不会影响
+    /// 其他设备的真实数据；之后的首次同步会把同步空间的全部数据
+    /// 拉到本机。应在 [`Self::replace_sync_binding_with_lamport_floor`]
+    /// 之后调用，否则绑定过程会把保留的本地任务重新写入 outbox。
+    pub fn clear_local_tasks(&mut self) -> CoreResult<()> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute("DELETE FROM tasks", [])?;
+        transaction.execute("DELETE FROM deleted_tasks", [])?;
+        transaction.execute("DELETE FROM sync_outbox", [])?;
+        transaction.execute("DELETE FROM sync_deferred_upserts", [])?;
+        transaction.execute("DELETE FROM sync_deferred_deletions", [])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn replace_sync_binding(&mut self, configuration: SyncConfiguration) -> CoreResult<()> {
         self.replace_sync_binding_with_lamport_floor(configuration, 0)
     }

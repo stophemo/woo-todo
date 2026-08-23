@@ -24,6 +24,9 @@ data class PairingCompletion(
 
 sealed class PairingException(message: String) : Exception(message) {
     data object AlreadyPaired : PairingException("本机已经完成配对")
+    data object DifferentSyncSpace : PairingException(
+        "配对二维码属于另一个同步空间。为避免 Mac、Android 和 Windows 被拆成多套数据，本机没有切换同步身份。",
+    )
     data object CurrentDeviceOnlyEndpoint : PairingException(
         "这个二维码使用了 127.0.0.1/localhost，它在手机上只代表手机自己。请在 Mac 选择局域网同步重新生成二维码，或改用两台设备都能访问的 HTTPS 同步服务。",
     )
@@ -67,6 +70,11 @@ class PairingCoordinator(
         val previousCredentials = credentialsStore.load()
         if (previousCredentials != null && !replaceExistingCredentials) {
             throw PairingException.AlreadyPaired
+        }
+        if (previousCredentials != null && replaceExistingCredentials &&
+            link.vaultId != null && previousCredentials.vaultId != link.vaultId
+        ) {
+            throw PairingException.DifferentSyncSpace
         }
         if (!SyncEndpointPolicy.isCrossDevice(URI(link.endpoint))) {
             throw PairingException.CurrentDeviceOnlyEndpoint
@@ -137,6 +145,11 @@ class PairingCoordinator(
                     }
 
                     PairingStatus.CONFIRMED -> {
+                        if (previousCredentials != null && replaceExistingCredentials &&
+                            result.vaultId != previousCredentials.vaultId
+                        ) {
+                            throw PairingException.DifferentSyncSpace
+                        }
                         val credentials = openCredentials(
                             link = link,
                             claim = claim,
@@ -195,6 +208,9 @@ class PairingCoordinator(
     ): SyncCredentials {
         val vaultId = result.vaultId?.takeIf { it.isNotBlank() }
             ?: throw PairingException.InvalidResult
+        if (link.vaultId != null && vaultId != link.vaultId) {
+            throw PairingException.DifferentSyncSpace
+        }
         val deviceId = result.deviceId?.takeIf { it.isNotBlank() }
             ?: throw PairingException.InvalidResult
         val initiatorPublicKey = result.initiatorPublicKey

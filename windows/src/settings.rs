@@ -9,9 +9,9 @@ use crate::shortcut::ShortcutConfiguration;
 
 const DEFAULT_LEFT: f64 = 80.0;
 const DEFAULT_TOP: f64 = 80.0;
-const DEFAULT_WIDTH: f64 = 380.0;
-const DEFAULT_HEIGHT: f64 = 540.0;
-const DEFAULT_OPACITY: f64 = 0.92;
+const DEFAULT_WIDTH: f64 = 610.0;
+const DEFAULT_HEIGHT: f64 = 440.0;
+const DEFAULT_OPACITY: f64 = 1.0;
 const MINIMUM_OPACITY_PERCENT: f64 = 20.0;
 const OPACITY_STEP_PERCENT: f64 = 10.0;
 
@@ -25,6 +25,7 @@ pub struct AppSettings {
     pub opacity: f64,
     pub topmost: bool,
     pub click_through: bool,
+    pub desktop_widget: bool,
     pub display: DisplayConfiguration,
     pub shortcuts: ShortcutConfiguration,
     /// 当前 Windows 设备是否负责承载“同一网络同步”服务。
@@ -46,6 +47,7 @@ struct PersistedSettings {
     opacity: f64,
     topmost: bool,
     click_through: bool,
+    desktop_widget: bool,
     display: Value,
     shortcuts: Value,
     local_network_host: bool,
@@ -63,6 +65,7 @@ impl Default for PersistedSettings {
             opacity: DEFAULT_OPACITY,
             topmost: true,
             click_through: false,
+            desktop_widget: false,
             display: serde_json::to_value(DisplayConfiguration::default()).unwrap_or(Value::Null),
             shortcuts: serde_json::to_value(ShortcutConfiguration::default())
                 .unwrap_or(Value::Null),
@@ -90,6 +93,7 @@ impl AppSettings {
             .map(ShortcutConfiguration::with_missing_defaults)
             .filter(|configuration| configuration.validate().is_ok())
             .unwrap_or_default();
+        let desktop_widget = loaded.desktop_widget;
         Self {
             path,
             board_left: loaded.board_left,
@@ -97,8 +101,9 @@ impl AppSettings {
             board_width: loaded.board_width.max(320.0),
             board_height: loaded.board_height.max(360.0),
             opacity: normalize_opacity(loaded.opacity),
-            topmost: loaded.topmost,
-            click_through: loaded.click_through,
+            topmost: loaded.topmost && !desktop_widget,
+            click_through: loaded.click_through && !desktop_widget,
+            desktop_widget,
             display,
             shortcuts,
             local_network_host: loaded.local_network_host,
@@ -126,6 +131,7 @@ impl AppSettings {
             opacity: self.opacity,
             topmost: self.topmost,
             click_through: self.click_through,
+            desktop_widget: self.desktop_widget,
             display,
             shortcuts,
             local_network_host: self.local_network_host,
@@ -136,10 +142,8 @@ impl AppSettings {
             .map_err(|error| format!("无法编码设置：{error}"))?;
         let temporary = self.path.with_extension("json.tmp");
         fs::write(&temporary, source).map_err(|error| format!("无法写入设置：{error}"))?;
-        if self.path.exists() {
-            fs::remove_file(&self.path).map_err(|error| format!("无法替换旧设置：{error}"))?;
-        }
-        fs::rename(&temporary, &self.path).map_err(|error| format!("无法保存设置：{error}"))
+        replace_file_atomically(&temporary, &self.path)
+            .map_err(|error| format!("无法保存设置：{error}"))
     }
 
     pub fn opacity_percent(&self) -> u8 {
@@ -151,6 +155,40 @@ fn normalize_opacity(value: f64) -> f64 {
     let percent = (value * 100.0).clamp(MINIMUM_OPACITY_PERCENT, 100.0);
     let stepped = (percent / OPACITY_STEP_PERCENT).round() * OPACITY_STEP_PERCENT;
     stepped.clamp(MINIMUM_OPACITY_PERCENT, 100.0) / 100.0
+}
+
+/// 用 `MoveFileExW(REPLACE_EXISTING)` 原子替换目标文件，
+/// 避免“先删除旧设置再改名”在崩溃时丢失 settings.json。
+fn replace_file_atomically(source: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let status = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if status == 0 {
+        return Err(format!("原子替换失败（错误 {}）", unsafe {
+            GetLastError()
+        }));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -183,6 +221,7 @@ mod tests {
         assert_eq!(settings.opacity, 0.20);
         assert!(!settings.topmost);
         assert!(settings.click_through);
+        assert!(!settings.desktop_widget);
         assert_eq!(settings.last_update_successful_check_at, 0);
         assert_eq!(settings.last_update_attempt_at, 0);
         assert_eq!(settings.display, DisplayConfiguration::default());
@@ -204,6 +243,26 @@ mod tests {
         assert!(restored.click_through);
         assert_eq!(restored.last_update_successful_check_at, 123_000);
         assert_eq!(restored.last_update_attempt_at, 124_000);
+    }
+
+    #[test]
+    fn desktop_widget_mode_normalizes_conflicting_panel_states() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("settings.json"),
+            r#"{
+  "Topmost": true,
+  "ClickThrough": true,
+  "DesktopWidget": true
+}"#,
+        )
+        .unwrap();
+
+        let settings = AppSettings::load(directory.path());
+
+        assert!(settings.desktop_widget);
+        assert!(!settings.topmost);
+        assert!(!settings.click_through);
     }
 
     #[test]

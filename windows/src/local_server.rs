@@ -456,6 +456,7 @@ impl LocalServerStore {
         })
     }
 
+    #[allow(dead_code)] // 供同步运行时统计本机最高水位时使用
     pub fn highest_lamport(&self) -> i64 {
         self.state
             .operations
@@ -1754,6 +1755,7 @@ impl LocalNetworkHttpServer {
         &self.endpoint
     }
 
+    #[allow(dead_code)] // 供调用方在开启服务前确认水位与运行状态
     pub fn highest_lamport(&self) -> Result<i64, LocalServerError> {
         self.store
             .lock()
@@ -1768,6 +1770,7 @@ impl LocalNetworkHttpServer {
             .map_err(|error| LocalServerError::ListenerFailed(error.to_string()))
     }
 
+    #[allow(dead_code)] // 供调用方在开启服务前确认运行状态
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire) && self.accept_thread.is_some()
     }

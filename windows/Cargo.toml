@@ -3,16 +3,20 @@ name = "woo-todo-windows"
 version = "0.1.31"
 edition = "2024"
 license = "MIT"
-description = "Woo Todo Windows 原生 Win32 客户端"
+description = "Woo Todo Windows Tauri 2 客户端"
 build = "build.rs"
 
 [[bin]]
 name = "WooTodo"
 path = "src/main.rs"
 
+[features]
+legacy-win32 = []
+
 [dependencies]
 base64 = "0.22"
 chrono = { version = "0.4.41", default-features = false, features = ["clock", "serde"] }
+icu_calendar = { version = "2.2", features = ["compiled_data"] }
 quick-xml = "0.38"
 qrcode = { version = "0.14", default-features = false }
 serde = { version = "1.0.219", features = ["derive"] }
@@ -24,6 +28,8 @@ zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 zeroize = "1.8"
 
 [target.'cfg(windows)'.dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
 windows = { version = "0.62.2", features = [
   "Data_Xml_Dom",
   "Foundation",
@@ -47,6 +53,7 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_System_Registry",
+  "Win32_Storage_FileSystem",
   "Win32_System_Threading",
   "Win32_UI_Controls",
   "Win32_UI_Controls_Dialogs",
@@ -56,8 +63,8 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
-[build-dependencies]
-winresource = "0.1.23"
+[target.'cfg(windows)'.build-dependencies]
+tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 tempfile = "3.20.0"

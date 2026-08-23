@@ -59,7 +59,7 @@ pub fn date_with_weekday(date: NaiveDate) -> String {
 pub fn task_badges(task: &TodoTask, today: NaiveDate) -> String {
     let mut values = Vec::new();
     if task.recurrence == Recurrence::Repeat {
-        values.push("重复".to_owned());
+        values.push(time_type_label(task.time_type).to_owned());
     }
     if let Some(reminder) = task.reminder_time {
         values.push(format!("提醒 {:02}:{:02}", reminder.hour, reminder.minute));

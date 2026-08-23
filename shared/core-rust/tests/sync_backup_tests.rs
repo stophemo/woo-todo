@@ -444,6 +444,34 @@ fn replacing_binding_uses_remote_lamport_floor_across_repeated_switches() {
 }
 
 #[test]
+fn clearing_local_tasks_never_generates_sync_operations() {
+    let (_directory, mut repository) = open_repository();
+    let kept = create_task(&mut repository, "保留到新的同步空间", 100);
+    let second = create_task(&mut repository, "另一条本地任务", 101);
+    repository
+        .configure_sync(sync_configuration("vault-a", "device-a", 4))
+        .unwrap();
+    repository
+        .replace_sync_binding_with_lamport_floor(sync_configuration("vault-b", "device-b", 8), 50)
+        .unwrap();
+
+    repository.clear_local_tasks().unwrap();
+
+    assert!(repository.find(&kept).unwrap().is_none());
+    assert!(repository.find(&second).unwrap().is_none());
+    assert_eq!(repository.fetch_all().unwrap().len(), 0);
+    // 清空绝不进入 outbox：不会把本地数据推送到同步空间
+    assert_eq!(repository.pending_operations(100).unwrap().len(), 0);
+    let state = repository.sync_state().unwrap();
+    assert_eq!(state.vault_id.as_deref(), Some("vault-b"));
+    assert_eq!(state.device_id.as_deref(), Some("device-b"));
+    // 绑定仍在，拉取水位不受影响（replace 会把保留任务重新入队，
+    // 水位可能略高于远端下限，但不影响用 cursor 拉取远端全部数据）
+    assert!(state.lamport >= 50);
+    assert_eq!(state.cursor, 0);
+}
+
+#[test]
 fn replacing_binding_rejects_invalid_lamport_floor_without_mutation() {
     let (_directory, mut repository) = open_repository();
     create_task(&mut repository, "不可破坏", 100);

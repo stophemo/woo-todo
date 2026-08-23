@@ -16,7 +16,8 @@ object SyncEndpointPolicy {
     fun scope(endpoint: URI): SyncEndpointScope {
         val host = endpoint.host?.lowercase() ?: return SyncEndpointScope.INVALID
         if (endpoint.rawUserInfo != null || endpoint.rawQuery != null ||
-            endpoint.rawFragment != null
+            endpoint.rawFragment != null || endpoint.path.trimEnd('/').substringAfterLast('/')
+                .equals("v1", ignoreCase = true)
         ) {
             return SyncEndpointScope.INVALID
         }
@@ -75,10 +76,12 @@ data class PairingDeepLink(
     val pairingId: String,
     val pairingSecret: String,
     val initiatorPublicKey: String,
+    val vaultId: String? = null,
 ) {
     init {
         require(SyncEndpointPolicy.isAllowed(URI(endpoint)))
         require(identifier.matches(pairingId))
+        vaultId?.let { require(identifier.matches(it)) }
         require(Base64Url.decode(pairingSecret).size == 32)
         require(Base64Url.decode(initiatorPublicKey).size == 32)
     }
@@ -89,7 +92,8 @@ data class PairingDeepLink(
             "pairingId" to pairingId,
             "pairingSecret" to pairingSecret,
             "initiatorPublicKey" to initiatorPublicKey,
-        ).entries.joinToString("&") { (key, value) ->
+        ).apply { vaultId?.let { put("vaultId", it) } }
+            .entries.joinToString("&") { (key, value) ->
             "$key=${URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")}"
         }
         return "wootodo://pair?$query"
@@ -103,11 +107,12 @@ data class PairingDeepLink(
         private val identifier = Regex("^[A-Za-z0-9._:-]{1,128}$")
         private val requiredKeys =
             setOf("endpoint", "pairingId", "pairingSecret", "initiatorPublicKey")
+        private val allowedKeys = requiredKeys + "vaultId"
 
         fun parse(source: String): PairingDeepLink {
             val uri = URI(source)
             require(
-                uri.scheme?.lowercase() == "wootodo" && uri.host == "pair" &&
+                uri.scheme?.lowercase() == "wootodo" && uri.host?.equals("pair", ignoreCase = true) == true &&
                     uri.rawPath.isNullOrEmpty() && uri.rawFragment == null,
             )
             val values = linkedMapOf<String, String>()
@@ -115,15 +120,22 @@ data class PairingDeepLink(
                 val pair = part.split('=', limit = 2)
                 require(pair.size == 2)
                 val key = decode(pair[0])
-                require(key in requiredKeys && key !in values)
+                require(key in allowedKeys && key !in values)
                 values[key] = decode(pair[1])
             }
-            require(values.keys == requiredKeys)
+            require(values.keys.containsAll(requiredKeys))
+            require(values.keys.all { it in allowedKeys })
             val endpoint = values.getValue("endpoint")
             val pairingId = values.getValue("pairingId")
             val pairingSecret = values.getValue("pairingSecret")
             val publicKey = values.getValue("initiatorPublicKey")
-            return PairingDeepLink(endpoint, pairingId, pairingSecret, publicKey)
+            return PairingDeepLink(
+                endpoint,
+                pairingId,
+                pairingSecret,
+                publicKey,
+                values["vaultId"],
+            )
         }
 
         private fun decode(value: String): String =

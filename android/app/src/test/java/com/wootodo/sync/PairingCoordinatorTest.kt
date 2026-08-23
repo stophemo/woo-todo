@@ -88,7 +88,7 @@ class PairingCoordinatorTest {
     }
 
     @Test
-    fun `用户确认后可用新二维码替换已清理的旧设备凭据`() = runBlocking {
+    fun `用户确认后拒绝属于另一个同步空间的新二维码`() = runBlocking {
         val fixture = PairingFixture()
         val oldCredentials = SyncCredentials(
             endpoint = "http://192.168.1.10:48473",
@@ -107,15 +107,16 @@ class PairingCoordinatorTest {
             pause = {},
         )
 
-        val completion = coordinator.pair(
-            link = fixture.link,
-            deviceName = "Android 设备",
-            replaceExistingCredentials = true,
-        )
+        val error = runCatching {
+            coordinator.pair(
+                link = fixture.link,
+                deviceName = "Android 设备",
+                replaceExistingCredentials = true,
+            )
+        }.exceptionOrNull()
 
-        assertTrue(completion.replacedExistingCredentials)
-        assertEquals(fixture.deviceId, store.credentials?.deviceId)
-        assertEquals(fixture.vaultId, store.credentials?.vaultId)
+        assertSame(PairingException.DifferentSyncSpace, error)
+        assertEquals(oldCredentials, store.credentials)
     }
 
     @Test
@@ -160,6 +161,7 @@ private class PairingFixture(
         pairingId = pairingId,
         pairingSecret = Base64Url.encode(pairingSecret),
         initiatorPublicKey = initiator.publicKeyBase64Url,
+        vaultId = vaultId,
     )
     val transport = ConfirmingPairingTransport(this, wrongInitiatorInResult)
 }

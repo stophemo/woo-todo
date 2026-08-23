@@ -1,0 +1,21 @@
+{
+  "name": "woo-todo-windows-ui",
+  "private": true,
+  "version": "0.1.31",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 1420",
+    "tauri:dev": "cd .. && npm exec --prefix ui -- tauri dev",
+    "tauri:build": "cd .. && npm exec --prefix ui -- tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "lucide": "^0.468.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4",
+    "vite": "^7.1.11"
+  }
+}

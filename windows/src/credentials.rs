@@ -596,11 +596,25 @@ fn valid_base64url_32(value: &str) -> bool {
 }
 
 fn valid_endpoint_text(value: &str, require_https: bool) -> bool {
-    let expected = if require_https { "https://" } else { "http://" };
-    value.starts_with(expected)
-        && value.len() > expected.len()
-        && !value.chars().any(char::is_control)
-        && !value.contains([' ', '\\', '@', '#', '?'])
+    if value.len() > 2_048
+        || value.chars().any(char::is_control)
+        || value.contains([' ', '\\', '@', '#', '?'])
+    {
+        return false;
+    }
+    let Ok(url) = Url::parse(value) else {
+        return false;
+    };
+    let expected_scheme = if require_https { "https" } else { "http" };
+    if !url.scheme().eq_ignore_ascii_case(expected_scheme) {
+        return false;
+    }
+    let scope = if require_https {
+        EndpointScope::Worker
+    } else {
+        EndpointScope::LocalNetwork
+    };
+    ValidatedEndpoint::parse(value, scope).is_ok()
 }
 
 fn valid_webdav_endpoint(value: &str) -> bool {

@@ -9,16 +9,20 @@ Set-StrictMode -Version Latest
 
 $windowsDirectory = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $windowsDirectory "Cargo.toml"
+$uiDirectory = Join-Path $windowsDirectory "ui"
 $distDirectory = Join-Path $windowsDirectory "dist"
 $publishDirectory = Join-Path $distDirectory "publish/WooTodo"
 
-foreach ($requiredPath in @($manifestPath)) {
+foreach ($requiredPath in @($manifestPath, (Join-Path $uiDirectory "package.json"), (Join-Path $uiDirectory "package-lock.json"))) {
     if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
         throw "缺少 Windows 打包文件：$requiredPath"
     }
 }
 if ($null -eq (Get-Command cargo -ErrorAction SilentlyContinue)) {
     throw "缺少 cargo 命令，请安装 Rust stable 工具链"
+}
+if ($null -eq (Get-Command npm -ErrorAction SilentlyContinue)) {
+    throw "缺少 npm 命令，请安装 Node.js 22+"
 }
 
 $metadataOutput = & cargo metadata `
@@ -62,7 +66,17 @@ if (Test-Path -LiteralPath $archivePath) {
     Remove-Item -LiteralPath $archivePath -Force
 }
 
-Write-Host "正在生成 Rust + Win32 x64 原生可执行文件..."
+Write-Host "正在构建 Tauri 2 前端资源..."
+& npm --prefix $uiDirectory ci
+if ($LASTEXITCODE -ne 0) {
+    throw "npm ci 失败，退出码：$LASTEXITCODE"
+}
+& npm --prefix $uiDirectory run build
+if ($LASTEXITCODE -ne 0) {
+    throw "前端构建失败，退出码：$LASTEXITCODE"
+}
+
+Write-Host "正在生成 Tauri 2 + Rust x64 可执行文件..."
 & cargo build `
     --manifest-path $manifestPath `
     --bin WooTodo `
@@ -83,7 +97,7 @@ Woo Todo Windows 实验版（不保证可用）
 
 此构建仅用于开发测试，不属于 Woo Todo 正式发布通道。
 它可能无法启动、功能不完整，并可能存在稳定性或数据兼容风险。请勿将其用于唯一或重要任务数据。
-后续 Windows 实验版需要手动下载并替换 WooTodo.exe。
+界面由 Tauri 2 + WebView2 提供，后续 Windows 实验版需要手动下载并替换 WooTodo.exe。
 "@ | Set-Content -LiteralPath $experimentalNotice -Encoding utf8
 
 Write-Host "正在生成 Windows 10/11 x64 实验版（不保证可用）免安装 ZIP..."

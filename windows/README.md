@@ -1,15 +1,15 @@
-# Woo Todo Windows 原生客户端
+# Woo Todo Windows 客户端
 
 > **Windows 客户端当前为实验版（不保证可用）。** 它可能无法启动、功能不完整，并可能存在稳定性或数据兼容风险。版本标签、压缩包文件名和包内说明文件都会明确标注 `experimental`；请勿用于唯一或重要任务数据。
 
-Windows 客户端使用 Rust、`windows-rs`、`windows-sys`、Win32 和 WinRT 通知 API 实现，不包含 Electron、WebView、跨端 UI 框架或 .NET 桌面运行时。Windows crate 直接依赖 `shared/core-rust/`，领域、SQLite 仓储与通知计划不经过 C ABI 或 JSON。任务读写始终落在本地 SQLite；网络不可用不会阻塞本地操作。
+Windows 客户端使用 Tauri 2、WebView2 和 Rust。界面由 `ui/` 中的 HTML/CSS/JavaScript 实现，任务、SQLite 仓储、同步运行时、通知和 Windows 系统集成仍由 Rust 负责。前端只通过 Tauri 命令访问领域能力，不复制任务结算规则；网络不可用不会阻塞本地操作。
 
 ## 系统要求
 
 - 运行：Windows 10 版本 2004（build 19041）或更高版本，x64 架构。
-- 开发：Windows x64 与 Rust stable（包含 `rustfmt`、`clippy` 和 MSVC 工具链）。
+- 开发：Windows x64、Rust stable、Node.js 22+、WebView2 Runtime（包含 `rustfmt`、`clippy` 和 MSVC 工具链）。
 
-GitHub Windows Prerelease 提供 x64 实验版免安装 ZIP，解压后可尝试运行根目录的 `WooTodo.exe`。实验包还包含 `WINDOWS-EXPERIMENTAL.txt`，再次说明它不保证可用。可执行文件静态链接 MSVC CRT，直接使用 Windows 自带的 Win32/WinRT 系统组件，目标机器不需要安装 Woo Todo、.NET 或 Visual C++ Runtime。
+GitHub Windows Prerelease 提供 x64 实验版免安装 ZIP。Tauri 会把前端资源打入可执行文件；目标机器需要 Windows 10 2004+ 和 WebView2 Runtime。
 
 当前程序未做代码签名，Windows SmartScreen 可能在首次下载或启动时显示来源提示。
 
@@ -22,7 +22,7 @@ GitHub Windows Prerelease 提供 x64 实验版免安装 ZIP，解压后可尝试
 
 `settings.json` 只保存窗口、显示、快捷键和本机是否承载局域网服务等非敏感设置，不写入设备令牌、应用密码或同步密钥。
 
-Windows 实验版不参与正式版应用内自动更新。托盘菜单检查到只有 macOS/Android 正式包时会明确提示 Windows 仍是实验版；后续 Windows 版本需要从对应 Prerelease 手动下载并替换 `WooTodo.exe`。手动替换或移动程序不会删除本地任务和设置；Rust 版本继续兼容旧客户端的数据库路径和 PascalCase 设置字段。
+Windows 实验版不参与正式版应用内自动更新。后续 Windows 版本需要从对应 Prerelease 手动安装；升级不会删除本地任务和设置，Tauri 版本继续兼容旧客户端的数据库路径和 PascalCase 设置字段。
 
 ## 构建与测试
 
@@ -32,12 +32,13 @@ Windows 实验版不参与正式版应用内自动更新。托盘菜单检查到
 cargo fmt --manifest-path windows/Cargo.toml --all -- --check
 cargo test --manifest-path windows/Cargo.toml --locked --all-targets
 cargo clippy --manifest-path windows/Cargo.toml --locked --all-targets -- -D warnings
-cargo run --manifest-path windows/Cargo.toml
+npm --prefix windows/ui install
+npm --prefix windows/ui run tauri:dev
 ```
 
 ## 生成发布包
 
-`package.ps1` 会锁定 `Cargo.lock`，为 MSVC x64 目标构建实验版，并生成包含原生 `WooTodo.exe` 和 `WINDOWS-EXPERIMENTAL.txt` 的 ZIP：
+`package.ps1` 会锁定 `Cargo.lock`，为 MSVC x64 目标构建 Tauri 实验版：
 
 ```powershell
 pwsh -NoProfile -File windows/scripts/package.ps1
@@ -52,30 +53,33 @@ windows/dist/Woo-Todo-v0.1.31-windows-x64-experimental.zip
 
 正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和优化构建，但 Windows ZIP 会发布到独立的 `windows-vX.Y.Z-experimental` GitHub Prerelease，绝不进入 macOS/Android 的正式 Release。Windows 界面交互、系统集成和升级流程仍需真实 Windows 设备手动验证，自动测试通过不代表实验版可正常使用。
 
-## 功能范围
+## Tauri 迁移范围
 
-Windows 提供本地 SQLite 任务、日/周/月/闲时、重复与 Pass、截止日期、历史统计、任务级系统提醒、悬浮任务板、托盘和可自定义全局快捷键。一次性任务跨周期保留到完成或手动 Pass；当前重复周期和一次性任务误点完成后，可取消复选框或使用“取消完成”恢复为待办，已结束的重复实例历史与 Pass 不可改写。
+当前默认 Tauri 界面已经接入现有 SQLite，并支持日/周/月/闲时导航、历史与统计、任务新增和编辑、完成与撤销、Pass、删除、同级排序，以及独立悬浮任务板。任务板显示阳历、农历与节气/节日，可调整不透明度、置顶和鼠标穿透。
 
-“同步”支持三种互斥方式：自建 Worker、由本机承载的同一网络同步、第三方 WebDAV。可以从当前方式直接切换，切换前先验证新端点或 WebDAV 目录；本地任务和显示配置会保留并在新空间建立基线。Worker 与同一网络方式支持 10 分钟配对二维码、六位码核对、设备列表和撤销；WebDAV 保存后可生成或复制供 Android 扫描的完整配置二维码。配置二维码含服务地址、认证凭据和 `vault key`，离开“同步”或关闭窗口会从界面和内存清除。
-
-同一网络模式固定监听 TCP `48473`，需要允许 Windows Defender 防火墙中的专用网络访问；休眠唤醒或本机 IP 变化后会刷新地址并恢复服务。局域网服务只适合可信网络，不提供公网 TLS。
+同步运行时会恢复 Windows Credential Manager 中已有的 Worker、局域网或 WebDAV 凭据，并支持手动触发同步。Tauri 托盘已经提供主窗口、任务板、同步和退出入口；同步页支持粘贴由 Mac 或已有 Android 同步空间生成的 `wootodo://pair` 配对链接加入同一 vault。加入前会校验 vaultId，不同同步空间会拒绝替换；本地任务与待同步数据保留。Windows 不应先创建新空间再让 Android 扫码，否则三端会被拆成不同同步空间。旧 Win32 实现暂时保留在 `src/native/` 供迁移时对照。
 
 同步凭据保存在 Windows Credential Manager，不会写入 `settings.json`。任务始终先写入本地 SQLite，网络不可用时仍可继续编辑。
 
-悬浮板透明度和鼠标穿透是两个独立设置：透明度可在 20%～100% 调整，开启或关闭穿透不会改写透明度。
+悬浮板透明度和鼠标穿透是两个独立设置：透明度可在 20%～100% 调整，开启或关闭穿透不会改写透明度。默认悬浮板尺寸为 610×440、不透明度 100%，与 macOS 面板一致。桌面小组件模式会把任务板保持在普通窗口底层，并与“始终置顶”和“鼠标穿透”互斥。
+
+运行中的问题排查：GUI 程序没有控制台，未捕获的 panic 会写入 `%LOCALAPPDATA%\Woo Todo\panic.log`。旧 `windows/scripts/smoke-test.ps1` 仅适用于 Win32 UI，不能用于验证 Tauri WebView DOM。
 
 ## 代码分层
 
 - `shared/core-rust`：任务校验、周期结算、统计、SQLite 仓储语义与稳定通知计划。
-- `windows/src/native`：Win32 窗口、任务板、原生控件、托盘、全局快捷键、单实例和协议激活。
+- `windows/src/tauri_app.rs`：Tauri 生命周期、窗口命令、任务命令、悬浮任务板和同步运行时桥接。
+- `windows/ui`：Tauri 2 前端、任务列表、设置页面和悬浮任务板视觉层。
+- `windows/src/native`：迁移期间保留的旧 Win32 UI 实现，不再是默认启动路径。
+- `windows/src/lunar.rs`：农历月日（ICU4X 中文日历）与节气、节日标注，对齐 macOS `TraditionalCalendarInfo`。
 - `windows/src/notifications.rs`：WinRT Toast 调度队列对齐。
-- `windows/src/settings.rs`：兼容旧版 `settings.json` 的本机设置持久化。
+- `windows/src/settings.rs`：兼容旧版 `settings.json` 的本机设置持久化（原子替换保存）。
 - `windows/src/credentials.rs`：Worker、局域网与第三方 WebDAV 凭据校验及 Windows Credential Manager 持久化。
 - `windows/src/sync_runtime.rs`：后台同步调度、方式切换和共享 SQLite 同步核心接入。
 - `windows/src/worker.rs`、`windows/src/webdav.rs`：Worker/局域网 REST 与通用 WebDAV 客户端。
 - `windows/src/local_server.rs`：同一网络主机、设备授权、配对与增量同步 HTTP 服务。
 - `windows/src/integration.rs`：免安装程序的当前用户通知身份与 `wootodo://` 协议注册。
 - `windows/src/update.rs`：Release 解析、WinHTTP 下载、SHA-256 校验和免安装自替换 helper。
-- `windows/scripts`：可复现的 ZIP 打包入口。
+- `windows/scripts`：可复现的 ZIP 打包入口与开发用冒烟测试脚本。
 
 首次运行会为当前用户创建带 `stophemo.WooTodo` AppUserModelID 的开始菜单身份，并注册 `wootodo://` 协议；它不会复制程序、创建卸载项或请求管理员权限。移动程序后重新运行一次即可刷新路径。系统提醒被点击时，协议参数会转发给已经运行的单实例应用。

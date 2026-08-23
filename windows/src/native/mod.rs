@@ -12,13 +12,13 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use chrono::{Days, NaiveDate, Utc};
+use chrono::{Days, NaiveDate, Timelike, Utc};
 use qrcode::{Color, QrCode};
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::Com::*;
 use windows_sys::Win32::System::DataExchange::*;
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows_sys::Win32::System::Threading::*;
 use windows_sys::Win32::UI::Controls::Dialogs::*;
@@ -29,7 +29,7 @@ use windows_sys::Win32::UI::Shell::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 use woo_todo_core::{
     QuestLine, Recurrence, ReminderTime, TaskRepository, TaskState, TimeType, TodoTask,
-    calculate_statistics, today_shanghai,
+    calculate_statistics, next_start, normalize_start, today_shanghai,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -56,6 +56,7 @@ const APP_ID: &str = "stophemo.WooTodo";
 const MAIN_CLASS: &str = "WooTodo.Native.Main.v1";
 const FLOAT_CLASS: &str = "WooTodo.Native.Float.v1";
 const EDITOR_CLASS: &str = "WooTodo.Native.Editor.v1";
+const QUICK_ADD_CLASS: &str = "WooTodo.Native.QuickAdd.v1";
 const MUTEX_NAME: &str = "Local\\WooTodo.WindowsApp";
 const WM_TRAY: u32 = WM_APP + 1;
 const WM_UPDATE_EVENT: u32 = WM_APP + 3;
@@ -73,22 +74,24 @@ const STATIC_CENTER_IMAGE: u32 = 512;
 const TRACKBAR_GET_POSITION: u32 = WM_USER;
 const CLIPBOARD_UNICODE_TEXT: u32 = 13;
 
-const INK: COLORREF = rgb(23, 24, 23);
-const INK_SOFT: COLORREF = rgb(37, 39, 37);
-const PAPER_BRIGHT: COLORREF = rgb(250, 251, 248);
-const PAPER_SOFT: COLORREF = rgb(243, 244, 241);
-const PAPER_CARD: COLORREF = rgb(255, 255, 255);
-const LINE_ON_LIGHT: COLORREF = rgb(220, 222, 217);
-const LINE_ON_DARK: COLORREF = rgb(52, 55, 51);
-const TEXT_ON_DARK: COLORREF = rgb(240, 242, 238);
-const MUTED_ON_DARK: COLORREF = rgb(174, 178, 172);
-const TEXT_ON_LIGHT: COLORREF = rgb(23, 24, 23);
-const MUTED_ON_LIGHT: COLORREF = rgb(99, 102, 96);
-const PURPLE: COLORREF = rgb(107, 86, 200);
-const PURPLE_LIGHT: COLORREF = rgb(169, 154, 232);
-const PURPLE_WASH: COLORREF = rgb(235, 232, 248);
-const GREEN: COLORREF = rgb(56, 184, 120);
-const ORANGE: COLORREF = rgb(210, 82, 48);
+const INK: COLORREF = rgb(24, 29, 31);
+const INK_SOFT: COLORREF = rgb(34, 41, 43);
+const PAPER_BRIGHT: COLORREF = rgb(31, 37, 39);
+const PAPER_SOFT: COLORREF = rgb(55, 65, 70);
+const PAPER_CARD: COLORREF = rgb(38, 45, 48);
+const LINE_ON_LIGHT: COLORREF = rgb(67, 77, 81);
+const LINE_ON_DARK: COLORREF = rgb(61, 70, 73);
+const TEXT_ON_DARK: COLORREF = rgb(238, 242, 241);
+const MUTED_ON_DARK: COLORREF = rgb(166, 175, 174);
+const TEXT_ON_LIGHT: COLORREF = rgb(232, 237, 236);
+const MUTED_ON_LIGHT: COLORREF = rgb(161, 171, 171);
+const PURPLE: COLORREF = rgb(124, 98, 234);
+const PURPLE_LIGHT: COLORREF = rgb(166, 145, 255);
+const PURPLE_WASH: COLORREF = rgb(55, 68, 104);
+const GREEN: COLORREF = rgb(58, 190, 128);
+const ORANGE: COLORREF = rgb(227, 94, 58);
+const NAV_SELECTED: COLORREF = rgb(55, 113, 219);
+const MAIN_NAV_WIDTH: i32 = 240;
 
 const ID_NAV: i32 = 100;
 const ID_TASKS: i32 = 101;
@@ -107,6 +110,7 @@ const ID_OPACITY: i32 = 120;
 const ID_TOPMOST: i32 = 121;
 const ID_CLICK_THROUGH: i32 = 122;
 const ID_HISTORY_CLEAR_ALL: i32 = 123;
+const ID_DESKTOP_WIDGET: i32 = 124;
 const ID_DISPLAY_HEADER: i32 = 130;
 const ID_DISPLAY_SUBTITLE: i32 = 131;
 const ID_DISPLAY_ELAPSED_DATE: i32 = 132;
@@ -125,6 +129,7 @@ const ID_SHORTCUT_SAVE: i32 = 144;
 const ID_SHORTCUT_RESET: i32 = 145;
 const ID_SHORTCUT_INCREASE_OPACITY: i32 = 146;
 const ID_SHORTCUT_DECREASE_OPACITY: i32 = 147;
+const ID_SHORTCUT_DESKTOP_WIDGET: i32 = 148;
 const ID_SYNC_MODE: i32 = 150;
 const ID_SYNC_ENDPOINT: i32 = 151;
 const ID_SYNC_INVITE: i32 = 152;
@@ -150,6 +155,18 @@ const ID_BACKUP_CONFIRMATION: i32 = 171;
 const ID_BACKUP_INCLUDE_IDENTITY: i32 = 172;
 const ID_BACKUP_EXPORT: i32 = 173;
 const ID_BACKUP_IMPORT: i32 = 174;
+const ID_DISPLAY_INSERT_MENU: i32 = 175;
+const ID_DISPLAY_TOKEN_BASE: i32 = 176;
+const ID_DISPLAY_TOKEN_COUNT: i32 = 11;
+const ID_DISPLAY_INSERT_SUBTITLE_MENU: i32 = 187;
+
+const ID_QUICK_TITLE: i32 = 350;
+const ID_QUICK_QUEST: i32 = 351;
+const ID_QUICK_REPEAT: i32 = 352;
+const ID_QUICK_REMINDER_ENABLED: i32 = 353;
+const ID_QUICK_REMINDER_TIME: i32 = 354;
+const ID_QUICK_STATUS: i32 = 355;
+const ID_QUICK_SUBMIT: i32 = 356;
 
 const ID_FLOAT_LIST: i32 = 200;
 const ID_FLOAT_EDIT: i32 = 201;
@@ -180,6 +197,10 @@ const ID_TRAY_TOPMOST: i32 = 403;
 const ID_TRAY_CLICK_THROUGH: i32 = 404;
 const ID_TRAY_EXIT: i32 = 405;
 const ID_TRAY_CHECK_UPDATE: i32 = 406;
+const ID_TRAY_SETTINGS: i32 = 407;
+const ID_TRAY_DESKTOP_WIDGET: i32 = 408;
+const ID_TRAY_OPACITY_BASE: i32 = 410;
+const ID_TRAY_OPACITY_COUNT: i32 = 9;
 
 const HOTKEY_QUICK_ADD: i32 = 1;
 const HOTKEY_TOGGLE_BOARD: i32 = 2;
@@ -187,12 +208,19 @@ const HOTKEY_TOPMOST: i32 = 3;
 const HOTKEY_CLICK_THROUGH: i32 = 4;
 const HOTKEY_INCREASE_OPACITY: i32 = 5;
 const HOTKEY_DECREASE_OPACITY: i32 = 6;
+const HOTKEY_DESKTOP_WIDGET: i32 = 7;
 
 const MINIMUM_OPACITY_PERCENT: i32 = 20;
 const MAXIMUM_OPACITY_PERCENT: i32 = 100;
 const OPACITY_STEP_PERCENT: i32 = 10;
 
 static QUICK_EDIT_PROC: AtomicIsize = AtomicIsize::new(0);
+static QUICK_ADD_EDIT_PROC: AtomicIsize = AtomicIsize::new(0);
+static SHORTCUT_EDIT_PROC: AtomicIsize = AtomicIsize::new(0);
+static DATE_PICKER_PROC: AtomicIsize = AtomicIsize::new(0);
+static COMBOBOX_PROC: AtomicIsize = AtomicIsize::new(0);
+static EDIT_PROC: AtomicIsize = AtomicIsize::new(0);
+static UPDOWN_PROC: AtomicIsize = AtomicIsize::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
@@ -203,8 +231,15 @@ enum Section {
     Someday,
     History,
     Statistics,
-    Settings,
+    Display,
+    Shortcuts,
     Sync,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisplayTemplateField {
+    Header,
+    Subtitle,
 }
 
 impl Section {
@@ -216,9 +251,25 @@ impl Section {
             4 => Self::Someday,
             5 => Self::History,
             6 => Self::Statistics,
-            7 => Self::Settings,
-            8 => Self::Sync,
+            7 => Self::Display,
+            8 => Self::Shortcuts,
+            9 => Self::Sync,
             _ => Self::Today,
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Today => "☀",
+            Self::Tomorrow => "◷",
+            Self::Week => "◴",
+            Self::Month => "▦",
+            Self::Someday => "✦",
+            Self::History => "↶",
+            Self::Statistics => "▥",
+            Self::Display => "A",
+            Self::Shortcuts => "⌘",
+            Self::Sync => "↻",
         }
     }
 }
@@ -250,6 +301,7 @@ struct MainControls {
     opacity_value: HWND,
     topmost: HWND,
     click_through: HWND,
+    desktop_widget: HWND,
     display_heading: HWND,
     display_header_label: HWND,
     display_header: HWND,
@@ -266,9 +318,11 @@ struct MainControls {
     display_insert_deadline_months: HWND,
     display_save: HWND,
     display_reset: HWND,
+    display_insert_menu: HWND,
+    display_insert_subtitle_menu: HWND,
     shortcut_heading: HWND,
-    shortcut_labels: [HWND; 6],
-    shortcut_edits: [HWND; 6],
+    shortcut_labels: [HWND; 7],
+    shortcut_edits: [HWND; 7],
     shortcut_save: HWND,
     shortcut_reset: HWND,
 }
@@ -277,8 +331,10 @@ struct MainControls {
 struct FloatControls {
     heading: HWND,
     date: HWND,
+    lunar: HWND,
     subtitle: HWND,
     progress: HWND,
+    progress_value: HWND,
     tasks: HWND,
     empty_icon: HWND,
     empty_title: HWND,
@@ -333,6 +389,7 @@ struct ThemeResources {
     ink_brush: HBRUSH,
     ink_soft_brush: HBRUSH,
     heading_font: HFONT,
+    brand_font: HFONT,
     subheading_font: HFONT,
     body_font: HFONT,
     body_semibold_font: HFONT,
@@ -351,6 +408,7 @@ impl ThemeResources {
             ink_brush: CreateSolidBrush(INK),
             ink_soft_brush: CreateSolidBrush(INK_SOFT),
             heading_font: create_ui_font(dpi, 27, FW_BOLD as i32),
+            brand_font: create_ui_font(dpi, 18, FW_BOLD as i32),
             subheading_font: create_ui_font(dpi, 14, FW_SEMIBOLD as i32),
             body_font: create_ui_font(dpi, 14, FW_NORMAL as i32),
             body_semibold_font: create_ui_font(dpi, 14, FW_SEMIBOLD as i32),
@@ -358,7 +416,7 @@ impl ThemeResources {
             nav_font: create_ui_font(dpi, 14, FW_SEMIBOLD as i32),
             row_height_images: ImageList_Create(
                 1,
-                (38 * dpi as i32 / 96).max(38),
+                (56 * dpi as i32 / 96).max(56),
                 ILC_COLOR32,
                 1,
                 0,
@@ -376,6 +434,7 @@ impl Drop for ThemeResources {
             DeleteObject(self.ink_brush);
             DeleteObject(self.ink_soft_brush);
             DeleteObject(self.heading_font);
+            DeleteObject(self.brand_font);
             DeleteObject(self.subheading_font);
             DeleteObject(self.body_font);
             DeleteObject(self.body_semibold_font);
@@ -448,6 +507,7 @@ struct App {
     sync_ui_receiver: Receiver<SyncUiEvent>,
     backup_job_running: bool,
     network_job_running: bool,
+    display_template_field: DisplayTemplateField,
 }
 
 struct PairingContext {
@@ -543,7 +603,9 @@ struct EditorControls {
     title: HWND,
     time_type: HWND,
     quest: HWND,
+    date_label: HWND,
     date: HWND,
+    period_summary: HWND,
     repeats: HWND,
     reminder_enabled: HWND,
     reminder_time: HWND,
@@ -553,11 +615,46 @@ struct EditorControls {
 
 struct EditorState {
     controls: EditorControls,
+    theme: *const ThemeResources,
     input: Option<TaskInput>,
     initial_type: TimeType,
     initial_date: NaiveDate,
     existing: Option<TodoTask>,
 }
+
+/// 快速新增窗口状态，对应 macOS 的 QuickAddPanel：
+/// 任务内容 + 任务级别 + 每天重复 + 提醒，底部实时摘要。
+struct QuickAddState {
+    controls: QuickAddControls,
+    theme: *const ThemeResources,
+    input: Option<TaskInput>,
+}
+
+#[derive(Default)]
+struct QuickAddControls {
+    title: HWND,
+    quest: HWND,
+    repeats: HWND,
+    reminder_enabled: HWND,
+    reminder_time: HWND,
+    status: HWND,
+    submit: HWND,
+}
+
+/// 显示页「插入变量」菜单的 token 清单，与 macOS 的插入菜单对齐。
+const DISPLAY_TOKENS: [(&str, &str); ID_DISPLAY_TOKEN_COUNT as usize] = [
+    ("{weekday}", "星期几"),
+    ("{weekdayShort}", "星期简称"),
+    ("{weekdayEn}", "英文星期几"),
+    ("{weekdayEnShort}", "英文星期简称"),
+    ("{date}", "日期（2026-08-17）"),
+    ("{dateLong}", "中文日期（2026年8月17日）"),
+    ("{year}", "年份"),
+    ("{month}", "月份"),
+    ("{monthPadded}", "两位月份"),
+    ("{day}", "日"),
+    ("{dayPadded}", "两位日"),
+];
 
 pub fn run() -> Result<(), String> {
     unsafe {
@@ -613,6 +710,12 @@ pub fn run() -> Result<(), String> {
             instance,
             EDITOR_CLASS,
             Some(editor_window_proc),
+            theme.paper_brush,
+        )?;
+        register_window_class(
+            instance,
+            QUICK_ADD_CLASS,
+            Some(quick_add_window_proc),
             theme.paper_brush,
         )?;
 
@@ -748,6 +851,7 @@ pub fn run() -> Result<(), String> {
             sync_ui_receiver,
             backup_job_running: false,
             network_job_running: false,
+            display_template_field: DisplayTemplateField::Header,
         });
         let app_pointer = (&mut *app) as *mut App;
 
@@ -758,8 +862,8 @@ pub fn run() -> Result<(), String> {
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1040,
-            700,
+            1180,
+            780,
             app_pointer.cast(),
         )?;
         if let Err(error) = create_main_controls(&mut app) {
@@ -820,12 +924,13 @@ pub fn run() -> Result<(), String> {
 
         ShowWindow(
             app.floating,
-            if app.settings.click_through {
+            if app.settings.click_through || app.settings.desktop_widget {
                 SW_SHOWNOACTIVATE
             } else {
                 SW_SHOW
             },
         );
+        apply_floating_settings(&app);
         UpdateWindow(app.floating);
         handle_activation_args(&mut app);
         if std::env::var_os("WOO_TODO_SKIP_UPDATE_CHECK").is_none() {
@@ -939,8 +1044,58 @@ unsafe fn create_top_window(
     if window.is_null() {
         Err(last_error("无法创建窗口"))
     } else {
+        apply_top_window_theme(window);
         Ok(window)
     }
+}
+
+unsafe fn apply_top_window_theme(window: HWND) {
+    type DwmSetWindowAttributeFn = unsafe extern "system" fn(HWND, u32, *const c_void, u32) -> i32;
+    let module = LoadLibraryW(wide("dwmapi.dll").as_ptr());
+    if module.is_null() {
+        apply_dark_control_theme(window);
+        return;
+    }
+    let Some(procedure) = GetProcAddress(module, c"DwmSetWindowAttribute".as_ptr().cast()) else {
+        FreeLibrary(module);
+        apply_dark_control_theme(window);
+        return;
+    };
+    let set_attribute = std::mem::transmute::<_, DwmSetWindowAttributeFn>(procedure);
+    let dark_mode = 1_i32;
+    set_attribute(
+        window,
+        20,
+        (&dark_mode as *const i32).cast(),
+        size_of::<i32>() as u32,
+    );
+    let corner = 2_i32;
+    set_attribute(
+        window,
+        33,
+        (&corner as *const i32).cast(),
+        size_of::<i32>() as u32,
+    );
+    FreeLibrary(module);
+    apply_dark_control_theme(window);
+}
+
+unsafe fn enable_native_dark_mode(window: HWND) {
+    type SetPreferredAppModeFn = unsafe extern "system" fn(i32) -> i32;
+    type AllowDarkModeForWindowFn = unsafe extern "system" fn(HWND, i32) -> i32;
+    let module = LoadLibraryW(wide("uxtheme.dll").as_ptr());
+    if module.is_null() {
+        return;
+    }
+    if let Some(procedure) = GetProcAddress(module, 135_usize as *const u8) {
+        let set_preferred_mode = std::mem::transmute::<_, SetPreferredAppModeFn>(procedure);
+        set_preferred_mode(2);
+    }
+    if let Some(procedure) = GetProcAddress(module, 133_usize as *const u8) {
+        let allow_dark_mode = std::mem::transmute::<_, AllowDarkModeForWindowFn>(procedure);
+        allow_dark_mode(window, 1);
+    }
+    FreeLibrary(module);
 }
 
 unsafe fn create_child(
@@ -951,6 +1106,9 @@ unsafe fn create_child(
     ex_style: u32,
     id: i32,
 ) -> Result<HWND, String> {
+    let is_date_picker = class.eq_ignore_ascii_case("SysDateTimePick32");
+    let is_combo_box = class.eq_ignore_ascii_case("COMBOBOX");
+    let is_edit = class.eq_ignore_ascii_case("EDIT");
     let class = wide(class);
     let text = wide(text);
     let child = CreateWindowExW(
@@ -976,6 +1134,39 @@ unsafe fn create_child(
         GetStockObject(DEFAULT_GUI_FONT) as usize,
         1,
     );
+    apply_dark_control_theme(child);
+    if is_date_picker {
+        let previous = SetWindowLongPtrW(
+            child,
+            GWLP_WNDPROC,
+            dark_date_picker_proc as *const () as isize,
+        );
+        let _ = DATE_PICKER_PROC.compare_exchange(0, previous, Ordering::AcqRel, Ordering::Acquire);
+        if style & DTS_UPDOWN != 0 {
+            let updown_class = wide("msctls_updown32");
+            let spinner = FindWindowExW(child, null_mut(), updown_class.as_ptr(), null());
+            if !spinner.is_null() {
+                apply_dark_control_theme(spinner);
+                let previous = SetWindowLongPtrW(
+                    spinner,
+                    GWLP_WNDPROC,
+                    dark_updown_proc as *const () as isize,
+                );
+                let _ =
+                    UPDOWN_PROC.compare_exchange(0, previous, Ordering::AcqRel, Ordering::Acquire);
+            }
+        }
+    } else if is_combo_box {
+        let previous = SetWindowLongPtrW(
+            child,
+            GWLP_WNDPROC,
+            dark_combo_box_proc as *const () as isize,
+        );
+        let _ = COMBOBOX_PROC.compare_exchange(0, previous, Ordering::AcqRel, Ordering::Acquire);
+    } else if is_edit {
+        let previous = SetWindowLongPtrW(child, GWLP_WNDPROC, dark_edit_proc as *const () as isize);
+        let _ = EDIT_PROC.compare_exchange(0, previous, Ordering::AcqRel, Ordering::Acquire);
+    }
     Ok(child)
 }
 
@@ -992,12 +1183,12 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
             | WS_VSCROLL
             | LBS_NOTIFY as u32
             | LBS_HASSTRINGS as u32
-            | LBS_OWNERDRAWFIXED as u32
+            | LBS_OWNERDRAWVARIABLE as u32
             | LBS_NOINTEGRALHEIGHT as u32,
         0,
         ID_NAV,
     )?;
-    for label in [
+    for (index, label) in [
         "今日",
         "明日",
         "本周",
@@ -1005,9 +1196,13 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         "闲时",
         "历史",
         "统计",
-        "显示与快捷键",
+        "显示",
+        "快捷键",
         "同步",
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let value = wide(label);
         SendMessageW(
             app.main_controls.nav,
@@ -1015,9 +1210,14 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
             0,
             value.as_ptr() as isize,
         );
+        SendMessageW(
+            app.main_controls.nav,
+            LB_SETITEMHEIGHT,
+            index,
+            if index == 7 { 62 } else { 38 },
+        );
     }
     SendMessageW(app.main_controls.nav, LB_SETCURSEL, 0, 0);
-    SendMessageW(app.main_controls.nav, LB_SETITEMHEIGHT, 0, 38);
     app.main_controls.title = create_child(parent, "STATIC", "今日", visible | STATIC_LEFT, 0, 0)?;
     app.main_controls.subtitle = create_child(parent, "STATIC", "", visible | STATIC_LEFT, 0, 0)?;
     app.main_controls.tasks = create_child(
@@ -1122,6 +1322,14 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         0,
         ID_CLICK_THROUGH,
     )?;
+    app.main_controls.desktop_widget = create_child(
+        parent,
+        "BUTTON",
+        "桌面小组件模式",
+        BS_AUTOCHECKBOX as u32,
+        0,
+        ID_DESKTOP_WIDGET,
+    )?;
 
     app.main_controls.display_heading =
         create_child(parent, "STATIC", "悬浮任务板标题", STATIC_LEFT, 0, 0)?;
@@ -1135,7 +1343,7 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         WS_EX_CLIENTEDGE,
         ID_DISPLAY_HEADER,
     )?;
-    SendMessageW(app.main_controls.display_header, EM_LIMITTEXT, 160, 0);
+    SendMessageW(app.main_controls.display_header, EM_LIMITTEXT, 80, 0);
     app.main_controls.display_subtitle_label =
         create_child(parent, "STATIC", "副标题", STATIC_LEFT, 0, 0)?;
     app.main_controls.display_subtitle = create_child(
@@ -1146,7 +1354,7 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         WS_EX_CLIENTEDGE,
         ID_DISPLAY_SUBTITLE,
     )?;
-    SendMessageW(app.main_controls.display_subtitle, EM_LIMITTEXT, 320, 0);
+    SendMessageW(app.main_controls.display_subtitle, EM_LIMITTEXT, 160, 0);
     app.main_controls.display_preview = create_child(parent, "STATIC", "", STATIC_LEFT, 0, 0)?;
     app.main_controls.display_elapsed_date_label =
         create_child(parent, "STATIC", "耗时起始日", STATIC_LEFT, 0, 0)?;
@@ -1176,8 +1384,12 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         hidden_button(parent, "插入耗时月日", ID_DISPLAY_INSERT_ELAPSED_MONTHS)?;
     app.main_controls.display_insert_deadline_months =
         hidden_button(parent, "插入截止月日", ID_DISPLAY_INSERT_DEADLINE_MONTHS)?;
-    app.main_controls.display_save = hidden_button(parent, "保存显示", ID_DISPLAY_SAVE)?;
+    app.main_controls.display_save = hidden_button(parent, "保存显示设置", ID_DISPLAY_SAVE)?;
     app.main_controls.display_reset = hidden_button(parent, "恢复默认", ID_DISPLAY_RESET)?;
+    app.main_controls.display_insert_menu =
+        hidden_button(parent, "插入变量…", ID_DISPLAY_INSERT_MENU)?;
+    app.main_controls.display_insert_subtitle_menu =
+        hidden_button(parent, "插入变量…", ID_DISPLAY_INSERT_SUBTITLE_MENU)?;
 
     app.main_controls.shortcut_heading =
         create_child(parent, "STATIC", "全局快捷键", STATIC_LEFT, 0, 0)?;
@@ -1188,6 +1400,7 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         "切换穿透",
         "增加不透明度",
         "降低不透明度",
+        "桌面小组件",
     ]
     .into_iter()
     .enumerate()
@@ -1202,6 +1415,7 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         ID_SHORTCUT_CLICK_THROUGH,
         ID_SHORTCUT_INCREASE_OPACITY,
         ID_SHORTCUT_DECREASE_OPACITY,
+        ID_SHORTCUT_DESKTOP_WIDGET,
     ]
     .into_iter()
     .enumerate()
@@ -1210,11 +1424,18 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
             parent,
             "EDIT",
             "",
-            WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL as u32,
+            WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL as u32 | ES_READONLY as u32,
             WS_EX_CLIENTEDGE,
             id,
         )?;
         SendMessageW(app.main_controls.shortcut_edits[index], EM_LIMITTEXT, 64, 0);
+        let previous = SetWindowLongPtrW(
+            app.main_controls.shortcut_edits[index],
+            GWLP_WNDPROC,
+            shortcut_edit_proc as *const () as isize,
+        );
+        let _ =
+            SHORTCUT_EDIT_PROC.compare_exchange(0, previous, Ordering::AcqRel, Ordering::Acquire);
     }
     app.main_controls.shortcut_save = hidden_button(parent, "应用快捷键", ID_SHORTCUT_SAVE)?;
     app.main_controls.shortcut_reset = hidden_button(parent, "重置快捷键", ID_SHORTCUT_RESET)?;
@@ -1238,8 +1459,8 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
         "创建邀请码",
         "WebDAV 账号",
         "应用密码 / 令牌",
-        "空间 ID",
-        "设备 ID",
+        "同步空间",
+        "当前设备",
         "设备令牌",
         "同步密钥",
     ] {
@@ -1308,7 +1529,7 @@ unsafe fn create_main_controls(app: &mut App) -> Result<(), String> {
 
     apply_main_fonts(app);
     set_list_palette(app.main_controls.tasks, PAPER_CARD, TEXT_ON_LIGHT);
-    apply_light_control_theme(app.main_controls.tasks);
+    apply_dark_control_theme(app.main_controls.tasks);
 
     layout_main(app);
     Ok(())
@@ -1330,15 +1551,12 @@ unsafe fn create_float_controls(app: &mut App) -> Result<(), String> {
     app.float_controls.heading =
         create_child(parent, "STATIC", "今日任务", visible | STATIC_LEFT, 0, 0)?;
     app.float_controls.date = create_child(parent, "STATIC", "", visible | STATIC_RIGHT, 0, 0)?;
+    app.float_controls.lunar = create_child(parent, "STATIC", "", visible | STATIC_RIGHT, 0, 0)?;
     app.float_controls.subtitle = create_child(parent, "STATIC", "", visible | STATIC_LEFT, 0, 0)?;
-    app.float_controls.progress = create_child(
-        parent,
-        "STATIC",
-        "今日进度  0 / 0",
-        visible | STATIC_LEFT,
-        0,
-        0,
-    )?;
+    app.float_controls.progress =
+        create_child(parent, "STATIC", "今日进度", visible | STATIC_LEFT, 0, 0)?;
+    app.float_controls.progress_value =
+        create_child(parent, "STATIC", "0 / 0", visible | STATIC_RIGHT, 0, 0)?;
     app.float_controls.tasks = create_child(
         parent,
         "SysListView32",
@@ -1371,7 +1589,7 @@ unsafe fn create_float_controls(app: &mut App) -> Result<(), String> {
         0,
         0,
     )?;
-    app.float_controls.empty_add = hidden_button(parent, "+  新增任务", ID_FLOAT_EMPTY_ADD)?;
+    app.float_controls.empty_add = hidden_button(parent, "新增任务", ID_FLOAT_EMPTY_ADD)?;
     app.float_controls.quick_edit = create_child(
         parent,
         "EDIT",
@@ -1396,17 +1614,6 @@ unsafe fn create_float_controls(app: &mut App) -> Result<(), String> {
     QUICK_EDIT_PROC.store(previous, Ordering::Release);
     layout_floating(app);
     Ok(())
-}
-
-unsafe fn button(parent: HWND, text: &str, id: i32) -> Result<HWND, String> {
-    create_child(
-        parent,
-        "BUTTON",
-        text,
-        WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON as u32,
-        0,
-        id,
-    )
 }
 
 unsafe fn styled_button(parent: HWND, text: &str, id: i32) -> Result<HWND, String> {
@@ -1436,34 +1643,34 @@ unsafe fn layout_main(app: &App) {
     GetClientRect(app.main, &mut area);
     let width = area.right.max(820);
     let height = area.bottom.max(560);
-    let nav_width = 220;
-    MoveWindow(app.main_controls.brand, 24, 22, nav_width - 42, 34, 1);
+    let nav_width = MAIN_NAV_WIDTH;
+    MoveWindow(app.main_controls.brand, 28, 22, nav_width - 52, 38, 1);
     MoveWindow(
         app.main_controls.nav,
-        20,
-        70,
-        nav_width - 40,
-        height - 92,
+        18,
+        102,
+        nav_width - 36,
+        height - 122,
         1,
     );
     MoveWindow(
         app.main_controls.title,
-        nav_width + 24,
-        24,
+        nav_width + 28,
+        20,
         width - nav_width - 190,
-        36,
+        38,
         1,
     );
     MoveWindow(
         app.main_controls.subtitle,
-        nav_width + 24,
-        64,
+        nav_width + 28,
+        62,
         width - nav_width - 48,
         24,
         1,
     );
-    MoveWindow(app.main_controls.add, width - 184, 24, 94, 34, 1);
-    MoveWindow(app.main_controls.refresh, width - 82, 24, 58, 34, 1);
+    MoveWindow(app.main_controls.add, width - 190, 24, 108, 34, 1);
+    MoveWindow(app.main_controls.refresh, width - 72, 24, 48, 34, 1);
     MoveWindow(
         app.main_controls.tasks,
         nav_width + 24,
@@ -1568,11 +1775,21 @@ unsafe fn layout_main(app: &App) {
         24,
         1,
     );
+    let template_button_width = 104;
+    let template_edit_width = settings_width - 76 - template_button_width - 4;
     MoveWindow(
         app.main_controls.display_header,
         settings_left + 76,
         116,
-        settings_width - 76,
+        template_edit_width.max(120),
+        30,
+        1,
+    );
+    MoveWindow(
+        app.main_controls.display_insert_menu,
+        settings_left + settings_width - template_button_width,
+        116,
+        template_button_width,
         30,
         1,
     );
@@ -1588,7 +1805,15 @@ unsafe fn layout_main(app: &App) {
         app.main_controls.display_subtitle,
         settings_left + 76,
         150,
-        settings_width - 76,
+        template_edit_width.max(120),
+        30,
+        1,
+    );
+    MoveWindow(
+        app.main_controls.display_insert_subtitle_menu,
+        settings_left + settings_width - template_button_width,
+        150,
+        template_button_width,
         30,
         1,
     );
@@ -1664,7 +1889,7 @@ unsafe fn layout_main(app: &App) {
         app.main_controls.display_save,
         settings_left + 100,
         288,
-        92,
+        108,
         28,
         1,
     );
@@ -1672,30 +1897,30 @@ unsafe fn layout_main(app: &App) {
     MoveWindow(
         app.main_controls.shortcut_heading,
         settings_left,
-        328,
+        88,
         settings_width,
         24,
         1,
     );
     let shortcut_column_width = (settings_width - 18) / 2;
-    for index in 0..6 {
+    for index in 0..7 {
         let column = index % 2;
         let row = index / 2;
         let x = settings_left + column as i32 * (shortcut_column_width + 18);
-        let y = 358 + row as i32 * 36;
+        let y = 118 + row as i32 * 36;
         MoveWindow(
             app.main_controls.shortcut_labels[index],
             x,
             y + 4,
-            82,
+            96,
             24,
             1,
         );
         MoveWindow(
             app.main_controls.shortcut_edits[index],
-            x + 86,
+            x + 100,
             y,
-            shortcut_column_width - 86,
+            shortcut_column_width - 100,
             30,
             1,
         );
@@ -1703,7 +1928,7 @@ unsafe fn layout_main(app: &App) {
     MoveWindow(
         app.main_controls.shortcut_reset,
         settings_left,
-        468,
+        274,
         104,
         28,
         1,
@@ -1711,7 +1936,7 @@ unsafe fn layout_main(app: &App) {
     MoveWindow(
         app.main_controls.shortcut_save,
         settings_left + 112,
-        468,
+        274,
         104,
         28,
         1,
@@ -1720,7 +1945,7 @@ unsafe fn layout_main(app: &App) {
     MoveWindow(
         app.main_controls.opacity_label,
         settings_left,
-        480,
+        334,
         80,
         24,
         1,
@@ -1728,7 +1953,7 @@ unsafe fn layout_main(app: &App) {
     MoveWindow(
         app.main_controls.opacity,
         settings_left + 82,
-        470,
+        324,
         (settings_width - 150).max(120),
         40,
         1,
@@ -1736,16 +1961,24 @@ unsafe fn layout_main(app: &App) {
     MoveWindow(
         app.main_controls.opacity_value,
         settings_left + settings_width - 60,
-        480,
+        334,
         60,
         24,
         1,
     );
-    MoveWindow(app.main_controls.topmost, settings_left, 514, 240, 28, 1);
+    MoveWindow(app.main_controls.topmost, settings_left, 368, 240, 28, 1);
     MoveWindow(
         app.main_controls.click_through,
         settings_left,
-        548,
+        402,
+        240,
+        28,
+        1,
+    );
+    MoveWindow(
+        app.main_controls.desktop_widget,
+        settings_left,
+        436,
         240,
         28,
         1,
@@ -1934,13 +2167,29 @@ unsafe fn layout_floating(app: &App) {
     MoveWindow(
         app.float_controls.date,
         width / 2,
-        20,
+        16,
         width / 2 - 24,
-        46,
+        22,
+        1,
+    );
+    MoveWindow(
+        app.float_controls.lunar,
+        width / 2,
+        40,
+        width / 2 - 24,
+        22,
         1,
     );
     MoveWindow(app.float_controls.subtitle, 24, 54, width / 2 - 34, 22, 1);
-    MoveWindow(app.float_controls.progress, 24, 84, width - 48, 24, 1);
+    MoveWindow(app.float_controls.progress, 24, 84, width / 2 - 34, 24, 1);
+    MoveWindow(
+        app.float_controls.progress_value,
+        width / 2,
+        84,
+        width / 2 - 24,
+        24,
+        1,
+    );
     MoveWindow(
         app.float_controls.tasks,
         24,
@@ -2004,7 +2253,8 @@ unsafe fn refresh_main(app: &mut App) {
     hide_settings(app);
     match app.section {
         Section::Statistics => show_statistics(app, today),
-        Section::Settings => show_settings(app),
+        Section::Display => show_display_settings(app),
+        Section::Shortcuts => show_shortcut_settings(app),
         Section::Sync => show_sync_settings(app),
         section => show_tasks(app, section, today),
     }
@@ -2014,7 +2264,7 @@ unsafe fn show_tasks(app: &mut App, section: Section, today: NaiveDate) {
     let (title, subtitle, result) = match section {
         Section::Today => (
             "今日",
-            today.format("%Y年%m月%d日").to_string(),
+            "今日与已规划的每日任务".to_owned(),
             app.repository.fetch_scope(TimeType::Day, today, true),
         ),
         Section::Tomorrow => {
@@ -2052,7 +2302,10 @@ unsafe fn show_tasks(app: &mut App, section: Section, today: NaiveDate) {
         }
         _ => return,
     };
-    set_text(app.main_controls.title, title);
+    set_text(
+        app.main_controls.title,
+        &format!("{}  {title}", section.icon()),
+    );
     set_text(app.main_controls.subtitle, &subtitle);
     ShowWindow(app.main_controls.tasks, SW_SHOW);
     ShowWindow(app.main_controls.content, SW_HIDE);
@@ -2098,6 +2351,12 @@ unsafe fn show_tasks(app: &mut App, section: Section, today: NaiveDate) {
         show_error(app.main, "无法读取任务", &error.to_string());
         Vec::new()
     });
+    if section == Section::History {
+        set_text(
+            app.main_controls.subtitle,
+            &format!("共 {} 条历史记录", app.visible_tasks.len()),
+        );
+    }
     app.populating_main_tasks = true;
     populate_task_list(app.main_controls.tasks, &app.visible_tasks, section, today);
     app.populating_main_tasks = false;
@@ -2146,8 +2405,11 @@ unsafe fn show_tasks(app: &mut App, section: Section, today: NaiveDate) {
 }
 
 unsafe fn show_statistics(app: &mut App, today: NaiveDate) {
-    set_text(app.main_controls.title, "统计");
-    set_text(app.main_controls.subtitle, "履约率只统计已经结束的周期");
+    set_text(app.main_controls.title, "▥  统计");
+    set_text(
+        app.main_controls.subtitle,
+        "只统计已经结束的周期，闲时和当前周期不进入履约率",
+    );
     ShowWindow(app.main_controls.tasks, SW_HIDE);
     ShowWindow(app.main_controls.content, SW_SHOW);
     hide_action_buttons(app);
@@ -2257,13 +2519,14 @@ unsafe fn show_statistics(app: &mut App, today: NaiveDate) {
     set_text(app.main_controls.content, &text);
 }
 
-unsafe fn show_settings(app: &mut App) {
-    set_text(app.main_controls.title, "显示与快捷键");
-    set_text(app.main_controls.subtitle, "任务板外观与全局操作");
+unsafe fn show_display_settings(app: &mut App) {
+    set_text(app.main_controls.title, "A  显示");
+    set_text(app.main_controls.subtitle, "任务板外观与标题模板");
     ShowWindow(app.main_controls.tasks, SW_HIDE);
     ShowWindow(app.main_controls.content, SW_HIDE);
     hide_action_buttons(app);
-    for control in settings_controls(app) {
+    app.display_template_field = DisplayTemplateField::Header;
+    for control in display_settings_controls(app) {
         ShowWindow(control, SW_SHOW);
     }
     set_text(
@@ -2277,7 +2540,6 @@ unsafe fn show_settings(app: &mut App) {
     set_date(app.main_controls.display_elapsed_date, today_shanghai());
     set_date(app.main_controls.display_deadline_date, today_shanghai());
     update_display_preview(app);
-    populate_shortcut_edits(app, &app.settings.shortcuts);
     SendMessageW(
         app.main_controls.opacity,
         TBM_SETPOS,
@@ -2308,10 +2570,32 @@ unsafe fn show_settings(app: &mut App) {
         } as usize,
         0,
     );
+    SendMessageW(
+        app.main_controls.desktop_widget,
+        BM_SETCHECK,
+        if app.settings.desktop_widget {
+            BST_CHECKED
+        } else {
+            BST_UNCHECKED
+        } as usize,
+        0,
+    );
+}
+
+unsafe fn show_shortcut_settings(app: &mut App) {
+    set_text(app.main_controls.title, "⌘  快捷键");
+    set_text(app.main_controls.subtitle, "全局快捷键");
+    ShowWindow(app.main_controls.tasks, SW_HIDE);
+    ShowWindow(app.main_controls.content, SW_HIDE);
+    hide_action_buttons(app);
+    for control in shortcut_settings_controls(app) {
+        ShowWindow(control, SW_SHOW);
+    }
+    populate_shortcut_edits(app, &app.settings.shortcuts);
 }
 
 unsafe fn show_sync_settings(app: &mut App) {
-    set_text(app.main_controls.title, "同步");
+    set_text(app.main_controls.title, "↻  同步");
     set_text(
         app.main_controls.subtitle,
         "同步方式互斥；本地任务始终可离线使用",
@@ -2327,7 +2611,10 @@ unsafe fn show_sync_settings(app: &mut App) {
 }
 
 unsafe fn hide_settings(app: &App) {
-    for control in settings_controls(app) {
+    for control in display_settings_controls(app)
+        .into_iter()
+        .chain(shortcut_settings_controls(app))
+    {
         ShowWindow(control, SW_HIDE);
     }
     for control in sync_settings_controls(app) {
@@ -2343,13 +2630,14 @@ unsafe fn hide_settings(app: &App) {
     }
 }
 
-fn settings_controls(app: &App) -> Vec<HWND> {
-    let mut controls = vec![
+fn display_settings_controls(app: &App) -> Vec<HWND> {
+    vec![
         app.main_controls.opacity_label,
         app.main_controls.opacity,
         app.main_controls.opacity_value,
         app.main_controls.topmost,
         app.main_controls.click_through,
+        app.main_controls.desktop_widget,
         app.main_controls.display_heading,
         app.main_controls.display_header_label,
         app.main_controls.display_header,
@@ -2364,8 +2652,15 @@ fn settings_controls(app: &App) -> Vec<HWND> {
         app.main_controls.display_insert_deadline_days,
         app.main_controls.display_insert_elapsed_months,
         app.main_controls.display_insert_deadline_months,
+        app.main_controls.display_insert_menu,
+        app.main_controls.display_insert_subtitle_menu,
         app.main_controls.display_save,
         app.main_controls.display_reset,
+    ]
+}
+
+fn shortcut_settings_controls(app: &App) -> Vec<HWND> {
+    let mut controls = vec![
         app.main_controls.shortcut_heading,
         app.main_controls.shortcut_save,
         app.main_controls.shortcut_reset,
@@ -2714,8 +3009,15 @@ unsafe fn refresh_floating(app: &mut App) {
         app.float_controls.subtitle,
         subtitle.as_deref().unwrap_or(""),
     );
-    let date_label = date_with_weekday(today).replacen(' ', "\r\n", 1);
-    set_text(app.float_controls.date, &date_label);
+    set_text(app.float_controls.date, &date_with_weekday(today));
+    let traditional = crate::lunar::TraditionalCalendarInfo::render(today);
+    set_text(
+        app.float_controls.lunar,
+        &match traditional.annotation {
+            Some(annotation) => format!("{} · {annotation}", traditional.lunar_date),
+            None => traditional.lunar_date,
+        },
+    );
     app.floating_tasks = app
         .repository
         .fetch_scope(TimeType::Day, today, true)
@@ -2726,8 +3028,8 @@ unsafe fn refresh_floating(app: &mut App) {
         .filter(|task| task.state == TaskState::Completed)
         .count();
     set_text(
-        app.float_controls.progress,
-        &format!("今日进度  {completed} / {}", app.floating_tasks.len()),
+        app.float_controls.progress_value,
+        &format!("{completed} / {}", app.floating_tasks.len()),
     );
     app.populating_float_tasks = true;
     SendMessageW(app.float_controls.tasks, LVM_DELETEALLITEMS, 0, 0);
@@ -2767,18 +3069,7 @@ unsafe fn refresh_floating(app: &mut App) {
             ShowWindow(control, SW_SHOW);
         }
         EnableWindow(app.float_controls.tasks, 1);
-        SendMessageW(app.float_controls.tasks, LVM_ENABLEGROUPVIEW, 1, 0);
-        for (index, line) in [QuestLine::Main, QuestLine::Side, QuestLine::Extra]
-            .into_iter()
-            .enumerate()
-        {
-            insert_list_group(
-                app.float_controls.tasks,
-                index as i32,
-                quest_group_id(line),
-                quest_line_label(line),
-            );
-        }
+        SendMessageW(app.float_controls.tasks, LVM_ENABLEGROUPVIEW, 0, 0);
         for (index, task) in app.floating_tasks.iter().enumerate() {
             let badges = task_badges(task, today);
             let text = if badges.is_empty() {
@@ -2786,13 +3077,7 @@ unsafe fn refresh_floating(app: &mut App) {
             } else {
                 format!("{}  · {}", task.title, badges)
             };
-            insert_grouped_list_item(
-                app.float_controls.tasks,
-                index as i32,
-                0,
-                &text,
-                quest_group_id(task.quest_line),
-            );
+            insert_grouped_list_item(app.float_controls.tasks, index as i32, 0, &text, -1);
             set_list_checked(
                 app.float_controls.tasks,
                 index as i32,
@@ -2810,11 +3095,7 @@ unsafe fn populate_task_list(list: HWND, tasks: &[TodoTask], section: Section, t
         SendMessageW(list, LVM_ENABLEGROUPVIEW, 0, 0);
         return;
     }
-    SendMessageW(list, LVM_ENABLEGROUPVIEW, 1, 0);
-    let groups = task_list_groups(tasks, section, today);
-    for (index, (id, label)) in groups.iter().enumerate() {
-        insert_list_group(list, index as i32, *id, label);
-    }
+    SendMessageW(list, LVM_ENABLEGROUPVIEW, 0, 0);
     for (index, task) in tasks.iter().enumerate() {
         let mut metadata = vec![
             quest_line_label(task.quest_line).to_owned(),
@@ -2832,7 +3113,7 @@ unsafe fn populate_task_list(list: HWND, tasks: &[TodoTask], section: Section, t
             index as i32,
             0,
             &format!("{}    · {}", task.title, metadata.join(" · ")),
-            task_group_id(task, section, today),
+            -1,
         );
         set_list_checked(
             list,
@@ -2846,14 +3127,12 @@ fn task_list_groups(tasks: &[TodoTask], section: Section, today: NaiveDate) -> V
     let mut groups = Vec::new();
     if section == Section::Today {
         for (stage, stage_label) in [(0, "待处理"), (1, "今日"), (2, "已规划")] {
-            for line in [QuestLine::Main, QuestLine::Side, QuestLine::Extra] {
-                let id = today_group_id(stage, line);
-                if tasks
-                    .iter()
-                    .any(|task| task_group_id(task, section, today) == id)
-                {
-                    groups.push((id, format!("{stage_label} · {}", quest_line_label(line))));
-                }
+            let id = today_group_id(stage);
+            if tasks
+                .iter()
+                .any(|task| task_group_id(task, section, today) == id)
+            {
+                groups.push((id, stage_label.to_owned()));
             }
         }
     } else {
@@ -2880,14 +3159,14 @@ fn task_group_id(task: &TodoTask, section: Section, today: NaiveDate) -> i32 {
             Some(date) if date > today => 2,
             _ => 1,
         };
-        today_group_id(stage, task.quest_line)
+        today_group_id(stage)
     } else {
         quest_group_id(task.quest_line)
     }
 }
 
-fn today_group_id(stage: i32, line: QuestLine) -> i32 {
-    100 + stage * 10 + quest_group_id(line)
+fn today_group_id(stage: i32) -> i32 {
+    100 + stage
 }
 
 fn quest_group_id(line: QuestLine) -> i32 {
@@ -2936,7 +3215,7 @@ unsafe fn add_list_column(list: HWND, index: i32, title: &str, width: i32) {
 unsafe fn insert_grouped_list_item(list: HWND, row: i32, column: i32, text: &str, group_id: i32) {
     let mut text = wide(text);
     let item = LVITEMW {
-        mask: LVIF_TEXT | LVIF_GROUPID,
+        mask: LVIF_TEXT | if group_id >= 0 { LVIF_GROUPID } else { 0 },
         iItem: row,
         iSubItem: column,
         pszText: text.as_mut_ptr(),
@@ -2944,24 +3223,6 @@ unsafe fn insert_grouped_list_item(list: HWND, row: i32, column: i32, text: &str
         ..Default::default()
     };
     SendMessageW(list, LVM_INSERTITEMW, 0, &item as *const _ as isize);
-}
-
-unsafe fn insert_list_group(list: HWND, index: i32, id: i32, header: &str) {
-    let mut header = wide(header);
-    let group = LVGROUP {
-        cbSize: size_of::<LVGROUP>() as u32,
-        mask: LVGF_HEADER | LVGF_GROUPID,
-        pszHeader: header.as_mut_ptr(),
-        cchHeader: (header.len().saturating_sub(1)) as i32,
-        iGroupId: id,
-        ..Default::default()
-    };
-    SendMessageW(
-        list,
-        LVM_INSERTGROUP,
-        index as usize,
-        &group as *const _ as isize,
-    );
 }
 
 unsafe fn selected_main_task(app: &App) -> Option<TodoTask> {
@@ -3047,11 +3308,16 @@ unsafe fn update_main_action_state(app: &App) {
     let completed = selected
         .as_ref()
         .is_some_and(|task| task.state == TaskState::Completed);
+    let has_selection = selected.is_some();
     set_text(
         app.main_controls.complete,
         if completed { "取消完成" } else { "完成" },
     );
     EnableWindow(app.main_controls.complete, (pending || completed) as i32);
+    ShowWindow(
+        app.main_controls.complete,
+        if has_selection { SW_SHOW } else { SW_HIDE },
+    );
     for control in [
         app.main_controls.edit,
         app.main_controls.pass,
@@ -3060,6 +3326,7 @@ unsafe fn update_main_action_state(app: &App) {
         app.main_controls.down,
     ] {
         EnableWindow(control, pending as i32);
+        ShowWindow(control, if pending { SW_SHOW } else { SW_HIDE });
     }
 }
 
@@ -3138,7 +3405,14 @@ unsafe fn create_task(app: &mut App, quick_title: Option<String>) {
             deadline_date: None,
         })
     } else {
-        show_task_editor(app.main, app.floating, default_type, default_date, None)
+        show_task_editor(
+            app.main,
+            app.floating,
+            &app.theme,
+            default_type,
+            default_date,
+            None,
+        )
     };
     let Some(input) = input else { return };
     match app.repository.create(
@@ -3171,8 +3445,14 @@ unsafe fn edit_task(app: &mut App, task: TodoTask, owner: HWND) {
     } else {
         app.floating
     };
-    let Some(input) = show_task_editor(owner, secondary, task.time_type, date, Some(task.clone()))
-    else {
+    let Some(input) = show_task_editor(
+        owner,
+        secondary,
+        &app.theme,
+        task.time_type,
+        date,
+        Some(task.clone()),
+    ) else {
         return;
     };
     match app.repository.update(
@@ -3284,18 +3564,45 @@ unsafe fn insert_display_counter(app: &App, variable: CounterVariable) -> Result
             app.main_controls.display_deadline_date
         }
     })?;
-    let token = DisplayConfiguration::counter_token(variable, date);
-    let focus = GetFocus();
-    let target = if focus == app.main_controls.display_header {
-        app.main_controls.display_header
-    } else {
-        app.main_controls.display_subtitle
+    insert_display_token(app, &DisplayConfiguration::counter_token(variable, date))
+}
+
+unsafe fn insert_display_token(app: &App, token: &str) -> Result<(), String> {
+    let target = match app.display_template_field {
+        DisplayTemplateField::Header => app.main_controls.display_header,
+        DisplayTemplateField::Subtitle => app.main_controls.display_subtitle,
     };
-    let token = wide(&token);
+    let token = wide(token);
     SendMessageW(target, EM_REPLACESEL, 1, token.as_ptr() as isize);
     SetFocus(target);
     update_display_preview(app);
     Ok(())
+}
+
+unsafe fn show_display_token_menu(app: &App, anchor: HWND) {
+    let menu = CreatePopupMenu();
+    if menu.is_null() {
+        return;
+    }
+    for (index, (token, label)) in DISPLAY_TOKENS.iter().enumerate() {
+        append_menu(
+            menu,
+            ID_DISPLAY_TOKEN_BASE + index as i32,
+            &format!("{token}  {label}"),
+        );
+    }
+    let mut rect: RECT = zeroed();
+    GetWindowRect(anchor, &mut rect);
+    TrackPopupMenu(
+        menu,
+        TPM_RIGHTBUTTON,
+        rect.left,
+        rect.bottom,
+        0,
+        app.main,
+        null(),
+    );
+    DestroyMenu(menu);
 }
 
 unsafe fn populate_shortcut_edits(app: &App, configuration: &ShortcutConfiguration) {
@@ -3309,21 +3616,21 @@ unsafe fn populate_shortcut_edits(app: &App, configuration: &ShortcutConfigurati
 }
 
 fn format_shortcut_binding(binding: &ShortcutBinding) -> String {
-    let mut parts = Vec::new();
+    let mut value = String::new();
     if binding.modifiers.contains(ShortcutModifiers::CONTROL) {
-        parts.push("Ctrl".to_owned());
+        value.push('⌃');
     }
     if binding.modifiers.contains(ShortcutModifiers::ALT) {
-        parts.push("Alt".to_owned());
+        value.push('⌥');
     }
     if binding.modifiers.contains(ShortcutModifiers::SHIFT) {
-        parts.push("Shift".to_owned());
+        value.push('⇧');
     }
     if binding.modifiers.contains(ShortcutModifiers::WINDOWS) {
-        parts.push("Win".to_owned());
+        value.push('⊞');
     }
-    parts.push(virtual_key_label(binding.virtual_key));
-    parts.join("+")
+    value.push_str(&virtual_key_label(binding.virtual_key));
+    value
 }
 
 fn virtual_key_label(key: u32) -> String {
@@ -3390,6 +3697,413 @@ fn parse_virtual_key(value: &str) -> Result<u32, String> {
         "down" => Ok(0x28),
         _ => Err(format!("无法识别按键 {value:?}")),
     }
+}
+
+unsafe extern "system" fn shortcut_edit_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN) {
+        let virtual_key = wparam as u32;
+        if matches!(
+            virtual_key,
+            value if value == VK_SHIFT as u32
+                || value == VK_CONTROL as u32
+                || value == VK_MENU as u32
+                || value == VK_LWIN as u32
+                || value == VK_RWIN as u32
+        ) {
+            return 0;
+        }
+        let mut modifiers = ShortcutModifiers::default();
+        if GetKeyState(VK_CONTROL as i32) < 0 {
+            modifiers |= ShortcutModifiers::CONTROL;
+        }
+        if GetKeyState(VK_MENU as i32) < 0 {
+            modifiers |= ShortcutModifiers::ALT;
+        }
+        if GetKeyState(VK_SHIFT as i32) < 0 {
+            modifiers |= ShortcutModifiers::SHIFT;
+        }
+        if GetKeyState(VK_LWIN as i32) < 0 || GetKeyState(VK_RWIN as i32) < 0 {
+            modifiers |= ShortcutModifiers::WINDOWS;
+        }
+        let binding = ShortcutBinding::new(modifiers, virtual_key);
+        if binding.validate().is_ok() {
+            set_text(hwnd, &format_shortcut_binding(&binding));
+            SendMessageW(hwnd, EM_SETSEL, 0, -1);
+        }
+        return 0;
+    }
+    if matches!(message, WM_CHAR | WM_SYSCHAR) {
+        return 0;
+    }
+    if message == WM_SETFOCUS {
+        SendMessageW(hwnd, EM_SETSEL, 0, -1);
+    }
+    let previous = SHORTCUT_EDIT_PROC.load(Ordering::Acquire);
+    CallWindowProcW(
+        Some(std::mem::transmute::<
+            isize,
+            unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT,
+        >(previous)),
+        hwnd,
+        message,
+        wparam,
+        lparam,
+    )
+}
+
+unsafe extern "system" fn dark_edit_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let previous = EDIT_PROC.load(Ordering::Acquire);
+    let result = call_previous_control_proc(previous, hwnd, message, wparam, lparam);
+    if matches!(message, WM_NCPAINT | WM_SETFOCUS | WM_KILLFOCUS | WM_ENABLE) {
+        paint_dark_edit_border(hwnd);
+    }
+    result
+}
+
+unsafe fn paint_dark_edit_border(window: HWND) {
+    let context = GetWindowDC(window);
+    if context.is_null() {
+        return;
+    }
+    let mut window_rect: RECT = zeroed();
+    GetWindowRect(window, &mut window_rect);
+    let width = window_rect.right - window_rect.left;
+    let height = window_rect.bottom - window_rect.top;
+    let color = if IsWindowEnabled(window) == 0 {
+        rgb(47, 54, 56)
+    } else if GetFocus() == window {
+        PURPLE_LIGHT
+    } else {
+        LINE_ON_LIGHT
+    };
+    let pen = CreatePen(PS_SOLID, 1, color);
+    let old_pen = SelectObject(context, pen);
+    let old_brush = SelectObject(context, GetStockObject(NULL_BRUSH));
+    Rectangle(context, 0, 0, width, height);
+    Rectangle(context, 1, 1, width - 1, height - 1);
+    SelectObject(context, old_brush);
+    SelectObject(context, old_pen);
+    DeleteObject(pen);
+    ReleaseDC(window, context);
+}
+
+unsafe extern "system" fn dark_date_picker_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_PAINT => {
+            let mut paint: PAINTSTRUCT = zeroed();
+            let context = BeginPaint(hwnd, &mut paint);
+            paint_dark_picker(
+                hwnd,
+                context,
+                &date_picker_text(hwnd),
+                date_picker_glyph(hwnd),
+            );
+            EndPaint(hwnd, &paint);
+            return 0;
+        }
+        WM_PRINTCLIENT => {
+            paint_dark_picker(
+                hwnd,
+                wparam as HDC,
+                &date_picker_text(hwnd),
+                date_picker_glyph(hwnd),
+            );
+            return 0;
+        }
+        WM_ERASEBKGND => return 1,
+        _ => {}
+    }
+    let previous = DATE_PICKER_PROC.load(Ordering::Acquire);
+    let result = call_previous_control_proc(previous, hwnd, message, wparam, lparam);
+    if matches!(
+        message,
+        DTM_SETSYSTEMTIME | WM_ENABLE | WM_SETFOCUS | WM_KILLFOCUS | WM_SETTEXT
+    ) {
+        InvalidateRect(hwnd, null(), 0);
+    }
+    result
+}
+
+unsafe extern "system" fn dark_combo_box_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_PAINT => {
+            let mut paint: PAINTSTRUCT = zeroed();
+            let context = BeginPaint(hwnd, &mut paint);
+            paint_dark_picker(hwnd, context, &get_text(hwnd), "▾");
+            EndPaint(hwnd, &paint);
+            return 0;
+        }
+        WM_PRINTCLIENT => {
+            paint_dark_picker(hwnd, wparam as HDC, &get_text(hwnd), "▾");
+            return 0;
+        }
+        WM_ERASEBKGND => return 1,
+        _ => {}
+    }
+    let previous = COMBOBOX_PROC.load(Ordering::Acquire);
+    let result = call_previous_control_proc(previous, hwnd, message, wparam, lparam);
+    if matches!(
+        message,
+        CB_SETCURSEL | WM_ENABLE | WM_SETFOCUS | WM_KILLFOCUS | WM_SETTEXT
+    ) {
+        InvalidateRect(hwnd, null(), 0);
+    }
+    result
+}
+
+unsafe extern "system" fn dark_updown_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_PAINT => {
+            let mut paint: PAINTSTRUCT = zeroed();
+            let context = BeginPaint(hwnd, &mut paint);
+            paint_dark_updown(hwnd, context);
+            EndPaint(hwnd, &paint);
+            return 0;
+        }
+        WM_PRINTCLIENT => {
+            paint_dark_updown(hwnd, wparam as HDC);
+            return 0;
+        }
+        WM_ERASEBKGND => return 1,
+        _ => {}
+    }
+    let previous = UPDOWN_PROC.load(Ordering::Acquire);
+    let result = call_previous_control_proc(previous, hwnd, message, wparam, lparam);
+    if matches!(message, WM_LBUTTONDOWN | WM_LBUTTONUP | WM_ENABLE) {
+        InvalidateRect(hwnd, null(), 0);
+    }
+    result
+}
+
+unsafe fn paint_dark_updown(window: HWND, context: HDC) {
+    if context.is_null() {
+        return;
+    }
+    let mut area: RECT = zeroed();
+    GetClientRect(window, &mut area);
+    let background = if IsWindowEnabled(window) != 0 {
+        INK_SOFT
+    } else {
+        rgb(35, 41, 43)
+    };
+    let brush = CreateSolidBrush(background);
+    FillRect(context, &area, brush);
+    DeleteObject(brush);
+
+    let divider_pen = CreatePen(PS_SOLID, 1, LINE_ON_LIGHT);
+    let old_pen = SelectObject(context, divider_pen);
+    MoveToEx(context, area.left, (area.top + area.bottom) / 2, null_mut());
+    LineTo(context, area.right, (area.top + area.bottom) / 2);
+    SelectObject(context, old_pen);
+    DeleteObject(divider_pen);
+
+    let center_x = (area.left + area.right) / 2;
+    let center_y = (area.top + area.bottom) / 2;
+    let arrow_brush = CreateSolidBrush(if IsWindowEnabled(window) != 0 {
+        MUTED_ON_LIGHT
+    } else {
+        rgb(92, 99, 99)
+    });
+    let arrow_pen = CreatePen(PS_SOLID, 1, background);
+    let old_brush = SelectObject(context, arrow_brush);
+    let old_pen = SelectObject(context, arrow_pen);
+    let up = [
+        POINT {
+            x: center_x,
+            y: center_y - 7,
+        },
+        POINT {
+            x: center_x - 4,
+            y: center_y - 3,
+        },
+        POINT {
+            x: center_x + 4,
+            y: center_y - 3,
+        },
+    ];
+    let down = [
+        POINT {
+            x: center_x - 4,
+            y: center_y + 3,
+        },
+        POINT {
+            x: center_x + 4,
+            y: center_y + 3,
+        },
+        POINT {
+            x: center_x,
+            y: center_y + 7,
+        },
+    ];
+    Polygon(context, up.as_ptr(), up.len() as i32);
+    Polygon(context, down.as_ptr(), down.len() as i32);
+    SelectObject(context, old_brush);
+    SelectObject(context, old_pen);
+    DeleteObject(arrow_brush);
+    DeleteObject(arrow_pen);
+}
+
+unsafe fn call_previous_control_proc(
+    previous: isize,
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if previous == 0 {
+        return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+    CallWindowProcW(
+        Some(std::mem::transmute::<
+            isize,
+            unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT,
+        >(previous)),
+        hwnd,
+        message,
+        wparam,
+        lparam,
+    )
+}
+
+unsafe fn date_picker_text(window: HWND) -> String {
+    let mut value: SYSTEMTIME = zeroed();
+    if SendMessageW(
+        window,
+        DTM_GETSYSTEMTIME,
+        0,
+        (&mut value as *mut SYSTEMTIME) as isize,
+    ) != GDT_VALID as isize
+    {
+        return String::new();
+    }
+    if GetWindowLongPtrW(window, GWL_STYLE) as u32 & DTS_TIMEFORMAT != 0 {
+        format!("{:02}:{:02}", value.wHour, value.wMinute)
+    } else {
+        format!("{} / {} / {}", value.wYear, value.wMonth, value.wDay)
+    }
+}
+
+unsafe fn date_picker_glyph(window: HWND) -> &'static str {
+    if GetWindowLongPtrW(window, GWL_STYLE) as u32 & DTS_UPDOWN != 0 {
+        "↕"
+    } else {
+        "▾"
+    }
+}
+
+unsafe fn paint_dark_picker(window: HWND, context: HDC, text: &str, glyph: &str) {
+    if context.is_null() {
+        return;
+    }
+    let mut area: RECT = zeroed();
+    GetClientRect(window, &mut area);
+    let enabled = IsWindowEnabled(window) != 0;
+    let background = if enabled { PAPER_CARD } else { rgb(35, 41, 43) };
+    let brush = CreateSolidBrush(background);
+    FillRect(context, &area, brush);
+    DeleteObject(brush);
+
+    let button_width = 26.min((area.right - area.left).max(0));
+    let button_rect = RECT {
+        left: area.right - button_width,
+        top: area.top + 1,
+        right: area.right - 1,
+        bottom: area.bottom - 1,
+    };
+    let button_brush = CreateSolidBrush(INK_SOFT);
+    FillRect(context, &button_rect, button_brush);
+    DeleteObject(button_brush);
+
+    let border_color = if GetFocus() == window {
+        PURPLE_LIGHT
+    } else {
+        LINE_ON_LIGHT
+    };
+    let border_pen = CreatePen(PS_SOLID, 1, border_color);
+    let old_pen = SelectObject(context, border_pen);
+    let old_brush = SelectObject(context, GetStockObject(NULL_BRUSH));
+    Rectangle(context, area.left, area.top, area.right, area.bottom);
+    MoveToEx(context, button_rect.left, button_rect.top, null_mut());
+    LineTo(context, button_rect.left, button_rect.bottom);
+    SelectObject(context, old_brush);
+    SelectObject(context, old_pen);
+    DeleteObject(border_pen);
+
+    let font = SendMessageW(window, WM_GETFONT, 0, 0) as HFONT;
+    let old_font = SelectObject(
+        context,
+        if font.is_null() {
+            GetStockObject(DEFAULT_GUI_FONT)
+        } else {
+            font
+        },
+    );
+    SetBkMode(context, TRANSPARENT as i32);
+    SetTextColor(
+        context,
+        if enabled {
+            TEXT_ON_LIGHT
+        } else {
+            MUTED_ON_LIGHT
+        },
+    );
+    let mut text_rect = RECT {
+        left: area.left + 8,
+        top: area.top,
+        right: button_rect.left - 6,
+        bottom: area.bottom,
+    };
+    let mut text = wide(text);
+    DrawTextW(
+        context,
+        text.as_mut_ptr(),
+        -1,
+        &mut text_rect,
+        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+    );
+    SetTextColor(
+        context,
+        if enabled {
+            MUTED_ON_LIGHT
+        } else {
+            rgb(92, 99, 99)
+        },
+    );
+    let mut glyph_rect = button_rect;
+    let mut glyph = wide(glyph);
+    DrawTextW(
+        context,
+        glyph.as_mut_ptr(),
+        -1,
+        &mut glyph_rect,
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+    );
+    SelectObject(context, old_font);
 }
 
 unsafe fn shortcut_configuration_from_edits(app: &App) -> Result<ShortcutConfiguration, String> {
@@ -3793,6 +4507,7 @@ fn pairing_deep_link(
     pairing_id: &str,
     pairing_secret: &str,
     initiator_public_key: &str,
+    vault_id: &str,
 ) -> Result<String, String> {
     let mut link =
         url::Url::parse("wootodo://pair").map_err(|_| "无法构造 Woo Todo 配对链接".to_owned())?;
@@ -3800,7 +4515,8 @@ fn pairing_deep_link(
         .append_pair("endpoint", endpoint)
         .append_pair("pairingId", pairing_id)
         .append_pair("pairingSecret", pairing_secret)
-        .append_pair("initiatorPublicKey", initiator_public_key);
+        .append_pair("initiatorPublicKey", initiator_public_key)
+        .append_pair("vaultId", vault_id);
     Ok(link.to_string())
 }
 
@@ -3894,6 +4610,7 @@ unsafe fn begin_pairing(app: &mut App) -> Result<(), String> {
                     &created.pairing_id,
                     &created.pairing_secret,
                     &created.initiator_public_key,
+                    credentials.vault_id(),
                 )?;
                 Ok((key_pair, created, link))
             })();
@@ -4971,6 +5688,12 @@ unsafe fn handle_main_command(app: &mut App, id: i32, notification: u16) {
             }
         }
         ID_REFRESH => refresh_all(app),
+        ID_DISPLAY_HEADER if notification == EN_SETFOCUS as u16 => {
+            app.display_template_field = DisplayTemplateField::Header;
+        }
+        ID_DISPLAY_SUBTITLE if notification == EN_SETFOCUS as u16 => {
+            app.display_template_field = DisplayTemplateField::Subtitle;
+        }
         ID_DISPLAY_HEADER | ID_DISPLAY_SUBTITLE if notification == EN_CHANGE as u16 => {
             update_display_preview(app);
         }
@@ -4997,6 +5720,23 @@ unsafe fn handle_main_command(app: &mut App, id: i32, notification: u16) {
         ID_DISPLAY_SAVE => {
             if let Err(error) = save_display_settings(app) {
                 show_error(app.main, "无法保存显示设置", &error);
+            }
+        }
+        ID_DISPLAY_INSERT_MENU => {
+            app.display_template_field = DisplayTemplateField::Header;
+            show_display_token_menu(app, app.main_controls.display_insert_menu);
+        }
+        ID_DISPLAY_INSERT_SUBTITLE_MENU => {
+            app.display_template_field = DisplayTemplateField::Subtitle;
+            show_display_token_menu(app, app.main_controls.display_insert_subtitle_menu);
+        }
+        value
+            if (ID_DISPLAY_TOKEN_BASE..ID_DISPLAY_TOKEN_BASE + ID_DISPLAY_TOKEN_COUNT)
+                .contains(&value) =>
+        {
+            let (token, _) = DISPLAY_TOKENS[(value - ID_DISPLAY_TOKEN_BASE) as usize];
+            if let Err(error) = insert_display_token(app, token) {
+                show_error(app.main, "无法插入变量", &error);
             }
         }
         ID_DISPLAY_RESET => {
@@ -5082,25 +5822,39 @@ unsafe fn handle_main_command(app: &mut App, id: i32, notification: u16) {
             }
         }
         ID_TOPMOST => {
-            app.settings.topmost =
+            let enabled =
                 SendMessageW(app.main_controls.topmost, BM_GETCHECK, 0, 0) == BST_CHECKED as isize;
-            apply_floating_settings(app);
-            let _ = app.settings.save();
+            set_topmost(app, enabled);
         }
         ID_CLICK_THROUGH => {
-            app.settings.click_through =
-                SendMessageW(app.main_controls.click_through, BM_GETCHECK, 0, 0)
-                    == BST_CHECKED as isize;
-            apply_floating_settings(app);
-            let _ = app.settings.save();
+            let enabled = SendMessageW(app.main_controls.click_through, BM_GETCHECK, 0, 0)
+                == BST_CHECKED as isize;
+            set_click_through(app, enabled);
+        }
+        ID_DESKTOP_WIDGET => {
+            let enabled = SendMessageW(app.main_controls.desktop_widget, BM_GETCHECK, 0, 0)
+                == BST_CHECKED as isize;
+            set_desktop_widget(app, enabled);
         }
         ID_TRAY_SHOW_MAIN => show_main(app),
         ID_TRAY_TOGGLE_BOARD => toggle_board(app),
-        ID_TRAY_QUICK_ADD => show_quick_add(app),
+        ID_TRAY_QUICK_ADD => show_quick_add_dialog(app),
         ID_TRAY_TOPMOST => toggle_topmost(app),
         ID_TRAY_CLICK_THROUGH => toggle_click_through(app),
+        ID_TRAY_DESKTOP_WIDGET => toggle_desktop_widget(app),
         ID_TRAY_CHECK_UPDATE => begin_update_check(app, true),
+        ID_TRAY_SETTINGS => {
+            app.section = Section::Display;
+            show_main(app);
+        }
         ID_TRAY_EXIT => exit_application(app),
+        value
+            if (ID_TRAY_OPACITY_BASE..ID_TRAY_OPACITY_BASE + ID_TRAY_OPACITY_COUNT)
+                .contains(&value) =>
+        {
+            let percent = 20 + (value - ID_TRAY_OPACITY_BASE) * 10;
+            set_opacity_percent(app, percent);
+        }
         _ => {}
     }
 }
@@ -5155,41 +5909,425 @@ unsafe fn toggle_board(app: &App) {
     } else {
         ShowWindow(
             app.floating,
-            if app.settings.click_through {
+            if app.settings.click_through || app.settings.desktop_widget {
                 SW_SHOWNOACTIVATE
             } else {
                 SW_SHOW
             },
         );
+        apply_floating_settings(app);
     }
 }
 
-unsafe fn show_quick_add(app: &mut App) {
-    if app.settings.click_through {
-        app.settings.click_through = false;
-        apply_floating_settings(app);
-        let _ = app.settings.save();
+/// 打开快速新增对话框（对应 macOS 的 QuickAddPanel）：
+/// 任务内容 + 任务级别 + 每天重复 + 提醒，提交后创建“今日”任务并关闭。
+unsafe fn show_quick_add_dialog(app: &mut App) {
+    let mut state = Box::new(QuickAddState {
+        controls: QuickAddControls::default(),
+        theme: &app.theme,
+        input: None,
+    });
+    let pointer = (&mut *state) as *mut QuickAddState;
+    let window = match create_top_window(
+        QUICK_ADD_CLASS,
+        "快速新增任务",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        WS_EX_DLGMODALFRAME,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        560,
+        212,
+        pointer.cast(),
+    ) {
+        Ok(window) => window,
+        Err(error) => {
+            show_error(app.main, "无法打开快速新增", &error);
+            return;
+        }
+    };
+    SetWindowLongPtrW(window, GWLP_HWNDPARENT, app.main as isize);
+    if let Err(error) = create_quick_add_controls(window, &mut state, &app.theme) {
+        show_error(app.main, "无法打开快速新增", &error);
+        DestroyWindow(window);
+        return;
     }
-    ShowWindow(app.floating, SW_SHOW);
-    SetForegroundWindow(app.floating);
-    SetFocus(app.float_controls.quick_edit);
+    position_quick_add(window);
+    let main_was_enabled = IsWindowEnabled(app.main) != 0;
+    let floating_was_enabled = IsWindowEnabled(app.floating) != 0;
+    EnableWindow(app.main, 0);
+    EnableWindow(app.floating, 0);
+    ShowWindow(window, SW_SHOW);
+    SetFocus(state.controls.title);
+    let mut message: MSG = zeroed();
+    while IsWindow(window) != 0 {
+        let result = GetMessageW(&mut message, null_mut(), 0, 0);
+        if result == 0 {
+            PostQuitMessage(message.wParam as i32);
+            break;
+        }
+        if result < 0 {
+            break;
+        }
+        if IsDialogMessageW(window, &message) == 0 {
+            let target = message.hwnd;
+            if target == window || (!target.is_null() && IsChild(window, target) != 0) {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+    }
+    if main_was_enabled && IsWindow(app.main) != 0 {
+        EnableWindow(app.main, 1);
+    }
+    if floating_was_enabled && IsWindow(app.floating) != 0 {
+        EnableWindow(app.floating, 1);
+    }
+    // 提交时在销毁窗口前快照输入，避免读取已销毁控件。
+    if let Some(input) = state.input.take() {
+        match app.repository.create(
+            &input.title,
+            input.time_type,
+            input.target_date,
+            input.quest_line,
+            input.repeats,
+            input.reminder_time,
+            input.deadline_date,
+            now_millis(),
+        ) {
+            Ok(_) => {
+                app.sync_runtime.request(SyncTrigger::LocalChange);
+                refresh_all(app);
+            }
+            Err(error) => {
+                show_error(app.main, "无法新增任务", &error.to_string());
+            }
+        }
+    }
+}
+
+unsafe fn create_quick_add_controls(
+    window: HWND,
+    state: &mut QuickAddState,
+    theme: &ThemeResources,
+) -> Result<(), String> {
+    state.controls.title = create_child(
+        window,
+        "EDIT",
+        "",
+        WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL as u32,
+        WS_EX_CLIENTEDGE,
+        ID_QUICK_TITLE,
+    )?;
+    MoveWindow(state.controls.title, 24, 18, 512, 38, 1);
+    SendMessageW(
+        state.controls.title,
+        EM_SETCUEBANNER,
+        1,
+        wide("新增今日任务").as_ptr() as isize,
+    );
+
+    state.controls.quest = create_child(
+        window,
+        "COMBOBOX",
+        "",
+        WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST as u32,
+        0,
+        ID_QUICK_QUEST,
+    )?;
+    for line in [QuestLine::Main, QuestLine::Side, QuestLine::Extra] {
+        combo_add(state.controls.quest, quest_line_label(line));
+    }
+    SendMessageW(state.controls.quest, CB_SETCURSEL, 0, 0);
+    MoveWindow(state.controls.quest, 24, 78, 158, 220, 1);
+    state.controls.repeats = create_child(
+        window,
+        "BUTTON",
+        "每天重复",
+        WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX as u32,
+        0,
+        ID_QUICK_REPEAT,
+    )?;
+    MoveWindow(state.controls.repeats, 198, 82, 100, 24, 1);
+    state.controls.reminder_enabled = create_child(
+        window,
+        "BUTTON",
+        "提醒",
+        WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX as u32,
+        0,
+        ID_QUICK_REMINDER_ENABLED,
+    )?;
+    MoveWindow(state.controls.reminder_enabled, 310, 82, 58, 24, 1);
+    state.controls.reminder_time = create_child(
+        window,
+        "SysDateTimePick32",
+        "",
+        WS_VISIBLE | WS_TABSTOP | DTS_TIMEFORMAT | DTS_UPDOWN,
+        0,
+        ID_QUICK_REMINDER_TIME,
+    )?;
+    MoveWindow(state.controls.reminder_time, 380, 78, 100, 30, 1);
+    set_time(state.controls.reminder_time, next_half_hour());
+    state.controls.submit = styled_button(window, "添加", ID_QUICK_SUBMIT)?;
+    MoveWindow(state.controls.submit, 490, 78, 54, 32, 1);
+    state.controls.status = create_child(
+        window,
+        "STATIC",
+        "",
+        WS_VISIBLE | STATIC_LEFT,
+        0,
+        ID_QUICK_STATUS,
+    )?;
+    MoveWindow(state.controls.status, 24, 126, 512, 20, 1);
+    set_control_font(state.controls.title, theme.subheading_font);
+    for control in [
+        state.controls.quest,
+        state.controls.repeats,
+        state.controls.reminder_enabled,
+        state.controls.reminder_time,
+    ] {
+        set_control_font(control, theme.body_font);
+    }
+    set_control_font(state.controls.submit, theme.body_semibold_font);
+    set_control_font(state.controls.status, theme.caption_font);
+    let previous = SetWindowLongPtrW(
+        state.controls.title,
+        GWLP_WNDPROC,
+        quick_add_title_proc as *const () as isize,
+    );
+    QUICK_ADD_EDIT_PROC.store(previous, Ordering::Release);
+    update_quick_add_status(state);
+    Ok(())
+}
+
+/// 默认提醒时间为下一个半点（:00 或 :30），与 macOS QuickAddPanel 一致。
+fn next_half_hour() -> ReminderTime {
+    let now = chrono::Local::now().time();
+    next_half_hour_after(now.hour() as u8, now.minute() as u8)
+}
+
+fn next_half_hour_after(hour: u8, minute: u8) -> ReminderTime {
+    let minutes = i32::from(hour) * 60 + i32::from(minute);
+    let next = minutes + 30 - minutes % 30;
+    let hour = (next / 60) % 24;
+    ReminderTime::new(hour as u8, (next % 60) as u8).unwrap_or(ReminderTime { hour: 9, minute: 0 })
+}
+
+unsafe fn quick_add_input(state: &QuickAddState) -> Option<TaskInput> {
+    let title = get_text(state.controls.title);
+    let title = title.trim();
+    if title.is_empty() {
+        return None;
+    }
+    let quest_line = match SendMessageW(state.controls.quest, CB_GETCURSEL, 0, 0) as i32 {
+        0 => QuestLine::Main,
+        1 => QuestLine::Side,
+        _ => QuestLine::Extra,
+    };
+    let repeats = SendMessageW(state.controls.repeats, BM_GETCHECK, 0, 0) == BST_CHECKED as isize;
+    let reminder_enabled =
+        SendMessageW(state.controls.reminder_enabled, BM_GETCHECK, 0, 0) == BST_CHECKED as isize;
+    let reminder_time = if reminder_enabled {
+        get_time(state.controls.reminder_time).ok()
+    } else {
+        None
+    };
+    Some(TaskInput {
+        title: title.to_owned(),
+        time_type: TimeType::Day,
+        target_date: today_shanghai(),
+        quest_line,
+        repeats,
+        reminder_time,
+        deadline_date: None,
+    })
+}
+
+unsafe fn update_quick_add_status(state: &QuickAddState) {
+    let quest_line = match SendMessageW(state.controls.quest, CB_GETCURSEL, 0, 0) as i32 {
+        0 => QuestLine::Main,
+        1 => QuestLine::Side,
+        _ => QuestLine::Extra,
+    };
+    let reminder_enabled =
+        SendMessageW(state.controls.reminder_enabled, BM_GETCHECK, 0, 0) == BST_CHECKED as isize;
+    EnableWindow(state.controls.reminder_time, reminder_enabled as i32);
+    let mut parts = vec!["今日".to_owned(), quest_line_label(quest_line).to_owned()];
+    if SendMessageW(state.controls.repeats, BM_GETCHECK, 0, 0) == BST_CHECKED as isize {
+        parts.push("每天重复".to_owned());
+    }
+    if reminder_enabled && let Ok(time) = get_time(state.controls.reminder_time) {
+        parts.push(format!("{:02}:{:02} 提醒", time.hour, time.minute));
+    }
+    set_text(state.controls.status, &parts.join(" · "));
+}
+
+unsafe fn position_quick_add(window: HWND) {
+    let mut monitor = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    let screen = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    if screen.is_null() || GetMonitorInfoW(screen, &mut monitor) == 0 {
+        return;
+    }
+    let work = monitor.rcWork;
+    let mut rect: RECT = zeroed();
+    GetWindowRect(window, &mut rect);
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+    // 与 macOS 一致：位于工作区上部（约 1/4 高度处），水平居中。
+    let x = work.left + ((work.right - work.left) - width) / 2;
+    let y = work.top + (work.bottom - work.top - height) / 4;
+    SetWindowPos(window, HWND_TOP, x, y, 0, 0, SWP_NOSIZE);
+}
+
+unsafe extern "system" fn quick_add_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_NCCREATE {
+        let create = &*(lparam as *const CREATESTRUCTW);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as isize);
+    }
+    let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut QuickAddState;
+    if pointer.is_null() {
+        return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+    let state = &mut *pointer;
+    match message {
+        WM_DRAWITEM => {
+            if lparam == 0 {
+                return 0;
+            }
+            draw_dialog_button(&*state.theme, &*(lparam as *const DRAWITEMSTRUCT))
+        }
+        WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX => {
+            paint_dialog_control(&*state.theme, message, wparam)
+        }
+        WM_COMMAND => {
+            let id = loword(wparam) as i32;
+            let notification = hiword(wparam);
+            if matches!(
+                id,
+                ID_QUICK_QUEST | ID_QUICK_REPEAT | ID_QUICK_REMINDER_ENABLED
+            ) && (notification == CBN_SELCHANGE as u16 || notification == BN_CLICKED as u16)
+            {
+                update_quick_add_status(state);
+            }
+            // 回车（IsDialogMessage 的 IDOK 或输入框子类化的 ID_QUICK_SUBMIT）提交；
+            // Esc（IsDialogMessage 的 IDCANCEL）关闭。
+            if id == IDOK || id == ID_QUICK_SUBMIT {
+                if let Some(input) = quick_add_input(state) {
+                    state.input = Some(input);
+                    DestroyWindow(hwnd);
+                } else {
+                    SetFocus(state.controls.title);
+                }
+            }
+            if id == IDCANCEL {
+                DestroyWindow(hwnd);
+            }
+            0
+        }
+        WM_NOTIFY => {
+            if lparam != 0 {
+                let header = &*(lparam as *const NMHDR);
+                if header.idFrom == ID_QUICK_REMINDER_TIME as usize
+                    && header.code == DTN_DATETIMECHANGE
+                {
+                    update_quick_add_status(state);
+                }
+            }
+            0
+        }
+        WM_CLOSE => {
+            DestroyWindow(hwnd);
+            0
+        }
+        _ => DefWindowProcW(hwnd, message, wparam, lparam),
+    }
+}
+
+/// 快速新增标题输入框：回车提交、Esc 关闭。
+unsafe extern "system" fn quick_add_title_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_KEYDOWN {
+        if wparam as u16 == VK_RETURN {
+            PostMessageW(
+                GetParent(hwnd),
+                WM_COMMAND,
+                ID_QUICK_SUBMIT as usize,
+                hwnd as isize,
+            );
+            return 0;
+        }
+        if wparam as u16 == VK_ESCAPE {
+            PostMessageW(GetParent(hwnd), WM_CLOSE, 0, 0);
+            return 0;
+        }
+    }
+    let previous = QUICK_ADD_EDIT_PROC.load(Ordering::Acquire);
+    CallWindowProcW(
+        Some(std::mem::transmute::<
+            isize,
+            unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT,
+        >(previous)),
+        hwnd,
+        message,
+        wparam,
+        lparam,
+    )
 }
 
 unsafe fn toggle_topmost(app: &mut App) {
-    app.settings.topmost = !app.settings.topmost;
-    apply_floating_settings(app);
-    let _ = app.settings.save();
-    if app.section == Section::Settings {
-        show_settings(app);
-    }
+    let enabled = app.settings.desktop_widget || !app.settings.topmost;
+    set_topmost(app, enabled);
 }
 
 unsafe fn toggle_click_through(app: &mut App) {
-    app.settings.click_through = !app.settings.click_through;
+    set_click_through(app, !app.settings.click_through);
+}
+
+unsafe fn toggle_desktop_widget(app: &mut App) {
+    set_desktop_widget(app, !app.settings.desktop_widget);
+}
+
+unsafe fn set_topmost(app: &mut App, enabled: bool) {
+    if enabled {
+        app.settings.desktop_widget = false;
+    }
+    app.settings.topmost = enabled;
+    persist_floating_settings(app);
+}
+
+unsafe fn set_click_through(app: &mut App, enabled: bool) {
+    if enabled {
+        app.settings.desktop_widget = false;
+    }
+    app.settings.click_through = enabled;
+    persist_floating_settings(app);
+}
+
+unsafe fn set_desktop_widget(app: &mut App, enabled: bool) {
+    app.settings.desktop_widget = enabled;
+    if enabled {
+        app.settings.topmost = false;
+        app.settings.click_through = false;
+    }
+    persist_floating_settings(app);
+}
+
+unsafe fn persist_floating_settings(app: &mut App) {
     apply_floating_settings(app);
     let _ = app.settings.save();
-    if app.section == Section::Settings {
-        show_settings(app);
+    if app.section == Section::Display {
+        show_display_settings(app);
     }
 }
 
@@ -5206,7 +6344,9 @@ unsafe fn apply_floating_settings(app: &App) {
     SetLayeredWindowAttributes(app.floating, 0, alpha, LWA_ALPHA);
     SetWindowPos(
         app.floating,
-        if app.settings.topmost {
+        if app.settings.desktop_widget {
+            HWND_BOTTOM
+        } else if app.settings.topmost {
             HWND_TOPMOST
         } else {
             HWND_NOTOPMOST
@@ -5320,6 +6460,7 @@ fn hotkey_id(command: ShortcutCommand) -> i32 {
         ShortcutCommand::ToggleClickThrough => HOTKEY_CLICK_THROUGH,
         ShortcutCommand::IncreaseOpacity => HOTKEY_INCREASE_OPACITY,
         ShortcutCommand::DecreaseOpacity => HOTKEY_DECREASE_OPACITY,
+        ShortcutCommand::ToggleDesktopWidget => HOTKEY_DESKTOP_WIDGET,
     }
 }
 
@@ -5331,6 +6472,7 @@ fn shortcut_command_label(command: ShortcutCommand) -> &'static str {
         ShortcutCommand::ToggleClickThrough => "切换穿透",
         ShortcutCommand::IncreaseOpacity => "增加不透明度",
         ShortcutCommand::DecreaseOpacity => "降低不透明度",
+        ShortcutCommand::ToggleDesktopWidget => "切换桌面小组件",
     }
 }
 
@@ -5342,6 +6484,7 @@ unsafe fn unregister_hotkeys(app: &App) {
         HOTKEY_CLICK_THROUGH,
         HOTKEY_INCREASE_OPACITY,
         HOTKEY_DECREASE_OPACITY,
+        HOTKEY_DESKTOP_WIDGET,
     ] {
         UnregisterHotKey(app.main, id);
     }
@@ -5349,12 +6492,13 @@ unsafe fn unregister_hotkeys(app: &App) {
 
 unsafe fn handle_hotkey(app: &mut App, id: i32) {
     match id {
-        HOTKEY_QUICK_ADD => show_quick_add(app),
+        HOTKEY_QUICK_ADD => show_quick_add_dialog(app),
         HOTKEY_TOGGLE_BOARD => toggle_board(app),
         HOTKEY_TOPMOST => toggle_topmost(app),
         HOTKEY_CLICK_THROUGH => toggle_click_through(app),
         HOTKEY_INCREASE_OPACITY => adjust_opacity(app, OPACITY_STEP_PERCENT),
         HOTKEY_DECREASE_OPACITY => adjust_opacity(app, -OPACITY_STEP_PERCENT),
+        HOTKEY_DESKTOP_WIDGET => toggle_desktop_widget(app),
         _ => {}
     }
 }
@@ -5390,7 +6534,7 @@ unsafe fn tray_data(app: &App) -> NOTIFYICONDATAW {
     if data.hIcon.is_null() {
         data.hIcon = LoadIconW(null_mut(), IDI_APPLICATION);
     }
-    copy_wide(&mut data.szTip, "无我待办");
+    copy_wide(&mut data.szTip, "Woo Todo");
     data
 }
 
@@ -5557,44 +6701,104 @@ unsafe fn show_tray_menu(app: &mut App) {
     if menu.is_null() {
         return;
     }
-    append_menu(menu, ID_TRAY_SHOW_MAIN, "任务详情与统计...");
+    append_menu(
+        menu,
+        ID_TRAY_QUICK_ADD,
+        &tray_item_with_hint(
+            "快速新增任务",
+            app.settings.shortcuts.binding(ShortcutCommand::QuickAdd),
+        ),
+    );
     append_menu(
         menu,
         ID_TRAY_TOGGLE_BOARD,
-        if IsWindowVisible(app.floating) != 0 {
-            "隐藏任务板"
-        } else {
-            "显示任务板"
-        },
+        &tray_item_with_hint(
+            if IsWindowVisible(app.floating) != 0 {
+                "隐藏任务板"
+            } else {
+                "显示任务板"
+            },
+            app.settings
+                .shortcuts
+                .binding(ShortcutCommand::ToggleTaskPanel),
+        ),
     );
-    append_menu(menu, ID_TRAY_QUICK_ADD, "快速新增...");
-    append_menu(
-        menu,
-        ID_TRAY_TOPMOST,
-        if app.settings.topmost {
-            "取消始终置顶"
-        } else {
-            "任务板始终置顶"
-        },
-    );
-    append_menu(
+    append_menu(menu, ID_TRAY_SHOW_MAIN, "任务详情与统计…");
+    append_menu(menu, ID_TRAY_SETTINGS, "设置…");
+    AppendMenuW(menu, MF_SEPARATOR, 0, null());
+
+    append_menu_checked(
         menu,
         ID_TRAY_CLICK_THROUGH,
-        if app.settings.click_through {
-            "鼠标穿透：已开启"
-        } else {
-            "鼠标穿透"
-        },
+        &tray_item_with_hint(
+            if app.settings.click_through {
+                "鼠标穿透：已开启"
+            } else {
+                "鼠标穿透"
+            },
+            app.settings
+                .shortcuts
+                .binding(ShortcutCommand::ToggleClickThrough),
+        ),
+        app.settings.click_through,
+    );
+
+    let opacity_menu = CreatePopupMenu();
+    if !opacity_menu.is_null() {
+        let current = app.settings.opacity_percent() as i32;
+        for index in 0..ID_TRAY_OPACITY_COUNT {
+            let percent = 20 + index * 10;
+            let label = match percent {
+                20 => "20%（最透明）".to_owned(),
+                100 => "100%（最清晰）".to_owned(),
+                value => format!("{value}%"),
+            };
+            append_menu_checked(
+                opacity_menu,
+                ID_TRAY_OPACITY_BASE + index,
+                &label,
+                percent == current,
+            );
+        }
+        append_submenu(menu, opacity_menu, &format!("不透明度（{current}%）"));
+    }
+
+    append_menu_checked(
+        menu,
+        ID_TRAY_TOPMOST,
+        &tray_item_with_hint(
+            "任务板始终置顶",
+            app.settings
+                .shortcuts
+                .binding(ShortcutCommand::ToggleAlwaysOnTop),
+        ),
+        app.settings.topmost,
+    );
+    append_menu_checked(
+        menu,
+        ID_TRAY_DESKTOP_WIDGET,
+        &tray_item_with_hint(
+            if app.settings.desktop_widget {
+                "桌面小组件模式：已开启"
+            } else {
+                "桌面小组件模式"
+            },
+            app.settings
+                .shortcuts
+                .binding(ShortcutCommand::ToggleDesktopWidget),
+        ),
+        app.settings.desktop_widget,
     );
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
+
     let update_title = match app.update_state {
-        UpdateState::Checking => "正在检查更新...".to_owned(),
-        UpdateState::Downloading => "正在下载更新...".to_owned(),
+        UpdateState::Checking => "正在检查更新…".to_owned(),
+        UpdateState::Downloading => "正在下载更新…".to_owned(),
         UpdateState::Idle => app
             .available_update
             .as_ref()
             .map(|release| format!("更新到 v{}", release.version))
-            .unwrap_or_else(|| "检查更新...".to_owned()),
+            .unwrap_or_else(|| "检查更新…".to_owned()),
     };
     append_menu(menu, ID_TRAY_CHECK_UPDATE, &update_title);
     append_menu(menu, ID_TRAY_EXIT, "退出 Woo Todo");
@@ -5605,9 +6809,31 @@ unsafe fn show_tray_menu(app: &mut App) {
     DestroyMenu(menu);
 }
 
+fn tray_item_with_hint(title: &str, binding: Option<&ShortcutBinding>) -> String {
+    match binding {
+        Some(binding) => format!("{title}\t{}", format_shortcut_binding(binding)),
+        None => title.to_owned(),
+    }
+}
+
 unsafe fn append_menu(menu: HMENU, id: i32, text: &str) {
     let text = wide(text);
     AppendMenuW(menu, MF_STRING, id as usize, text.as_ptr());
+}
+
+unsafe fn append_menu_checked(menu: HMENU, id: i32, text: &str, checked: bool) {
+    let text = wide(text);
+    AppendMenuW(
+        menu,
+        MF_STRING | if checked { MF_CHECKED } else { 0 },
+        id as usize,
+        text.as_ptr(),
+    );
+}
+
+unsafe fn append_submenu(menu: HMENU, submenu: HMENU, text: &str) {
+    let text = wide(text);
+    AppendMenuW(menu, MF_POPUP, submenu as usize, text.as_ptr());
 }
 
 unsafe fn show_float_menu(app: &mut App) {
@@ -5735,6 +6961,17 @@ unsafe extern "system" fn main_window_proc(
                 return 0;
             }
             draw_owner_control(app, &*(lparam as *const DRAWITEMSTRUCT), false)
+        }
+        WM_MEASUREITEM => {
+            if lparam == 0 {
+                return 0;
+            }
+            let measure = &mut *(lparam as *mut MEASUREITEMSTRUCT);
+            if measure.CtlType == ODT_LISTBOX && measure.CtlID == ID_NAV as u32 {
+                measure.itemHeight = if measure.itemID == 7 { 62 } else { 38 };
+                return 1;
+            }
+            0
         }
         WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX => {
             paint_main_control(app, message, wparam, lparam)
@@ -5900,6 +7137,20 @@ unsafe extern "system" fn float_window_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     };
     match message {
+        WM_ACTIVATE => {
+            if loword(wparam) != WA_INACTIVE as u16 && app.settings.desktop_widget {
+                SetWindowPos(
+                    hwnd,
+                    HWND_BOTTOM,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+            0
+        }
         WM_PAINT => paint_float_window(app, hwnd),
         WM_DRAWITEM => {
             if lparam == 0 {
@@ -6025,12 +7276,14 @@ unsafe extern "system" fn quick_edit_proc(
 unsafe fn show_task_editor(
     owner: HWND,
     secondary: HWND,
+    theme: &ThemeResources,
     initial_type: TimeType,
     initial_date: NaiveDate,
     existing: Option<TodoTask>,
 ) -> Option<TaskInput> {
     let mut state = Box::new(EditorState {
         controls: EditorControls::default(),
+        theme,
         input: None,
         initial_type,
         initial_date,
@@ -6049,7 +7302,7 @@ unsafe fn show_task_editor(
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         470,
-        500,
+        470,
         pointer.cast(),
     )
     .ok()?;
@@ -6108,6 +7361,12 @@ unsafe fn create_editor_controls(window: HWND, state: &mut EditorState) -> Resul
         ID_EDITOR_TITLE,
     )?;
     MoveWindow(state.controls.title, 22, 44, 420, 30, 1);
+    SendMessageW(
+        state.controls.title,
+        EM_SETCUEBANNER,
+        1,
+        wide("一句话写下要做的事").as_ptr() as isize,
+    );
     create_label(window, "时间范围", 22, 90, 180, 20)?;
     create_label(window, "任务级别", 242, 90, 180, 20)?;
     state.controls.time_type = create_child(
@@ -6159,7 +7418,7 @@ unsafe fn create_editor_controls(window: HWND, state: &mut EditorState) -> Resul
         quest_index(selected_quest) as usize,
         0,
     );
-    create_label(window, "目标日期", 22, 162, 200, 20)?;
+    state.controls.date_label = create_label(window, "目标日期", 22, 162, 260, 20)?;
     state.controls.date = create_child(
         window,
         "SysDateTimePick32",
@@ -6175,15 +7434,16 @@ unsafe fn create_editor_controls(window: HWND, state: &mut EditorState) -> Resul
         .and_then(|task| task.period_start)
         .unwrap_or(state.initial_date);
     set_date(state.controls.date, date);
+    state.controls.period_summary = create_label(window, "", 22, 220, 420, 20)?;
     state.controls.repeats = create_child(
         window,
         "BUTTON",
-        "每个所属周期重复",
+        "每天重复",
         WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX as u32,
         0,
         ID_EDITOR_REPEAT,
     )?;
-    MoveWindow(state.controls.repeats, 22, 230, 240, 28, 1);
+    MoveWindow(state.controls.repeats, 22, 248, 240, 28, 1);
     if state
         .existing
         .as_ref()
@@ -6200,7 +7460,7 @@ unsafe fn create_editor_controls(window: HWND, state: &mut EditorState) -> Resul
         0,
         ID_EDITOR_REMINDER_ENABLED,
     )?;
-    MoveWindow(state.controls.reminder_enabled, 22, 272, 200, 28, 1);
+    MoveWindow(state.controls.reminder_enabled, 22, 290, 200, 28, 1);
     state.controls.reminder_time = create_child(
         window,
         "SysDateTimePick32",
@@ -6209,7 +7469,7 @@ unsafe fn create_editor_controls(window: HWND, state: &mut EditorState) -> Resul
         0,
         ID_EDITOR_REMINDER_TIME,
     )?;
-    MoveWindow(state.controls.reminder_time, 242, 270, 200, 30, 1);
+    MoveWindow(state.controls.reminder_time, 242, 288, 200, 30, 1);
     let reminder = state
         .existing
         .as_ref()
@@ -6237,7 +7497,7 @@ unsafe fn create_editor_controls(window: HWND, state: &mut EditorState) -> Resul
         0,
         ID_EDITOR_DEADLINE_ENABLED,
     )?;
-    MoveWindow(state.controls.deadline_enabled, 22, 314, 200, 28, 1);
+    MoveWindow(state.controls.deadline_enabled, 22, 332, 200, 28, 1);
     state.controls.deadline_date = create_child(
         window,
         "SysDateTimePick32",
@@ -6246,7 +7506,7 @@ unsafe fn create_editor_controls(window: HWND, state: &mut EditorState) -> Resul
         0,
         ID_EDITOR_DEADLINE_DATE,
     )?;
-    MoveWindow(state.controls.deadline_date, 242, 312, 200, 30, 1);
+    MoveWindow(state.controls.deadline_date, 242, 330, 200, 30, 1);
     let deadline = state
         .existing
         .as_ref()
@@ -6265,17 +7525,10 @@ unsafe fn create_editor_controls(window: HWND, state: &mut EditorState) -> Resul
             0,
         );
     }
-    let cancel = button(window, "取消", ID_EDITOR_CANCEL)?;
-    let save = create_child(
-        window,
-        "BUTTON",
-        "保存",
-        WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON as u32,
-        0,
-        ID_EDITOR_SAVE,
-    )?;
-    MoveWindow(cancel, 278, 410, 76, 32, 1);
-    MoveWindow(save, 366, 410, 76, 32, 1);
+    let cancel = styled_button(window, "取消", ID_EDITOR_CANCEL)?;
+    let save = styled_button(window, "保存", ID_EDITOR_SAVE)?;
+    MoveWindow(cancel, 278, 382, 76, 34, 1);
+    MoveWindow(save, 366, 382, 76, 34, 1);
     update_editor_options(state);
     Ok(())
 }
@@ -6295,10 +7548,38 @@ unsafe fn create_label(
 
 unsafe fn update_editor_options(state: &EditorState) {
     let index = SendMessageW(state.controls.time_type, CB_GETCURSEL, 0, 0) as i32;
-    let someday = index == 3;
+    let time_type = index_time_type(index).unwrap_or(TimeType::Day);
+    let someday = time_type == TimeType::Someday;
+    // 与 macOS 一致：重复文案跟随时间范围。
+    let repeat_label = match time_type {
+        TimeType::Week => "每周重复",
+        TimeType::Month => "每月重复",
+        _ => "每天重复",
+    };
+    set_text(state.controls.repeats, repeat_label);
+    set_text(
+        state.controls.date_label,
+        match time_type {
+            TimeType::Day => "目标日期",
+            TimeType::Week => "目标周内任意一天",
+            TimeType::Month => "目标月内任意一天",
+            TimeType::Someday => "",
+        },
+    );
+    for control in [state.controls.date_label, state.controls.date] {
+        ShowWindow(control, if someday { SW_HIDE } else { SW_SHOW });
+    }
     EnableWindow(state.controls.date, (!someday) as i32);
     EnableWindow(state.controls.repeats, (!someday) as i32);
     EnableWindow(state.controls.reminder_enabled, (!someday) as i32);
+    ShowWindow(
+        state.controls.repeats,
+        if someday { SW_HIDE } else { SW_SHOW },
+    );
+    ShowWindow(
+        state.controls.reminder_enabled,
+        if someday { SW_HIDE } else { SW_SHOW },
+    );
     if someday {
         SendMessageW(
             state.controls.repeats,
@@ -6327,9 +7608,47 @@ unsafe fn update_editor_options(state: &EditorState) {
     let reminder_enabled = !someday
         && SendMessageW(state.controls.reminder_enabled, BM_GETCHECK, 0, 0) == BST_CHECKED as isize;
     EnableWindow(state.controls.reminder_time, reminder_enabled as i32);
+    ShowWindow(
+        state.controls.reminder_time,
+        if reminder_enabled { SW_SHOW } else { SW_HIDE },
+    );
     let deadline_enabled = !repeats
         && SendMessageW(state.controls.deadline_enabled, BM_GETCHECK, 0, 0) == BST_CHECKED as isize;
     EnableWindow(state.controls.deadline_date, deadline_enabled as i32);
+    ShowWindow(
+        state.controls.deadline_date,
+        if deadline_enabled { SW_SHOW } else { SW_HIDE },
+    );
+    let summary = if someday {
+        "闲时任务没有目标周期，也不会自动 Pass。".to_owned()
+    } else {
+        get_date(state.controls.date)
+            .map(|date| editor_period_description(time_type, date))
+            .unwrap_or_default()
+    };
+    set_text(state.controls.period_summary, &summary);
+}
+
+fn editor_period_description(time_type: TimeType, date: NaiveDate) -> String {
+    let Some(start) = normalize_start(time_type, date) else {
+        return String::new();
+    };
+    let value = match time_type {
+        TimeType::Day => start.format("%Y年%-m月%-d日").to_string(),
+        TimeType::Week => {
+            let end = next_start(time_type, start)
+                .and_then(|date| date.checked_sub_days(Days::new(1)))
+                .unwrap_or(start);
+            format!(
+                "{}–{}",
+                start.format("%-m月%-d日"),
+                end.format("%-m月%-d日")
+            )
+        }
+        TimeType::Month => start.format("%Y年%-m月").to_string(),
+        TimeType::Someday => return String::new(),
+    };
+    format!("目标周期：{value}")
 }
 
 unsafe fn save_editor(state: &mut EditorState) -> Result<(), String> {
@@ -6400,6 +7719,15 @@ unsafe extern "system" fn editor_window_proc(
     }
     let state = &mut *pointer;
     match message {
+        WM_DRAWITEM => {
+            if lparam == 0 {
+                return 0;
+            }
+            draw_dialog_button(&*state.theme, &*(lparam as *const DRAWITEMSTRUCT))
+        }
+        WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX => {
+            paint_dialog_control(&*state.theme, message, wparam)
+        }
         WM_COMMAND => {
             let id = loword(wparam) as i32;
             let notification = hiword(wparam);
@@ -6423,6 +7751,21 @@ unsafe extern "system" fn editor_window_proc(
             }
             if id == ID_EDITOR_CANCEL {
                 DestroyWindow(hwnd);
+            }
+            0
+        }
+        WM_NOTIFY => {
+            if lparam != 0 {
+                let header = &*(lparam as *const NMHDR);
+                if header.idFrom == ID_EDITOR_DATE as usize && header.code == DTN_DATETIMECHANGE {
+                    if SendMessageW(state.controls.deadline_enabled, BM_GETCHECK, 0, 0)
+                        != BST_CHECKED as isize
+                        && let Ok(date) = get_date(state.controls.date)
+                    {
+                        set_date(state.controls.deadline_date, date);
+                    }
+                    update_editor_options(state);
+                }
             }
             0
         }
@@ -6581,6 +7924,7 @@ fn is_main_app_message(message: u32) -> bool {
         message,
         WM_PAINT
             | WM_DRAWITEM
+            | WM_MEASUREITEM
             | WM_SIZE
             | WM_CTLCOLORSTATIC
             | WM_CTLCOLOREDIT
@@ -6616,6 +7960,7 @@ fn is_float_app_message(message: u32) -> bool {
             | WM_GETMINMAXINFO
             | WM_DPICHANGED
             | WM_DISPLAYCHANGE
+            | WM_ACTIVATE
             | WM_CLOSE
             | WM_COMMAND
             | WM_NOTIFY
@@ -6678,13 +8023,14 @@ unsafe fn apply_main_fonts(app: &App) {
     ] {
         set_control_font(control, app.theme.body_font);
     }
-    for control in settings_controls(app)
+    for control in display_settings_controls(app)
         .into_iter()
+        .chain(shortcut_settings_controls(app))
         .chain(sync_settings_controls(app))
     {
         set_control_font(control, app.theme.body_font);
     }
-    set_control_font(app.main_controls.brand, app.theme.subheading_font);
+    set_control_font(app.main_controls.brand, app.theme.brand_font);
     set_control_font(app.main_controls.nav, app.theme.nav_font);
     set_control_font(app.main_controls.title, app.theme.heading_font);
     set_control_font(app.main_controls.subtitle, app.theme.caption_font);
@@ -6725,8 +8071,10 @@ unsafe fn apply_float_fonts(app: &App) {
     for control in [
         app.float_controls.heading,
         app.float_controls.date,
+        app.float_controls.lunar,
         app.float_controls.subtitle,
         app.float_controls.progress,
+        app.float_controls.progress_value,
         app.float_controls.tasks,
         app.float_controls.empty_icon,
         app.float_controls.empty_title,
@@ -6740,8 +8088,10 @@ unsafe fn apply_float_fonts(app: &App) {
     }
     set_control_font(app.float_controls.heading, app.theme.heading_font);
     set_control_font(app.float_controls.date, app.theme.caption_font);
+    set_control_font(app.float_controls.lunar, app.theme.caption_font);
     set_control_font(app.float_controls.subtitle, app.theme.caption_font);
     set_control_font(app.float_controls.progress, app.theme.caption_font);
+    set_control_font(app.float_controls.progress_value, app.theme.caption_font);
     set_control_font(app.float_controls.empty_icon, app.theme.heading_font);
     set_control_font(app.float_controls.empty_title, app.theme.subheading_font);
     set_control_font(app.float_controls.empty_subtitle, app.theme.caption_font);
@@ -6757,12 +8107,8 @@ unsafe fn set_list_palette(list: HWND, background: COLORREF, text: COLORREF) {
 }
 
 unsafe fn apply_dark_control_theme(control: HWND) {
+    enable_native_dark_mode(control);
     let theme = wide("DarkMode_Explorer");
-    SetWindowTheme(control, theme.as_ptr(), null());
-}
-
-unsafe fn apply_light_control_theme(control: HWND) {
-    let theme = wide("Explorer");
     SetWindowTheme(control, theme.as_ptr(), null());
 }
 
@@ -6775,19 +8121,45 @@ unsafe fn paint_main_window(app: &App, hwnd: HWND) -> LRESULT {
     let sidebar = RECT {
         left: 0,
         top: 0,
-        right: 220,
+        right: MAIN_NAV_WIDTH,
         bottom: area.bottom,
     };
     FillRect(context, &sidebar, app.theme.paper_soft_brush);
-    let divider = RECT {
-        left: 219,
+    let header = RECT {
+        left: MAIN_NAV_WIDTH,
         top: 0,
-        right: 220,
+        right: area.right,
+        bottom: 96,
+    };
+    FillRect(context, &header, app.theme.paper_card_brush);
+    let divider = RECT {
+        left: MAIN_NAV_WIDTH - 1,
+        top: 0,
+        right: MAIN_NAV_WIDTH,
         bottom: area.bottom,
     };
     let divider_brush = CreateSolidBrush(LINE_ON_LIGHT);
     FillRect(context, &divider, divider_brush);
     DeleteObject(divider_brush);
+
+    SetBkMode(context, TRANSPARENT as i32);
+    SetTextColor(context, MUTED_ON_LIGHT);
+    let old_font = SelectObject(context, app.theme.caption_font);
+    let mut heading = wide("任务与统计");
+    let mut heading_rect = RECT {
+        left: 28,
+        top: 76,
+        right: MAIN_NAV_WIDTH - 24,
+        bottom: 98,
+    };
+    DrawTextW(
+        context,
+        heading.as_mut_ptr(),
+        -1,
+        &mut heading_rect,
+        DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+    );
+    SelectObject(context, old_font);
     EndPaint(hwnd, &paint);
     0
 }
@@ -6844,38 +8216,78 @@ unsafe fn draw_navigation_item(app: &App, draw: &DRAWITEMSTRUCT) {
         "闲时",
         "历史",
         "统计",
-        "显示与快捷键",
+        "显示",
+        "快捷键",
         "同步",
     ];
+    let icons = ["☀", "◷", "◴", "▦", "✦", "↶", "▥", "A", "⌘", "↻"];
     let Some(label) = labels.get(draw.itemID as usize) else {
         return;
     };
+    let icon = icons.get(draw.itemID as usize).copied().unwrap_or("•");
     FillRect(draw.hDC, &draw.rcItem, app.theme.paper_soft_brush);
     let selected = draw.itemState & ODS_SELECTED != 0;
     let mut rect = draw.rcItem;
-    rect.left += 6;
-    rect.right -= 6;
+    rect.left += 5;
+    rect.right -= 5;
+    if draw.itemID == 7 {
+        SetBkMode(draw.hDC, TRANSPARENT as i32);
+        SetTextColor(draw.hDC, MUTED_ON_LIGHT);
+        let old_font = SelectObject(draw.hDC, app.theme.caption_font);
+        let mut heading = wide("设置");
+        let mut heading_rect = RECT {
+            left: rect.left + 8,
+            top: rect.top + 4,
+            right: rect.right - 8,
+            bottom: rect.top + 24,
+        };
+        DrawTextW(
+            draw.hDC,
+            heading.as_mut_ptr(),
+            -1,
+            &mut heading_rect,
+            DT_SINGLELINE | DT_VCENTER | DT_LEFT,
+        );
+        SelectObject(draw.hDC, old_font);
+        rect.top += 24;
+    }
     rect.top += 3;
     rect.bottom -= 3;
     if selected {
-        let brush = CreateSolidBrush(PURPLE_WASH);
-        FillRect(draw.hDC, &rect, brush);
+        let brush = CreateSolidBrush(NAV_SELECTED);
+        let pen = CreatePen(PS_SOLID, 1, NAV_SELECTED);
+        let old_brush = SelectObject(draw.hDC, brush);
+        let old_pen = SelectObject(draw.hDC, pen);
+        RoundRect(draw.hDC, rect.left, rect.top, rect.right, rect.bottom, 8, 8);
+        SelectObject(draw.hDC, old_brush);
+        SelectObject(draw.hDC, old_pen);
         DeleteObject(brush);
-        let accent = RECT {
-            left: rect.left,
-            top: rect.top + 8,
-            right: rect.left + 3,
-            bottom: rect.bottom - 8,
-        };
-        let accent_brush = CreateSolidBrush(PURPLE);
-        FillRect(draw.hDC, &accent, accent_brush);
-        DeleteObject(accent_brush);
+        DeleteObject(pen);
     }
-    let mut text_rect = rect;
-    text_rect.left += 18;
     SetBkMode(draw.hDC, TRANSPARENT as i32);
-    SetTextColor(draw.hDC, if selected { PURPLE } else { MUTED_ON_LIGHT });
     let old_font = SelectObject(draw.hDC, app.theme.nav_font);
+    let mut icon_rect = rect;
+    icon_rect.left += 13;
+    icon_rect.right = icon_rect.left + 26;
+    SetTextColor(draw.hDC, if selected { TEXT_ON_DARK } else { PURPLE_LIGHT });
+    let mut icon_text = wide(icon);
+    DrawTextW(
+        draw.hDC,
+        icon_text.as_mut_ptr(),
+        -1,
+        &mut icon_rect,
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+    );
+    let mut text_rect = rect;
+    text_rect.left += 48;
+    SetTextColor(
+        draw.hDC,
+        if selected {
+            TEXT_ON_DARK
+        } else {
+            TEXT_ON_LIGHT
+        },
+    );
     let mut text = wide(label);
     DrawTextW(
         draw.hDC,
@@ -6910,12 +8322,12 @@ unsafe fn draw_button(app: &App, draw: &DRAWITEMSTRUCT, floating: bool) {
         PAPER_CARD
     };
     let background = if disabled {
-        if floating { INK_SOFT } else { PAPER_SOFT }
+        if floating { INK_SOFT } else { rgb(42, 49, 51) }
     } else if pressed {
         if primary {
-            rgb(86, 68, 169)
+            rgb(99, 76, 196)
         } else {
-            rgb(232, 233, 229)
+            rgb(51, 60, 63)
         }
     } else {
         background
@@ -6924,7 +8336,7 @@ unsafe fn draw_button(app: &App, draw: &DRAWITEMSTRUCT, floating: bool) {
         if floating {
             MUTED_ON_DARK
         } else {
-            rgb(158, 161, 155)
+            rgb(112, 121, 121)
         }
     } else if primary {
         TEXT_ON_DARK
@@ -6935,7 +8347,13 @@ unsafe fn draw_button(app: &App, draw: &DRAWITEMSTRUCT, floating: bool) {
     } else {
         TEXT_ON_LIGHT
     };
-    let parent_background = if floating { INK } else { PAPER_BRIGHT };
+    let parent_background = if floating {
+        INK
+    } else if matches!(id, ID_ADD | ID_REFRESH) {
+        PAPER_CARD
+    } else {
+        PAPER_BRIGHT
+    };
     let parent_brush = CreateSolidBrush(parent_background);
     FillRect(draw.hDC, &draw.rcItem, parent_brush);
     DeleteObject(parent_brush);
@@ -6984,6 +8402,73 @@ unsafe fn draw_button(app: &App, draw: &DRAWITEMSTRUCT, floating: bool) {
     }
 }
 
+unsafe fn draw_dialog_button(theme: &ThemeResources, draw: &DRAWITEMSTRUCT) -> LRESULT {
+    if draw.CtlType != ODT_BUTTON {
+        return 0;
+    }
+    let primary = matches!(draw.CtlID as i32, ID_QUICK_SUBMIT | ID_EDITOR_SAVE);
+    let disabled = draw.itemState & ODS_DISABLED != 0;
+    let pressed = draw.itemState & ODS_SELECTED != 0;
+    let background = if disabled {
+        rgb(42, 49, 51)
+    } else if pressed && primary {
+        rgb(99, 76, 196)
+    } else if primary {
+        PURPLE
+    } else {
+        PAPER_CARD
+    };
+    let parent_brush = CreateSolidBrush(PAPER_BRIGHT);
+    FillRect(draw.hDC, &draw.rcItem, parent_brush);
+    DeleteObject(parent_brush);
+    let mut rect = draw.rcItem;
+    rect.left += 1;
+    rect.top += 2;
+    rect.right -= 1;
+    rect.bottom -= 2;
+    let brush = CreateSolidBrush(background);
+    let border = CreatePen(
+        PS_SOLID,
+        1,
+        if primary { background } else { LINE_ON_LIGHT },
+    );
+    let old_brush = SelectObject(draw.hDC, brush);
+    let old_pen = SelectObject(draw.hDC, border);
+    RoundRect(draw.hDC, rect.left, rect.top, rect.right, rect.bottom, 6, 6);
+    SelectObject(draw.hDC, old_brush);
+    SelectObject(draw.hDC, old_pen);
+    DeleteObject(brush);
+    DeleteObject(border);
+    let mut text_rect = rect;
+    text_rect.left += 8;
+    text_rect.right -= 8;
+    SetBkMode(draw.hDC, TRANSPARENT as i32);
+    SetTextColor(
+        draw.hDC,
+        if disabled {
+            MUTED_ON_LIGHT
+        } else if primary {
+            TEXT_ON_DARK
+        } else {
+            TEXT_ON_LIGHT
+        },
+    );
+    let old_font = SelectObject(draw.hDC, theme.body_semibold_font);
+    let mut value = wide(&get_text(draw.hwndItem));
+    DrawTextW(
+        draw.hDC,
+        value.as_mut_ptr(),
+        -1,
+        &mut text_rect,
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
+    );
+    SelectObject(draw.hDC, old_font);
+    if draw.itemState & ODS_FOCUS != 0 {
+        DrawFocusRect(draw.hDC, &rect);
+    }
+    1
+}
+
 unsafe fn draw_task_list_notification(
     app: &App,
     lparam: LPARAM,
@@ -6993,61 +8478,423 @@ unsafe fn draw_task_list_notification(
     match custom.nmcd.dwDrawStage {
         CDDS_PREPAINT => Some(CDRF_NOTIFYITEMDRAW as isize),
         CDDS_ITEMPREPAINT => {
+            if custom.dwItemType == LVCDI_GROUP {
+                custom.clrText = PURPLE_LIGHT;
+                custom.clrTextBk = if floating { INK_SOFT } else { PAPER_CARD };
+                custom.clrFace = custom.clrTextBk;
+                SelectObject(custom.nmcd.hdc, app.theme.body_semibold_font);
+                return Some(CDRF_NEWFONT as isize);
+            }
             let index = custom.nmcd.dwItemSpec;
-            let completed = if floating {
-                app.floating_tasks
-                    .get(index)
-                    .is_some_and(|task| task.state != TaskState::Pending)
+            let task = if floating {
+                app.floating_tasks.get(index)
             } else {
-                app.visible_tasks
-                    .get(index)
-                    .is_some_and(|task| task.state != TaskState::Pending)
+                app.visible_tasks.get(index)
             };
-            let selected = custom.nmcd.uItemState & CDIS_SELECTED != 0;
-            custom.clrText = if completed {
-                if floating {
-                    MUTED_ON_DARK
-                } else {
-                    rgb(145, 148, 142)
-                }
-            } else if floating {
-                TEXT_ON_DARK
-            } else {
-                TEXT_ON_LIGHT
-            };
-            custom.clrTextBk = if selected {
-                if floating {
-                    rgb(57, 51, 73)
-                } else {
-                    PURPLE_WASH
-                }
-            } else if floating {
-                INK_SOFT
-            } else {
-                PAPER_CARD
-            };
-            SelectObject(custom.nmcd.hdc, app.theme.body_font);
-            Some(CDRF_NEWFONT as isize)
+            task.map(|task| draw_task_row(app, custom, task, index, floating))
+                .or(Some(CDRF_DODEFAULT as isize))
         }
         _ => Some(CDRF_DODEFAULT as isize),
     }
 }
 
-unsafe fn paint_main_control(app: &App, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    let context = wparam as HDC;
-    SetTextColor(
-        context,
-        if lparam as HWND == app.main_controls.empty_icon {
-            PURPLE
+unsafe fn draw_task_row(
+    app: &App,
+    custom: &NMLVCUSTOMDRAW,
+    task: &TodoTask,
+    index: usize,
+    floating: bool,
+) -> LRESULT {
+    let selected = SendMessageW(
+        custom.nmcd.hdr.hwndFrom,
+        LVM_GETITEMSTATE,
+        custom.nmcd.dwItemSpec,
+        LVIS_SELECTED as isize,
+    ) as u32
+        & LVIS_SELECTED
+        != 0;
+    let background = if selected {
+        if floating {
+            rgb(58, 51, 76)
         } else {
-            TEXT_ON_LIGHT
+            PURPLE_WASH
+        }
+    } else if floating {
+        INK_SOFT
+    } else {
+        PAPER_CARD
+    };
+    let rect = custom.nmcd.rc;
+    let brush = CreateSolidBrush(background);
+    FillRect(custom.nmcd.hdc, &rect, brush);
+    DeleteObject(brush);
+
+    let group_label = task_row_group_label(app, index, floating);
+    let content_offset = if group_label.is_some() { 10 } else { 0 };
+    if let Some(group_label) = group_label {
+        let mut group_rect = RECT {
+            left: rect.left + 10,
+            top: rect.top,
+            right: rect.right - 10,
+            bottom: rect.top + 16,
+        };
+        SetBkMode(custom.nmcd.hdc, TRANSPARENT as i32);
+        SetTextColor(custom.nmcd.hdc, PURPLE_LIGHT);
+        let old_font = SelectObject(custom.nmcd.hdc, app.theme.caption_font);
+        let mut group_label = wide(&group_label);
+        DrawTextW(
+            custom.nmcd.hdc,
+            group_label.as_mut_ptr(),
+            -1,
+            &mut group_rect,
+            DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+        );
+        SelectObject(custom.nmcd.hdc, old_font);
+    }
+
+    let box_size = 17;
+    let box_left = rect.left + 10;
+    let box_top =
+        rect.top + content_offset + ((rect.bottom - rect.top - content_offset - box_size) / 2);
+    let state_color = match task.state {
+        TaskState::Pending => MUTED_ON_LIGHT,
+        TaskState::Completed => GREEN,
+        TaskState::Pass => ORANGE,
+    };
+    let box_brush = CreateSolidBrush(if task.state == TaskState::Pending {
+        background
+    } else {
+        state_color
+    });
+    let box_pen = CreatePen(PS_SOLID, 1, state_color);
+    let old_brush = SelectObject(custom.nmcd.hdc, box_brush);
+    let old_pen = SelectObject(custom.nmcd.hdc, box_pen);
+    RoundRect(
+        custom.nmcd.hdc,
+        box_left,
+        box_top,
+        box_left + box_size,
+        box_top + box_size,
+        5,
+        5,
+    );
+    SelectObject(custom.nmcd.hdc, old_brush);
+    SelectObject(custom.nmcd.hdc, old_pen);
+    DeleteObject(box_brush);
+    DeleteObject(box_pen);
+    if task.state != TaskState::Pending {
+        let symbol = if task.state == TaskState::Completed {
+            "✓"
+        } else {
+            "×"
+        };
+        let mut symbol_rect = RECT {
+            left: box_left,
+            top: box_top - 1,
+            right: box_left + box_size,
+            bottom: box_top + box_size,
+        };
+        SetBkMode(custom.nmcd.hdc, TRANSPARENT as i32);
+        SetTextColor(custom.nmcd.hdc, INK);
+        let old_font = SelectObject(custom.nmcd.hdc, app.theme.body_semibold_font);
+        let mut symbol = wide(symbol);
+        DrawTextW(
+            custom.nmcd.hdc,
+            symbol.as_mut_ptr(),
+            -1,
+            &mut symbol_rect,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+        );
+        SelectObject(custom.nmcd.hdc, old_font);
+    }
+
+    let text_left = box_left + box_size + 12;
+    let mut title_rect = RECT {
+        left: text_left,
+        top: rect.top + content_offset + 4,
+        right: rect.right - if floating { 12 } else { 38 },
+        bottom: rect.top + content_offset + 28,
+    };
+    SetBkMode(custom.nmcd.hdc, TRANSPARENT as i32);
+    SetTextColor(
+        custom.nmcd.hdc,
+        if task.state == TaskState::Pending {
+            if floating {
+                TEXT_ON_DARK
+            } else {
+                TEXT_ON_LIGHT
+            }
+        } else if floating {
+            MUTED_ON_DARK
+        } else {
+            MUTED_ON_LIGHT
         },
     );
-    SetBkColor(context, PAPER_BRIGHT);
-    if message == WM_CTLCOLORSTATIC {
+    let old_font = SelectObject(custom.nmcd.hdc, app.theme.body_font);
+    let mut title = wide(&task.title);
+    DrawTextW(
+        custom.nmcd.hdc,
+        title.as_mut_ptr(),
+        -1,
+        &mut title_rect,
+        DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS,
+    );
+    SelectObject(custom.nmcd.hdc, old_font);
+
+    let chip_top = rect.top + content_offset + 28;
+    let mut chip_left = text_left;
+    let chip_right = rect.right - 12;
+    if !floating {
+        let (chip_background, chip_text) = match task.quest_line {
+            QuestLine::Main => (rgb(52, 50, 72), PURPLE_LIGHT),
+            QuestLine::Side => (rgb(35, 67, 58), rgb(114, 213, 164)),
+            QuestLine::Extra => (rgb(75, 47, 43), rgb(239, 134, 103)),
+        };
+        chip_left = draw_task_badge(
+            custom.nmcd.hdc,
+            app.theme.caption_font,
+            chip_left,
+            chip_top,
+            chip_right,
+            quest_line_label(task.quest_line),
+            chip_background,
+            chip_text,
+        );
+        chip_left = draw_task_badge(
+            custom.nmcd.hdc,
+            app.theme.caption_font,
+            chip_left,
+            chip_top,
+            chip_right,
+            &period_label(task),
+            INK_SOFT,
+            MUTED_ON_LIGHT,
+        );
+    }
+    if task.state != TaskState::Pending {
+        let state_color = if task.state == TaskState::Completed {
+            GREEN
+        } else {
+            ORANGE
+        };
+        chip_left = draw_task_badge(
+            custom.nmcd.hdc,
+            app.theme.caption_font,
+            chip_left,
+            chip_top,
+            chip_right,
+            state_label(task.state),
+            rgb(45, 54, 55),
+            state_color,
+        );
+    }
+    for badge in task_badges(task, app.current_date).split(" · ") {
+        if badge.is_empty() {
+            continue;
+        }
+        chip_left = draw_task_badge(
+            custom.nmcd.hdc,
+            app.theme.caption_font,
+            chip_left,
+            chip_top,
+            chip_right,
+            badge,
+            if floating { rgb(47, 55, 57) } else { INK_SOFT },
+            if floating {
+                MUTED_ON_DARK
+            } else {
+                MUTED_ON_LIGHT
+            },
+        );
+    }
+    let _ = chip_left;
+
+    if !floating && task.state == TaskState::Pending {
+        let mut edit_rect = RECT {
+            left: rect.right - 34,
+            top: rect.top,
+            right: rect.right - 8,
+            bottom: rect.bottom,
+        };
+        SetTextColor(custom.nmcd.hdc, PURPLE_LIGHT);
+        let old_font = SelectObject(custom.nmcd.hdc, app.theme.body_semibold_font);
+        let mut edit = wide("✎");
+        DrawTextW(
+            custom.nmcd.hdc,
+            edit.as_mut_ptr(),
+            -1,
+            &mut edit_rect,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+        );
+        SelectObject(custom.nmcd.hdc, old_font);
+    }
+
+    let separator = RECT {
+        left: text_left,
+        top: rect.bottom - 1,
+        right: rect.right - 8,
+        bottom: rect.bottom,
+    };
+    let separator_brush = CreateSolidBrush(if floating {
+        LINE_ON_DARK
+    } else {
+        LINE_ON_LIGHT
+    });
+    FillRect(custom.nmcd.hdc, &separator, separator_brush);
+    DeleteObject(separator_brush);
+    CDRF_SKIPDEFAULT as isize
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_task_badge(
+    context: HDC,
+    font: HFONT,
+    left: i32,
+    top: i32,
+    right: i32,
+    label: &str,
+    background: COLORREF,
+    text_color: COLORREF,
+) -> i32 {
+    if label.is_empty() || left >= right {
+        return left;
+    }
+    let old_font = SelectObject(context, font);
+    let mut measured = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 18,
+    };
+    let mut value = wide(label);
+    DrawTextW(
+        context,
+        value.as_mut_ptr(),
+        -1,
+        &mut measured,
+        DT_SINGLELINE | DT_CALCRECT,
+    );
+    let width = (measured.right - measured.left + 14).max(28);
+    if left + width > right {
+        SelectObject(context, old_font);
+        return right;
+    }
+    let badge = RECT {
+        left,
+        top,
+        right: left + width,
+        bottom: top + 19,
+    };
+    let brush = CreateSolidBrush(background);
+    let pen = CreatePen(PS_SOLID, 1, background);
+    let old_brush = SelectObject(context, brush);
+    let old_pen = SelectObject(context, pen);
+    RoundRect(
+        context,
+        badge.left,
+        badge.top,
+        badge.right,
+        badge.bottom,
+        6,
+        6,
+    );
+    SelectObject(context, old_brush);
+    SelectObject(context, old_pen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+
+    let mut text_rect = badge;
+    text_rect.left += 7;
+    text_rect.right -= 7;
+    SetBkMode(context, TRANSPARENT as i32);
+    SetTextColor(context, text_color);
+    DrawTextW(
+        context,
+        value.as_mut_ptr(),
+        -1,
+        &mut text_rect,
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS,
+    );
+    SelectObject(context, old_font);
+    badge.right + 6
+}
+
+fn task_row_group_label(app: &App, index: usize, floating: bool) -> Option<String> {
+    let tasks = if floating {
+        &app.floating_tasks
+    } else {
+        &app.visible_tasks
+    };
+    let task = tasks.get(index)?;
+    let group_id = if floating {
+        quest_group_id(task.quest_line)
+    } else {
+        task_group_id(task, app.section, app.current_date)
+    };
+    if index > 0 {
+        let previous = tasks.get(index - 1)?;
+        let previous_group = if floating {
+            quest_group_id(previous.quest_line)
+        } else {
+            task_group_id(previous, app.section, app.current_date)
+        };
+        if previous_group == group_id {
+            return None;
+        }
+    }
+    if floating {
+        Some(quest_line_label(task.quest_line).to_owned())
+    } else {
+        task_list_groups(tasks, app.section, app.current_date)
+            .into_iter()
+            .find_map(|(id, label)| (id == group_id).then_some(label))
+    }
+}
+
+unsafe fn paint_main_control(app: &App, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let context = wparam as HDC;
+    let control = lparam as HWND;
+    let sidebar = control == app.main_controls.brand || control == app.main_controls.nav;
+    let header = control == app.main_controls.title || control == app.main_controls.subtitle;
+    let edit = message == WM_CTLCOLOREDIT || message == WM_CTLCOLORLISTBOX && !sidebar;
+    let text = if control == app.main_controls.empty_icon {
+        PURPLE_LIGHT
+    } else if control == app.main_controls.subtitle
+        || control == app.main_controls.empty_subtitle
+        || control == app.main_controls.opacity_label
+    {
+        MUTED_ON_LIGHT
+    } else {
+        TEXT_ON_LIGHT
+    };
+    let (background, brush) = if sidebar {
+        (PAPER_SOFT, app.theme.paper_soft_brush)
+    } else if header || edit {
+        (PAPER_CARD, app.theme.paper_card_brush)
+    } else {
+        (PAPER_BRIGHT, app.theme.paper_brush)
+    };
+    SetTextColor(context, text);
+    SetBkColor(context, background);
+    if matches!(message, WM_CTLCOLORSTATIC | WM_CTLCOLORBTN) {
         SetBkMode(context, TRANSPARENT as i32);
     }
-    app.theme.paper_brush as LRESULT
+    brush as LRESULT
+}
+
+unsafe fn paint_dialog_control(theme: &ThemeResources, message: u32, wparam: WPARAM) -> LRESULT {
+    let context = wparam as HDC;
+    let editable = matches!(message, WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX);
+    SetTextColor(context, TEXT_ON_LIGHT);
+    SetBkColor(context, if editable { PAPER_CARD } else { PAPER_BRIGHT });
+    if matches!(message, WM_CTLCOLORSTATIC | WM_CTLCOLORBTN) {
+        SetBkMode(context, TRANSPARENT as i32);
+    }
+    if editable {
+        theme.paper_card_brush as LRESULT
+    } else {
+        theme.paper_brush as LRESULT
+    }
 }
 
 unsafe fn paint_floating_control(
@@ -7069,7 +8916,10 @@ unsafe fn paint_floating_control(
         || control == app.float_controls.empty_subtitle
     {
         MUTED_ON_DARK
-    } else if control == app.float_controls.heading || control == app.float_controls.empty_title {
+    } else if control == app.float_controls.heading
+        || control == app.float_controls.empty_title
+        || control == app.float_controls.progress_value
+    {
         TEXT_ON_DARK
     } else {
         PURPLE_LIGHT
@@ -7111,4 +8961,49 @@ fn hiword(value: usize) -> u16 {
 
 fn last_error(context: &str) -> String {
     format!("{context}：{}", std::io::Error::last_os_error())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_add_uses_the_next_half_hour_even_on_a_boundary() {
+        assert_eq!(
+            next_half_hour_after(9, 0),
+            ReminderTime {
+                hour: 9,
+                minute: 30
+            }
+        );
+        assert_eq!(
+            next_half_hour_after(9, 30),
+            ReminderTime {
+                hour: 10,
+                minute: 0
+            }
+        );
+        assert_eq!(
+            next_half_hour_after(23, 45),
+            ReminderTime { hour: 0, minute: 0 }
+        );
+    }
+
+    #[test]
+    fn editor_period_descriptions_cover_day_week_month_and_someday() {
+        let date = NaiveDate::from_ymd_opt(2026, 8, 19).unwrap();
+        assert_eq!(
+            editor_period_description(TimeType::Day, date),
+            "目标周期：2026年8月19日"
+        );
+        assert_eq!(
+            editor_period_description(TimeType::Week, date),
+            "目标周期：8月17日–8月23日"
+        );
+        assert_eq!(
+            editor_period_description(TimeType::Month, date),
+            "目标周期：2026年8月"
+        );
+        assert_eq!(editor_period_description(TimeType::Someday, date), "");
+    }
 }

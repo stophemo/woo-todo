@@ -85,7 +85,7 @@ fn show_fatal_error(message: &str) {
 }
 
 /// GUI 程序没有控制台，panic 信息默认不可见；
-/// 写入 `%LOCALAPPDATA%\Woo Todo\panic.log` 便于排查实验版问题。
+/// 写入 `%LOCALAPPDATA%\Woo Todo\panic.log` 便于排查启动问题。
 #[cfg(windows)]
 fn install_panic_log() {
     use std::io::Write;

@@ -1,17 +1,14 @@
 # Woo Todo Windows 客户端
 
-> **Windows 客户端当前为实验版（不保证可用）。** 它可能无法启动、功能不完整，并可能存在稳定性或数据兼容风险。版本标签、压缩包文件名和包内说明文件都会明确标注 `experimental`；请勿用于唯一或重要任务数据。
-
-Windows 客户端使用 Tauri 2、WebView2 和 Rust。界面由 `ui/` 中的 HTML/CSS/JavaScript 实现，任务、SQLite 仓储、同步运行时、通知和 Windows 系统集成仍由 Rust 负责。前端只通过 Tauri 命令访问领域能力，不复制任务结算规则；网络不可用不会阻塞本地操作。
+Windows 客户端从 `v0.2.0` 起进入正式发布通道，使用 Tauri 2、WebView2 和 Rust。界面由 `ui/` 中的 HTML/CSS/JavaScript 实现，任务、SQLite 仓储、同步运行时、通知和 Windows 系统集成仍由 Rust 负责。前端只通过 Tauri 命令访问领域能力；网络不可用不会阻塞本地操作。
 
 ## 系统要求
 
 - 运行：Windows 10 版本 2004（build 19041）或更高版本，x64 架构。
+- 需要：WebView2 Runtime。大多数 Windows 10/11 系统已经预装；如果启动失败，请先安装或修复 WebView2 Runtime。
 - 开发：Windows x64、Rust stable、Node.js 22+、WebView2 Runtime（包含 `rustfmt`、`clippy` 和 MSVC 工具链）。
 
-GitHub Windows Prerelease 提供 x64 实验版免安装 ZIP。Tauri 会把前端资源打入可执行文件；目标机器需要 Windows 10 2004+ 和 WebView2 Runtime。
-
-当前程序未做代码签名，Windows SmartScreen 可能在首次下载或启动时显示来源提示。
+GitHub 正式 Release 提供 x64 免安装 ZIP。当前程序未做代码签名，Windows SmartScreen 可能在首次下载或启动时显示来源提示。
 
 应用数据保存在 `%LOCALAPPDATA%\Woo Todo`：
 
@@ -22,7 +19,7 @@ GitHub Windows Prerelease 提供 x64 实验版免安装 ZIP。Tauri 会把前端
 
 `settings.json` 只保存窗口、显示、快捷键和本机是否承载局域网服务等非敏感设置，不写入设备令牌、应用密码或同步密钥。
 
-Windows 实验版不参与正式版应用内自动更新。后续 Windows 版本需要从对应 Prerelease 手动安装；升级不会删除本地任务和设置，Tauri 版本继续兼容旧客户端的数据库路径和 PascalCase 设置字段。
+Windows 正式版与 macOS、Android 一起进入 GitHub 正式 Release；当前 Tauri 主界面使用正式 ZIP 手动升级，下载新 ZIP 后替换旧的 `WooTodo.exe` 即可。升级不会删除本地任务和设置，Tauri 版本继续兼容旧客户端的数据库路径和 PascalCase 设置字段。
 
 ## 构建与测试
 
@@ -32,38 +29,40 @@ Windows 实验版不参与正式版应用内自动更新。后续 Windows 版本
 cargo fmt --manifest-path windows/Cargo.toml --all -- --check
 cargo test --manifest-path windows/Cargo.toml --locked --all-targets
 cargo clippy --manifest-path windows/Cargo.toml --locked --all-targets -- -D warnings
-npm --prefix windows/ui install
+npm --prefix windows/ui ci
 npm --prefix windows/ui run tauri:dev
 ```
 
 ## 生成发布包
 
-`package.ps1` 会锁定 `Cargo.lock`，为 MSVC x64 目标构建 Tauri 实验版：
+`package.ps1` 会锁定 `Cargo.lock`，为 MSVC x64 目标构建 Tauri 正式免安装 ZIP：
 
 ```powershell
 pwsh -NoProfile -File windows/scripts/package.ps1
-pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.1.31
+pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.2.0
 ```
 
 输出文件为：
 
 ```text
-windows/dist/Woo-Todo-v0.1.31-windows-x64-experimental.zip
+windows/dist/Woo-Todo-v0.2.0-windows-x64.zip
 ```
 
-正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和优化构建，但 Windows ZIP 会发布到独立的 `windows-vX.Y.Z-experimental` GitHub Prerelease，绝不进入 macOS/Android 的正式 Release。Windows 界面交互、系统集成和升级流程仍需真实 Windows 设备手动验证，自动测试通过不代表实验版可正常使用。
+ZIP 只包含 `WooTodo.exe`，因为应用内更新器会校验并替换这一文件。任务、设置和凭据均保存在用户数据目录，不会被打进发布包。
+
+正式 tag 发布会在 Windows Runner 上重新执行格式、测试、Clippy 和优化构建，之后与 macOS、Android 一起进入同一个 GitHub Release。Windows 界面交互、系统集成和更新流程仍建议在真实 Windows 设备上验证；自动测试通过不能替代真机验收。
 
 ## Tauri 迁移范围
 
-当前默认 Tauri 界面已经接入现有 SQLite，并支持日/周/月/闲时导航、历史与统计、任务新增和编辑、完成与撤销、Pass、删除、同级排序，以及独立悬浮任务板。任务板显示阳历、农历与节气/节日，可调整不透明度、置顶和鼠标穿透。
+当前 Tauri 界面已经接入现有 SQLite，并支持日/周/月/闲时导航、历史与统计、任务新增和编辑、完成与撤销、Pass、删除、同级排序，以及独立悬浮任务板。任务板显示阳历、农历与节气/节日，可调整不透明度、置顶、鼠标穿透和桌面小组件模式。
 
-同步运行时会恢复 Windows Credential Manager 中已有的 Worker、局域网或 WebDAV 凭据，并支持手动触发同步。Tauri 托盘已经提供主窗口、任务板、同步和退出入口；同步页支持粘贴由 Mac 或已有 Android 同步空间生成的 `wootodo://pair` 配对链接加入同一 vault。加入前会校验 vaultId，不同同步空间会拒绝替换；本地任务与待同步数据保留。Windows 不应先创建新空间再让 Android 扫码，否则三端会被拆成不同同步空间。旧 Win32 实现暂时保留在 `src/native/` 供迁移时对照。
+同步运行时会恢复 Windows Credential Manager 中已有的 Worker、局域网或 WebDAV 凭据，并支持手动触发同步。Tauri 托盘已经提供主窗口、任务板、同步和退出入口；同步页支持粘贴由 Mac、Windows 或 Android 同步空间生成的 `wootodo://pair` 配对链接加入同一 vault。加入前会校验 vaultId，不同同步空间会拒绝替换；本地任务与待同步数据保留。Windows 不应先创建新空间再让 Android 扫码，否则三端会被拆成不同同步空间。旧 Win32 实现暂时保留在 `src/native/` 供迁移时对照。
 
 同步凭据保存在 Windows Credential Manager，不会写入 `settings.json`。任务始终先写入本地 SQLite，网络不可用时仍可继续编辑。
 
 悬浮板透明度和鼠标穿透是两个独立设置：透明度可在 20%～100% 调整，开启或关闭穿透不会改写透明度。默认悬浮板尺寸为 500×440、不透明度 80%，背景为平滑的半透明渐变，可透出桌面；主窗口与设置页使用光滑深色渐变风格。桌面小组件模式会把任务板保持在普通窗口底层，并与“始终置顶”和“鼠标穿透”互斥。
 
-运行中的问题排查：GUI 程序没有控制台，未捕获的 panic 会写入 `%LOCALAPPDATA%\Woo Todo\panic.log`。旧 `windows/scripts/smoke-test.ps1` 仅适用于 Win32 UI，不能用于验证 Tauri WebView DOM。
+运行中的问题排查：GUI 程序没有控制台，未捕获的 panic 会写入 `%LOCALAPPDATA%\Woo Todo\panic.log`。如启动失败，优先检查 WebView2 Runtime、系统事件查看器和该日志文件。
 
 ## 代码分层
 

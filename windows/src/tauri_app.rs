@@ -18,9 +18,7 @@ use crate::display::DisplayConfiguration;
 use crate::hotkeys::{HotkeyEvent, HotkeyManager};
 use crate::http::WinHttpTransport;
 use crate::local_server::{DEFAULT_LOCAL_SYNC_PORT, preferred_local_endpoint};
-use crate::local_sync_host::{
-    LocalSyncHost, generate_local_network_credentials, local_state_path,
-};
+use crate::local_sync_host::{LocalSyncHost, generate_local_network_credentials, local_state_path};
 use crate::lunar::TraditionalCalendarInfo;
 use crate::settings::AppSettings;
 use crate::shortcut::{ShortcutCommand, command_label, format_shortcut_binding};
@@ -404,7 +402,12 @@ async fn join_sync_space(
                 .map_err(|error| format!("无法移除本地任务：{error}"))?;
             Ok(())
         } else {
-            switch_sync_binding(&mut repository, state.credentials.as_ref(), joined.0, joined.1)
+            switch_sync_binding(
+                &mut repository,
+                state.credentials.as_ref(),
+                joined.0,
+                joined.1,
+            )
         }
     };
     let mut runtime = lock(&state.sync_runtime, "同步运行时")?;
@@ -472,7 +475,10 @@ fn stop_local_sync(app: AppHandle, state: State<'_, RuntimeState>) -> Result<App
 }
 
 #[tauri::command]
-fn create_local_pairing(app: AppHandle, state: State<'_, RuntimeState>) -> Result<AppSnapshot, String> {
+fn create_local_pairing(
+    app: AppHandle,
+    state: State<'_, RuntimeState>,
+) -> Result<AppSnapshot, String> {
     {
         let host_guard = lock(&state.local_host, "局域网同步主机")?;
         let host = host_guard

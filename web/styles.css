@@ -1025,7 +1025,7 @@ strong {
 
 .download-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -1061,6 +1061,10 @@ strong {
 
 .platform-android {
   background: var(--green-dark);
+}
+
+.platform-windows {
+  background: var(--blue);
 }
 
 .platform-name strong,
@@ -1390,6 +1394,10 @@ strong {
     gap: 22px;
     padding-right: 22px;
     padding-left: 22px;
+  }
+
+  .download-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .download-item {

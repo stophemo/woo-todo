@@ -257,10 +257,10 @@ impl LocalSyncHost {
                 LocalPairingState::Claimed(claim) => claim.clone(),
                 LocalPairingState::Confirmed => return Err("该设备已经加入同步空间".to_owned()),
                 LocalPairingState::Expired => {
-                    return Err("配对请求已过期，请重新生成链接".to_owned())
+                    return Err("配对请求已过期，请重新生成链接".to_owned());
                 }
                 LocalPairingState::Failed(message) => {
-                    return Err(format!("配对会话已失效：{message}"))
+                    return Err(format!("配对会话已失效：{message}"));
                 }
                 LocalPairingState::Open => return Err("还没有设备请求加入".to_owned()),
             }
@@ -320,12 +320,7 @@ impl LocalSyncHost {
         // 只置停止标志并释放会话，不阻塞等待轮询线程：线程持有自身的
         // 凭据与事件句柄副本，会在下一次轮询间隔（≤2 秒）内自然退出。
         // 避免在 local_host 锁内长时间 join 导致 get_snapshot 卡顿。
-        let Some(active) = self
-            .pairing
-            .lock()
-            .ok()
-            .and_then(|mut value| value.take())
-        else {
+        let Some(active) = self.pairing.lock().ok().and_then(|mut value| value.take()) else {
             return;
         };
         active.stop_flag.store(true, Ordering::Release);
@@ -419,9 +414,8 @@ fn pairing_link(
     initiator_public_key: &str,
     vault_id: &str,
 ) -> String {
-    let encoded = |value: &str| {
-        url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
-    };
+    let encoded =
+        |value: &str| url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
     format!(
         "wootodo://pair?endpoint={}&pairingId={}&pairingSecret={}&initiatorPublicKey={}&vaultId={}",
         encoded(endpoint),
@@ -434,9 +428,7 @@ fn pairing_link(
 
 /// 为新建的局域网同步空间生成 `LocalNetwork` 身份（vault id 格式与
 /// macOS 保持一致：`vault-` + 9 字节 Base64URL）。
-pub fn generate_local_network_credentials(
-    endpoint: String,
-) -> Result<SyncCredentials, String> {
+pub fn generate_local_network_credentials(endpoint: String) -> Result<SyncCredentials, String> {
     let random_vault = base64url_encode(&random_bytes::<9>().map_err(|error| error.to_string())?);
     let device_id = format!(
         "device-{}",
@@ -499,7 +491,8 @@ mod tests {
             &public_key,
             "vault-XXXXYYYYZZZZ",
         );
-        let parsed = PairingLink::parse(&link).expect("Windows 生成的链接应能被 Windows 加入方解析");
+        let parsed =
+            PairingLink::parse(&link).expect("Windows 生成的链接应能被 Windows 加入方解析");
         assert_eq!(parsed.endpoint, "http://192.168.1.5:48473");
         assert_eq!(parsed.pairing_id, "pair-abc123");
         assert_eq!(parsed.vault_id.as_deref(), Some("vault-XXXXYYYYZZZZ"));

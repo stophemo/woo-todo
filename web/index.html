@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>无我待办 | 本地优先的跨设备待办</title>
-  <meta name="description" content="无我待办是一款本地优先的跨设备待办应用。手机规划，电脑执行；同一 Wi-Fi、手机热点和电脑热点均可加密同步。Windows 版将在 v0.2.x 提供，目前正在开发中。">
+  <meta name="description" content="无我待办是一款本地优先的跨设备待办应用。手机规划，电脑执行；macOS、Android 与 Windows 均可在本地使用，并通过加密同步保持一致。">
   <meta name="author" content="Woo Todo">
   <meta name="theme-color" content="#191c1a">
   <meta name="color-scheme" content="light">
@@ -13,7 +13,7 @@
   <meta property="og:locale" content="zh_CN">
   <meta property="og:url" content="https://woo-todo.vercel.app/">
   <meta property="og:title" content="无我待办 | 本地优先的跨设备待办">
-  <meta property="og:description" content="手机规划，电脑执行。同一网络即可加密同步，Windows 版将在 v0.2.x 提供。">
+  <meta property="og:description" content="手机规划，电脑执行。macOS、Android 与 Windows 均可本地使用，同一网络即可加密同步。">
   <meta property="og:image" content="https://woo-todo.vercel.app/assets/og-cover.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -38,7 +38,7 @@
         <a href="#download">下载</a>
         <a href="https://github.com/stophemo/woo-todo" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
-      <a class="header-action" href="#download">下载 v0.1.31</a>
+      <a class="header-action" href="#download">下载 v0.2.0</a>
     </div>
   </header>
 
@@ -47,13 +47,14 @@
       <div class="hero-grid" aria-hidden="true"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="eyebrow">v0.1.31 · macOS / Android</p>
+          <p class="eyebrow">v0.2.0 · macOS / Android / Windows</p>
           <h1 id="hero-title">无我待办</h1>
           <p class="hero-tagline">手机规划，电脑执行。</p>
-          <p class="hero-summary">任务始终先留在本地。用手机安排今天和明天，在 Mac 悬浮任务板上继续完成；没有网络也不耽误记录。</p>
+          <p class="hero-summary">任务始终先留在本地。用手机安排今天和明天，在 Mac 或 Windows 悬浮任务板上继续完成；没有网络也不耽误记录。</p>
           <div class="hero-actions" aria-label="正式版下载">
-            <a class="button button-light" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.31/Woo-Todo-v0.1.31-macos-arm64.zip">下载 macOS</a>
-            <a class="button button-outline" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.31/Woo-Todo-v0.1.31-android.apk">下载 Android</a>
+            <a class="button button-light" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.0/Woo-Todo-v0.2.0-macos-arm64.zip">下载 macOS</a>
+            <a class="button button-outline" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.0/Woo-Todo-v0.2.0-android.apk">下载 Android</a>
+            <a class="button button-outline" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.0/Woo-Todo-v0.2.0-windows-x64.zip">下载 Windows</a>
           </div>
           <p class="hero-note">本地优先 · 断网可用 · MIT 开源</p>
         </div>
@@ -141,16 +142,15 @@
         <div class="availability-inner">
           <div class="availability-item">
             <span>macOS</span>
-            <strong>v0.1.31 正式版</strong>
+            <strong>v0.2.0 正式版</strong>
           </div>
           <div class="availability-item">
             <span>Android</span>
-            <strong>v0.1.31 正式版</strong>
+            <strong>v0.2.0 正式版</strong>
           </div>
           <div class="availability-item availability-windows">
             <span>Windows</span>
-            <strong>v0.2.x 提供</strong>
-            <small>正在开发中</small>
+            <strong>v0.2.0 正式版</strong>
           </div>
         </div>
       </div>
@@ -172,8 +172,8 @@
           </article>
           <article class="feature-row">
             <span class="feature-index">02</span>
-            <h3>手机安排，Mac 执行</h3>
-            <p>Android 提供今日与明日规划、提醒和桌面 Widget；Mac 通过菜单栏、全局快捷键与悬浮任务板承接执行。</p>
+            <h3>手机安排，电脑执行</h3>
+            <p>Android 提供今日与明日规划、提醒和桌面 Widget；Mac 与 Windows 通过菜单栏、快捷键与悬浮任务板承接执行。</p>
           </article>
           <article class="feature-row">
             <span class="feature-index">03</span>
@@ -189,15 +189,15 @@
         <header class="sync-heading">
           <div>
             <p class="section-kicker">同一网络同步</p>
-            <h2 id="sync-title">电脑和手机连在一起，就能同步</h2>
+            <h2 id="sync-title">三端按自己的信任边界同步</h2>
           </div>
-          <p>不需要互联网、Woo Todo 账号或服务器地址。在 Mac 开启同步主机，Android 扫描二维码完成配对。</p>
+          <p>不需要互联网、Woo Todo 账号或固定服务器地址。在 Mac 或 Windows 开启同步主机，Android 扫描二维码或粘贴配对链接即可加入。</p>
         </header>
 
-        <div class="sync-topology" aria-label="Mac 与 Android 同一网络加密同步">
+        <div class="sync-topology" aria-label="Mac、Windows 与 Android 同一网络加密同步">
           <div class="device device-desktop">
             <div class="desktop-shape" aria-hidden="true"><span></span></div>
-            <strong>Mac</strong>
+            <strong>Mac / Windows</strong>
             <small>本地同步主机</small>
           </div>
           <div class="connection">
@@ -248,10 +248,10 @@
       <div class="section-inner">
         <header class="download-heading">
           <div>
-            <p class="section-kicker">v0.1.31</p>
-            <h2 id="download-title">下载正式版</h2>
+            <p class="section-kicker">v0.2.0</p>
+            <h2 id="download-title">下载三端正式版</h2>
           </div>
-          <p>macOS 与 Android 已提供正式版本，均可在后续版本中继续应用内更新。</p>
+          <p>macOS、Android 与 Windows 均已提供正式版本。macOS 和 Android 支持应用内更新；Windows 为免安装 ZIP，下载后直接运行。</p>
         </header>
 
         <div class="download-list">
@@ -261,7 +261,7 @@
               <div><strong>macOS</strong><small>macOS 15+ · Apple Silicon</small></div>
             </div>
             <p>菜单栏入口、快捷新增与悬浮任务板。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.31/Woo-Todo-v0.1.31-macos-arm64.zip">下载 ZIP</a>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.0/Woo-Todo-v0.2.0-macos-arm64.zip">下载 ZIP</a>
           </article>
           <article class="download-item">
             <div class="platform-name">
@@ -269,22 +269,30 @@
               <div><strong>Android</strong><small>Android 13+</small></div>
             </div>
             <p>今日与明日规划、定时提醒和桌面 Widget。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.1.31/Woo-Todo-v0.1.31-android.apk">下载 APK</a>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.0/Woo-Todo-v0.2.0-android.apk">下载 APK</a>
+          </article>
+          <article class="download-item">
+            <div class="platform-name">
+              <span class="platform-mark platform-windows">W</span>
+              <div><strong>Windows</strong><small>Windows 10 2004+ · x64</small></div>
+            </div>
+            <p>Tauri 2 悬浮任务板、同步、通知与任务管理。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.0/Woo-Todo-v0.2.0-windows-x64.zip">下载 ZIP</a>
           </article>
         </div>
 
-        <aside class="windows-roadmap" aria-label="Windows 开发状态">
-          <div class="roadmap-status"><i></i><span>正在开发中</span></div>
+        <aside class="windows-roadmap" aria-label="Windows 正式版状态">
+          <div class="roadmap-status"><i></i><span>正式发布</span></div>
           <div>
-            <p>Windows</p>
-            <h3>Windows 版将在 v0.2.x 提供</h3>
+            <p>Windows v0.2.0</p>
+            <h3>Windows x64 已加入三端正式 Release</h3>
           </div>
-          <p>正式版完成前暂不提供下载。</p>
+          <p>免安装 ZIP，当前未签名，首次启动可能触发 SmartScreen 提示。</p>
         </aside>
 
         <div class="release-links">
-          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.1.31">查看发布说明</a>
-          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.1.31/SHA256SUMS.txt">SHA-256 校验</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.0">查看发布说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.2.0/SHA256SUMS.txt">SHA-256 校验</a>
           <a href="https://github.com/stophemo/woo-todo">GitHub 源代码</a>
         </div>
       </div>

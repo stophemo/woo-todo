@@ -92,6 +92,19 @@ public enum SyncEndpointSetupPolicy {
         guard !trimmed.isEmpty else { return .empty }
         guard let endpoint = URL(string: trimmed) else { return .invalid }
 
+        let finalPathComponent = endpoint.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .last?
+            .lowercased()
+        if finalPathComponent == "v1",
+           endpoint.scheme?.lowercased() == "https",
+           endpoint.user == nil,
+           endpoint.password == nil,
+           endpoint.query == nil,
+           endpoint.fragment == nil {
+            return .includesAPIVersion
+        }
+
         switch SyncEndpointPolicy.scope(of: endpoint) {
         case .invalid:
             return .invalid
@@ -100,13 +113,6 @@ public enum SyncEndpointSetupPolicy {
         case .localNetwork:
             return .invalid
         case .crossDevice:
-            let finalPathComponent = endpoint.path
-                .split(separator: "/", omittingEmptySubsequences: true)
-                .last?
-                .lowercased()
-            if finalPathComponent == "v1" {
-                return .includesAPIVersion
-            }
             return .ready(endpoint)
         }
     }

@@ -121,9 +121,7 @@ fn parse_release(source: &[u8], current_version: &str) -> Result<Option<UpdateRe
         .assets
         .iter()
         .find(|asset| asset.name == expected_name && asset.browser_download_url == expected_url)
-        .ok_or(
-            "Windows 当前为实验版（不保证可用），不参与正式版自动更新；请手动获取 Windows 实验版 Prerelease",
-        )?;
+        .ok_or("GitHub 正式 Release 缺少 Windows x64 ZIP")?;
     let digest = parse_sha256(
         asset
             .digest
@@ -588,14 +586,13 @@ mod tests {
     }
 
     #[test]
-    fn experimental_asset_is_not_accepted_as_a_formal_windows_update() {
-        let digest = format!("sha256:{}", "00".repeat(32));
-        let experimental = String::from_utf8(release_json("v0.1.14", &digest))
-            .unwrap()
-            .replace("windows-x64.zip", "windows-x64-experimental.zip");
+    fn missing_formal_windows_asset_is_rejected() {
+        let missing = br#"{
+            "tag_name":"v0.1.14","draft":false,"prerelease":false,"assets":[]
+        }"#;
 
-        let error = parse_release(experimental.as_bytes(), "0.1.13").unwrap_err();
+        let error = parse_release(missing, "0.1.13").unwrap_err();
 
-        assert!(error.contains("实验版（不保证可用）"));
+        assert!(error.contains("缺少 Windows x64 ZIP"));
     }
 }

@@ -101,10 +101,10 @@ jobs:
             "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate" \
             2>/dev/null | grep -F 'org.sparkle-project.Sparkle.Autoupdate'
           codesign --verify --deep --strict --verbose=2 "$APP"
-          test -f "macos/dist/Woo Todo-0.1.31-macos.zip"
+          test -f "macos/dist/Woo Todo-0.2.0-macos.zip"
 
   windows:
-    name: Windows 实验版测试与打包验证
+    name: Windows 正式版测试与打包验证
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -135,24 +135,24 @@ jobs:
       - name: 检查 Windows Rust 静态诊断
         run: cargo clippy --manifest-path windows/Cargo.toml --locked --all-targets -- -D warnings
 
-      - name: 构建 Windows 实验版（不保证可用）免安装 ZIP
+      - name: 构建 Windows 正式免安装 ZIP
         shell: pwsh
         run: |
           ./windows/scripts/package.ps1
-          $archives = @(Get-ChildItem -LiteralPath windows/dist -Filter "Woo-Todo-v*-windows-x64-experimental.zip" -File)
+          $archives = @(Get-ChildItem -LiteralPath windows/dist -Filter "Woo-Todo-v*-windows-x64.zip" -File)
           if ($archives.Count -ne 1) {
-            throw "Windows dist 中应当只有一个实验版 ZIP，实际为 $($archives.Count) 个"
+            throw "Windows dist 中应当只有一个正式 ZIP，实际为 $($archives.Count) 个"
           }
           $entries = @(tar -tf $archives[0].FullName)
-          if ($entries -notcontains "WooTodo.exe" -or $entries -notcontains "WINDOWS-EXPERIMENTAL.txt") {
-            throw "Windows 实验包缺少 WooTodo.exe 或 WINDOWS-EXPERIMENTAL.txt"
+          if ($entries.Count -ne 1 -or $entries[0] -ne "WooTodo.exe") {
+            throw "Windows 正式 ZIP 必须只包含 WooTodo.exe"
           }
 
-      - name: 上传 Windows 实验版测试包
+      - name: 上传 Windows 正式版测试包
         uses: actions/upload-artifact@v4
         with:
-          name: windows-x64-experimental
-          path: windows/dist/Woo-Todo-v*-windows-x64-experimental.zip
+          name: windows-x64-release
+          path: windows/dist/Woo-Todo-v*-windows-x64.zip
           if-no-files-found: error
           retention-days: 30
 

@@ -16,6 +16,55 @@ const MAXIMUM_RESPONSE_BYTES: usize = 3 * 1_024 * 1_024;
 const MAXIMUM_DEVICE_NAME_CHARACTERS: usize = 80;
 const MAXIMUM_PREFLIGHT_PAGES: usize = 1_000;
 
+/// 同步服务交互的结构化错误。
+///
+/// `Server` 携带 HTTP 状态码与业务错误码（如 `CURSOR_AHEAD`），调用方
+/// 可以据此识别“客户端游标超前”等可恢复场景，而不是只拿到一段文本；
+/// `Transport` 表示网络层失败，`Protocol` 表示响应格式或本地处理失败。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerError {
+    Server {
+        status: u16,
+        code: String,
+        message: String,
+    },
+    Transport(String),
+    Protocol(String),
+}
+
+impl WorkerError {
+    /// 服务端返回的业务错误码（如 `UNAUTHORIZED`、`CURSOR_AHEAD`）。
+    pub fn server_code(&self) -> Option<&str> {
+        match self {
+            Self::Server { code, .. } => Some(code),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for WorkerError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Server { code, message, .. } => write!(formatter, "{code}：{message}"),
+            Self::Transport(message) | Self::Protocol(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for WorkerError {}
+
+impl From<String> for WorkerError {
+    fn from(message: String) -> Self {
+        Self::Transport(message)
+    }
+}
+
+impl From<WorkerError> for String {
+    fn from(error: WorkerError) -> Self {
+        error.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DevicePlatform {
@@ -285,14 +334,14 @@ impl<T: HttpTransport> WorkerClient<T> {
         })
     }
 
-    pub fn synchronize(&self, request: &SyncRequest) -> Result<SyncData, String> {
+    pub fn synchronize(&self, request: &SyncRequest) -> Result<SyncData, WorkerError> {
         request
             .validate()
-            .map_err(|error| format!("同步请求无效：{error}"))?;
+            .map_err(|error| WorkerError::Protocol(format!("同步请求无效：{error}")))?;
         let response: SyncData = self.send_json("POST", &["v1", "sync"], request, &[200])?;
         response
             .validate()
-            .map_err(|error| format!("同步响应无效：{error}"))?;
+            .map_err(|error| WorkerError::Protocol(format!("同步响应无效：{error}")))?;
         Ok(response)
     }
 
@@ -395,7 +444,7 @@ impl<T: HttpTransport> WorkerClient<T> {
         let mut token_bytes = random_bytes::<32>().map_err(|error| error.to_string())?;
         let device_token = base64url_encode(&token_bytes);
         let public_key = key_pair.public_key_base64url();
-        let result = (|| {
+        let result = (|| -> Result<JoinedPairing, WorkerError> {
             validate_pairing_identifier(&link.pairing_id)?;
             validate_device_name(device_name)?;
             let claim = self.claim_pairing(
@@ -409,7 +458,7 @@ impl<T: HttpTransport> WorkerClient<T> {
                 || claim.status != PairingStatus::Claimed
                 || claim.expires_at <= 0
             {
-                return Err("配对认领响应无效".to_owned());
+                return Err(WorkerError::Protocol("配对认领响应无效".to_owned()));
             }
             let session_key = zeroize::Zeroizing::new(
                 key_pair
@@ -424,7 +473,7 @@ impl<T: HttpTransport> WorkerClient<T> {
                 let value =
                     self.pairing_result(&link.pairing_id, &link.pairing_secret, &device_token)?;
                 if value.pairing_id != link.pairing_id || value.expires_at != claim.expires_at {
-                    return Err("配对结果与当前会话不一致".to_owned());
+                    return Err(WorkerError::Protocol("配对结果与当前会话不一致".to_owned()));
                 }
                 match value.status {
                     PairingStatus::Claimed => {
@@ -433,23 +482,23 @@ impl<T: HttpTransport> WorkerClient<T> {
                             || value.initiator_public_key.is_some()
                             || value.vault_key_envelope.is_some()
                         {
-                            return Err("配对等待结果携带了不应出现的密钥字段".to_owned());
+                            return Err(WorkerError::Protocol("配对等待结果携带了不应出现的密钥字段".to_owned()));
                         }
                         if chrono::Utc::now().timestamp_millis()
                             >= value.expires_at.saturating_add(30_000)
                         {
-                            return Err("配对二维码已过期，请重新生成".to_owned());
+                            return Err(WorkerError::Protocol("配对二维码已过期，请重新生成".to_owned()));
                         }
                         thread::sleep(Duration::from_secs(2));
                     }
                     PairingStatus::Confirmed => break value,
                     PairingStatus::Expired => {
-                        return Err("配对二维码已过期，请重新生成".to_owned());
+                        return Err(WorkerError::Protocol("配对二维码已过期，请重新生成".to_owned()));
                     }
                     PairingStatus::Canceled => {
-                        return Err("配对已取消，请重新生成二维码".to_owned());
+                        return Err(WorkerError::Protocol("配对已取消，请重新生成二维码".to_owned()));
                     }
-                    PairingStatus::Open => return Err("配对结果状态无效".to_owned()),
+                    PairingStatus::Open => return Err(WorkerError::Protocol("配对结果状态无效".to_owned())),
                 }
             };
             let vault_id = result
@@ -463,7 +512,7 @@ impl<T: HttpTransport> WorkerClient<T> {
                 .is_some_and(|value| value != vault_id)
                 || expected_vault_id.is_some_and(|value| value != vault_id)
             {
-                return Err("配对二维码属于另一个同步空间，Windows 没有切换本地同步身份".to_owned());
+                return Err(WorkerError::Protocol("配对二维码属于另一个同步空间，Windows 没有切换本地同步身份".to_owned()));
             }
             let device_id = result
                 .device_id
@@ -471,10 +520,10 @@ impl<T: HttpTransport> WorkerClient<T> {
                 .ok_or_else(|| "配对结果缺少设备标识".to_owned())?;
             validate_identifier(&device_id, "deviceId")?;
             if device_id != claim.device_id {
-                return Err("配对结果中的设备标识与认领响应不一致".to_owned());
+                return Err(WorkerError::Protocol("配对结果中的设备标识与认领响应不一致".to_owned()));
             }
             if result.initiator_public_key.as_deref() != Some(link.initiator_public_key.as_str()) {
-                return Err("配对结果中的发起方公钥不一致".to_owned());
+                return Err(WorkerError::Protocol("配对结果中的发起方公钥不一致".to_owned()));
             }
             let envelope = result
                 .vault_key_envelope
@@ -492,7 +541,7 @@ impl<T: HttpTransport> WorkerClient<T> {
             })
         })();
         token_bytes.zeroize();
-        result
+        result.map_err(Into::into)
     }
 
     fn claim_pairing(
@@ -526,7 +575,7 @@ impl<T: HttpTransport> WorkerClient<T> {
         pairing_id: &str,
         pairing_secret: &str,
         device_token: &str,
-    ) -> Result<PairingResultData, String> {
+    ) -> Result<PairingResultData, WorkerError> {
         self.send_public_json(
             "POST",
             &["v1", "pairings", pairing_id, "result"],
@@ -573,9 +622,9 @@ impl<T: HttpTransport> WorkerClient<T> {
         path: &[&str],
         input: &Input,
         accepted: &[u16],
-    ) -> Result<Output, String> {
+    ) -> Result<Output, WorkerError> {
         let body =
-            serde_json::to_vec(input).map_err(|error| format!("无法编码配对请求：{error}"))?;
+            serde_json::to_vec(input).map_err(|error| WorkerError::Protocol(format!("无法编码配对请求：{error}")))?;
         let response = self.transport.execute(HttpRequest {
             method,
             url: self.endpoint.append_path(path)?,
@@ -592,9 +641,9 @@ impl<T: HttpTransport> WorkerClient<T> {
         path: &[&str],
         input: &Input,
         accepted: &[u16],
-    ) -> Result<Output, String> {
+    ) -> Result<Output, WorkerError> {
         let body =
-            serde_json::to_vec(input).map_err(|error| format!("无法编码同步请求：{error}"))?;
+            serde_json::to_vec(input).map_err(|error| WorkerError::Protocol(format!("无法编码同步请求：{error}")))?;
         decode_response(self.send(method, path, body, accepted)?, accepted)
     }
 
@@ -604,17 +653,19 @@ impl<T: HttpTransport> WorkerClient<T> {
         path: &[&str],
         body: Vec<u8>,
         _accepted: &[u16],
-    ) -> Result<HttpResponse, String> {
-        self.transport.execute(HttpRequest {
-            method,
-            url: self.endpoint.append_path(path)?,
-            headers: vec![
-                ("Authorization".to_owned(), format!("Bearer {}", self.token)),
-                ("Content-Type".to_owned(), "application/json".to_owned()),
-            ],
-            body,
-            maximum_response_bytes: MAXIMUM_RESPONSE_BYTES,
-        })
+    ) -> Result<HttpResponse, WorkerError> {
+        self.transport
+            .execute(HttpRequest {
+                method,
+                url: self.endpoint.append_path(path)?,
+                headers: vec![
+                    ("Authorization".to_owned(), format!("Bearer {}", self.token)),
+                    ("Content-Type".to_owned(), "application/json".to_owned()),
+                ],
+                body,
+                maximum_response_bytes: MAXIMUM_RESPONSE_BYTES,
+            })
+            .map_err(Into::into)
     }
 }
 
@@ -753,10 +804,10 @@ struct FailurePayload {
 fn decode_response<T: DeserializeOwned>(
     response: HttpResponse,
     accepted: &[u16],
-) -> Result<T, String> {
+) -> Result<T, WorkerError> {
     if !accepted.contains(&response.status) {
         let failure: FailureEnvelope = serde_json::from_slice(&response.body)
-            .map_err(|_| format!("同步服务返回 HTTP {}", response.status))?;
+            .map_err(|_| WorkerError::Protocol(format!("同步服务返回 HTTP {}", response.status)))?;
         if failure.ok
             || failure.error.code.is_empty()
             || failure.error.message.is_empty()
@@ -765,15 +816,24 @@ fn decode_response<T: DeserializeOwned>(
                 .as_ref()
                 .is_some_and(|value| value.is_empty())
         {
-            return Err(format!("同步服务返回 HTTP {}", response.status));
+            return Err(WorkerError::Protocol(format!(
+                "同步服务返回 HTTP {}",
+                response.status
+            )));
         }
         let _ = failure.error.details;
-        return Err(format!("{}：{}", failure.error.code, failure.error.message));
+        return Err(WorkerError::Server {
+            status: response.status,
+            code: failure.error.code,
+            message: failure.error.message,
+        });
     }
     let envelope: SuccessEnvelope<T> = serde_json::from_slice(&response.body)
-        .map_err(|_| "同步服务成功响应 JSON 格式无效".to_owned())?;
+        .map_err(|_| WorkerError::Protocol("同步服务成功响应 JSON 格式无效".to_owned()))?;
     if !envelope.ok || envelope.request_id.is_empty() {
-        return Err("同步服务成功响应包络无效".to_owned());
+        return Err(WorkerError::Protocol(
+            "同步服务成功响应包络无效".to_owned(),
+        ));
     }
     Ok(envelope.data)
 }
@@ -801,7 +861,9 @@ fn validate_device_name(value: &str) -> Result<(), String> {
 }
 
 fn validate_identifier(value: &str, field: &str) -> Result<(), String> {
-    if !(8..=128).contains(&value.len())
+    // 与 core-rust SyncConfiguration 的 1..=128 规则保持一致，避免
+    // 65 到 128 字符的 vaultId 在客户端各层校验不一致。
+    if !(1..=128).contains(&value.len())
         || !value.bytes().enumerate().all(|(index, value)| {
             value.is_ascii_alphanumeric()
                 || (index > 0 && matches!(value, b'.' | b'_' | b':' | b'-'))
@@ -972,7 +1034,39 @@ mod tests {
             &[200],
         )
         .unwrap_err();
-        assert_eq!(error, "UNAUTHORIZED：设备令牌无效");
+        assert_eq!(error.server_code(), Some("UNAUTHORIZED"));
+        assert_eq!(error.to_string(), "UNAUTHORIZED：设备令牌无效");
+        assert_eq!(String::from(error.clone()), "UNAUTHORIZED：设备令牌无效");
+        assert!(matches!(
+            error,
+            WorkerError::Server { status: 401, .. }
+        ));
+    }
+
+    #[test]
+    fn cursor_ahead_failure_is_recognizable_by_code() {
+        let error = decode_response::<Value>(
+            response(
+                409,
+                r#"{"ok":false,"error":{"code":"CURSOR_AHEAD","message":"客户端游标超过服务端最新序号"},"requestId":"request-cursor"}"#,
+            ),
+            &[200],
+        )
+        .unwrap_err();
+        assert_eq!(error.server_code(), Some("CURSOR_AHEAD"));
+    }
+
+    #[test]
+    fn identifier_length_rules_match_core_configuration() {
+        // vaultId/deviceId 与 core-rust SyncConfiguration 一致：1 到 128 字符。
+        assert!(validate_identifier("a", "vaultId").is_ok());
+        assert!(validate_identifier(&"v".repeat(128), "vaultId").is_ok());
+        assert!(validate_identifier(&"v".repeat(129), "vaultId").is_err());
+        assert!(validate_identifier("", "vaultId").is_err());
+        // 允许 65 到 128 字符的 vaultId（此前 Windows 校验错误地限制在 64）。
+        let medium = format!("{}{}", "vault-".to_owned(), "v".repeat(60));
+        assert_eq!(medium.len(), 66);
+        assert!(validate_identifier(&medium, "vaultId").is_ok());
     }
 
     #[test]

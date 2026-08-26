@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use chrono::{NaiveDate, Utc};
@@ -385,7 +386,15 @@ async fn join_sync_space(
     .await
     .map_err(|error| format!("配对后台任务失败：{error}"))??;
 
-    lock(&state.sync_runtime, "同步运行时")?.stop();
+    // 停止旧同步运行时：先请求停止并立即把运行状态置为 false，再把运行时
+    // 从锁中取出、在锁外 join 工作线程，避免在途 WinHTTP 同步（最长 30 秒）
+    // 期间冻结 UI。工作线程退出后才会切换绑定，防止新旧身份写同一数据库。
+    let previous_runtime = {
+        let guard = lock(&state.sync_runtime, "同步运行时")?;
+        guard.request_stop();
+        std::mem::replace(&mut *guard, SyncRuntime::stopped())
+    };
+    previous_runtime.join_worker();
     let switch_result = {
         let mut repository = lock(&state.repository, "任务库")?;
         if input.clear_local_tasks {
@@ -446,7 +455,13 @@ fn start_local_sync(app: AppHandle, state: State<'_, RuntimeState>) -> Result<Ap
     let state_path = local_state_path(&data_directory()?, &vault_id);
     let host = LocalSyncHost::start(credentials.clone(), state_path)?;
 
-    lock(&state.sync_runtime, "同步运行时")?.stop();
+    // 停止旧同步运行时（先请求停止、再在锁外 join），避免在途同步冻结 UI。
+    let previous_runtime = {
+        let guard = lock(&state.sync_runtime, "同步运行时")?;
+        guard.request_stop();
+        std::mem::replace(&mut *guard, SyncRuntime::stopped())
+    };
+    previous_runtime.join_worker();
     let switch_result = {
         let mut repository = lock(&state.repository, "任务库")?;
         switch_sync_binding(&mut repository, state.credentials.as_ref(), credentials, 0)
@@ -461,6 +476,14 @@ fn start_local_sync(app: AppHandle, state: State<'_, RuntimeState>) -> Result<Ap
         runtime.request(SyncTrigger::Manual);
     }
     *lock(&state.local_host, "局域网同步主机")? = Some(host);
+    // 记录主机角色：应用重启、休眠唤醒后据此自动恢复监听。
+    {
+        let mut settings = lock(&state.settings, "设置")?;
+        settings.local_network_host = true;
+        settings
+            .save()
+            .map_err(|error| format!("无法保存局域网主机标记：{error}"))?;
+    }
     notify_frontends(&app, "tray://refresh");
     snapshot(&state)
 }
@@ -469,6 +492,11 @@ fn start_local_sync(app: AppHandle, state: State<'_, RuntimeState>) -> Result<Ap
 fn stop_local_sync(app: AppHandle, state: State<'_, RuntimeState>) -> Result<AppSnapshot, String> {
     if let Some(mut host) = lock(&state.local_host, "局域网同步主机")?.take() {
         host.stop();
+        // 清除主机标记：重启后不再自动恢复监听。
+        if let Ok(mut settings) = lock(&state.settings, "设置") {
+            settings.local_network_host = false;
+            let _ = settings.save();
+        }
     }
     notify_frontends(&app, "tray://refresh");
     snapshot(&state)
@@ -624,6 +652,79 @@ fn notify_frontends(app: &AppHandle, event: &str) {
     }
 }
 
+/// 把悬浮板窗口的 Move/Resize 持久化到设置（逻辑坐标，跨 DPI 稳定）。
+///
+/// 几何恢复完成前（[`BOARD_GEOMETRY_READY`] 未置位）忽略事件，避免
+/// 用窗口默认几何覆盖已保存的位置与大小；数值未变化时跳过无意义写入。
+fn persist_board_geometry(window: &tauri::WebviewWindow, event: &tauri::WindowEvent) {
+    if !matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
+        return;
+    }
+    if !BOARD_GEOMETRY_READY.load(Ordering::Acquire) {
+        return;
+    }
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    let Ok(scale) = window.scale_factor() else {
+        return;
+    };
+    let position = position.to_logical::<f64>(scale);
+    let size = size.to_logical::<f64>(scale);
+    let state = window.app_handle().state::<RuntimeState>();
+    let Ok(mut settings) = lock(&state.settings, "设置") else {
+        return;
+    };
+    let changed = (position.x - settings.board_left).abs() >= 0.5
+        || (position.y - settings.board_top).abs() >= 0.5
+        || (size.width - settings.board_width).abs() >= 0.5
+        || (size.height - settings.board_height).abs() >= 0.5;
+    if !changed {
+        return;
+    }
+    settings.board_left = position.x;
+    settings.board_top = position.y;
+    settings.board_width = size.width;
+    settings.board_height = size.height;
+    let _ = settings.save();
+}
+
+/// 启动时恢复局域网同步主机监听。
+///
+/// 仅当上次会话保存过主机标记（[`AppSettings::local_network_host`]）且
+/// 当前活动同步身份仍是同一网络同步时恢复；恢复失败（如端口被占用）时
+/// 清除标记避免每次启动重试，用户可在同步页重新开启。
+fn restore_local_network_host(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<RuntimeState>();
+    if !lock(&state.settings, "设置")?.local_network_host {
+        return Ok(());
+    }
+    let Some(credentials) = state.credentials.load()? else {
+        return Ok(());
+    };
+    if credentials.mode() != SyncMode::LocalNetwork {
+        return Ok(());
+    }
+    let vault_id = credentials.vault_id().to_owned();
+    let state_path = local_state_path(&data_directory()?, &vault_id);
+    match LocalSyncHost::start(credentials, state_path) {
+        Ok(host) => {
+            *lock(&state.local_host, "局域网同步主机")? = Some(host);
+            Ok(())
+        }
+        Err(_) => {
+            if let Ok(mut settings) = lock(&state.settings, "设置") {
+                settings.local_network_host = false;
+                let _ = settings.save();
+            }
+            Ok(())
+        }
+    }
+}
+
 fn tray_toggle_board_setting(app: &AppHandle, setting: &str) -> Result<(), String> {
     let state = app.state::<RuntimeState>();
     let current = {
@@ -698,6 +799,10 @@ fn window_action(window: WebviewWindow, action: String) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
+/// 悬浮板窗口几何是否已从设置恢复。恢复前忽略 Move/Resize 事件，
+/// 避免用窗口默认几何覆盖已保存的设置。
+static BOARD_GEOMETRY_READY: AtomicBool = AtomicBool::new(false);
+
 pub fn run() -> Result<(), String> {
     let state = build_runtime()?;
     tauri::Builder::default()
@@ -710,13 +815,19 @@ pub fn run() -> Result<(), String> {
         }))
         .manage(state)
         .on_window_event(|window, event| {
-            // 主窗口的关闭（X、Alt+F4）改为隐藏到托盘，托盘菜单可随时恢复；
-            // 避免窗口被销毁后“设置/任务详情/快速新增”找不到窗口而打不开。
-            if window.label() == "main"
+            // 主窗口与悬浮板窗口的关闭（X、Alt+F4）都改为隐藏：托盘菜单可
+            // 随时恢复，避免窗口被销毁后“设置/任务详情/快速新增/悬浮板”
+            // 找不到窗口而打不开。
+            if matches!(window.label(), "main" | "board")
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
             {
                 api.prevent_close();
                 let _ = window.hide();
+                return;
+            }
+            // 悬浮板几何（位置与大小）随 Move/Resize 事件持久化，重启后恢复。
+            if window.label() == "board" {
+                persist_board_geometry(window, event);
             }
         })
         .setup(|app| {
@@ -736,6 +847,32 @@ pub fn run() -> Result<(), String> {
                 board.set_always_on_bottom(desktop_widget)?;
                 board.set_always_on_top(always_on_top)?;
                 board.set_ignore_cursor_events(click_through)?;
+                // 恢复上次会话的悬浮板位置与大小（窗口默认几何可能不同）。
+                let (left, top, width, height) = {
+                    let settings = lock(&state.settings, "设置")?;
+                    (
+                        settings.board_left,
+                        settings.board_top,
+                        settings.board_width,
+                        settings.board_height,
+                    )
+                };
+                board.set_position(tauri::LogicalPosition::new(left, top))?;
+                board.set_size(tauri::LogicalSize::new(width, height))?;
+            }
+            // 几何已恢复：此后的 Move/Resize 事件才会回写设置，避免在恢复
+            // 完成前用窗口默认几何覆盖已保存的位置与大小。
+            BOARD_GEOMETRY_READY.store(true, Ordering::Release);
+
+            // 恢复局域网同步主机监听：上次会话开启过主机服务且当前身份
+            // 仍是同一网络同步时自动恢复，无需用户重新开启。
+            restore_local_network_host(app)?;
+
+            // 启动时对齐一次提醒计划：重启后残留的过期/陈旧提醒会被清理。
+            if let Ok(repository) = state.repository.lock()
+                && let Ok(tasks) = repository.fetch_all()
+            {
+                let _ = crate::notifications::reconcile(&tasks);
             }
 
             let shortcuts = lock(&state.settings, "设置")?.shortcuts.clone();

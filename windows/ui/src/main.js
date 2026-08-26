@@ -115,7 +115,7 @@ function visibleTasks() {
   const tasks = state.snapshot?.tasks || [];
   if (state.section === "history") return tasks.filter((task) => task.state !== "pending");
   if (state.section === "today") return tasks.filter((task) => task.timeType === "day" && (task.state === "pending" || task.periodStart === state.snapshot.referenceDate));
-  if (state.section === "tomorrow") return tasks.filter((task) => task.periodStart > state.snapshot.referenceDate && task.state === "pending");
+  if (state.section === "tomorrow") return tasks.filter((task) => task.timeType === "day" && task.periodStart > state.snapshot.referenceDate && task.state === "pending");
   if (state.section === "week") return tasks.filter((task) => task.timeType === "week" && task.state === "pending");
   if (state.section === "month") return tasks.filter((task) => task.timeType === "month" && task.state === "pending");
   if (state.section === "someday") return tasks.filter((task) => task.timeType === "someday" && task.state === "pending");

@@ -10,9 +10,6 @@ build = "build.rs"
 name = "WooTodo"
 path = "src/main.rs"
 
-[features]
-legacy-win32 = []
-
 [dependencies]
 base64 = "0.22"
 chrono = { version = "0.4.41", default-features = false, features = ["clock", "serde"] }

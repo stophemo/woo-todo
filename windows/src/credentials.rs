@@ -582,7 +582,9 @@ fn valid_identifier(value: &str) -> bool {
 }
 
 fn valid_vault_id(value: &str) -> bool {
-    (1..=64).contains(&value.len())
+    // 与 core-rust SyncConfiguration 的 1..=128 规则保持一致，避免
+    // 65 到 128 字符的 vaultId 在客户端各层校验不一致。
+    (1..=128).contains(&value.len())
         && value.bytes().enumerate().all(|(index, value)| {
             value.is_ascii_alphanumeric() || (index > 0 && matches!(value, b'.' | b'_' | b'-'))
         })
@@ -711,6 +713,29 @@ mod tests {
         let mut object: serde_json::Value = serde_json::from_slice(&value).unwrap();
         object["appPassword"] = serde_json::Value::String("secret".to_owned());
         assert!(SyncCredentials::decode(&serde_json::to_vec(&object).unwrap()).is_err());
+    }
+
+    #[test]
+    fn vault_id_length_rule_matches_core_configuration() {
+        // 1 到 128 字符都允许（此前错误限制为 64）。
+        assert!(valid_vault_id("v"));
+        assert!(valid_vault_id(&"v".repeat(64)));
+        assert!(valid_vault_id(&"v".repeat(128)));
+        assert!(!valid_vault_id(&"v".repeat(129)));
+        assert!(!valid_vault_id(""));
+        assert!(!valid_vault_id("bad/id"));
+
+        // 通过凭据校验路径验证 65..=128 字符的 vaultId 不再错位报错。
+        let long_vault = format!("vault-{}", "v".repeat(100));
+        assert_eq!(long_vault.len(), 106);
+        let credentials = SyncCredentials::Worker {
+            endpoint: "https://sync.example.com".to_owned(),
+            vault_id: long_vault,
+            device_id: "device-windows-1".to_owned(),
+            device_token: key('a'),
+            vault_key: key('b'),
+        };
+        assert!(credentials.validate().is_ok());
     }
 
     #[test]

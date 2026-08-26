@@ -780,3 +780,177 @@ fn backup_tasks_and_sync_binding_roll_back_together_when_baseline_enqueue_fails(
     assert!(!state.has_bound_identity());
     assert!(!state.has_sync_history());
 }
+
+#[test]
+fn reset_cursor_clears_local_cursor_without_touching_data_or_history() {
+    let (_directory, mut target) = open_repository();
+    let source = sync_configuration("vault-reset", "device-source", 4);
+    target
+        .configure_sync(sync_configuration("vault-reset", "device-target", 4))
+        .unwrap();
+    let task = TodoTask::create(
+        "游标重置任务",
+        TimeType::Day,
+        today_shanghai(),
+        QuestLine::Main,
+        false,
+        0,
+        100,
+        None,
+        None,
+        Some("00000000-0000-4000-8000-000000000911".to_owned()),
+    )
+    .unwrap();
+    let entity = WireEntity::Task(WireTaskPayload::from_task(&task).unwrap());
+    target
+        .apply_remote_operations(
+            &[pulled(
+                &source,
+                &entity,
+                &task.id,
+                OperationKind::Upsert,
+                1,
+                "op-reset-0001",
+                1,
+            )],
+            1,
+        )
+        .unwrap();
+    assert_eq!(target.current_cursor().unwrap(), 1);
+
+    target.reset_cursor().unwrap();
+
+    assert_eq!(target.current_cursor().unwrap(), 0);
+    assert_eq!(target.fetch_all().unwrap(), vec![task]);
+    let state = target.sync_state().unwrap();
+    assert_eq!(state.applied_operation_count, 1);
+    assert_eq!(state.outbox_count, 0);
+}
+
+#[test]
+fn applied_operation_history_stays_bounded_after_many_worker_syncs() {
+    let (_directory, mut target) = open_repository();
+    let source = sync_configuration("vault-bounded-worker", "device-source", 5);
+    target
+        .configure_sync(sync_configuration("vault-bounded-worker", "device-target", 5))
+        .unwrap();
+    let task = TodoTask::create(
+        "批量同步任务",
+        TimeType::Day,
+        today_shanghai(),
+        QuestLine::Main,
+        false,
+        0,
+        100,
+        None,
+        None,
+        Some("00000000-0000-4000-8000-000000000912".to_owned()),
+    )
+    .unwrap();
+    let entity = WireEntity::Task(WireTaskPayload::from_task(&task).unwrap());
+
+    let total = 10_050_i64;
+    for chunk_start in (1..=total).step_by(500) {
+        let chunk_end = (chunk_start + 499).min(total);
+        let mut operations = Vec::with_capacity((chunk_end - chunk_start + 1) as usize);
+        for sequence in chunk_start..=chunk_end {
+            operations.push(pulled(
+                &source,
+                &entity,
+                &task.id,
+                OperationKind::Upsert,
+                sequence,
+                &format!("op-bounded-worker-{sequence:06}"),
+                sequence,
+            ));
+        }
+        target
+            .apply_remote_operations(&operations, chunk_end)
+            .unwrap();
+    }
+
+    // 保留窗口 10000：游标推进到 10050 后，旧记录应被裁剪到恰好 10000 条。
+    let state = target.sync_state().unwrap();
+    assert_eq!(state.cursor, total);
+    assert_eq!(state.applied_operation_count, 10_000);
+
+    // 继续推进游标时窗口始终保持有界。
+    let mut more = Vec::new();
+    for sequence in (total + 1)..=(total + 50) {
+        more.push(pulled(
+            &source,
+            &entity,
+            &task.id,
+            OperationKind::Upsert,
+            sequence,
+            &format!("op-bounded-worker-{sequence:06}"),
+            sequence,
+        ));
+    }
+    target
+        .apply_remote_operations(&more, total + 50)
+        .unwrap();
+    assert_eq!(target.sync_state().unwrap().applied_operation_count, 10_000);
+}
+
+#[test]
+fn webdav_applied_operation_history_stays_bounded_after_many_syncs() {
+    let (directory, mut target) = open_repository();
+    let configuration = sync_configuration("vault-bounded-webdav", "device-source", 5);
+    target.configure_sync(configuration.clone()).unwrap();
+    let task = TodoTask::create(
+        "WebDAV 批量任务",
+        TimeType::Day,
+        today_shanghai(),
+        QuestLine::Main,
+        false,
+        0,
+        100,
+        None,
+        None,
+        Some("00000000-0000-4000-8000-000000000913".to_owned()),
+    )
+    .unwrap();
+    let entity = WireEntity::Task(WireTaskPayload::from_task(&task).unwrap());
+
+    let total = 10_050_i64;
+    let mut operations = Vec::with_capacity(total as usize);
+    for sequence in 1..=total {
+        let pulled = pulled(
+            &configuration,
+            &entity,
+            &task.id,
+            OperationKind::Upsert,
+            sequence,
+            &format!("op-bounded-webdav-{sequence:06}"),
+            sequence,
+        );
+        operations.push(WebDavOperation::from_push(
+            configuration.vault_id.clone(),
+            configuration.device_id.clone(),
+            SyncPushOperation {
+                op_id: pulled.op_id,
+                entity_id: pulled.entity_id,
+                kind: pulled.kind,
+                lamport: pulled.lamport,
+                ciphertext: pulled.ciphertext,
+                nonce: pulled.nonce,
+            },
+        ));
+    }
+    target.apply_webdav_operations(&operations).unwrap();
+
+    // WebDAV 已应用记录独立成表，直接统计行数验证窗口有界。
+    let connection = rusqlite::Connection::open(directory.path().join("tasks.sqlite")).unwrap();
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sync_webdav_applied_operations",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 10_000);
+    let state = target.sync_state().unwrap();
+    assert_eq!(state.cursor, 0);
+    assert_eq!(state.applied_operation_count, 0);
+}

@@ -36,6 +36,7 @@ const MAXIMUM_ACTIVE_PAIRINGS: usize = 32;
 const MAXIMUM_PUSH_OPERATIONS: usize = 50;
 const MAXIMUM_PULL_OPERATIONS: usize = 100;
 const MAXIMUM_STATE_BYTES: u64 = 128 * 1_024 * 1_024;
+const MAXIMUM_CONFIRMED_OPERATIONS: usize = 16_384;
 const MAXIMUM_WIRE_TIMESTAMP: i64 = 9_007_199_254_740_991;
 const MAXIMUM_PATH_BYTES: usize = 2_048;
 const MAXIMUM_HEADERS: usize = 100;
@@ -227,6 +228,10 @@ struct PersistedState {
     next_server_sequence: i64,
     devices: Vec<StoredDevice>,
     operations: Vec<SyncPulledOperation>,
+    /// 已被所有设备确认（ack）并从 operations 裁剪的操作 id，用于重复
+    /// push 去重；`#[serde(default)]` 兼容旧格式状态文件，不提升版本号。
+    #[serde(default)]
+    confirmed_op_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +245,10 @@ struct StoredDevice {
     created_at: i64,
     last_seen_at: Option<i64>,
     revoked_at: Option<i64>,
+    /// 该设备已确认应用到的服务端序号（ack 驱动的清理水位）。
+    /// `#[serde(default)]` 兼容旧格式状态文件。
+    #[serde(default)]
+    ack_cursor: i64,
 }
 
 impl StoredDevice {
@@ -441,8 +450,10 @@ impl LocalServerStore {
                     created_at: timestamp,
                     last_seen_at: Some(timestamp),
                     revoked_at: None,
+                    ack_cursor: 0,
                 }],
                 operations: Vec::new(),
+                confirmed_op_ids: Vec::new(),
             };
             persist_atomically(&state_path, &initial)?;
             initial
@@ -803,6 +814,7 @@ impl LocalServerStore {
                     created_at: claimed.claimed_at,
                     last_seen_at: None,
                     revoked_at: None,
+                    ack_cursor: 0,
                 });
                 self.persist(&updated)?;
                 self.state = updated;
@@ -900,11 +912,10 @@ impl LocalServerStore {
                 "同步游标、分页或批次大小无效",
             ));
         }
-        let maximum_cursor = self
-            .state
-            .operations
-            .last()
-            .map_or(0, |operation| operation.server_seq);
+        // 最新序号来自 next_server_sequence：即使 operations 已被确认裁剪，
+        // 客户端的历史游标仍然有效；只有服务端状态真正重置（序号从头开始）
+        // 时才返回 CURSOR_AHEAD。
+        let maximum_cursor = self.state.next_server_sequence.saturating_sub(1);
         if input.cursor > maximum_cursor {
             return Err(
                 ServiceFailure::new(409, "CURSOR_AHEAD", "客户端游标超过服务端最新序号")
@@ -924,6 +935,10 @@ impl LocalServerStore {
                 .operations
                 .iter()
                 .any(|stored| stored.op_id == operation.op_id)
+                || updated
+                    .confirmed_op_ids
+                    .iter()
+                    .any(|id| id == &operation.op_id)
             {
                 continue;
             }
@@ -952,6 +967,40 @@ impl LocalServerStore {
             .find(|stored| stored.id == device.id)
         {
             stored_device.last_seen_at = Some(timestamp);
+            // 有效 ack（已由请求校验保证非负且 <= cursor）推进该设备水位。
+            if let Some(ack) = input.ack {
+                stored_device.ack_cursor = stored_device.ack_cursor.max(ack);
+            }
+        }
+        // ack 驱动的操作日志清理：只裁剪所有未撤销设备都已确认的序号，
+        // 避免低水位设备拉取时缺失；被裁剪 opId 记入 confirmed_op_ids，
+        // 供后续重复 push 去重（上限 16384，超出丢弃最旧的）。
+        let threshold = updated
+            .devices
+            .iter()
+            .filter(|device| device.revoked_at.is_none())
+            .map(|device| device.ack_cursor)
+            .min()
+            .unwrap_or(0);
+        if threshold > 0 {
+            let split = updated
+                .operations
+                .iter()
+                .position(|operation| operation.server_seq > threshold);
+            let confirmed = match split {
+                Some(index) => updated.operations.drain(..index).collect::<Vec<_>>(),
+                None => std::mem::take(&mut updated.operations),
+            };
+            for operation in confirmed {
+                if !updated.confirmed_op_ids.contains(&operation.op_id) {
+                    updated.confirmed_op_ids.push(operation.op_id);
+                }
+            }
+            if updated.confirmed_op_ids.len() > MAXIMUM_CONFIRMED_OPERATIONS {
+                let overflow =
+                    updated.confirmed_op_ids.len() - MAXIMUM_CONFIRMED_OPERATIONS;
+                updated.confirmed_op_ids.drain(..overflow);
+            }
         }
         self.persist(&updated)?;
         self.state = updated;
@@ -1404,11 +1453,16 @@ fn validate_persisted_state(state: &PersistedState) -> Result<(), LocalServerErr
     }
 
     let mut operation_ids = HashSet::new();
+    let first_sequence = state
+        .operations
+        .first()
+        .map_or(1_i64, |operation| operation.server_seq);
     for (index, operation) in state.operations.iter().enumerate() {
         let expected_sequence = i64::try_from(index)
             .ok()
-            .and_then(|value| value.checked_add(1))
+            .and_then(|value| first_sequence.checked_add(value))
             .ok_or(LocalServerError::CorruptedState)?;
+        // 裁剪只发生在队首，剩余操作必须从 first.server_seq 起连续。
         if operation.server_seq != expected_sequence
             || !valid_identifier(&operation.op_id)
             || !valid_identifier(&operation.entity_id)
@@ -1419,12 +1473,30 @@ fn validate_persisted_state(state: &PersistedState) -> Result<(), LocalServerErr
             return Err(LocalServerError::CorruptedState);
         }
     }
-    let expected_next = i64::try_from(state.operations.len())
-        .ok()
-        .and_then(|value| value.checked_add(1))
-        .ok_or(LocalServerError::CorruptedState)?;
+    // 非空时 next 必须等于末条序号 + 1；为空时可能是全新状态（next 必须
+    // 为 1），也可能是全部操作被确认裁剪（next 保持历史值且 confirmed
+    // 非空），只有后者允许 next 大于 1。
+    let expected_next = match state.operations.last() {
+        Some(operation) => operation
+            .server_seq
+            .checked_add(1)
+            .ok_or(LocalServerError::CorruptedState)?,
+        None if state.confirmed_op_ids.is_empty() => 1,
+        None => state.next_server_sequence,
+    };
     if state.next_server_sequence != expected_next {
         return Err(LocalServerError::CorruptedState);
+    }
+    let mut confirmed_ids = HashSet::new();
+    if state.confirmed_op_ids.len() > MAXIMUM_CONFIRMED_OPERATIONS {
+        return Err(LocalServerError::CorruptedState);
+    }
+    for operation_id in &state.confirmed_op_ids {
+        if !valid_identifier(operation_id)
+            || !confirmed_ids.insert(operation_id.as_str())
+        {
+            return Err(LocalServerError::CorruptedState);
+        }
     }
     Ok(())
 }
@@ -2625,5 +2697,262 @@ mod tests {
         server.stop().unwrap();
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(!server.is_running());
+    }
+
+    fn sync_envelope(
+        store: &mut LocalServerStore,
+        credentials: &SyncCredentials,
+        cursor: i64,
+        ack: Option<i64>,
+        push: Vec<SyncPushOperation>,
+    ) -> SyncData {
+        success(store.handle(sync_request(
+            token(credentials),
+            &SyncRequest {
+                cursor,
+                ack,
+                pull_limit: Some(100),
+                push,
+            },
+        )))
+    }
+
+    #[test]
+    fn ack_driven_cleanup_trims_confirmed_operations_and_bounds_state_size() {
+        let directory = tempdir().unwrap();
+        let state_path = directory.path().join("state.json");
+        let credentials = credentials("device-windows-local", 1);
+        let mut store =
+            LocalServerStore::new_with_clock(&state_path, &credentials, "Windows", || 1_000)
+                .unwrap();
+
+        // 第一轮：推送 3 个操作，游标推进到 3，未携带 ack 时不裁剪。
+        let first = sync_envelope(
+            &mut store,
+            &credentials,
+            0,
+            None,
+            vec![
+                operation("op-trim-1", 1),
+                operation("op-trim-2", 2),
+                operation("op-trim-3", 3),
+            ],
+        );
+        assert_eq!(first.cursor, 3);
+        assert_eq!(store.state.operations.len(), 3);
+        assert!(store.state.confirmed_op_ids.is_empty());
+
+        // 第二轮：ack=3 确认全部操作，operations 被裁剪并记入 confirmed_op_ids。
+        let second = sync_envelope(&mut store, &credentials, 3, Some(3), Vec::new());
+        assert!(second.pull.is_empty());
+        assert!(store.state.operations.is_empty());
+        assert_eq!(
+            store.state.confirmed_op_ids,
+            vec!["op-trim-1".to_owned(), "op-trim-2".to_owned(), "op-trim-3".to_owned()]
+        );
+
+        // 第三轮：已确认操作再次 push 被跳过（重复计数，不重新入队）。
+        let third = sync_envelope(&mut store, &credentials, 3, Some(3), vec![operation("op-trim-1", 1)]);
+        assert_eq!(third.push.inserted, 0);
+        assert_eq!(third.push.duplicates, 1);
+
+        // 状态文件体积有界，且裁剪后的状态可正常重新加载。
+        assert!(fs::metadata(&state_path).unwrap().len() < 8 * 1_024);
+        let restarted =
+            LocalServerStore::new_with_clock(&state_path, &credentials, "Windows", || 2_000)
+                .unwrap();
+        assert!(restarted.state.operations.is_empty());
+        assert_eq!(restarted.state.confirmed_op_ids.len(), 3);
+        assert_eq!(restarted.state.devices[0].ack_cursor, 3);
+    }
+
+    #[test]
+    fn low_water_device_operations_survive_until_that_device_acks() {
+        let directory = tempdir().unwrap();
+        let clock = Arc::new(AtomicI64::new(10_000));
+        let clock_value = Arc::clone(&clock);
+        let credentials = credentials("device-windows-local", 1);
+        let mut store = LocalServerStore::new_with_clock(
+            directory.path().join("state.json"),
+            &credentials,
+            "Windows",
+            move || clock_value.load(Ordering::Relaxed),
+        )
+        .unwrap();
+
+        // 通过配对加入第二台设备 B。
+        let created: CreatePairingData = success(store.handle(authenticated(
+            json_request(
+                "POST",
+                "/v1/pairings",
+                &CreatePairingRequest {
+                    public_key: base64url_encode(&[3; 32]),
+                },
+            ),
+            token(&credentials),
+        )));
+        let device_b_token = base64url_encode(&[4; 32]);
+        let _: PairingClaimData = success(store.handle(json_request(
+            "POST",
+            &format!("/v1/pairings/{}/claim", created.pairing_id),
+            &PairingClaimRequest {
+                pairing_secret: created.pairing_secret.clone(),
+                device_token: device_b_token.clone(),
+                device: PairingDeviceRegistration {
+                    name: "低水位设备".to_owned(),
+                    platform: DevicePlatform::Android,
+                    public_key: base64url_encode(&[5; 32]),
+                },
+            },
+        )));
+        let _: PairingConfirmData = success(store.handle(authenticated(
+            json_request(
+                "POST",
+                &format!("/v1/pairings/{}/confirm", created.pairing_id),
+                &PairingConfirmRequest {
+                    vault_key_envelope: EncryptedEnvelope {
+                        ciphertext: base64url_encode(&[6; 32]),
+                        nonce: base64url_encode(&[7; 12]),
+                    },
+                },
+            ),
+            token(&credentials),
+        )));
+        let _: PairingResultData = success(store.handle(json_request(
+            "POST",
+            &format!("/v1/pairings/{}/result", created.pairing_id),
+            &PairingResultRequest {
+                pairing_secret: created.pairing_secret,
+                device_token: device_b_token.clone(),
+            },
+        )));
+
+        // 主机 A 推送 5 个操作并 ack=5；设备 B 尚未同步，水位为 0 → 不裁剪。
+        sync_envelope(
+            &mut store,
+            &credentials,
+            0,
+            None,
+            vec![
+                operation("op-multi-1", 1),
+                operation("op-multi-2", 2),
+                operation("op-multi-3", 3),
+                operation("op-multi-4", 4),
+                operation("op-multi-5", 5),
+            ],
+        );
+        sync_envelope(&mut store, &credentials, 5, Some(5), Vec::new());
+        assert_eq!(store.state.operations.len(), 5);
+        assert!(store.state.confirmed_op_ids.is_empty());
+
+        // B 只同步到游标 2（ack=2）：阈值 = min(5, 2) = 2，裁剪 seq <= 2。
+        let b_sync =
+            |store: &mut LocalServerStore, cursor: i64, ack: i64, pull_limit: usize| -> SyncData {
+                success(store.handle(sync_request(
+                    &device_b_token,
+                    &SyncRequest {
+                        cursor,
+                        ack: Some(ack),
+                        pull_limit: Some(pull_limit),
+                        push: Vec::new(),
+                    },
+                )))
+            };
+        // B 先拉取前 2 条（seq 1..2），游标与 ack 都停在 2。
+        let first_pull = b_sync(&mut store, 0, 0, 2);
+        assert_eq!(first_pull.pull.len(), 2);
+        assert_eq!(first_pull.cursor, 2);
+        assert!(first_pull.has_more);
+        let second_pull = b_sync(&mut store, 2, 2, 100);
+        assert_eq!(second_pull.pull.len(), 3);
+        assert_eq!(second_pull.cursor, 5);
+        assert!(!store.state.operations.is_empty());
+        assert_eq!(
+            store.state.operations.iter().map(|op| op.server_seq).collect::<Vec<_>>(),
+            vec![3, 4, 5]
+        );
+        assert_eq!(
+            store.state.confirmed_op_ids,
+            vec!["op-multi-1".to_owned(), "op-multi-2".to_owned()]
+        );
+        // B 未确认的 seq 3..5 仍然可以拉取。
+        let remaining = b_sync(&mut store, 2, 2, 100);
+        assert_eq!(remaining.pull.len(), 3);
+        assert_eq!(remaining.cursor, 5);
+
+        // B 补上 ack=5 后，阈值 = 5，全部操作被裁剪。
+        let final_round = b_sync(&mut store, 5, 5, 100);
+        assert!(final_round.pull.is_empty());
+        assert!(store.state.operations.is_empty());
+        assert_eq!(store.state.confirmed_op_ids.len(), 5);
+    }
+
+    #[test]
+    fn repushing_confirmed_operation_is_skipped_as_duplicate() {
+        let directory = tempdir().unwrap();
+        let credentials = credentials("device-windows-local", 1);
+        let mut store = LocalServerStore::new_with_clock(
+            directory.path().join("state.json"),
+            &credentials,
+            "Windows",
+            || 1_000,
+        )
+        .unwrap();
+        let pushed = operation("op-confirmed-repush", 3);
+        sync_envelope(&mut store, &credentials, 0, Some(0), vec![pushed.clone()]);
+        sync_envelope(&mut store, &credentials, 1, Some(1), Vec::new());
+        assert!(store.state.operations.is_empty());
+        assert!(store.state.confirmed_op_ids.contains(&pushed.op_id));
+
+        // 同一 opId 再次推送：跳过（不在 operations 也不重新入队），按重复计数。
+        let replay = sync_envelope(&mut store, &credentials, 1, Some(1), vec![pushed.clone()]);
+        assert_eq!(replay.push.inserted, 0);
+        assert_eq!(replay.push.duplicates, 1);
+        assert!(store.state.operations.is_empty());
+        assert_eq!(store.state.confirmed_op_ids.len(), 1);
+    }
+
+    #[test]
+    fn legacy_state_file_without_ack_fields_loads_with_zero_watermarks() {
+        let directory = tempdir().unwrap();
+        let state_path = directory.path().join("state.json");
+        let credentials = credentials("device-windows-local", 1);
+        let token_hash = credential_hash(token(&credentials));
+        fs::write(
+            &state_path,
+            format!(
+                r#"{{
+  "version": 1,
+  "vaultId": "vault-local-network",
+  "nextServerSequence": 1,
+  "devices": [
+    {{ "id": "device-windows-local", "name": "Windows 旧版主机", "platform": "windows",
+       "publicKey": null, "tokenHash": "{token_hash}",
+       "createdAt": 1000, "lastSeenAt": 1000, "revokedAt": null }}
+  ],
+  "operations": []
+}}"#
+            ),
+        )
+        .unwrap();
+
+        let mut store =
+            LocalServerStore::new_with_clock(&state_path, &credentials, "Windows", || 2_000)
+                .unwrap();
+        assert_eq!(store.state.devices[0].ack_cursor, 0);
+        assert!(store.state.confirmed_op_ids.is_empty());
+
+        // 旧格式状态文件仍可正常同步，ack 从零开始推进。
+        let first = sync_envelope(
+            &mut store,
+            &credentials,
+            0,
+            Some(0),
+            vec![operation("op-legacy-1", 1)],
+        );
+        assert_eq!(first.cursor, 1);
+        sync_envelope(&mut store, &credentials, 1, Some(1), Vec::new());
+        assert!(store.state.operations.is_empty());
+        assert_eq!(store.state.devices[0].ack_cursor, 1);
     }
 }

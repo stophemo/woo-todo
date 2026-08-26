@@ -19,6 +19,10 @@ use crate::wire::{
     canonical_entity_id,
 };
 
+/// 客户端保留的“已应用操作”记录窗口。窗口外的重复应用由 opId 幂等
+/// 与 LWW 合并保证安全，因此可以在此窗口外裁剪以控制表体积。
+const APPLIED_OPERATION_RETENTION: i64 = 10_000;
+
 pub struct TaskRepository {
     connection: Connection,
     sync_configuration: Option<SyncConfiguration>,
@@ -579,6 +583,18 @@ impl TaskRepository {
         sync_state_number(&self.connection, "cursor")
     }
 
+    /// 把本地同步游标重置为 0（服务端游标被重置或丢失时使用）。
+    ///
+    /// 仅在服务端返回 `CURSOR_AHEAD`（客户端游标超过服务端最新序号）时由
+    /// 同步运行时调用：重置后从 0 重新拉取，配合已应用的 opId 记录去重，
+    /// 不会重复应用已有操作；本地任务与 outbox 不受影响。
+    pub fn reset_cursor(&mut self) -> CoreResult<()> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute("UPDATE sync_state SET cursor = 0 WHERE singleton = 1", [])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn apply_remote_operations(
         &mut self,
         operations: &[SyncPulledOperation],
@@ -605,6 +621,13 @@ impl TaskRepository {
                 [operation.lamport],
             )?;
         }
+        // 同一事务内裁剪窗口外的已应用记录，恰好保留最近 10000 条，
+        // 避免 applied 表长期膨胀；窗口外重复应用由 opId 幂等与
+        // LWW 合并保证安全。
+        transaction.execute(
+            "DELETE FROM sync_applied_operations WHERE server_seq <= ?1",
+            [cursor - APPLIED_OPERATION_RETENTION],
+        )?;
         transaction.execute(
             "UPDATE sync_state SET cursor = ?1 WHERE singleton = 1",
             [cursor],
@@ -646,6 +669,17 @@ impl TaskRepository {
                 params![operation.op_id, now_millis()],
             )?;
         }
+        // 同一事务内只保留最近 N 条已应用记录（按应用时间倒序），
+        // 避免 WebDAV 长期同步后表无限膨胀。
+        transaction.execute(
+            r#"
+            DELETE FROM sync_webdav_applied_operations WHERE op_id NOT IN (
+              SELECT op_id FROM sync_webdav_applied_operations
+              ORDER BY applied_at DESC, op_id DESC LIMIT ?1
+            )
+            "#,
+            [APPLIED_OPERATION_RETENTION],
+        )?;
         transaction.commit()?;
         Ok(())
     }

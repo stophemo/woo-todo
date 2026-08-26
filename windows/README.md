@@ -56,7 +56,7 @@ ZIP 只包含 `WooTodo.exe`，因为应用内更新器会校验并替换这一�
 
 当前 Tauri 界面已经接入现有 SQLite，并支持日/周/月/闲时导航、历史与统计、任务新增和编辑、完成与撤销、Pass、删除、同级排序，以及独立悬浮任务板。任务板显示阳历、农历与节气/节日，可调整不透明度、置顶、鼠标穿透和桌面小组件模式。
 
-同步运行时会恢复 Windows Credential Manager 中已有的 Worker、局域网或 WebDAV 凭据，并支持手动触发同步。Tauri 托盘已经提供主窗口、任务板、同步和退出入口；同步页支持粘贴由 Mac、Windows 或 Android 同步空间生成的 `wootodo://pair` 配对链接加入同一 vault。加入前会校验 vaultId，不同同步空间会拒绝替换；本地任务与待同步数据保留。Windows 不应先创建新空间再让 Android 扫码，否则三端会被拆成不同同步空间。旧 Win32 实现暂时保留在 `src/native/` 供迁移时对照。
+同步运行时会恢复 Windows Credential Manager 中已有的 Worker、局域网或 WebDAV 凭据，并支持手动触发同步。Tauri 托盘已经提供主窗口、任务板、同步和退出入口；同步页支持粘贴由 Mac、Windows 或 Android 同步空间生成的 `wootodo://pair` 配对链接加入同一 vault。加入前会校验 vaultId，不同同步空间会拒绝替换；本地任务与待同步数据保留。Windows 不应先创建新空间再让 Android 扫码，否则三端会被拆成不同同步空间。
 
 同步凭据保存在 Windows Credential Manager，不会写入 `settings.json`。任务始终先写入本地 SQLite，网络不可用时仍可继续编辑。
 
@@ -69,7 +69,6 @@ ZIP 只包含 `WooTodo.exe`，因为应用内更新器会校验并替换这一�
 - `shared/core-rust`：任务校验、周期结算、统计、SQLite 仓储语义与稳定通知计划。
 - `windows/src/tauri_app.rs`：Tauri 生命周期、窗口命令、任务命令、悬浮任务板和同步运行时桥接。
 - `windows/ui`：Tauri 2 前端、任务列表、设置页面和悬浮任务板视觉层。
-- `windows/src/native`：迁移期间保留的旧 Win32 UI 实现，不再是默认启动路径。
 - `windows/src/lunar.rs`：农历月日（ICU4X 中文日历）与节气、节日标注，对齐 macOS `TraditionalCalendarInfo`。
 - `windows/src/notifications.rs`：WinRT Toast 调度队列对齐。
 - `windows/src/settings.rs`：兼容旧版 `settings.json` 的本机设置持久化（原子替换保存）。

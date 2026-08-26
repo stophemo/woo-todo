@@ -30,8 +30,6 @@ mod ui_text;
 mod hotkeys;
 #[cfg(windows)]
 mod integration;
-#[cfg(all(windows, feature = "legacy-win32"))]
-mod native;
 #[cfg(windows)]
 mod notifications;
 #[cfg(windows)]

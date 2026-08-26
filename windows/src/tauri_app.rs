@@ -389,8 +389,8 @@ async fn join_sync_space(
     // 停止旧同步运行时：先请求停止并立即把运行状态置为 false，再把运行时
     // 从锁中取出、在锁外 join 工作线程，避免在途 WinHTTP 同步（最长 30 秒）
     // 期间冻结 UI。工作线程退出后才会切换绑定，防止新旧身份写同一数据库。
-    let previous_runtime = {
-        let guard = lock(&state.sync_runtime, "同步运行时")?;
+    let mut previous_runtime = {
+        let mut guard = lock(&state.sync_runtime, "同步运行时")?;
         guard.request_stop();
         std::mem::replace(&mut *guard, SyncRuntime::stopped())
     };
@@ -456,8 +456,8 @@ fn start_local_sync(app: AppHandle, state: State<'_, RuntimeState>) -> Result<Ap
     let host = LocalSyncHost::start(credentials.clone(), state_path)?;
 
     // 停止旧同步运行时（先请求停止、再在锁外 join），避免在途同步冻结 UI。
-    let previous_runtime = {
-        let guard = lock(&state.sync_runtime, "同步运行时")?;
+    let mut previous_runtime = {
+        let mut guard = lock(&state.sync_runtime, "同步运行时")?;
         guard.request_stop();
         std::mem::replace(&mut *guard, SyncRuntime::stopped())
     };
@@ -656,7 +656,7 @@ fn notify_frontends(app: &AppHandle, event: &str) {
 ///
 /// 几何恢复完成前（[`BOARD_GEOMETRY_READY`] 未置位）忽略事件，避免
 /// 用窗口默认几何覆盖已保存的位置与大小；数值未变化时跳过无意义写入。
-fn persist_board_geometry(window: &tauri::WebviewWindow, event: &tauri::WindowEvent) {
+fn persist_board_geometry(window: &tauri::Window, event: &tauri::WindowEvent) {
     if !matches!(
         event,
         tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
@@ -869,7 +869,7 @@ pub fn run() -> Result<(), String> {
 
             // 恢复局域网同步主机监听：上次会话开启过主机服务且当前身份
             // 仍是同一网络同步时自动恢复，无需用户重新开启。
-            restore_local_network_host(app)?;
+            restore_local_network_host(app.handle())?;
 
             // 启动时对齐一次提醒计划：重启后残留的过期/陈旧提醒会被清理。
             if let Ok(repository) = state.repository.lock()

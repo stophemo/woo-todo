@@ -707,11 +707,23 @@ mod tests {
 
         let transport = ScriptedTransport::new(vec![
             // 第一轮：推送 1 条本地操作并拉取 1 条远端操作，游标推进到 1。
-            sync_success((1, 1, 0), &[remote], 1, true, "request-page-1"),
+            sync_success(
+                (1, 1, 0),
+                std::slice::from_ref(&remote),
+                1,
+                true,
+                "request-page-1",
+            ),
             // 第二轮：服务端返回 409 CURSOR_AHEAD（模拟服务端状态文件重建）。
             cursor_ahead_failure("request-cursor-ahead"),
             // 重置后重新从 0 同步：outbox 已清空，远端操作按 opId 幂等跳过。
-            sync_success((0, 0, 0), &[remote], 1, false, "request-retry"),
+            sync_success(
+                (0, 0, 0),
+                std::slice::from_ref(&remote),
+                1,
+                false,
+                "request-retry",
+            ),
         ]);
         // 请求序列（cursor, push 条数）：0+1（首轮推送 1 条）→ 1+0（触发
         // CURSOR_AHEAD）→ 0+0（重置后重试，outbox 已清空）。

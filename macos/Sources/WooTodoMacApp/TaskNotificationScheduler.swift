@@ -1,10 +1,15 @@
 import Foundation
+import OSLog
 @preconcurrency import UserNotifications
 import WooTodoCore
 
 @MainActor
 final class TaskNotificationScheduler {
     private static let identifierPrefix = "woo-todo.task."
+    private static let logger = Logger(
+        subsystem: "io.github.stophemo.woo-todo",
+        category: "任务提醒"
+    )
     private let center: UNUserNotificationCenter
     private var schedulingTask: Task<Void, Never>?
     private var generation = UUID()
@@ -65,7 +70,14 @@ final class TaskNotificationScheduler {
                     content: content,
                     trigger: trigger
                 )
-                try? await center.add(request)
+                do {
+                    try await center.add(request)
+                } catch {
+                    // 单条提醒调度失败不中断其余提醒，但记录日志便于排查。
+                    Self.logger.error(
+                        "无法调度任务提醒 \(task.id.uuidString, privacy: .public)：\(error.localizedDescription, privacy: .public)"
+                    )
+                }
             }
         }
     }

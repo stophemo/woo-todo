@@ -1080,6 +1080,198 @@ struct SQLiteSyncIntegrationTests {
         }
     }
 
+    @Test("低版本 tombstone 的删除时间与记录版本同源且更新的 tombstone 会刷新删除时间")
+    func staleTombstoneDeletionTimeMatchesRecordedVersion() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let task = try makeTask(
+            title: "将被旧 tombstone 删除",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        // 高版本活跃任务（lamport 100）。
+        try await repository.applyRemoteOperations([
+            try remoteTaskOperation(
+                task,
+                kind: .upsert,
+                lamport: 100,
+                serverSequence: 1,
+                deviceID: "device-newer",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+        // 低版本 tombstone（lamport 2）：删除仍生效（终态），
+        // 记录版本与删除时间都必须来自该 tombstone，而不是混合高版本活跃记录的 lamport。
+        let earlyDeletion = milliseconds(date("2026-07-15T09:00:00+08:00"))
+        try await repository.applyRemoteOperations([
+            try remoteTombstoneOperation(
+                entityID: task.id.uuidString.lowercased(),
+                lamport: 2,
+                serverSequence: 2,
+                deviceID: "device-stale",
+                configuration: configuration,
+                deletedAt: earlyDeletion
+            ),
+        ], advancingCursorTo: 2)
+        #expect(try repository.fetchAll().isEmpty)
+
+        // 更高版本 tombstone（lamport 3、更晚的删除时间）应刷新记录：备份导出与记录版本同源。
+        let laterDeletion = milliseconds(date("2026-07-15T10:00:00+08:00"))
+        try await repository.applyRemoteOperations([
+            try remoteTombstoneOperation(
+                entityID: task.id.uuidString.lowercased(),
+                lamport: 3,
+                serverSequence: 3,
+                deviceID: "device-stale",
+                configuration: configuration,
+                deletedAt: laterDeletion
+            ),
+        ], advancingCursorTo: 3)
+        let tombstones = try repository.makeBackupTombstones()
+        #expect(tombstones.count == 1)
+        #expect(tombstones[0].deletedAt == laterDeletion)
+    }
+
+    @Test("同步 applied 记录裁剪到最近 10000 条")
+    func syncAppliedTableIsBounded() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let task = try makeTask(
+            title: "裁剪测试",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        let total = 10_001
+        let operations = try (1...total).map { sequence in
+            try remoteTaskOperation(
+                task,
+                kind: .upsert,
+                lamport: Int64(sequence),
+                serverSequence: Int64(sequence),
+                deviceID: "device-trim",
+                configuration: configuration
+            )
+        }
+        try await repository.applyRemoteOperations(
+            operations,
+            advancingCursorTo: Int64(total)
+        )
+        #expect(try repository.syncAppliedOperationCount() == 10_000)
+        #expect(try await repository.currentCursor() == Int64(total))
+        #expect(try repository.fetchAll().map(\.title) == ["裁剪测试"])
+    }
+
+    @Test("WebDAV applied 记录裁剪到最近 10000 条且重放不增长")
+    func webDavAppliedTableIsBounded() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let task = try makeTask(
+            title: "WebDAV 裁剪测试",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        let total = 10_001
+        let operations = try (1...total).map { index in
+            try webDavOperation(
+                from: remoteTaskOperation(
+                    task,
+                    kind: .upsert,
+                    lamport: Int64(index),
+                    serverSequence: Int64(index),
+                    deviceID: "device-webdav",
+                    configuration: configuration
+                ),
+                configuration: configuration
+            )
+        }
+        try await repository.applyWebDavOperations(operations)
+        #expect(try repository.webDavAppliedOperationCount() == 10_000)
+        #expect(try repository.fetchAll().map(\.title) == ["WebDAV 裁剪测试"])
+
+        // 幂等重放整批旧对象：全部被 applied 表去重跳过，行数不增长。
+        try await repository.applyWebDavOperations(operations)
+        #expect(try repository.webDavAppliedOperationCount() == 10_000)
+        #expect(try repository.fetchAll().map(\.title) == ["WebDAV 裁剪测试"])
+    }
+
+    @Test("服务端状态丢失重建（CURSOR_AHEAD）后客户端自动恢复同步")
+    func cursorAheadRecoversAfterServerStateLoss() async throws {
+        let configuration = syncConfiguration()
+        let credentials = SyncCredentials(
+            endpoint: URL(string: "http://192.168.8.21:48473")!,
+            vaultId: configuration.vaultId,
+            deviceId: configuration.deviceId,
+            deviceToken: Base64URL.encode(Data(repeating: 1, count: 32)),
+            vaultKey: configuration.vaultKey
+        )
+        try credentials.validate()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-cursor-ahead-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstStateURL = directory.appendingPathComponent("state-1.json")
+        let rebuiltStateURL = directory.appendingPathComponent("state-2.json")
+
+        // 第一阶段：正常同步，客户端游标推进到 1。
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        try repository.save(makeTask(
+            title: "第一台设备任务",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        ))
+        let firstStore = try LocalSyncServerStore(
+            fileURL: firstStateURL,
+            bootstrapCredentials: credentials,
+            now: { 1_000 }
+        )
+        let firstCoordinator = SyncCoordinator(
+            transport: StoreSyncTransport(store: firstStore),
+            outbox: repository,
+            local: repository,
+            deviceToken: credentials.deviceToken
+        )
+        let firstSummary = try await firstCoordinator.synchronize()
+        #expect(firstSummary.pushed == 1)
+        #expect(firstSummary.finalCursor == 1)
+
+        // 第二阶段：server-state.json 丢失后服务端从序号 1 重建（maxCursor = 0）。
+        // 客户端 cursor=1 触发 409 CURSOR_AHEAD；协调器应重置本地游标并自动恢复，不抛错。
+        let rebuiltStore = try LocalSyncServerStore(
+            fileURL: rebuiltStateURL,
+            bootstrapCredentials: credentials,
+            now: { 2_000 }
+        )
+        let recoveredCoordinator = SyncCoordinator(
+            transport: StoreSyncTransport(store: rebuiltStore),
+            outbox: repository,
+            local: repository,
+            deviceToken: credentials.deviceToken
+        )
+        let recoveredSummary = try await recoveredCoordinator.synchronize()
+        #expect(recoveredSummary.finalCursor == 0)
+        #expect(try await repository.currentCursor() == 0)
+
+        // 第三阶段：恢复后本地新变更照常同步，游标重新推进。
+        try repository.save(makeTask(
+            title: "恢复后的新任务",
+            createdAt: date("2026-07-16T08:00:00+08:00")
+        ))
+        let finalSummary = try await recoveredCoordinator.synchronize()
+        #expect(finalSummary.pushed == 1)
+        #expect(finalSummary.finalCursor == 1)
+        #expect(try repository.fetchAll().map(\.title).sorted() == [
+            "恢复后的新任务", "第一台设备任务",
+        ])
+    }
+
     @Test("截止前 completed 在两种到达顺序下都优先于 pass")
     func validCompletedWinsPassRegardlessOfArrivalOrder() async throws {
         let configuration = syncConfiguration()
@@ -1607,12 +1799,13 @@ private func remoteTombstoneOperation(
     lamport: Int64,
     serverSequence: Int64,
     deviceID: String,
-    configuration: SQLiteSyncConfiguration
+    configuration: SQLiteSyncConfiguration,
+    deletedAt: Int64 = milliseconds(date("2026-07-15T09:00:00+08:00"))
 ) throws -> SyncPulledOperation {
     let operationID = "remote-delete-\(serverSequence)-\(deviceID)"
     let payload = try WireTombstonePayload(
         id: entityID,
-        deletedAt: milliseconds(date("2026-07-15T09:00:00+08:00"))
+        deletedAt: deletedAt
     )
     let metadata = SyncAADMetadata(
         vaultId: configuration.vaultId,
@@ -1682,4 +1875,44 @@ private func milliseconds(_ date: Date) -> Int64 {
 
 private func date(_ value: String) -> Date {
     ISO8601DateFormatter().date(from: value)!
+}
+
+/// 把 LocalSyncServerStore 包装为 SyncTransport，便于在仓储集成测试中跑完整同步协调器。
+private struct StoreSyncTransport: SyncTransport {
+    let store: LocalSyncServerStore
+
+    func sync(_ request: SyncRequest, deviceToken: String) async throws -> SyncData {
+        let response = await store.handle(LocalSyncHTTPRequest(
+            method: "POST",
+            path: "/v1/sync",
+            headers: ["Authorization": "Bearer \(deviceToken)"],
+            body: try JSONEncoder().encode(request)
+        ))
+        guard (200..<300).contains(response.statusCode) else {
+            let failure = try JSONDecoder().decode(
+                StoreSyncFailureEnvelope.self,
+                from: response.body
+            )
+            throw SyncAPIError.server(
+                statusCode: response.statusCode,
+                payload: failure.error,
+                requestId: nil
+            )
+        }
+        let envelope = try JSONDecoder().decode(
+            StoreSyncSuccessEnvelope<SyncData>.self,
+            from: response.body
+        )
+        guard envelope.ok else { throw SyncAPIError.decoding("成功响应中的 ok 不是 true") }
+        return envelope.data
+    }
+}
+
+private struct StoreSyncSuccessEnvelope<Value: Decodable>: Decodable {
+    let ok: Bool
+    let data: Value
+}
+
+private struct StoreSyncFailureEnvelope: Decodable {
+    let error: ServerErrorPayload
 }

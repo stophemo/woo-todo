@@ -30,10 +30,10 @@ public struct PairingKeyPair: Equatable, Sendable {
         self.publicKey = key.publicKey.rawRepresentation
     }
 
-    public static func generate() -> PairingKeyPair {
+    public static func generate() throws -> PairingKeyPair {
         let key = Curve25519.KeyAgreement.PrivateKey()
-        // CryptoKit 生成的 key 始终满足构造条件。
-        return try! PairingKeyPair(privateKey: key.rawRepresentation)
+        // CryptoKit 生成的密钥理论上始终有效；即使构造失败也抛出可描述错误，而不是 try! 崩溃。
+        return try PairingKeyPair(privateKey: key.rawRepresentation)
     }
 
     public var publicKeyBase64URL: String {

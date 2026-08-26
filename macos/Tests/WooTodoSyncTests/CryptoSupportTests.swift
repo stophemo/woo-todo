@@ -66,8 +66,8 @@ struct CryptoSupportTests {
 
     @Test("X25519 双方派生相同会话密钥并封装 vault key")
     func testX25519双方派生相同会话密钥并封装VaultKey() throws {
-        let initiator = PairingKeyPair.generate()
-        let claimant = PairingKeyPair.generate()
+        let initiator = try PairingKeyPair.generate()
+        let claimant = try PairingKeyPair.generate()
         let pairingId = "pairing-test-001"
         let pairingSecret = Data(repeating: 5, count: 32)
         let claimedDeviceId = "device-test-001"

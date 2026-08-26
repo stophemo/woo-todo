@@ -57,6 +57,7 @@ final class WebDavSettingsStore: ObservableObject {
     private let draftDeviceId: String
 
     private static let lastSuccessfulDefaultsKey = "webdav.last-successful-at"
+    private static let draftDeviceIdDefaultsKey = "webdav.draft-device-id"
     private static let fallbackInterval: TimeInterval = 15 * 60
 
     init(
@@ -72,7 +73,18 @@ final class WebDavSettingsStore: ObservableObject {
         self.workerCredentialsStore = workerCredentialsStore
         self.workerSyncConfigured = workerSyncConfigured
         self.defaults = defaults
-        self.draftDeviceId = UUID().uuidString.lowercased()
+        // 草稿设备 ID 跨启动保持稳定：凭据被删除后重新保存不会因 deviceId 变化影响 Lamport 决胜。
+        // 优先复用 worker 凭据中的设备 ID（同一台设备继续使用同一 LWW 身份）。
+        if let worker = try? workerCredentialsStore.load(), !worker.deviceId.isEmpty {
+            self.draftDeviceId = worker.deviceId
+        } else if let saved = defaults.string(forKey: Self.draftDeviceIdDefaultsKey),
+                  !saved.isEmpty {
+            self.draftDeviceId = saved
+        } else {
+            let generated = UUID().uuidString.lowercased()
+            defaults.set(generated, forKey: Self.draftDeviceIdDefaultsKey)
+            self.draftDeviceId = generated
+        }
         let savedSuccess = defaults.object(
             forKey: Self.lastSuccessfulDefaultsKey
         ) as? Double
@@ -318,6 +330,17 @@ final class WebDavSettingsStore: ObservableObject {
     }
 
     private func makeFreshDraft() {
+        // 仅当不存在已保存 vaultKey 时才生成新随机密钥：
+        // 优先复用 worker 凭据中的同步密钥（切换 WebDAV 时继续沿用同一 vault），
+        // 避免每次启动生成新随机密钥导致保存时 deviceId/密钥漂移。
+        if let worker = try? workerCredentialsStore.load(),
+           worker.vaultKey.count == AES256GCM.keyByteCount,
+           !worker.vaultId.isEmpty {
+            endpointText = ""
+            vaultId = worker.vaultId
+            vaultKeyText = Base64URL.encode(worker.vaultKey)
+            return
+        }
         let randomVault = (try? SecureRandom.bytes(count: 9)).map(Base64URL.encode) ?? UUID().uuidString
         let randomKey = (try? SecureRandom.bytes(count: AES256GCM.keyByteCount)).map(Base64URL.encode) ?? ""
         endpointText = ""

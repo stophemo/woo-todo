@@ -43,8 +43,8 @@
         "periodStart": {
           "type": ["string", "null"],
           "format": "date",
-          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
-          "description": "day 使用合法公历日期；week 必须为周一；month 必须为每月 1 日。week 的星期语义由客户端与共享 fixture 校验。"
+          "pattern": "^(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "day 使用合法公历日期（自 0001-01-01 起，拒绝零年）；week 必须为周一；month 必须为每月 1 日。week 的星期语义由客户端与共享 fixture 校验。"
         },
         "deadlineDate": {
           "type": ["string", "null"],
@@ -86,7 +86,7 @@
           "if": { "properties": { "timeType": { "const": "month" } } },
           "then": {
             "properties": {
-              "periodStart": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-01$" }
+              "periodStart": { "type": "string", "pattern": "^(?!0000)[0-9]{4}-[0-9]{2}-01$" }
             }
           }
         },

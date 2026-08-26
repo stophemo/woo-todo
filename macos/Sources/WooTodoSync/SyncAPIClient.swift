@@ -30,6 +30,17 @@ public protocol SyncTransport: Sendable {
     func sync(_ request: SyncRequest, deviceToken: String) async throws -> SyncData
 }
 
+public extension SyncAPIError {
+    /// 服务端游标落后于客户端（通常因服务端状态丢失重建后从序号 1 重新计数）。
+    /// 客户端应重置本地 cursor 后从头重新同步。
+    var isCursorAhead: Bool {
+        if case .server(let statusCode, let payload, _) = self {
+            return statusCode == 409 && payload.code == "CURSOR_AHEAD"
+        }
+        return false
+    }
+}
+
 private struct SuccessEnvelope<Value: Decodable>: Decodable {
     let ok: Bool
     let data: Value

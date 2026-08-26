@@ -115,6 +115,44 @@ struct SyncBackendSelectionTests {
         #expect(store.connection == nil)
     }
 
+    @MainActor
+    @Test("无已保存 WebDAV 凭据时草稿复用 worker 的 vaultKey 且跨启动稳定")
+    func draftReusesWorkerVaultKeyAcrossLaunches() throws {
+        let workerCredentials = SyncCredentials(
+            endpoint: try #require(URL(string: "http://192.168.8.21:48473")),
+            vaultId: "worker-vault-id",
+            deviceId: "worker-macos-device",
+            deviceToken: Base64URL.encode(Data(repeating: 3, count: 32)),
+            vaultKey: Data(repeating: 4, count: AES256GCM.keyByteCount)
+        )
+        let workerStore = TestSyncCredentialsStore()
+        try workerStore.save(workerCredentials)
+        let defaults = try testDefaults()
+
+        // 已有 worker 凭据（已保存 vaultKey）时，草稿应沿用其 vault 与密钥，不再生成新随机密钥。
+        let first = WebDavSettingsStore(
+            repository: try SQLiteTaskRepository(path: ":memory:"),
+            credentialsStore: TestWebDavCredentialsStore(),
+            workerCredentialsStore: workerStore,
+            workerSyncConfigured: true,
+            defaults: defaults
+        )
+        #expect(first.connection == nil)
+        #expect(first.vaultId == workerCredentials.vaultId)
+        #expect(first.vaultKeyText == Base64URL.encode(workerCredentials.vaultKey))
+
+        // 重启（新实例、同一 defaults）：草稿仍然稳定，不漂移。
+        let second = WebDavSettingsStore(
+            repository: try SQLiteTaskRepository(path: ":memory:"),
+            credentialsStore: TestWebDavCredentialsStore(),
+            workerCredentialsStore: workerStore,
+            workerSyncConfigured: true,
+            defaults: defaults
+        )
+        #expect(second.vaultId == workerCredentials.vaultId)
+        #expect(second.vaultKeyText == Base64URL.encode(workerCredentials.vaultKey))
+    }
+
     private func testDefaults() throws -> UserDefaults {
         let name = "SyncBackendSelectionTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))

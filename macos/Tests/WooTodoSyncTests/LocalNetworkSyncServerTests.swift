@@ -322,6 +322,295 @@ struct LocalNetworkSyncServerTests {
         #expect(afterRevocation.statusCode == 401)
     }
 
+    @Test("ack 驱动裁剪：全部确认后旧操作被裁剪且序号不重置")
+    func confirmedOperationsAreTrimmedAndSequenceKeepsCounting() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-lan-trim-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        let credentials = try fixtureCredentials()
+        let store = try LocalSyncServerStore(
+            fileURL: stateURL,
+            bootstrapCredentials: credentials,
+            now: { 1_000 }
+        )
+
+        func push(_ opId: String, ack: Int64, cursor: Int64) async throws -> SyncData {
+            let response = await store.handle(request(
+                path: "/v1/sync",
+                token: credentials.deviceToken,
+                body: try JSONEncoder().encode(SyncRequest(
+                    cursor: cursor,
+                    ack: ack,
+                    pullLimit: 100,
+                    push: [makeOperation(opId: opId)]
+                ))
+            ))
+            return try successData(response)
+        }
+
+        // 第一轮：插入 op-trim-1（seq 1），ack 0 → 不被裁剪。
+        var data = try await push("op-trim-1", ack: 0, cursor: 0)
+        #expect(data.push.inserted == 1)
+        #expect(data.cursor == 1)
+        // 第二轮：ack 1 确认 seq 1 → 触发裁剪，随后插入 op-trim-2（seq 2）。
+        data = try await push("op-trim-2", ack: 1, cursor: 1)
+        #expect(data.push.inserted == 1)
+        #expect(data.cursor == 2)
+        // 第三轮：ack 2 确认 seq 1-2 → 全部裁剪。
+        data = try await push("op-trim-3", ack: 2, cursor: 2)
+        #expect(data.push.inserted == 1)
+        #expect(data.cursor == 3)
+
+        // 从 0 重新拉取：只应看到未被裁剪的 op-trim-3（seq 3），旧操作已移除。
+        let pulled = await store.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(
+                SyncRequest(cursor: 0, ack: 0, pullLimit: 100, push: [])
+            )
+        ))
+        let pulledData: SyncData = try successData(pulled)
+        #expect(pulledData.pull.map(\.opId) == ["op-trim-3"])
+        #expect(pulledData.cursor == 3)
+    }
+
+    @Test("重复 push 已确认 opId 被跳过且不会重新计数")
+    func repushConfirmedOperationIsSkipped() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-lan-repush-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        let credentials = try fixtureCredentials()
+        let store = try LocalSyncServerStore(
+            fileURL: stateURL,
+            bootstrapCredentials: credentials,
+            now: { 1_000 }
+        )
+        let operation = makeOperation(opId: "op-repush-1")
+
+        _ = await store.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 0, ack: 0, pullLimit: 100, push: [operation]
+            ))
+        ))
+        // 确认 seq 1 → 裁剪并进入 confirmedOperationIds。
+        _ = await store.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 1, ack: 1, pullLimit: 100, push: []
+            ))
+        ))
+
+        // 重复 push 已确认 opId：应计为重复而非重新插入（否则 seq 会重新计数）。
+        let repush = await store.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 1, ack: 1, pullLimit: 100, push: [operation]
+            ))
+        ))
+        let repushData: SyncData = try successData(repush)
+        #expect(repushData.push.inserted == 0)
+        #expect(repushData.push.duplicates == 1)
+        #expect(repushData.cursor == 1)
+
+        // 新操作应从 seq 2 继续编号，且从 0 拉取看不到已确认的 op-repush-1。
+        let second = makeOperation(opId: "op-repush-2")
+        let secondResponse = await store.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 1, ack: 1, pullLimit: 100, push: [second]
+            ))
+        ))
+        let secondData: SyncData = try successData(secondResponse)
+        #expect(secondData.pull.map(\.opId) == ["op-repush-2"])
+        #expect(secondData.pull.first?.serverSeq == 2)
+    }
+
+    @Test("多设备时低水位设备未确认的操作不被裁剪")
+    func unconfirmedOperationsOfLaggingDeviceAreRetained() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-lan-multidevice-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        let credentials = try fixtureCredentials()
+        let store = try LocalSyncServerStore(
+            fileURL: stateURL,
+            bootstrapCredentials: credentials,
+            now: { 10_000 }
+        )
+
+        // 配对一台新设备（低水位设备）。
+        let createdResponse = await store.handle(request(
+            path: "/v1/pairings",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(
+                CreatePairingRequest(publicKey: Base64URL.encode(Data(repeating: 3, count: 32)))
+            )
+        ))
+        let created: CreatePairingData = try successData(createdResponse)
+        let androidToken = Base64URL.encode(Data(repeating: 4, count: 32))
+        _ = await store.handle(request(
+            path: "/v1/pairings/\(created.pairingId)/claim",
+            body: try JSONEncoder().encode(PairingClaimRequest(
+                pairingSecret: created.pairingSecret,
+                deviceToken: androidToken,
+                device: PairingDeviceRegistration(
+                    name: "低水位设备",
+                    platform: .android,
+                    publicKey: Base64URL.encode(Data(repeating: 5, count: 32))
+                )
+            ))
+        ))
+        _ = await store.handle(request(
+            path: "/v1/pairings/\(created.pairingId)/confirm",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(PairingConfirmRequest(
+                vaultKeyEnvelope: EncryptedEnvelope(
+                    ciphertext: Base64URL.encode(Data(repeating: 6, count: 32)),
+                    nonce: Base64URL.encode(Data(repeating: 7, count: 12))
+                )
+            ))
+        ))
+
+        // 主机插入 op-host-1（seq 1）并确认到 seq 1；Android 尚未确认任何序号。
+        let hostSync = await store.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 0, ack: 0, pullLimit: 100,
+                push: [makeOperation(opId: "op-host-1")]
+            ))
+        ))
+        let hostData: SyncData = try successData(hostSync)
+        #expect(hostData.pull.map(\.opId) == ["op-host-1"])
+        _ = await store.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 1, ack: 1, pullLimit: 100, push: []
+            ))
+        ))
+
+        // 低水位设备未确认 → 主机已确认的 op-host-1 仍可被低水位设备从 0 拉取。
+        let laggingPull = await store.handle(request(
+            path: "/v1/sync",
+            token: androidToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 0, ack: 0, pullLimit: 100, push: []
+            ))
+        ))
+        let laggingData: SyncData = try successData(laggingPull)
+        #expect(laggingData.pull.map(\.opId) == ["op-host-1"])
+
+        // Android 确认到 seq 1 后，低水位消失 → 操作被裁剪，从 0 拉取不再返回。
+        _ = await store.handle(request(
+            path: "/v1/sync",
+            token: androidToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 1, ack: 1, pullLimit: 100, push: []
+            ))
+        ))
+        let afterAllAcked = await store.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 0, ack: 0, pullLimit: 100, push: []
+            ))
+        ))
+        let afterData: SyncData = try successData(afterAllAcked)
+        #expect(afterData.pull.isEmpty)
+        #expect(afterData.cursor == 0)
+    }
+
+    @Test("旧格式状态文件（无 ackCursor/confirmedOperationIds）可加载并继续同步")
+    func legacyStateFileWithoutAckFieldsLoads() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-lan-legacy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        let credentials = try fixtureCredentials()
+
+        // 先写入新格式状态，再剥离新字段模拟旧版本文件。
+        let writer = try LocalSyncServerStore(
+            fileURL: stateURL,
+            bootstrapCredentials: credentials,
+            now: { 1_000 }
+        )
+        _ = await writer.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 0, ack: 0, pullLimit: 100,
+                push: [makeOperation(opId: "op-legacy-1")]
+            ))
+        ))
+        var object = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any]
+        )
+        object.removeValue(forKey: "confirmedOperationIds")
+        object.removeValue(forKey: "maxLamportEver")
+        if var devices = object["devices"] as? [[String: Any]] {
+            for index in devices.indices {
+                devices[index].removeValue(forKey: "ackCursor")
+            }
+            object["devices"] = devices
+        }
+        try JSONSerialization.data(withJSONObject: object).write(to: stateURL, options: .atomic)
+
+        let legacyStore = try LocalSyncServerStore(
+            fileURL: stateURL,
+            bootstrapCredentials: credentials,
+            now: { 2_000 }
+        )
+        // 旧文件加载后仍可同步：从 0 拉取到旧操作，并可用 ack 触发裁剪。
+        let pulled = await legacyStore.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 0, ack: 0, pullLimit: 100, push: []
+            ))
+        ))
+        let pulledData: SyncData = try successData(pulled)
+        #expect(pulledData.pull.map(\.opId) == ["op-legacy-1"])
+
+        let confirm = await legacyStore.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 1, ack: 1, pullLimit: 100, push: []
+            ))
+        ))
+        let confirmData: SyncData = try successData(confirm)
+        #expect(confirmData.cursor == 1)
+        let trimmed = await legacyStore.handle(request(
+            path: "/v1/sync",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(SyncRequest(
+                cursor: 0, ack: 0, pullLimit: 100, push: []
+            ))
+        ))
+        let trimmedData: SyncData = try successData(trimmed)
+        #expect(trimmedData.pull.isEmpty)
+        #expect(trimmedData.cursor == 0)
+    }
+
+    private func makeOperation(opId: String) -> SyncPushOperation {
+        SyncPushOperation(
+            opId: opId,
+            entityId: "task-\(opId)",
+            kind: .upsert,
+            lamport: 1,
+            ciphertext: Base64URL.encode(Data(repeating: 7, count: 32)),
+            nonce: Base64URL.encode(Data(repeating: 8, count: 12))
+        )
+    }
+
     private func fixtureCredentials() throws -> SyncCredentials {
         let credentials = SyncCredentials(
             endpoint: URL(string: "http://192.168.8.21:48473")!,

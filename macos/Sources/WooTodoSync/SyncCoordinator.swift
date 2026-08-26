@@ -16,6 +16,11 @@ public protocol SyncLocalApplying: Sendable {
         _ operations: [SyncPulledOperation],
         advancingCursorTo cursor: Int64
     ) async throws
+
+    /// 把本地 cursor 重置为 0，用于服务端状态丢失重建（CURSOR_AHEAD）后的恢复。
+    /// 实现方必须在同一事务内更新并保持幂等：服务端重建后会从序号 1 重新编号，
+    /// 因此允许清空 applied 操作台账，但不得触碰 outbox 或已应用的实体数据。
+    func resetCursor() async throws
 }
 
 public struct SyncRunSummary: Equatable, Sendable {
@@ -75,7 +80,25 @@ public actor SyncCoordinator {
     }
 
     public func synchronize() async throws -> SyncRunSummary {
-        var cursor = try await local.currentCursor()
+        // 服务端状态丢失重建后（如 server-state.json 丢失、云端 KV 被清空），
+        // 服务端从序号 1 重新计数，客户端 cursor 会超过服务端 maxCursor 并收到
+        // 409 CURSOR_AHEAD。此时重置本地 cursor 并从头重新同步即可恢复，无需用户干预。
+        var didResetForCursorAhead = false
+        while true {
+            do {
+                return try await runSynchronizePass(
+                    startingCursor: didResetForCursorAhead ? 0 : try await local.currentCursor()
+                )
+            } catch let error as SyncAPIError {
+                guard !didResetForCursorAhead, error.isCursorAhead else { throw error }
+                try await local.resetCursor()
+                didResetForCursorAhead = true
+            }
+        }
+    }
+
+    private func runSynchronizePass(startingCursor: Int64) async throws -> SyncRunSummary {
+        var cursor = startingCursor
         var pushed = 0
         var pulled = 0
         var pages = 0

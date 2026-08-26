@@ -1,10 +1,12 @@
 import CryptoKit
 import Foundation
+import Security
 
 public enum EncryptedFileCredentialsStoreError: Error, Equatable, LocalizedError {
     case invalidKeyFile
     case secureEnclaveKeyUnavailable
     case invalidCredentialsFile
+    case keychainUnavailable(String)
     case fileSystem(String)
 
     public var errorDescription: String? {
@@ -15,6 +17,8 @@ public enum EncryptedFileCredentialsStoreError: Error, Equatable, LocalizedError
             "本机 WebDAV 配置密钥无法由 Secure Enclave 解锁"
         case .invalidCredentialsFile:
             "本机加密的 WebDAV 配置无效或已损坏"
+        case .keychainUnavailable(let message):
+            "本机 WebDAV 配置密钥无法读写 Keychain：\(message)"
         case .fileSystem(let message):
             "无法访问本机 WebDAV 配置：\(message)"
         }
@@ -22,6 +26,9 @@ public enum EncryptedFileCredentialsStoreError: Error, Equatable, LocalizedError
 }
 
 /// 将 WebDAV 完整配置加密保存在应用数据目录，并仅在首次使用时迁移旧 Keychain 项。
+/// 加密密钥优先使用 Secure Enclave（密钥文件只存放 SE 包装的私钥）；
+/// SE 不可用时降级为 Keychain 中的软件随机密钥（kSecAttrAccessibleAfterFirstUnlock），
+/// 不再把明文密钥写入应用目录。旧版本遗留的 raw AES 明文密钥文件在读取时迁移后删除。
 public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring,
     @unchecked Sendable {
     private let directoryURL: URL
@@ -31,6 +38,8 @@ public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring
     private let legacyStore: (any WebDavCredentialsStoring)?
     private let fileManager: FileManager
     private let preferSecureEnclave: Bool
+    let keychainService: String
+    let keychainAccount: String
     private let lock = NSLock()
 
     private static let credentialsFileName = "webdav-credentials.enc"
@@ -44,6 +53,8 @@ public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring
     private static let keyDerivationSalt = Data(
         "io.github.stophemo.woo-todo.local-credentials".utf8
     )
+    private static let defaultKeychainService = "dev.woo-todo.webdav"
+    private static let defaultKeychainAccount = "webdav-credentials-key"
 
     public convenience init(
         directoryURL: URL,
@@ -61,7 +72,9 @@ public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring
         directoryURL: URL,
         legacyStore: (any WebDavCredentialsStoring)?,
         fileManager: FileManager,
-        preferSecureEnclave: Bool
+        preferSecureEnclave: Bool,
+        keychainService: String = EncryptedFileWebDavCredentialsStore.defaultKeychainService,
+        keychainAccount: String = EncryptedFileWebDavCredentialsStore.defaultKeychainAccount
     ) {
         self.directoryURL = directoryURL
         self.credentialsURL = directoryURL.appendingPathComponent(
@@ -79,6 +92,8 @@ public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring
         self.legacyStore = legacyStore
         self.fileManager = fileManager
         self.preferSecureEnclave = preferSecureEnclave
+        self.keychainService = keychainService
+        self.keychainAccount = keychainAccount
     }
 
     public func save(_ credentials: WebDavCredentials) throws {
@@ -122,6 +137,8 @@ public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring
                 throw Self.fileSystemError(error)
             }
         }
+        // 同步清理 Keychain 中的降级密钥；失败不阻塞删除（密钥只解密本机配置，配置已删除）。
+        _ = SecItemDelete(keychainQuery() as CFDictionary)
     }
 
     private func saveUnlocked(_ credentials: WebDavCredentials) throws {
@@ -190,8 +207,12 @@ public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring
     }
 
     private func loadOrCreateEncryptionKey() throws -> Data {
+        // 旧版本可能在 SE 不可用时写入过 raw AES 明文密钥文件，优先走读取路径完成迁移。
         if fileManager.fileExists(atPath: keyURL.path) {
             return try loadExistingEncryptionKey()
+        }
+        if let rawKey = try loadRawKeyFromKeychain() {
+            return rawKey
         }
 
         if preferSecureEnclave, SecureEnclave.isAvailable {
@@ -206,21 +227,28 @@ public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring
                 try writeKeyFile(keyFile)
                 return try Self.deriveEncryptionKey(from: privateKey)
             } catch {
-                // Secure Enclave 创建失败时仍允许使用仅当前用户可读的软件随机密钥。
+                // Secure Enclave 创建失败时降级为 Keychain 中的软件随机密钥。
             }
         }
 
         let key = try SecureRandom.bytes(count: AES256GCM.keyByteCount)
-        try writeKeyFile(KeyFile(
-            format: Self.keyFormat,
-            version: Self.version,
-            kind: .rawAES256,
-            value: Base64URL.encode(key)
-        ))
+        try saveRawKeyToKeychain(key)
         return key
     }
 
     private func loadExistingEncryptionKey() throws -> Data {
+        // 密钥文件只存放 Secure Enclave 包装的私钥；SE 不可用时的 raw AES 密钥在 Keychain。
+        // 旧版本可能在文件中留下过 raw AES 明文密钥，读取后迁移到 Keychain 并删除文件。
+        if fileManager.fileExists(atPath: keyURL.path) {
+            return try loadEncryptionKeyFromFile()
+        }
+        if let rawKey = try loadRawKeyFromKeychain() {
+            return rawKey
+        }
+        throw EncryptedFileCredentialsStoreError.invalidKeyFile
+    }
+
+    private func loadEncryptionKeyFromFile() throws -> Data {
         let keyFile: KeyFile
         do {
             keyFile = try JSONDecoder().decode(KeyFile.self, from: Data(contentsOf: keyURL))
@@ -245,6 +273,14 @@ public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring
         case .rawAES256:
             guard value.count == AES256GCM.keyByteCount else {
                 throw EncryptedFileCredentialsStoreError.invalidKeyFile
+            }
+            // 迁移：密钥本身不变，仅把 raw AES 密钥存入 Keychain 后删除明文文件。
+            // Keychain 写入失败时保留文件继续使用，不阻塞读取；下次启动会再次尝试迁移。
+            do {
+                try saveRawKeyToKeychain(value)
+                try? fileManager.removeItem(at: keyURL)
+            } catch {
+                // 迁移失败时保留旧文件，读取不受影响。
             }
             return value
         }
@@ -275,6 +311,50 @@ public final class EncryptedFileWebDavCredentialsStore: WebDavCredentialsStoring
         } catch {
             throw Self.fileSystemError(error)
         }
+    }
+
+    private func keychainQuery() -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+        ]
+    }
+
+    /// SE 不可用时的降级密钥存入 Keychain（AfterFirstUnlock），不再写明文密钥文件。
+    private func saveRawKeyToKeychain(_ key: Data) throws {
+        var attributes = keychainQuery()
+        attributes[kSecValueData as String] = key
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        attributes[kSecAttrSynchronizable as String] = false
+        let status = SecItemAdd(attributes as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+            let updateStatus = SecItemUpdate(
+                keychainQuery() as CFDictionary,
+                [kSecValueData as String: key] as CFDictionary
+            )
+            guard updateStatus == errSecSuccess else {
+                throw EncryptedFileCredentialsStoreError.keychainUnavailable("错误码 \(updateStatus)")
+            }
+        } else if status != errSecSuccess {
+            throw EncryptedFileCredentialsStoreError.keychainUnavailable("错误码 \(status)")
+        }
+    }
+
+    private func loadRawKeyFromKeychain() throws -> Data? {
+        var request = keychainQuery()
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw EncryptedFileCredentialsStoreError.keychainUnavailable("错误码 \(status)")
+        }
+        guard data.count == AES256GCM.keyByteCount else {
+            throw EncryptedFileCredentialsStoreError.invalidKeyFile
+        }
+        return data
     }
 
     private func ensureDirectory() throws {

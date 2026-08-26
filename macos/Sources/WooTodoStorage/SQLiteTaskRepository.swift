@@ -886,6 +886,24 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
+    public func resetCursor() async throws {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                // 服务端状态丢失重建后（CURSOR_AHEAD）把本地 cursor 重置为 0，
+                // 并清空 sync_applied_operations：重建后的服务端会从序号 1 重新编号，
+                // 旧记录的 server_seq 与新建 op 冲突（UNIQUE 约束），且旧 opId 不会再出现，
+                // 幂等性由 LWW 与实体版本表保证。outbox 保持不变。
+                try execute("UPDATE sync_state SET cursor = 0 WHERE singleton = 1")
+                try execute("DELETE FROM sync_applied_operations")
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
     public func pendingWebDavOperationIDs(_ operationIDs: [String]) async throws -> Set<String> {
         try withLock {
             var pending = Set<String>()
@@ -988,6 +1006,9 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 defer { sqlite3_finalize(statement) }
                 try bind([.integer(cursor)], to: statement)
                 guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+                // 只保留最近 10000 条 applied 记录，防止表无限增长；
+                // 幂等性由 LWW 与实体版本表保证，裁剪不影响重复应用的正确性。
+                try trimSyncAppliedOperations(keepingServerSeqAtLeast: cursor - Self.appliedOperationRetentionWindow + 1)
                 try execute("COMMIT")
             } catch {
                 try? execute("ROLLBACK")
@@ -1029,6 +1050,9 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                     }
                     try recordWebDavOperation(operation.opId)
                 }
+                // 只保留最近 10000 条 WebDAV applied 记录，防止表无限增长；
+                // 幂等性由 LWW 与实体版本表保证。
+                try trimWebDavAppliedOperations(retaining: Self.appliedOperationRetentionWindow)
                 try execute("COMMIT")
             } catch {
                 try? execute("ROLLBACK")
@@ -1038,6 +1062,52 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     }
 
     private static let webDavApplyBatchSize = 25
+
+    /// applied 记录保留窗口：同步（按 server_seq）与 WebDAV（按 applied_at）各保留最近 10000 条。
+    private static let appliedOperationRetentionWindow: Int64 = 10_000
+
+    private func trimSyncAppliedOperations(keepingServerSeqAtLeast lowerBound: Int64) throws {
+        // 删除 server_seq < lowerBound 的旧记录；lowerBound <= 1 时不删除任何行。
+        let statement = try prepare("DELETE FROM sync_applied_operations WHERE server_seq < ?")
+        defer { sqlite3_finalize(statement) }
+        try bind([.integer(lowerBound)], to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    private func trimWebDavAppliedOperations(retaining count: Int64) throws {
+        let statement = try prepare(
+            """
+            DELETE FROM sync_webdav_applied_operations
+            WHERE op_id IN (
+                SELECT op_id FROM (
+                    SELECT op_id FROM sync_webdav_applied_operations
+                    ORDER BY applied_at DESC
+                    LIMIT -1 OFFSET ?
+                )
+            )
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([.integer(count)], to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    /// 测试用：返回 sync_applied_operations 的行数（有界性断言）。
+    internal func syncAppliedOperationCount() throws -> Int {
+        try withLock { try scalarCount("SELECT COUNT(*) FROM sync_applied_operations") }
+    }
+
+    /// 测试用：返回 sync_webdav_applied_operations 的行数（有界性断言）。
+    internal func webDavAppliedOperationCount() throws -> Int {
+        try withLock { try scalarCount("SELECT COUNT(*) FROM sync_webdav_applied_operations") }
+    }
+
+    private func scalarCount(_ sql: String) throws -> Int {
+        let statement = try prepare(sql)
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw statementError() }
+        return Int(sqlite3_column_int64(statement, 0))
+    }
 
     private func validate(_ configuration: SQLiteSyncConfiguration) throws {
         guard !configuration.vaultId.isEmpty,
@@ -1735,18 +1805,14 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 return
             }
 
-            let horizon = maximumVersion(
-                currentVersion,
-                incomingLamport: operation.lamport,
-                incomingDeviceID: operation.deviceId,
-                entityID: entityID
-            )
-
+            // 删除由本次 tombstone 触发：版本标识（lamport/deviceID）与删除时间必须同源，
+            // 都取本次 tombstone，避免“lamport 属高版本活跃记录、deletedAt 属低版本 tombstone”
+            // 的自相矛盾记录，保证备份导出的删除时间与记录版本一致。
             try deleteTaskRow(entityID: entityID)
             try upsertEntityVersion(EntityVersion(
                 entityID: entityID,
-                lamport: horizon.lamport,
-                deviceID: horizon.deviceID,
+                lamport: operation.lamport,
+                deviceID: operation.deviceId,
                 isDeleted: true,
                 deletedAt: payload.deletedAt
             ))

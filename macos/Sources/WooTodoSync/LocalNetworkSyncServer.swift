@@ -73,6 +73,11 @@ private struct LocalSyncPersistedState: Codable {
     var nextServerSequence: Int64
     var devices: [LocalSyncStoredDevice]
     var operations: [SyncPulledOperation]
+    /// 已被全部设备确认（ack）并裁剪出 operations 的 opId；nil 兼容旧状态文件。
+    /// 上限 16384，超出时丢弃最旧。
+    var confirmedOperationIds: [String]?
+    /// 历史上已插入操作的最大 lamport；operations 裁剪后仍保留，供 maximumLamport 使用。
+    var maxLamportEver: Int64?
 }
 
 private struct LocalSyncStoredDevice: Codable {
@@ -84,6 +89,8 @@ private struct LocalSyncStoredDevice: Codable {
     let createdAt: Int64
     var lastSeenAt: Int64?
     var revokedAt: Int64?
+    /// 该设备最近确认（ack）到的服务端序号；nil 兼容旧状态文件，按 0 处理。
+    var ackCursor: Int64?
 }
 
 private struct LocalSyncPairingSession {
@@ -157,6 +164,7 @@ public actor LocalSyncServerStore {
     private static let maximumDeviceNameCharacters = 80
     private static let maximumOperations = 50
     private static let maximumPullOperations = 100
+    private static let maximumConfirmedOperationIds = 16_384
 
     private let fileURL: URL
     private let now: @Sendable () -> Int64
@@ -252,7 +260,10 @@ public actor LocalSyncServerStore {
     }
 
     public func maximumLamport() -> Int64 {
-        state.operations.map(\.lamport).max() ?? 0
+        max(
+            state.operations.map(\.lamport).max() ?? 0,
+            state.maxLamportEver ?? 0
+        )
     }
 
     private func route(
@@ -562,7 +573,10 @@ public actor LocalSyncServerStore {
               input.push.count <= Self.maximumOperations else {
             throw validation("sync", "同步游标、分页或批次大小无效")
         }
-        let maximumCursor = state.operations.last?.serverSeq ?? 0
+        let maximumCursor = max(
+            state.operations.last?.serverSeq ?? 0,
+            state.nextServerSequence - 1
+        )
         guard input.cursor <= maximumCursor else {
             throw LocalSyncServiceFailure(
                 409,
@@ -581,7 +595,8 @@ public actor LocalSyncServerStore {
         var inserted = 0
         let timestamp = now()
         for operation in input.push {
-            if updatedState.operations.contains(where: { $0.opId == operation.opId }) {
+            if updatedState.operations.contains(where: { $0.opId == operation.opId })
+                || updatedState.confirmedOperationIds?.contains(operation.opId) == true {
                 continue
             }
             updatedState.operations.append(SyncPulledOperation(
@@ -596,11 +611,23 @@ public actor LocalSyncServerStore {
                 createdAt: timestamp
             ))
             updatedState.nextServerSequence += 1
+            updatedState.maxLamportEver = max(
+                updatedState.maxLamportEver ?? 0,
+                operation.lamport
+            )
             inserted += 1
         }
         if let index = updatedState.devices.firstIndex(where: { $0.id == device.id }) {
             updatedState.devices[index].lastSeenAt = timestamp
+            // 记录设备确认水位：只有全部设备都确认过的操作才会被裁剪。
+            if let ack = input.ack {
+                updatedState.devices[index].ackCursor = max(
+                    updatedState.devices[index].ackCursor ?? 0,
+                    ack
+                )
+            }
         }
+        trimConfirmedOperations(&updatedState)
         do {
             try persist(updatedState)
         } catch {
@@ -629,6 +656,22 @@ public actor LocalSyncServerStore {
             ),
             requestId: requestId
         )
+    }
+
+    /// 按全部设备的最低确认水位裁剪 operations：只删除所有设备都已确认（ack）的条目，
+    /// 并把被裁剪的 opId 移入 confirmedOperationIds 供 push 去重，防止重复提交。
+    private func trimConfirmedOperations(_ updatedState: inout LocalSyncPersistedState) {
+        let threshold = updatedState.devices.map { $0.ackCursor ?? 0 }.min() ?? 0
+        guard threshold > 0 else { return }
+        let confirmed = updatedState.operations.filter { $0.serverSeq <= threshold }
+        guard !confirmed.isEmpty else { return }
+        updatedState.operations.removeAll { $0.serverSeq <= threshold }
+        var confirmedIDs = updatedState.confirmedOperationIds ?? []
+        confirmedIDs.append(contentsOf: confirmed.map(\.opId))
+        if confirmedIDs.count > Self.maximumConfirmedOperationIds {
+            confirmedIDs.removeFirst(confirmedIDs.count - Self.maximumConfirmedOperationIds)
+        }
+        updatedState.confirmedOperationIds = confirmedIDs
     }
 
     private func listDevices(

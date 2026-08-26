@@ -597,7 +597,7 @@ final class SyncSettingsStore: ObservableObject {
             try pairingMachine.beginCreation()
             publishPairingState()
 
-            let keyPair = PairingKeyPair.generate()
+            let keyPair = try PairingKeyPair.generate()
             let created = try await apiClient.createPairing(
                 CreatePairingRequest(publicKey: keyPair.publicKeyBase64URL),
                 deviceToken: credentials.deviceToken

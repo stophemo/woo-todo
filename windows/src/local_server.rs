@@ -997,8 +997,7 @@ impl LocalServerStore {
                 }
             }
             if updated.confirmed_op_ids.len() > MAXIMUM_CONFIRMED_OPERATIONS {
-                let overflow =
-                    updated.confirmed_op_ids.len() - MAXIMUM_CONFIRMED_OPERATIONS;
+                let overflow = updated.confirmed_op_ids.len() - MAXIMUM_CONFIRMED_OPERATIONS;
                 updated.confirmed_op_ids.drain(..overflow);
             }
         }
@@ -1492,9 +1491,7 @@ fn validate_persisted_state(state: &PersistedState) -> Result<(), LocalServerErr
         return Err(LocalServerError::CorruptedState);
     }
     for operation_id in &state.confirmed_op_ids {
-        if !valid_identifier(operation_id)
-            || !confirmed_ids.insert(operation_id.as_str())
-        {
+        if !valid_identifier(operation_id) || !confirmed_ids.insert(operation_id.as_str()) {
             return Err(LocalServerError::CorruptedState);
         }
     }
@@ -2748,11 +2745,21 @@ mod tests {
         assert!(store.state.operations.is_empty());
         assert_eq!(
             store.state.confirmed_op_ids,
-            vec!["op-trim-1".to_owned(), "op-trim-2".to_owned(), "op-trim-3".to_owned()]
+            vec![
+                "op-trim-1".to_owned(),
+                "op-trim-2".to_owned(),
+                "op-trim-3".to_owned()
+            ]
         );
 
         // 第三轮：已确认操作再次 push 被跳过（重复计数，不重新入队）。
-        let third = sync_envelope(&mut store, &credentials, 3, Some(3), vec![operation("op-trim-1", 1)]);
+        let third = sync_envelope(
+            &mut store,
+            &credentials,
+            3,
+            Some(3),
+            vec![operation("op-trim-1", 1)],
+        );
         assert_eq!(third.push.inserted, 0);
         assert_eq!(third.push.duplicates, 1);
 
@@ -2868,7 +2875,12 @@ mod tests {
         assert_eq!(second_pull.cursor, 5);
         assert!(!store.state.operations.is_empty());
         assert_eq!(
-            store.state.operations.iter().map(|op| op.server_seq).collect::<Vec<_>>(),
+            store
+                .state
+                .operations
+                .iter()
+                .map(|op| op.server_seq)
+                .collect::<Vec<_>>(),
             vec![3, 4, 5]
         );
         assert_eq!(

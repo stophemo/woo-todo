@@ -832,7 +832,11 @@ fn applied_operation_history_stays_bounded_after_many_worker_syncs() {
     let (_directory, mut target) = open_repository();
     let source = sync_configuration("vault-bounded-worker", "device-source", 5);
     target
-        .configure_sync(sync_configuration("vault-bounded-worker", "device-target", 5))
+        .configure_sync(sync_configuration(
+            "vault-bounded-worker",
+            "device-target",
+            5,
+        ))
         .unwrap();
     let task = TodoTask::create(
         "批量同步任务",
@@ -887,9 +891,7 @@ fn applied_operation_history_stays_bounded_after_many_worker_syncs() {
             sequence,
         ));
     }
-    target
-        .apply_remote_operations(&more, total + 50)
-        .unwrap();
+    target.apply_remote_operations(&more, total + 50).unwrap();
     assert_eq!(target.sync_state().unwrap().applied_operation_count, 10_000);
 }
 

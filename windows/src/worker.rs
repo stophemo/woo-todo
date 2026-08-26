@@ -482,23 +482,33 @@ impl<T: HttpTransport> WorkerClient<T> {
                             || value.initiator_public_key.is_some()
                             || value.vault_key_envelope.is_some()
                         {
-                            return Err(WorkerError::Protocol("配对等待结果携带了不应出现的密钥字段".to_owned()));
+                            return Err(WorkerError::Protocol(
+                                "配对等待结果携带了不应出现的密钥字段".to_owned(),
+                            ));
                         }
                         if chrono::Utc::now().timestamp_millis()
                             >= value.expires_at.saturating_add(30_000)
                         {
-                            return Err(WorkerError::Protocol("配对二维码已过期，请重新生成".to_owned()));
+                            return Err(WorkerError::Protocol(
+                                "配对二维码已过期，请重新生成".to_owned(),
+                            ));
                         }
                         thread::sleep(Duration::from_secs(2));
                     }
                     PairingStatus::Confirmed => break value,
                     PairingStatus::Expired => {
-                        return Err(WorkerError::Protocol("配对二维码已过期，请重新生成".to_owned()));
+                        return Err(WorkerError::Protocol(
+                            "配对二维码已过期，请重新生成".to_owned(),
+                        ));
                     }
                     PairingStatus::Canceled => {
-                        return Err(WorkerError::Protocol("配对已取消，请重新生成二维码".to_owned()));
+                        return Err(WorkerError::Protocol(
+                            "配对已取消，请重新生成二维码".to_owned(),
+                        ));
                     }
-                    PairingStatus::Open => return Err(WorkerError::Protocol("配对结果状态无效".to_owned())),
+                    PairingStatus::Open => {
+                        return Err(WorkerError::Protocol("配对结果状态无效".to_owned()));
+                    }
                 }
             };
             let vault_id = result
@@ -512,7 +522,9 @@ impl<T: HttpTransport> WorkerClient<T> {
                 .is_some_and(|value| value != vault_id)
                 || expected_vault_id.is_some_and(|value| value != vault_id)
             {
-                return Err(WorkerError::Protocol("配对二维码属于另一个同步空间，Windows 没有切换本地同步身份".to_owned()));
+                return Err(WorkerError::Protocol(
+                    "配对二维码属于另一个同步空间，Windows 没有切换本地同步身份".to_owned(),
+                ));
             }
             let device_id = result
                 .device_id
@@ -520,10 +532,14 @@ impl<T: HttpTransport> WorkerClient<T> {
                 .ok_or_else(|| "配对结果缺少设备标识".to_owned())?;
             validate_identifier(&device_id, "deviceId")?;
             if device_id != claim.device_id {
-                return Err(WorkerError::Protocol("配对结果中的设备标识与认领响应不一致".to_owned()));
+                return Err(WorkerError::Protocol(
+                    "配对结果中的设备标识与认领响应不一致".to_owned(),
+                ));
             }
             if result.initiator_public_key.as_deref() != Some(link.initiator_public_key.as_str()) {
-                return Err(WorkerError::Protocol("配对结果中的发起方公钥不一致".to_owned()));
+                return Err(WorkerError::Protocol(
+                    "配对结果中的发起方公钥不一致".to_owned(),
+                ));
             }
             let envelope = result
                 .vault_key_envelope
@@ -623,8 +639,8 @@ impl<T: HttpTransport> WorkerClient<T> {
         input: &Input,
         accepted: &[u16],
     ) -> Result<Output, WorkerError> {
-        let body =
-            serde_json::to_vec(input).map_err(|error| WorkerError::Protocol(format!("无法编码配对请求：{error}")))?;
+        let body = serde_json::to_vec(input)
+            .map_err(|error| WorkerError::Protocol(format!("无法编码配对请求：{error}")))?;
         let response = self.transport.execute(HttpRequest {
             method,
             url: self.endpoint.append_path(path)?,
@@ -642,8 +658,8 @@ impl<T: HttpTransport> WorkerClient<T> {
         input: &Input,
         accepted: &[u16],
     ) -> Result<Output, WorkerError> {
-        let body =
-            serde_json::to_vec(input).map_err(|error| WorkerError::Protocol(format!("无法编码同步请求：{error}")))?;
+        let body = serde_json::to_vec(input)
+            .map_err(|error| WorkerError::Protocol(format!("无法编码同步请求：{error}")))?;
         decode_response(self.send(method, path, body, accepted)?, accepted)
     }
 
@@ -831,9 +847,7 @@ fn decode_response<T: DeserializeOwned>(
     let envelope: SuccessEnvelope<T> = serde_json::from_slice(&response.body)
         .map_err(|_| WorkerError::Protocol("同步服务成功响应 JSON 格式无效".to_owned()))?;
     if !envelope.ok || envelope.request_id.is_empty() {
-        return Err(WorkerError::Protocol(
-            "同步服务成功响应包络无效".to_owned(),
-        ));
+        return Err(WorkerError::Protocol("同步服务成功响应包络无效".to_owned()));
     }
     Ok(envelope.data)
 }
@@ -1037,10 +1051,7 @@ mod tests {
         assert_eq!(error.server_code(), Some("UNAUTHORIZED"));
         assert_eq!(error.to_string(), "UNAUTHORIZED：设备令牌无效");
         assert_eq!(String::from(error.clone()), "UNAUTHORIZED：设备令牌无效");
-        assert!(matches!(
-            error,
-            WorkerError::Server { status: 401, .. }
-        ));
+        assert!(matches!(error, WorkerError::Server { status: 401, .. }));
     }
 
     #[test]

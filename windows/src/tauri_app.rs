@@ -657,7 +657,10 @@ fn notify_frontends(app: &AppHandle, event: &str) {
 /// 几何恢复完成前（[`BOARD_GEOMETRY_READY`] 未置位）忽略事件，避免
 /// 用窗口默认几何覆盖已保存的位置与大小；数值未变化时跳过无意义写入。
 fn persist_board_geometry(window: &tauri::WebviewWindow, event: &tauri::WindowEvent) {
-    if !matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
+    if !matches!(
+        event,
+        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+    ) {
         return;
     }
     if !BOARD_GEOMETRY_READY.load(Ordering::Acquire) {

@@ -185,6 +185,26 @@ class SyncRuntimeTest {
         )
     }
 
+    @Test
+    fun `数据库绑定冲突给出明确提示且不自动重试`() = runBlocking {
+        val runtime = SyncRuntime(
+            runnerFactory = {
+                throw SyncBindingConflictException("本地数据库已绑定到其他同步空间或设备")
+            },
+            clockMillis = { 789L },
+        )
+
+        assertEquals(SyncExecutionResult.Failed(retryable = false), runtime.synchronize())
+        assertEquals(
+            SyncRuntimeState.Failed(
+                message = "此设备已绑定其他同步空间，请先解绑再切换",
+                retryable = false,
+                finishedAt = 789L,
+            ),
+            runtime.state.value,
+        )
+    }
+
     private fun serverError(status: Int): SyncApiException.Server = SyncApiException.Server(
         statusCode = status,
         payload = ServerErrorPayload("TEST_$status", "测试错误"),

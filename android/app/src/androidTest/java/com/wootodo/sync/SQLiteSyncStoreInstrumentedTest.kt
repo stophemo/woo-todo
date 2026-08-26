@@ -752,6 +752,98 @@ class SQLiteSyncStoreInstrumentedTest {
         assertEquals(0, rowCount("sync_tombstones"))
     }
 
+    @Test
+    fun `resetCursor 归零游标且保留已应用记录与任务`() {
+        val store = SQLiteSyncStore(database, credentials)
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 1,
+                    opId = "op-reset-1",
+                    lamport = 1,
+                    payload = remoteTask("task-reset-cursor", "重置前任务"),
+                ),
+            ),
+            advancingCursorTo = 1,
+        )
+
+        store.resetCursor()
+
+        assertEquals(0L, store.currentCursor())
+        assertEquals("重置前任务", taskTitle("task-reset-cursor"))
+        assertEquals(1, rowCount("sync_applied_operations"))
+    }
+
+    @Test
+    fun `同步应用记录随游标前进裁剪只保留最近窗口`() {
+        val store = SQLiteSyncStore(database, credentials)
+        val sqlite = database.writableDatabase
+        val window = SQLiteSyncStore.APPLIED_RETENTION_WINDOW
+        sqlite.beginTransaction()
+        try {
+            for (sequence in 1..(window + 5)) {
+                sqlite.execSQL(
+                    "INSERT INTO sync_applied_operations(op_id, server_seq) VALUES (?, ?)",
+                    arrayOf("op-history-$sequence", sequence),
+                )
+            }
+            sqlite.setTransactionSuccessful()
+        } finally {
+            sqlite.endTransaction()
+        }
+        val latest = window + 6
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = latest,
+                    opId = "op-latest",
+                    lamport = latest,
+                    payload = remoteTask("task-trim-applied", "裁剪窗口后"),
+                ),
+            ),
+            advancingCursorTo = latest,
+        )
+
+        // 窗口外（server_seq < latest - 10000）的记录被删除，表保持有界。
+        assertEquals(window + 1, rowCount("sync_applied_operations").toLong())
+        assertEquals(latest, store.currentCursor())
+        assertEquals("裁剪窗口后", taskTitle("task-trim-applied"))
+    }
+
+    @Test
+    fun `WebDAV应用记录只保留最近窗口`() {
+        val store = SQLiteSyncStore(database, credentials)
+        val sqlite = database.writableDatabase
+        val window = SQLiteSyncStore.APPLIED_RETENTION_WINDOW
+        sqlite.beginTransaction()
+        try {
+            for (index in 1..(window + 5)) {
+                sqlite.execSQL(
+                    "INSERT INTO sync_webdav_applied_operations(op_id, applied_at) " +
+                        "VALUES (?, ?)",
+                    arrayOf("op-webdav-history-$index", index),
+                )
+            }
+            sqlite.setTransactionSuccessful()
+        } finally {
+            sqlite.endTransaction()
+        }
+        store.applyWebDavOperations(
+            listOf(
+                operation(
+                    serverSeq = 1,
+                    opId = "op-webdav-latest",
+                    lamport = 1,
+                    payload = remoteTask("task-webdav-trim", "WebDAV 裁剪后"),
+                ).toWebDavOperation(),
+            ),
+        )
+
+        // 旧记录按 applied_at 保留最近 10000 条（含新操作，最旧的 6 条被淘汰）。
+        assertEquals(window, rowCount("sync_webdav_applied_operations").toLong())
+        assertEquals("WebDAV 裁剪后", taskTitle("task-webdav-trim"))
+    }
+
     private fun localTask(id: String, title: String): TaskEntity = TaskEntity(
         id = id,
         seriesId = id,

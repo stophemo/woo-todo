@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BackupPackageTest {
@@ -126,6 +127,28 @@ class BackupPackageTest {
 
         assertEquals("08:30", BackupPackageCodec.open(sealed, vector.getString("password"))
             .tasks.single().reminderTime)
+    }
+
+    @Test
+    fun `备份往返保留任务截止日且含截止日的备份可正常解码`() {
+        val vector = fixture()
+        val snapshot = BackupSnapshot(
+            exportedAt = 1_784_259_000_000,
+            tasks = listOf(fixtureTask().copy(deadlineDate = "2026-07-20")),
+            syncCredentials = null,
+        )
+        val sealed = BackupPackageCodec.seal(
+            snapshot = snapshot,
+            passphrase = vector.getString("password"),
+            iterations = vector.getJSONObject("kdf").getInt("iterations"),
+            salt = Base64Url.decode(vector.getJSONObject("kdf").getString("salt")),
+            nonce = Base64Url.decode(vector.getJSONObject("cipher").getString("nonce")),
+        )
+
+        val restored = BackupPackageCodec.open(sealed, vector.getString("password"))
+        assertEquals("2026-07-20", restored.tasks.single().deadlineDate)
+        // 明文按与 macOS 一致的字段名编码截止日。
+        assertTrue(decryptPlaintext(sealed, vector).contains("\"deadlineDate\":\"2026-07-20\""))
     }
 
     @Test

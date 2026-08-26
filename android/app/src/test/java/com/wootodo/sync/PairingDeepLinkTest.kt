@@ -38,6 +38,19 @@ class PairingDeepLinkTest {
     }
 
     @Test
+    fun `配对深链的加号按字面解码不转换为空格`() {
+        val secret = Base64Url.encode(ByteArray(32) { 1 })
+        val publicKey = Base64Url.encode(ByteArray(32) { 2 })
+
+        val link = PairingDeepLink.parse(
+            "wootodo://pair?endpoint=https%3A%2F%2Fsync.example.test%2Fa+b" +
+                "&pairingId=pair-1&pairingSecret=$secret&initiatorPublicKey=$publicKey",
+        )
+
+        assertEquals("https://sync.example.test/a+b", link.endpoint)
+    }
+
+    @Test
     fun `配对深链允许HTTPS回环调试和受限局域网HTTP`() {
         val secret = Base64Url.encode(ByteArray(32) { 1 })
         val publicKey = Base64Url.encode(ByteArray(32) { 2 })

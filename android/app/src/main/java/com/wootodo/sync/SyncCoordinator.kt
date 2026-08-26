@@ -13,6 +13,9 @@ interface RemoteApplyStore {
 
     /** 实现方必须在同一事务内幂等落地操作并保存 cursor。 */
     fun applyRemoteOperations(operations: List<SyncPulledOperation>, advancingCursorTo: Long)
+
+    /** 服务端状态丢失重建后本地游标超前时重置为 0，允许从开头重新拉取。 */
+    fun resetCursor()
 }
 
 data class SyncRunSummary(
@@ -46,7 +49,7 @@ class SyncCoordinator(
         var pages = 0
         var performedEmptyPush = false
 
-        while (true) {
+        restart@ while (true) {
             val pending = outbox.pendingOperations(MAXIMUM_PUSH_BATCH)
             if (pending.isEmpty() && performedEmptyPush) break
             val operationIds = pending.map(SyncPushOperation::opId)
@@ -58,15 +61,27 @@ class SyncCoordinator(
                     throw SyncCoordinatorException.PageLimitExceeded
                 }
                 val previousCursor = cursor
-                val response = transport.sync(
-                    SyncRequest(
-                        cursor = cursor,
-                        ack = cursor,
-                        pullLimit = MAXIMUM_PULL_BATCH,
-                        push = outgoing,
-                    ),
-                    credential,
-                )
+                val response = try {
+                    transport.sync(
+                        SyncRequest(
+                            cursor = cursor,
+                            ack = cursor,
+                            pullLimit = MAXIMUM_PULL_BATCH,
+                            push = outgoing,
+                        ),
+                        credential,
+                    )
+                } catch (error: SyncApiException.Server) {
+                    // 服务端状态丢失重建后游标超前：重置本地游标并从 0 重新执行完整同步。
+                    // 页面计数不重置，恶意或异常服务端无法借此绕过分页上限。
+                    if (error.payload.code != CURSOR_AHEAD_ERROR_CODE) throw error
+                    remoteApplyStore.resetCursor()
+                    cursor = 0
+                    pulled = 0
+                    performedEmptyPush = false
+                    pages += 1
+                    continue@restart
+                }
                 pages += 1
                 batchPages += 1
 
@@ -127,5 +142,8 @@ class SyncCoordinator(
         const val MAXIMUM_PUSH_BATCH = 50
         const val MAXIMUM_PULL_BATCH = 100
         const val MAXIMUM_PAGES_PER_RUN = 1_000
+
+        /** 服务端状态重建后丢弃了历史，客户端游标超前于服务端最大序号。 */
+        const val CURSOR_AHEAD_ERROR_CODE = "CURSOR_AHEAD"
     }
 }

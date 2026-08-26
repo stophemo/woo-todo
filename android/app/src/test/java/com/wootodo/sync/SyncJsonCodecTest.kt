@@ -35,16 +35,42 @@ class SyncJsonCodecTest {
     }
 
     @Test
-    fun `成功响应拒绝未知字段`() {
+    fun `成功响应忽略未知字段且缺少必需字段仍拒绝`() {
         val source = """
             {"ok":true,"data":{"push":{"received":0,"inserted":0,"duplicates":0},
             "pull":[],"cursor":0,"hasMore":false,"serverTime":1,"extra":true},
             "requestId":"req-1"}
         """.trimIndent()
 
+        assertEquals(
+            SyncData(SyncPushSummary(0, 0, 0), emptyList(), 0, hasMore = false, serverTime = 1),
+            SyncJsonCodec.decodeSyncData(source),
+        )
+
+        val missingRequired = """
+            {"ok":true,"data":{"push":{"received":0,"inserted":0,"duplicates":0},
+            "pull":[],"cursor":0,"hasMore":false},"requestId":"req-1"}
+        """.trimIndent()
         assertThrows(ProtocolJsonException::class.java) {
-            SyncJsonCodec.decodeSyncData(source)
+            SyncJsonCodec.decodeSyncData(missingRequired)
         }
+    }
+
+    @Test
+    fun `含未知字段的拉取操作仍可正常解码`() {
+        val source = """
+            {"ok":true,"data":{"push":{"received":0,"inserted":0,"duplicates":0},
+            "pull":[{"serverSeq":1,"opId":"op_01JZ7X0B8E6V5P4N3M2K",
+            "deviceId":"device_01JZ7WZX2WQ9A8B7C6D5","entityId":"task_01JZ7WZX2WQ9A8B7C6D5",
+            "kind":"upsert","lamport":12,"ciphertext":"VGhpcy1pcy1hLXRlc3QtY2lwaGVydGV4dA",
+            "nonce":"AAECAwQFBgcICQoL","createdAt":123,"futureField":"any"}],
+            "cursor":1,"hasMore":false,"serverTime":1},"requestId":"req-2"}
+        """.trimIndent()
+
+        val data = SyncJsonCodec.decodeSyncData(source)
+        assertEquals(1, data.pull.size)
+        assertEquals(1L, data.pull.single().serverSeq)
+        assertEquals("op_01JZ7X0B8E6V5P4N3M2K", data.pull.single().opId)
     }
 
     @Test
@@ -123,7 +149,7 @@ class SyncJsonCodecTest {
             JSONObject(valid.toString()).put("headerTemplate", "第一行\u2028第二行"),
             JSONObject(valid.toString()).put("deadlineDate", "2026-02-30"),
             JSONObject(valid.toString()).apply { remove("startDate") },
-            JSONObject(valid.toString()).put("unexpected", true),
+            // 未知字段按向前兼容策略忽略，不在此处断言拒绝；见“成功响应忽略未知字段”用例。
         )
 
         invalidPayloads.forEach { invalid ->

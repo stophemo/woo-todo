@@ -118,6 +118,8 @@ object SyncFailurePolicy {
 
         is SyncApiException.InvalidEndpoint -> SyncFailureDescription("同步服务地址无效", false)
         is SyncApiException.Decoding -> SyncFailureDescription("同步协议响应无法识别", false)
+        is SyncBindingConflictException ->
+            SyncFailureDescription("此设备已绑定其他同步空间，请先解绑再切换", false)
         is SyncCoordinatorException -> SyncFailureDescription("同步数据校验失败，已保留本地待发送任务", false)
         is SyncCryptoException -> SyncFailureDescription("同步密文校验失败，未应用远端数据", false)
         else -> SyncFailureDescription("同步未完成，已保留本地待发送任务", false)

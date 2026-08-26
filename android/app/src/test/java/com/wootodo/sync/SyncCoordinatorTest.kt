@@ -2,6 +2,7 @@ package com.wootodo.sync
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SyncCoordinatorTest {
@@ -85,6 +86,72 @@ class SyncCoordinatorTest {
         assertEquals(listOf(50, 1), transport.requests.map { it.push.size })
     }
 
+    @Test
+    fun `服务端游标超前时重置游标并从头重新同步`() {
+        val operation = pushOperation(1)
+        val outbox = FakeOutbox(mutableListOf(operation))
+        val local = FakeRemoteApplyStore(5)
+        val transport = ScriptedTransport(
+            mutableListOf(
+                Result.failure(
+                    SyncApiException.Server(
+                        statusCode = 409,
+                        payload = ServerErrorPayload("CURSOR_AHEAD", "服务端状态已重建"),
+                        requestId = "req-cursor-ahead",
+                    ),
+                ),
+                Result.success(syncData(1, false, listOf(pulledOperation(1)), received = 1)),
+            ),
+        )
+
+        val summary = SyncCoordinator(transport, outbox, local, credential).synchronize()
+
+        assertEquals(1, local.resetCount)
+        assertEquals(1, summary.pushed)
+        assertEquals(1, summary.pulled)
+        assertEquals(1, local.cursor)
+        assertEquals(listOf(5L, 0L), transport.requests.map { it.cursor })
+        assertEquals(listOf(listOf(operation.opId)), outbox.acknowledged)
+        assertEquals(emptyList<String>(), outbox.operations.map { it.opId })
+    }
+
+    @Test
+    fun `其他服务端错误照常抛出且不重置游标`() {
+        val outbox = FakeOutbox(mutableListOf(pushOperation(1)))
+        val local = FakeRemoteApplyStore(7)
+        val transport = ScriptedTransport(
+            mutableListOf(
+                Result.failure(
+                    SyncApiException.Server(
+                        statusCode = 500,
+                        payload = ServerErrorPayload("INTERNAL", "服务端错误"),
+                        requestId = "req-other",
+                    ),
+                ),
+            ),
+        )
+
+        assertThrows(SyncApiException.Server::class.java) {
+            SyncCoordinator(transport, outbox, local, credential).synchronize()
+        }
+        assertEquals(0, local.resetCount)
+        assertEquals(7, local.cursor)
+        assertEquals(listOf(pushOperation(1)), outbox.operations)
+    }
+
+    @Test
+    fun `游标超前反复出现时受分页上限保护`() {
+        val outbox = FakeOutbox(mutableListOf())
+        val local = FakeRemoteApplyStore(5)
+        val transport = AlwaysCursorAheadTransport()
+
+        assertThrows(SyncCoordinatorException.PageLimitExceeded::class.java) {
+            SyncCoordinator(transport, outbox, local, credential).synchronize()
+        }
+        assertTrue(local.resetCount >= 1)
+        assertEquals(SyncCoordinator.MAXIMUM_PAGES_PER_RUN, transport.requests)
+    }
+
     private fun pushOperation(index: Int): SyncPushOperation = SyncPushOperation(
         opId = "op-$index",
         entityId = "task-$index",
@@ -146,6 +213,8 @@ private class FakeRemoteApplyStore(
     var cursor: Long,
     private val failApply: Boolean = false,
 ) : RemoteApplyStore {
+    var resetCount = 0
+
     override fun currentCursor(): Long = cursor
 
     override fun applyRemoteOperations(
@@ -154,6 +223,24 @@ private class FakeRemoteApplyStore(
     ) {
         if (failApply) throw TestFailure()
         cursor = advancingCursorTo
+    }
+
+    override fun resetCursor() {
+        resetCount += 1
+        cursor = 0
+    }
+}
+
+private class AlwaysCursorAheadTransport : SyncTransport {
+    var requests = 0
+
+    override fun sync(request: SyncRequest, credential: BearerCredential): SyncData {
+        requests += 1
+        throw SyncApiException.Server(
+            statusCode = 409,
+            payload = ServerErrorPayload("CURSOR_AHEAD", "服务端状态已重建"),
+            requestId = "req-always",
+        )
     }
 }
 

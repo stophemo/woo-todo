@@ -560,12 +560,15 @@ private fun String.hasWireCodePointLength(range: IntRange): Boolean {
     return codePointCount(0, length) in range
 }
 
+/**
+ * 同步协议解码只要求必需字段存在，忽略未知字段：任一端先升级新增字段时，
+ * 旧端仍能解码其余数据，避免整批同步失败。备份解码的严格校验在 BackupPackage 内独立实现。
+ */
 private fun JSONObject.requireKeys(required: Set<String>, optional: Set<String> = emptySet()) {
     val actual = keys().asSequence().toSet()
     val missing = required - actual
-    val unknown = actual - required - optional
-    if (missing.isNotEmpty() || unknown.isNotEmpty()) {
-        throw ProtocolJsonException("JSON 字段不匹配，缺少 $missing，未知 $unknown")
+    if (missing.isNotEmpty()) {
+        throw ProtocolJsonException("JSON 字段不匹配，缺少 $missing")
     }
 }
 

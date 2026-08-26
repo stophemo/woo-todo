@@ -346,6 +346,9 @@ object SQLiteLocalMutationRecorder {
     }
 }
 
+/** 本地数据库已绑定到其他同步空间或设备，必须先解绑才能切换。 */
+class SyncBindingConflictException(message: String) : IllegalArgumentException(message)
+
 class SQLiteSyncStore(
     private val database: TaskDatabase,
     private val credentials: SyncCredentials,
@@ -359,6 +362,9 @@ class SQLiteSyncStore(
     }
 
     companion object {
+        /** sync_applied_operations / sync_webdav_applied_operations 保留的最近记录数。 */
+        const val APPLIED_RETENTION_WINDOW = 10_000L
+
         /** 清理旧同步空间的元数据，但保留任务与显示配置。 */
         fun resetSyncBinding(database: TaskDatabase) {
             val sqlite = database.writableDatabase
@@ -468,6 +474,19 @@ class SQLiteSyncStore(
         cursor.getLong(0)
     }
 
+    /** 服务端状态重建导致本地游标超前时归零，保留已应用记录与本地任务。 */
+    @Synchronized
+    override fun resetCursor() {
+        val sqlite = database.writableDatabase
+        sqlite.beginTransaction()
+        try {
+            sqlite.execSQL("UPDATE sync_state SET cursor = 0 WHERE id = 1")
+            sqlite.setTransactionSuccessful()
+        } finally {
+            sqlite.endTransaction()
+        }
+    }
+
     @Synchronized
     override fun applyRemoteOperations(
         operations: List<SyncPulledOperation>,
@@ -505,6 +524,11 @@ class SQLiteSyncStore(
             sqlite.execSQL(
                 "UPDATE sync_state SET cursor = ? WHERE id = 1",
                 arrayOf(advancingCursorTo),
+            )
+            // 幂等由 LWW 版本决定，旧序号记录不再需要，随游标前进裁剪窗口外的记录。
+            sqlite.execSQL(
+                "DELETE FROM $TABLE_APPLIED WHERE server_seq < ?",
+                arrayOf(advancingCursorTo - APPLIED_RETENTION_WINDOW),
             )
             sqlite.setTransactionSuccessful()
         } finally {
@@ -569,6 +593,13 @@ class SQLiteSyncStore(
                 }
                 rememberWebDavOperation(sqlite, operation.opId)
             }
+            // WebDAV 无服务端序号，按应用时间保留最近窗口内的记录用于幂等去重。
+            sqlite.execSQL(
+                "DELETE FROM $TABLE_WEBDAV_APPLIED WHERE op_id NOT IN " +
+                    "(SELECT op_id FROM $TABLE_WEBDAV_APPLIED " +
+                    "ORDER BY applied_at DESC, op_id DESC LIMIT ?)",
+                arrayOf(APPLIED_RETENTION_WINDOW),
+            )
             sqlite.setTransactionSuccessful()
         } finally {
             sqlite.endTransaction()
@@ -597,11 +628,10 @@ class SQLiteSyncStore(
             cursor.getString(0) to cursor.getString(1)
         }
         val isUnbound = current.first.isEmpty() && current.second.isEmpty()
-        require(
-            isUnbound ||
-                (current.first == credentials.vaultId && current.second == credentials.deviceId),
+        if (!isUnbound &&
+            (current.first != credentials.vaultId || current.second != credentials.deviceId)
         ) {
-            "本地数据库已绑定到其他同步空间或设备"
+            throw SyncBindingConflictException("本地数据库已绑定到其他同步空间或设备")
         }
         if (!isUnbound) return
 

@@ -621,9 +621,12 @@ class MainActivity : AppCompatActivity() {
                 R.string.webdav_vault_id_hint,
                 setupLink?.vaultId ?: existing?.vaultId ?: generatedIdentity.first,
             )
+            // vaultKey 等同同步密钥：加密码掩码，且不预填已保存的凭据（扫码导入的新
+            // 密钥或新生成的密钥除外），避免截屏或旁观泄露。
             val vaultKey = field(
                 R.string.webdav_vault_key_hint,
-                importedVaultKey ?: existing?.let { Base64Url.encode(it.vaultKey) } ?: generatedKey,
+                importedVaultKey ?: generatedKey,
+                password = true,
             )
             container.addView(endpoint)
             container.addView(username)
@@ -654,13 +657,23 @@ class MainActivity : AppCompatActivity() {
                     val configure: () -> Unit = {
                         lifecycleScope.launch {
                             val result = runCatching {
+                                val vaultKeyText = vaultKey.text.toString().trim()
+                                val effectiveVaultKey = if (vaultKeyText.isEmpty()) {
+                                    // 编辑已有配置且未重新输入时沿用已保存密钥。
+                                    existing?.vaultKey
+                                } else {
+                                    Base64Url.decode(vaultKeyText)
+                                }
                                 val credentials = WebDavCredentials(
                                     endpoint = endpoint.text.toString().trim(),
                                     username = username.text.toString().trim(),
                                     appPassword = appPassword.text.toString(),
                                     vaultId = vaultId.text.toString().trim(),
                                     deviceId = existing?.deviceId ?: generatedIdentity.second,
-                                    vaultKey = Base64Url.decode(vaultKey.text.toString().trim()),
+                                    vaultKey = effectiveVaultKey
+                                        ?: throw IllegalArgumentException(
+                                            getString(R.string.webdav_vault_key_hint),
+                                        ),
                                 )
                                 credentials.validate()
                                 app.configureWebDav(

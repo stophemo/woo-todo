@@ -26,6 +26,8 @@ object SyncJobScheduler {
     private const val SCHEDULER_VERSION = 2
     private const val EXTRA_SCHEDULER_VERSION = "sync_scheduler_version"
     private const val EXTRA_TRANSPORT_MODE = "sync_transport_mode"
+    private const val RETRY_PREFS_NAME = "sync_job_retry"
+    private const val KEY_IMMEDIATE_RETRY_COUNT = "immediate_retry_count"
 
     fun enqueueImmediate(context: Context, replaceExisting: Boolean = false): Boolean {
         val mode = activeMode(context) ?: return false
@@ -36,7 +38,9 @@ object SyncJobScheduler {
         val info = baseBuilder(context, IMMEDIATE_JOB_ID, mode)
             .setBackoffCriteria(BACKOFF_MILLIS, SyncJobRetryPolicy.backoffPolicy(mode))
             .build()
-        return scheduler.schedule(info) == JobScheduler.RESULT_SUCCESS
+        val scheduled = scheduler.schedule(info) == JobScheduler.RESULT_SUCCESS
+        if (scheduled) clearImmediateRetryCount(context)
+        return scheduled
     }
 
     fun ensurePeriodic(context: Context): Boolean {
@@ -85,14 +89,48 @@ object SyncJobScheduler {
         extras.getInt(EXTRA_SCHEDULER_VERSION, 0) == SCHEDULER_VERSION &&
             extras.getString(EXTRA_TRANSPORT_MODE) == mode.name
 
-    internal fun shouldReschedule(jobId: Int, result: SyncExecutionResult): Boolean =
-        SyncJobRetryPolicy.shouldReschedule(
-            isImmediate = jobId == IMMEDIATE_JOB_ID,
-            retryable = result is SyncExecutionResult.Failed && result.retryable,
+    /**
+     * 决定 Job 失败后是否由系统按退避策略再次调度。连续自动重试超过上限后停止，
+     * 只依赖 periodic job、网络恢复回调或下次本地变更重新发起同步。
+     */
+    internal fun shouldReschedule(
+        context: Context,
+        jobId: Int,
+        result: SyncExecutionResult,
+    ): Boolean {
+        if (jobId != IMMEDIATE_JOB_ID) return false
+        if (result !is SyncExecutionResult.Failed || !result.retryable) {
+            if (result is SyncExecutionResult.Succeeded) clearImmediateRetryCount(context)
+            return false
+        }
+        val attempts = immediateRetryCount(context) + 1
+        persistImmediateRetryCount(context, attempts)
+        return SyncJobRetryPolicy.shouldReschedule(
+            isImmediate = true,
+            retryable = true,
+            retryCount = attempts,
         )
+    }
+
+    private fun retryPreferences(context: Context): android.content.SharedPreferences =
+        context.applicationContext.getSharedPreferences(RETRY_PREFS_NAME, android.content.Context.MODE_PRIVATE)
+
+    private fun immediateRetryCount(context: Context): Int =
+        retryPreferences(context).getInt(KEY_IMMEDIATE_RETRY_COUNT, 0)
+
+    private fun persistImmediateRetryCount(context: Context, count: Int) {
+        retryPreferences(context).edit().putInt(KEY_IMMEDIATE_RETRY_COUNT, count).apply()
+    }
+
+    private fun clearImmediateRetryCount(context: Context) {
+        retryPreferences(context).edit().remove(KEY_IMMEDIATE_RETRY_COUNT).apply()
+    }
 }
 
 internal object SyncJobRetryPolicy {
+    /** 一次由外部事件发起后的最大连续自动重试次数。 */
+    const val MAX_IMMEDIATE_RETRIES = 10
+
     fun backoffPolicy(mode: SyncTransportMode): Int =
         if (mode == SyncTransportMode.LOCAL_NETWORK) {
             JobInfo.BACKOFF_POLICY_LINEAR
@@ -100,8 +138,12 @@ internal object SyncJobRetryPolicy {
             JobInfo.BACKOFF_POLICY_EXPONENTIAL
         }
 
-    fun shouldReschedule(isImmediate: Boolean, retryable: Boolean): Boolean =
-        isImmediate && retryable
+    /**
+     * 只有即时同步任务在可重试失败后由系统退避重试；周期任务失败不额外调度。
+     * 连续失败计数达到上限后停止，等待外部事件（periodic job、网络恢复、本地变更）再次发起。
+     */
+    fun shouldReschedule(isImmediate: Boolean, retryable: Boolean, retryCount: Int = 0): Boolean =
+        isImmediate && retryable && retryCount < MAX_IMMEDIATE_RETRIES
 }
 
 /** 只在系统授予的短时后台窗口执行，不创建前台服务。 */
@@ -114,7 +156,11 @@ class SyncJobService : JobService() {
         runningJobs.remove(params.jobId)?.cancel()
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val result = runtime.synchronize()
-            val shouldRetry = SyncJobScheduler.shouldReschedule(params.jobId, result)
+            val shouldRetry = SyncJobScheduler.shouldReschedule(
+                this@SyncJobService,
+                params.jobId,
+                result,
+            )
             runningJobs.remove(params.jobId)
             jobFinished(params, shouldRetry)
         }

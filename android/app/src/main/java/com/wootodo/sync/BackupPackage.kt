@@ -509,7 +509,7 @@ object BackupPackageCodec {
     }
 
     private fun decodeTask(root: StrictJsonObject, path: String): TaskInstancePayload {
-        root.requireKeys(TASK_KEYS, setOf("reminderTime"), path)
+        root.requireKeys(TASK_KEYS, TASK_OPTIONAL_KEYS, path)
         val task = try {
             TaskInstancePayload(
                 protocolVersion = root.int("protocolVersion", "$path.protocolVersion", 0..Int.MAX_VALUE),
@@ -519,6 +519,10 @@ object BackupPackageCodec {
                 title = root.string("title", "$path.title"),
                 timeType = WireTimeType.fromWire(root.string("timeType", "$path.timeType")),
                 periodStart = root.nullableString("periodStart", "$path.periodStart"),
+                deadlineDate = root.optionalNullableString(
+                    "deadlineDate",
+                    "$path.deadlineDate",
+                ),
                 timezone = root.string("timezone", "$path.timezone"),
                 questLine = WireQuestLine.fromWire(root.string("questLine", "$path.questLine")),
                 state = WireTaskState.fromWire(root.string("state", "$path.state")),
@@ -637,6 +641,9 @@ object BackupPackageCodec {
         if (task.reminderTime != null) {
             append(",\"reminderTime\":").appendJsonString(task.reminderTime)
         }
+        if (task.deadlineDate != null) {
+            append(",\"deadlineDate\":").appendJsonString(task.deadlineDate)
+        }
         append(",\"settledAt\":").append(task.settledAt ?: "null")
         append(",\"sortOrder\":").append(task.sortOrder)
         append(",\"state\":").appendJsonString(task.state.value)
@@ -658,6 +665,8 @@ object BackupPackageCodec {
         "periodStart", "timezone", "questLine", "state", "recurrence", "sortOrder",
         "createdAt", "updatedAt", "settledAt",
     )
+    // deadlineDate 与 reminderTime 一样是可选字段：旧备份缺少时等同 null（task.schema.json）。
+    private val TASK_OPTIONAL_KEYS = setOf("reminderTime", "deadlineDate")
     private val TOMBSTONE_KEYS = setOf("protocolVersion", "entityType", "id", "deletedAt")
     private val CREDENTIAL_KEYS =
         setOf("endpoint", "vaultId", "deviceId", "deviceToken", "vaultKey")

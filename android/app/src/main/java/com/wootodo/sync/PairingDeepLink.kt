@@ -138,7 +138,11 @@ data class PairingDeepLink(
             )
         }
 
-        private fun decode(value: String): String =
-            URLDecoder.decode(value, StandardCharsets.UTF_8.name())
+        private fun decode(value: String): String = try {
+            // Query 参数是 URI 组件而不是 application/x-www-form-urlencoded；原始 '+' 必须保留。
+            URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8.name())
+        } catch (error: Exception) {
+            throw IllegalArgumentException("配对深链参数编码无效", error)
+        }
     }
 }

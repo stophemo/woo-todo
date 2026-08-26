@@ -30,12 +30,12 @@ private class TodayWidgetFactory(
     override fun onCreate() = Unit
 
     override fun onDataSetChanged() {
+        // Widget 工厂线程只做只读读取；结算过期任务（autoPassExpired）与触发同步
+        // 属于应用生命周期职责（应用启动、前台刷新、同步完成后），不得在 Launcher
+        // 刷新路径上做 DB 写或发起网络同步。
         items = try {
             runBlocking(Dispatchers.IO) {
                 val application = context.applicationContext as WooTodoApplication
-                if (application.taskRepository.autoPassExpired() > 0) {
-                    application.notifyLocalMutation()
-                }
                 TodayWidgetItems.from(
                     application.taskRepository.tasksForToday().take(MAX_VISIBLE_TASKS),
                 )

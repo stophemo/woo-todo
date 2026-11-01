@@ -6,6 +6,7 @@ import com.wootodo.domain.TaskDraft
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
+import com.wootodo.ui.toRestoreDraft
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
@@ -96,6 +97,35 @@ class TaskRepositoryTest {
 
         assertFalse(store.reopenCompleted(id, 99_999))
         assertEquals(TaskStatus.PENDING, repository.get(id)?.status)
+    }
+
+    @Test
+    fun `显式撤销完成只接受已完成任务且不能反向结算`() = runBlocking {
+        val id = repository.create(TaskDraft(title = "误点完成", targetDate = date))
+        assertFalse(repository.reopen(id, date))
+        assertEquals(TaskStatus.PENDING, repository.get(id)?.status)
+
+        assertTrue(repository.settle(id, TaskStatus.COMPLETED))
+        assertTrue(repository.reopen(id, date))
+        assertEquals(TaskStatus.PENDING, repository.get(id)?.status)
+
+        assertTrue(repository.settle(id, TaskStatus.PASS))
+        assertFalse(repository.reopen(id, date))
+        assertEquals(TaskStatus.PASS, repository.get(id)?.status)
+    }
+
+    @Test
+    fun `撤销删除重建的任务沿用原排序位置`() = runBlocking {
+        val first = repository.create(TaskDraft(title = "第一条", targetDate = date))
+        val second = repository.create(TaskDraft(title = "第二条", targetDate = date))
+        val deleted = repository.get(second)!!
+        assertTrue(repository.delete(second))
+
+        val restored = repository.create(deleted.toRestoreDraft())
+        val tasks = store.items.value.sortedBy { it.sortOrder }
+        assertEquals(listOf("第一条", "第二条"), tasks.map { it.title })
+        assertEquals(deleted.sortOrder, repository.get(restored)?.sortOrder)
+        assertEquals(first, tasks.first().id)
     }
 
     @Test

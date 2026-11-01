@@ -13,6 +13,7 @@ import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
@@ -36,6 +37,7 @@ import kotlinx.coroutines.launch
 class EditTaskActivity : AppCompatActivity() {
     private lateinit var repository: TaskRepository
     private lateinit var pageTitle: TextView
+    private lateinit var settledNotice: TextView
     private lateinit var titleInput: EditText
     private lateinit var questSpinner: Spinner
     private lateinit var timeSpinner: Spinner
@@ -55,12 +57,14 @@ class EditTaskActivity : AppCompatActivity() {
     private var reminderTime: LocalTime = LocalTime.of(9, 0)
     private var editingTask: Task? = null
     private var isLoadingTask = false
+    private var initialSnapshot: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_edit_task)
         applySystemBarInsets(findViewById(R.id.edit_task_root))
         pageTitle = findViewById(R.id.page_title)
+        settledNotice = findViewById(R.id.settled_notice)
         titleInput = findViewById(R.id.title_input)
         titleInput.enableEditableTextActions()
         questSpinner = findViewById(R.id.quest_spinner)
@@ -74,6 +78,13 @@ class EditTaskActivity : AppCompatActivity() {
         saveButton = findViewById(R.id.save_button)
         deleteButton = findViewById(R.id.delete_button)
         repository = (application as WooTodoApplication).taskRepository
+        findViewById<View>(R.id.back_button).setOnClickListener { attemptClose() }
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() = attemptClose()
+            },
+        )
 
         val restoredDate = savedInstanceState?.getString(STATE_SELECTED_DATE)
         (restoredDate ?: intent.getStringExtra(EXTRA_TARGET_DATE))?.let { encoded ->
@@ -100,9 +111,41 @@ class EditTaskActivity : AppCompatActivity() {
                 timeSpinner.setSelection(timeTypes.indexOf(initialType))
                 updateDateButton(initialType)
             }
+            initialSnapshot = currentSnapshot()
         } else {
             loadTask(taskId, savedInstanceState)
         }
+    }
+
+    /** 记录进入页面时的表单快照，用于返回时提醒未保存的修改。 */
+    private fun currentSnapshot(): String = listOf(
+        titleInput.text.toString(),
+        selectedDate.toString(),
+        questSpinner.selectedItemPosition,
+        timeSpinner.selectedItemPosition,
+        selectedRecurrenceOrOnce().rawValue,
+        deadlineSwitch.isChecked,
+        selectedDeadlineDate.toString(),
+        reminderSwitch.isChecked,
+        reminderTime.toString(),
+    ).joinToString("|")
+
+    private fun hasUnsavedChanges(): Boolean {
+        val baseline = initialSnapshot ?: return false
+        return currentSnapshot() != baseline
+    }
+
+    private fun attemptClose() {
+        if (!hasUnsavedChanges()) {
+            finish()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.editor_discard_title)
+            .setMessage(R.string.editor_discard_message)
+            .setNegativeButton(R.string.editor_discard_cancel, null)
+            .setPositiveButton(R.string.editor_discard_confirm) { _, _ -> finish() }
+            .show()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -188,8 +231,30 @@ class EditTaskActivity : AppCompatActivity() {
             }
             deleteButton.isVisible = pending
             saveButton.isEnabled = pending
+            applySettledState(task)
             isLoadingTask = false
+            initialSnapshot = currentSnapshot()
         }
+    }
+
+    /** 已结算任务只能查看：禁用全部输入，避免看起来可改但保存无效。 */
+    private fun applySettledState(task: Task) {
+        val editable = !isReadOnly(task.status)
+        settledNotice.isVisible = !editable
+        pageTitle.setText(if (editable) R.string.edit_task else R.string.view_task_title)
+        listOf(
+            titleInput,
+            questSpinner,
+            timeSpinner,
+            dateButton,
+            recurrenceSpinner,
+            deadlineSwitch,
+            deadlineDateButton,
+            reminderSwitch,
+            reminderTimeButton,
+        ).forEach { it.isEnabled = editable }
+        saveButton.isVisible = editable
+        deleteButton.isVisible = editable
     }
 
     private fun restoreDraftState(state: Bundle, fallback: Task? = null) {

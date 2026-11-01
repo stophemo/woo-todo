@@ -5,6 +5,9 @@ import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -42,6 +45,7 @@ import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.display.DayCounterPreferences
 import com.wootodo.display.DayCounterSettings
+import com.wootodo.domain.Task
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TaskTimeType
@@ -81,6 +85,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var taskAdapter: TaskAdapter
     private lateinit var taskList: RecyclerView
     private lateinit var emptyView: TextView
+    private lateinit var emptyState: View
     private lateinit var syncButton: Button
     private lateinit var syncStatus: TextView
     private lateinit var screenTitle: TextView
@@ -160,6 +165,7 @@ class MainActivity : AppCompatActivity() {
         availableUpdateRelease = updatePreferences.loadAvailableRelease(currentVersionLabel())
         taskList = findViewById(R.id.task_list)
         emptyView = findViewById(R.id.empty_view)
+        emptyState = findViewById(R.id.empty_state)
         syncButton = findViewById(R.id.sync_button)
         syncStatus = findViewById(R.id.sync_status)
         screenTitle = findViewById(R.id.screen_title)
@@ -168,15 +174,21 @@ class MainActivity : AppCompatActivity() {
         dayCounterText.enableReadOnlyTextSelection()
 
         taskAdapter = TaskAdapter(
-            onComplete = { viewModel.toggleCompletion(it.id) },
-            onPass = { viewModel.settle(it.id, TaskStatus.PASS) },
+            onCheck = { task ->
+                if (task.status == TaskStatus.COMPLETED) {
+                    reopenTask(task)
+                } else {
+                    completeTask(task)
+                }
+            },
+            onMenu = ::showTaskMenu,
             onEdit = { openEditor(it.id) },
         )
         taskList.apply {
             layoutManager = LinearLayoutManager(this@MainActivity)
             adapter = taskAdapter
         }
-        attachReordering()
+        attachRowGestures()
 
         scopeGroup = findViewById(R.id.scope_group)
         scopeGroup.setOnCheckedChangeListener { _, checkedId ->
@@ -197,13 +209,21 @@ class MainActivity : AppCompatActivity() {
                     viewModel.selectToday()
                 }
             }
+            // 大字体或窄屏下标签会横向溢出，切换后把选中的标签滚进可视区。
+            findViewById<View>(checkedId)?.let { chip ->
+                chip.requestRectangleOnScreen(
+                    android.graphics.Rect(0, 0, chip.width, chip.height),
+                    false,
+                )
+            }
             renderDayCounter()
         }
         findViewById<FloatingActionButton>(R.id.add_task).setOnClickListener { openEditor() }
-        findViewById<Button>(R.id.insights_button).setOnClickListener {
+        findViewById<Button>(R.id.empty_add_task).setOnClickListener { openEditor() }
+        findViewById<View>(R.id.insights_button).setOnClickListener {
             startActivity(Intent(this, InsightsActivity::class.java))
         }
-        findViewById<Button>(R.id.reminder_settings_button).setOnClickListener { anchor ->
+        findViewById<View>(R.id.reminder_settings_button).setOnClickListener { anchor ->
             showMoreMenu(anchor)
         }
         syncButton.setOnClickListener { handleSyncAction() }
@@ -216,7 +236,7 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     viewModel.tasks.collect { tasks ->
                         taskAdapter.submitTasks(tasks)
-                        emptyView.isVisible = tasks.isEmpty()
+                        emptyState.isVisible = tasks.isEmpty()
                     }
                 }
                 launch {
@@ -347,7 +367,14 @@ class MainActivity : AppCompatActivity() {
         notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    private fun attachReordering() {
+    private fun attachRowGestures() {
+        val density = resources.displayMetrics.density
+        val edgePadding = 16f * density
+        val revealPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 14f * resources.displayMetrics.scaledDensity
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
         val callback = object : ItemTouchHelper.Callback() {
             private var draggedLine: QuestLine? = null
 
@@ -356,10 +383,20 @@ class MainActivity : AppCompatActivity() {
             override fun getMovementFlags(
                 recyclerView: RecyclerView,
                 viewHolder: RecyclerView.ViewHolder,
-            ): Int = if (taskAdapter.questLineAt(viewHolder.adapterPosition) != null) {
-                makeMovementFlags(ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0)
-            } else {
-                makeMovementFlags(0, 0)
+            ): Int {
+                val task = taskAdapter.taskAt(viewHolder.adapterPosition)
+                    ?: return makeMovementFlags(0, 0)
+                val dragFlags = if (task.status == TaskStatus.PENDING) {
+                    ItemTouchHelper.UP or ItemTouchHelper.DOWN
+                } else {
+                    0
+                }
+                val swipeFlags = (if (swipeRightAction(task.status) != null) {
+                    ItemTouchHelper.RIGHT
+                } else {
+                    0
+                }) or (if (swipeLeftAction(task.status) != null) ItemTouchHelper.LEFT else 0)
+                return makeMovementFlags(dragFlags, swipeFlags)
             }
 
             override fun onMove(
@@ -375,13 +412,86 @@ class MainActivity : AppCompatActivity() {
                 return taskAdapter.moveItem(from, to)
             }
 
-            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) = Unit
+            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
+                val position = viewHolder.adapterPosition
+                val task = taskAdapter.taskAt(position) ?: return
+                val action = if (direction == ItemTouchHelper.RIGHT) {
+                    swipeRightAction(task.status)
+                } else {
+                    swipeLeftAction(task.status)
+                }
+                action?.let { handleRowAction(it, task) }
+                // ItemTouchHelper 不会自动把未删除的行推回原位，必须主动复位。
+                viewHolder.itemView.translationX = 0f
+                taskList.post { taskAdapter.notifyItemChanged(position) }
+            }
+
+            override fun onChildDraw(
+                canvas: Canvas,
+                recyclerView: RecyclerView,
+                viewHolder: RecyclerView.ViewHolder,
+                dX: Float,
+                dY: Float,
+                actionState: Int,
+                isCurrentlyActive: Boolean,
+            ) {
+                if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE &&
+                    isCurrentlyActive &&
+                    dX != 0f
+                ) {
+                    val task = taskAdapter.taskAt(viewHolder.adapterPosition)
+                    val action = if (dX > 0) {
+                        task?.let { swipeRightAction(it.status) }
+                    } else {
+                        task?.let { swipeLeftAction(it.status) }
+                    }
+                    if (action != null) {
+                        val itemView = viewHolder.itemView
+                        val left = if (dX > 0) itemView.left.toFloat() else itemView.right + dX
+                        val right = if (dX > 0) itemView.left + dX else itemView.right.toFloat()
+                        val radius = 12f * density
+                        revealPaint.color = ContextCompat.getColor(
+                            this@MainActivity,
+                            swipeColorRes(action),
+                        )
+                        canvas.drawRoundRect(
+                            left,
+                            itemView.top.toFloat(),
+                            right,
+                            itemView.bottom.toFloat(),
+                            radius,
+                            radius,
+                            revealPaint,
+                        )
+                        val label = getString(swipeLabelRes(action))
+                        labelPaint.color = ContextCompat.getColor(this@MainActivity, R.color.on_primary)
+                        val baseline = itemView.top + itemView.height / 2f -
+                            (labelPaint.descent() + labelPaint.ascent()) / 2f
+                        val textX = if (dX > 0) {
+                            itemView.left + edgePadding
+                        } else {
+                            itemView.right - edgePadding - labelPaint.measureText(label)
+                        }
+                        canvas.drawText(label, textX, baseline, labelPaint)
+                    }
+                }
+                super.onChildDraw(
+                    canvas,
+                    recyclerView,
+                    viewHolder,
+                    dX,
+                    dY,
+                    actionState,
+                    isCurrentlyActive,
+                )
+            }
 
             override fun clearView(
                 recyclerView: RecyclerView,
                 viewHolder: RecyclerView.ViewHolder,
             ) {
                 super.clearView(recyclerView, viewHolder)
+                viewHolder.itemView.translationX = 0f
                 draggedLine?.let { line ->
                     viewModel.reorder(taskAdapter.taskIdsForLine(line))
                 }
@@ -389,6 +499,115 @@ class MainActivity : AppCompatActivity() {
             }
         }
         ItemTouchHelper(callback).attachToRecyclerView(taskList)
+    }
+
+    private fun swipeLabelRes(action: TaskRowAction): Int = when (action) {
+        TaskRowAction.COMPLETE -> R.string.task_menu_complete
+        TaskRowAction.REOPEN -> R.string.task_menu_reopen
+        TaskRowAction.DELETE -> R.string.task_menu_delete
+        TaskRowAction.PASS -> R.string.task_menu_pass
+        TaskRowAction.EDIT -> R.string.task_menu_edit
+    }
+
+    private fun swipeColorRes(action: TaskRowAction): Int = when (action) {
+        TaskRowAction.DELETE, TaskRowAction.PASS -> R.color.orange
+        else -> R.color.green
+    }
+
+    private fun showTaskMenu(task: Task, anchor: View) {
+        val actions = taskRowActions(task.status)
+        PopupMenu(this, anchor).apply {
+            actions.forEachIndexed { index, action ->
+                menu.add(0, index, index, getString(action.labelRes(task.status)))
+            }
+            setOnMenuItemClickListener { item ->
+                val action = actions.getOrNull(item.itemId) ?: return@setOnMenuItemClickListener false
+                handleRowAction(action, task)
+                true
+            }
+            show()
+        }
+    }
+
+    private fun handleRowAction(action: TaskRowAction, task: Task) {
+        when (action) {
+            TaskRowAction.COMPLETE -> completeTask(task)
+            TaskRowAction.REOPEN -> reopenTask(task)
+            TaskRowAction.PASS -> confirmPass(task)
+            TaskRowAction.EDIT -> openEditor(task.id)
+            TaskRowAction.DELETE -> deleteTask(task)
+        }
+    }
+
+    private fun completeTask(task: Task) {
+        viewModel.complete(task.id) { changed ->
+            if (changed) {
+                showUndoSnackbar(
+                    getString(R.string.task_completed_message, task.title),
+                    R.string.undo,
+                ) {
+                    reopenTask(task, quiet = true)
+                }
+            }
+        }
+    }
+
+    private fun reopenTask(task: Task, quiet: Boolean = false) {
+        viewModel.reopen(task.id) { changed ->
+            when {
+                changed && !quiet -> showTransientMessage(
+                    getString(R.string.task_reopened_message, task.title),
+                )
+                !changed -> showTransientMessage(
+                    R.string.task_reopen_unavailable,
+                    Snackbar.LENGTH_LONG,
+                )
+            }
+        }
+    }
+
+    private fun confirmPass(task: Task) {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.pass_confirm_title, task.title))
+            .setMessage(R.string.pass_confirm_message)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.pass_confirm) { _, _ ->
+                viewModel.pass(task.id) { changed ->
+                    if (changed) {
+                        showTransientMessage(getString(R.string.task_passed_message, task.title))
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun deleteTask(task: Task) {
+        viewModel.delete(task) { deleted ->
+            if (!deleted) {
+                showTransientMessage(R.string.task_delete_failed, Snackbar.LENGTH_LONG)
+                return@delete
+            }
+            showUndoSnackbar(
+                getString(R.string.task_deleted_message, task.title),
+                R.string.undo,
+            ) {
+                viewModel.restore(task) { restored ->
+                    if (!restored) {
+                        showTransientMessage(R.string.task_restore_failed, Snackbar.LENGTH_LONG)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showUndoSnackbar(
+        message: String,
+        @StringRes actionRes: Int,
+        onUndo: () -> Unit,
+    ) {
+        Snackbar.make(findViewById(R.id.main_root), message, Snackbar.LENGTH_LONG)
+            .setAction(actionRes) { onUndo() }
+            .show()
     }
 
     private fun showReminderSettings() {

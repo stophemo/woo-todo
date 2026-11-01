@@ -4,18 +4,18 @@ import android.graphics.Paint
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.CheckBox
 import android.widget.TextView
 import androidx.core.content.ContextCompat
-import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.wootodo.R
 import com.wootodo.domain.QuestLine
+import com.wootodo.domain.Recurrence
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
+import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
@@ -25,8 +25,8 @@ private sealed interface TaskListItem {
 }
 
 internal class TaskAdapter(
-    private val onComplete: (Task) -> Unit,
-    private val onPass: (Task) -> Unit,
+    private val onCheck: (Task) -> Unit,
+    private val onMenu: (Task, View) -> Unit,
     private val onEdit: (Task) -> Unit,
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private val items = mutableListOf<TaskListItem>()
@@ -71,6 +71,8 @@ internal class TaskAdapter(
         (items.getOrNull(position) as? TaskListItem.Row)?.task
             ?.takeIf { it.status == TaskStatus.PENDING }
             ?.questLine
+
+    fun taskAt(position: Int): Task? = (items.getOrNull(position) as? TaskListItem.Row)?.task
 
     fun moveItem(fromPosition: Int, toPosition: Int): Boolean {
         val fromLine = questLineAt(fromPosition) ?: return false
@@ -133,7 +135,7 @@ internal class TaskAdapter(
         private val taskCheck: CheckBox = itemView.findViewById(R.id.task_check)
         private val taskTitle: TextView = itemView.findViewById(R.id.task_title)
         private val taskStatus: TextView = itemView.findViewById(R.id.task_status)
-        private val passButton: Button = itemView.findViewById(R.id.pass_button)
+        private val taskActions: View = itemView.findViewById(R.id.task_actions)
 
         fun bind(task: Task) {
             val pending = task.status == TaskStatus.PENDING
@@ -155,9 +157,14 @@ internal class TaskAdapter(
                 )
                 null -> null
             }
-            taskStatus.text = deadlineLabel?.let {
-                itemView.context.getString(R.string.task_status_with_detail, statusLabel, it)
-            } ?: statusLabel
+            // 状态行同时透露重复规则，手机上不必进编辑页就能判断会不会自动滚动。
+            taskStatus.text = buildList {
+                add(statusLabel)
+                if (task.recurrence != Recurrence.ONCE && task.timeType != TaskTimeType.LEISURE) {
+                    add(itemView.context.getString(task.recurrence.labelRes()))
+                }
+                deadlineLabel?.let(::add)
+            }.joinToString(" · ")
             taskStatus.setTextColor(
                 ContextCompat.getColor(
                     itemView.context,
@@ -167,6 +174,8 @@ internal class TaskAdapter(
             taskCheck.setOnCheckedChangeListener(null)
             taskCheck.isChecked = task.status == TaskStatus.COMPLETED
             taskCheck.isEnabled = task.status != TaskStatus.PASS
+            // Pass 不可逆，空复选框会让人误以为还能点，隐藏后整行交给详情页。
+            taskCheck.visibility = if (task.status == TaskStatus.PASS) View.INVISIBLE else View.VISIBLE
             taskCheck.contentDescription = itemView.context.getString(
                 if (task.status == TaskStatus.COMPLETED) {
                     R.string.reopen_completed
@@ -175,19 +184,21 @@ internal class TaskAdapter(
                 },
             )
             taskCheck.setOnClickListener {
-                if (task.status != TaskStatus.PASS) onComplete(task)
+                if (task.status != TaskStatus.PASS) onCheck(task)
             }
-            passButton.isVisible = pending
-            passButton.setOnClickListener { onPass(task) }
-            taskRow.alpha = if (pending) 1f else 0.55f
+            taskActions.contentDescription = itemView.context.getString(
+                R.string.task_actions_for,
+                task.title,
+            )
+            taskActions.setOnClickListener { onMenu(task, it) }
+            taskRow.alpha = if (pending) 1f else 0.72f
             taskTitle.paintFlags = if (task.status == TaskStatus.COMPLETED) {
                 taskTitle.paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
             } else {
                 taskTitle.paintFlags and Paint.STRIKE_THRU_TEXT_FLAG.inv()
             }
-            taskRow.setOnClickListener {
-                if (pending) onEdit(task)
-            }
+            // 任何状态都能打开详情，避免已完成 / Pass 任务在手机上成为死路。
+            taskRow.setOnClickListener { onEdit(task) }
         }
     }
 

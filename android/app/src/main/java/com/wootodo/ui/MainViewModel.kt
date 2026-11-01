@@ -67,19 +67,46 @@ class MainViewModel(
         }
     }
 
-    fun settle(id: String, status: TaskStatus) {
+    fun complete(id: String, onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            if (repository.settle(id, status)) {
-                onTasksChanged()
-            }
+            val changed = repository.settle(id, TaskStatus.COMPLETED)
+            if (changed) onTasksChanged()
+            onResult(changed)
         }
     }
 
-    fun toggleCompletion(id: String) {
+    fun reopen(id: String, onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            if (repository.toggleCompletion(id)) {
-                onTasksChanged()
-            }
+            val changed = repository.reopen(id)
+            if (changed) onTasksChanged()
+            onResult(changed)
+        }
+    }
+
+    fun pass(id: String, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val changed = repository.settle(id, TaskStatus.PASS)
+            if (changed) onTasksChanged()
+            onResult(changed)
+        }
+    }
+
+    fun delete(task: Task, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val deleted = repository.delete(task.id)
+            if (deleted) onTasksChanged()
+            onResult(deleted)
+        }
+    }
+
+    /** 撤销删除：用删除前的字段重建一条待办，避免同步删除墓碑冲突。 */
+    fun restore(task: Task, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val restored = runCatching {
+                repository.create(task.toRestoreDraft())
+            }.isSuccess
+            if (restored) onTasksChanged()
+            onResult(restored)
         }
     }
 

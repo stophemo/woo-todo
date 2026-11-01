@@ -49,6 +49,7 @@ class InsightsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_insights)
         applySystemBarInsets(findViewById(R.id.insights_root))
+        findViewById<View>(R.id.insights_back_button).setOnClickListener { finish() }
         endedRate = findViewById(R.id.ended_rate)
         mainRate = findViewById(R.id.main_rate)
         dailyTrend = findViewById(R.id.daily_trend)
@@ -225,8 +226,12 @@ class InsightsActivity : AppCompatActivity() {
             counts.pending,
         )
 
-    private fun formatTrend(buckets: List<TrendBucket>, timeType: TaskTimeType): String =
-        buckets.joinToString("\n") { bucket ->
+    private fun formatTrend(buckets: List<TrendBucket>, timeType: TaskTimeType): String {
+        if (buckets.isEmpty()) return getString(R.string.trend_no_records)
+        val recorded = visibleTrendBuckets(buckets)
+        if (recorded.isEmpty()) return getString(R.string.trend_no_records)
+        // 全零周期不再逐行占位，否则大字体手机上一屏只能看到 3 行数字。
+        val lines = recorded.map { bucket ->
             val period = when (timeType) {
                 TaskTimeType.DAY -> bucket.startDate.format(dayFormatter)
                 TaskTimeType.WEEK -> getString(
@@ -247,9 +252,14 @@ class InsightsActivity : AppCompatActivity() {
                 rate,
                 bucket.completed,
                 bucket.pass,
-                bucket.sampleCount,
             )
+        }.toMutableList()
+        val hidden = hiddenTrendBucketCount(buckets)
+        if (hidden > 0) {
+            lines += getString(R.string.trend_empty_periods, hidden)
         }
+        return lines.joinToString("\n")
+    }
 
     private fun formatHistory(task: Task): String = getString(
         R.string.history_item_format,

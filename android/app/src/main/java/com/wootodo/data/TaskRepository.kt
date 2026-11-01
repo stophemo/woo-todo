@@ -142,6 +142,16 @@ class TaskRepository(
         }
     }
 
+    /** 只把已完成任务恢复为待办；不会把待办重新结算，供撤销完成使用。 */
+    suspend fun reopen(
+        id: String,
+        referenceDate: LocalDate = LocalDate.now(clock),
+    ): Boolean {
+        val current = store.getById(id) ?: return false
+        if (current.status != TaskStatus.COMPLETED) return false
+        return reopenCompleted(current, referenceDate)
+    }
+
     suspend fun tasksForToday(date: LocalDate = LocalDate.now(clock)): List<Task> =
         store.getForDay(date).map(TaskEntity::toDomain).sortedWith(TaskRules.ordering)
 

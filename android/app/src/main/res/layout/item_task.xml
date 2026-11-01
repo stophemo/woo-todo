@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/task_row"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:foreground="?attr/selectableItemBackground"
+    android:background="?attr/selectableItemBackground"
     android:gravity="center_vertical"
     android:minHeight="58dp"
     android:orientation="horizontal"
@@ -11,13 +12,14 @@
 
     <CheckBox
         android:id="@+id/task_check"
-        android:layout_width="56dp"
+        android:layout_width="52dp"
         android:layout_height="48dp"
         android:buttonTint="@color/task_check_tint"
         android:contentDescription="@string/mark_completed"
         android:gravity="center" />
 
     <LinearLayout
+        android:id="@+id/task_body"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
@@ -39,13 +41,14 @@
             android:textColor="@color/muted" />
     </LinearLayout>
 
-    <Button
-        android:id="@+id/pass_button"
-        style="@style/Widget.Material3.Button.TextButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:minWidth="0dp"
-        android:text="@string/pass"
-        android:textColor="@color/orange" />
+    <ImageButton
+        android:id="@+id/task_actions"
+        android:layout_width="44dp"
+        android:layout_height="48dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/task_actions"
+        android:padding="10dp"
+        android:src="@drawable/ic_more_vert"
+        app:tint="@color/muted" />
 
 </LinearLayout>

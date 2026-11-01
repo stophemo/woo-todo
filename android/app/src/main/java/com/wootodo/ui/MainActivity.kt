@@ -567,7 +567,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmPass(task: Task) {
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle(getString(R.string.pass_confirm_title, task.title))
             .setMessage(R.string.pass_confirm_message)
             .setNegativeButton(R.string.cancel, null)
@@ -579,6 +579,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .show()
+        // 主题会把按钮文字转成大写，与产品中统一的 Pass 写法不一致。
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.isAllCaps = false
     }
 
     private fun deleteTask(task: Task) {

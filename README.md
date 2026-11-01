@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://woo-todo.vercel.app/">产品主页</a> ·
-  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.0">下载 v0.2.0</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.2">下载 v0.2.2</a> ·
   <a href="#装好以后从这里开始">安装指南</a> ·
   <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
 </p>
@@ -50,26 +50,25 @@ macOS 的原生任务小组件停留在桌面层，也可切换为普通或置�
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.2.0`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.0)，正式提供 macOS ZIP、Android APK 与 Windows x64 免安装 ZIP。Windows 尚未提供代码签名，首次运行时 SmartScreen 可能提示来源未知。
+当前稳定版是 [`v0.2.2`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.2)，正式提供 macOS ZIP 与 Android APK。Windows 版本次暂缓发布，可继续使用 `v0.2.1` 的免安装 ZIP，功能与 v0.2.2 一致。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、完整任务管理与统计 | `v0.2.0` 正式版 |
-| Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.2.0` 正式版 |
-| Windows 10 build 19041+ / Windows 11（仅 x64） | Tauri 悬浮任务板、任务管理、统计与加密同步 | `v0.2.0` 正式版 |
+| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、完整任务管理与统计 | `v0.2.2` 正式版 |
+| Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.2.2` 正式版 |
+| Windows 10 build 19041+ / Windows 11（仅 x64） | Tauri 悬浮任务板、任务管理、统计与加密同步 | `v0.2.1` 正式版，本版暂缓 |
 
 Windows 已支持自建服务、同一网络与第三方 WebDAV 三种互斥同步方式，以及设备配对和撤销。同步凭据保存在 Windows Credential Manager，不写入 `settings.json`。Windows 正式包为免安装 ZIP，当前未签名，升级时重新下载并替换 `WooTodo.exe` 即可。
 
-## 下载 v0.2.0
+## 下载 v0.2.2
 
 | 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.2.0-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.2.0/Woo-Todo-v0.2.0-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
-| Android | [Woo-Todo-v0.2.0-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.0/Woo-Todo-v0.2.0-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| Windows | [Woo-Todo-v0.2.0-windows-x64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.2.0/Woo-Todo-v0.2.0-windows-x64.zip) | ZIP 只包含 `WooTodo.exe`，解压后运行即可。当前程序未签名，SmartScreen 可能提示来源未知；升级时下载新 ZIP 并替换旧程序。 |
-| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.0/SHA256SUMS.txt) | 校验 macOS、Android 与 Windows 正式包。 |
+| macOS | [Woo-Todo-v0.2.2-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.2.2/Woo-Todo-v0.2.2-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.2.2-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.2/Woo-Todo-v0.2.2-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.2/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
 
-`v0.2.0` 首次将 Tauri 2 Windows 客户端纳入三端正式发布，提供可用的任务管理、悬浮任务板、局域网/自建服务/WebDAV 同步、设备配对、通知和标题模板设置；macOS 与 Android 已继续沿用原生实现，并与共享同步协议保持兼容。Windows 当前采用免安装 ZIP，暂不提供代码签名。
+`v0.2.2` 集中在 Android 的移动端可用性：任务行不再常驻 `Pass` 按钮，改用行内操作菜单，任意状态的任务都能打开详情，已完成与 `Pass` 的任务进入只读页；新增右滑完成或撤销、左滑删除，配合提示条直接撤销；编辑页补上返回与未保存提醒；统计页折叠没有记录的周期。macOS 本次没有功能变更，与 `v0.2.1` 行为一致。Windows 版本暂缓发布，仍可从 `v0.2.1` 下载免安装 ZIP。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名，自建服务或同一网络身份在更新后仍可能再次请求 Keychain 授权；第三方 WebDAV 配置会在首次迁移后改由本机加密文件自动回填。Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -89,7 +88,7 @@ Windows 已支持自建服务、同一网络与第三方 WebDAV 三种互斥同�
 
 ### Windows
 
-1. 下载并解压 `Woo-Todo-v0.2.0-windows-x64.zip`，运行 `WooTodo.exe`。如果 SmartScreen 拦截，请确认文件来自项目正式 Release 并核对 `SHA256SUMS.txt`。
+1. 下载并解压 `Woo-Todo-v0.2.1-windows-x64.zip`，运行 `WooTodo.exe`。如果 SmartScreen 拦截，请确认文件来自项目正式 Release 并核对 `SHA256SUMS.txt`。
 2. 主窗口支持今日、明日、本周、本月、闲时、历史和统计；可新增、编辑、完成、撤销、`Pass`、删除及同级排序任务。
 3. 工具栏可显示独立悬浮任务板；“显示”页面可调整任务板不透明度、置顶、鼠标穿透和桌面小组件模式。同步运行时和任务提醒继续由 Rust 与 Windows 系统组件负责。
 

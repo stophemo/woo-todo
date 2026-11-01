@@ -1932,6 +1932,25 @@ fn wake_address(address: SocketAddr) -> SocketAddr {
     }
 }
 
+/// 用 compare_exchange 循环替代已废弃的 `fetch_update`，在并发下同样保证不超上限。
+fn try_admit_client(active_clients: &AtomicUsize) -> bool {
+    let mut current = active_clients.load(Ordering::Acquire);
+    loop {
+        if current >= MAXIMUM_CLIENTS {
+            return false;
+        }
+        match active_clients.compare_exchange_weak(
+            current,
+            current + 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return true,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 fn accept_connections(
     listener: TcpListener,
     store: SharedLocalServerStore,
@@ -1946,12 +1965,7 @@ fn accept_connections(
                 if !running.load(Ordering::Acquire) {
                     break;
                 }
-                if active_clients
-                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
-                        (value < MAXIMUM_CLIENTS).then_some(value + 1)
-                    })
-                    .is_err()
-                {
+                if !try_admit_client(&active_clients) {
                     let response =
                         bare_error_response(503, "SERVER_BUSY", "局域网同步服务当前连接过多");
                     let _ = write_http_response(&mut stream, &response);
@@ -2141,6 +2155,25 @@ mod tests {
     use woo_todo_core::{OperationKind, SyncPushOperation};
 
     use super::*;
+
+    #[test]
+    fn 接入计数不超过客户端上限() {
+        let active_clients = AtomicUsize::new(0);
+        for _ in 0..MAXIMUM_CLIENTS {
+            assert!(try_admit_client(&active_clients));
+        }
+        assert!(!try_admit_client(&active_clients));
+        assert_eq!(active_clients.load(Ordering::Acquire), MAXIMUM_CLIENTS);
+    }
+
+    #[test]
+    fn 客户端释放后可以重新接入() {
+        let active_clients = AtomicUsize::new(MAXIMUM_CLIENTS);
+        assert!(!try_admit_client(&active_clients));
+        active_clients.fetch_sub(1, Ordering::AcqRel);
+        assert!(try_admit_client(&active_clients));
+        assert_eq!(active_clients.load(Ordering::Acquire), MAXIMUM_CLIENTS);
+    }
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]

@@ -45,7 +45,7 @@ pwsh -NoProfile -File windows/scripts/package.ps1 -Version 0.2.0
 输出文件为：
 
 ```text
-windows/dist/Woo-Todo-v0.2.0-windows-x64.zip
+windows/dist/Woo-Todo-v0.2.1-windows-x64.zip
 ```
 
 ZIP 只包含 `WooTodo.exe`，因为应用内更新器会校验并替换这一文件。任务、设置和凭据均保存在用户数据目录，不会被打进发布包。

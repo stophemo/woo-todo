@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.View
 import android.widget.CheckBox
 import android.widget.FrameLayout
+import androidx.appcompat.view.ContextThemeWrapper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wootodo.R
@@ -21,8 +22,13 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class TaskRowContractInstrumentedTest {
+    // 行布局引用了应用主题里的 ?attr/selectableItemBackground，用默认平台主题
+    // 会在 inflation 阶段抛 UnsupportedOperationException，因此这里显式套用应用主题。
     private val context: Context
-        get() = ApplicationProvider.getApplicationContext()
+        get() = ContextThemeWrapper(
+            ApplicationProvider.getApplicationContext(),
+            R.style.Theme_WooTodo,
+        )
 
     @Test
     fun `每一行都提供更多操作入口而不是常驻Pass按钮`() {
@@ -47,26 +53,26 @@ class TaskRowContractInstrumentedTest {
 
             row.findViewById<View>(R.id.task_row).performClick()
 
-            assertEquals("点击 $status 行应打开详情", status.name, opened)
+            assertEquals("点击 $status 行应打开详情", "task-$status", opened)
         }
     }
 
     @Test
     fun `点击复选框按状态分发完成或撤销`() {
         val pending = mutableListOf<TaskStatus>()
-        bindRow(task(status = TaskStatus.PENDING)) { pending += it.status }
+        bindRow(task(status = TaskStatus.PENDING), onCheck = { pending += it.status })
             .findViewById<CheckBox>(R.id.task_check)
             .performClick()
         assertEquals(listOf(TaskStatus.PENDING), pending)
 
         val completed = mutableListOf<TaskStatus>()
-        bindRow(task(status = TaskStatus.COMPLETED)) { completed += it.status }
+        bindRow(task(status = TaskStatus.COMPLETED), onCheck = { completed += it.status })
             .findViewById<CheckBox>(R.id.task_check)
             .performClick()
         assertEquals(listOf(TaskStatus.COMPLETED), completed)
 
         val passed = mutableListOf<TaskStatus>()
-        bindRow(task(status = TaskStatus.PASS)) { passed += it.status }
+        bindRow(task(status = TaskStatus.PASS), onCheck = { passed += it.status })
             .findViewById<CheckBox>(R.id.task_check)
             .performClick()
         assertTrue(passed.isEmpty())

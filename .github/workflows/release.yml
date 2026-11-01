@@ -238,6 +238,8 @@ jobs:
   windows:
     name: 构建 Windows x64 正式免安装 ZIP
     needs: validate-tag
+    # Windows 版本暂缓发布，设置仓库变量 RELEASE_INCLUDE_WINDOWS=true 即可重新纳入。
+    if: vars.RELEASE_INCLUDE_WINDOWS == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -318,6 +320,8 @@ jobs:
       - android
       - macos
       - windows
+    # Windows 任务被跳过时仍然发布，失败或取消则不发布。
+    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -339,6 +343,7 @@ jobs:
           path: release
 
       - name: 下载 Windows 正式版产物
+        if: vars.RELEASE_INCLUDE_WINDOWS == 'true'
         uses: actions/download-artifact@v4
         with:
           name: windows-release
@@ -348,9 +353,16 @@ jobs:
         run: |
           set -euo pipefail
           cd release
-          test "$(find . -maxdepth 1 -type f \( -name '*.apk' -o -name '*.zip' \) | wc -l | tr -d ' ')" = "3"
+          test "$(find . -maxdepth 1 -type f -name '*.apk' | wc -l | tr -d ' ')" = "1"
+          test "$(find . -maxdepth 1 -type f -name '*macos-arm64.zip' | wc -l | tr -d ' ')" = "1"
+          WINDOWS_ZIPS="$(find . -maxdepth 1 -type f -name '*windows-x64.zip' | wc -l | tr -d ' ')"
+          if [[ "${{ vars.RELEASE_INCLUDE_WINDOWS }}" == "true" ]]; then
+            test "$WINDOWS_ZIPS" = "1"
+          else
+            test "$WINDOWS_ZIPS" = "0"
+          fi
+          test "$(find . -maxdepth 1 -type f -name '*.zip' | wc -l | tr -d ' ')" = "$((1 + WINDOWS_ZIPS))"
           test -z "$(find . -maxdepth 1 -type f \( -iname '*preview*' -o -iname '*experimental*' \) -print -quit)"
-          test "$(find . -maxdepth 1 -type f -name '*windows-x64.zip' | wc -l | tr -d ' ')" = "1"
           shasum -a 256 ./*.apk ./*.zip > SHA256SUMS.txt
 
       - name: 发布产物

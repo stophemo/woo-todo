@@ -123,4 +123,71 @@ struct PairingDeepLinkTests {
                 == .ready(URL(string: "https://sync.example.test/root")!)
         )
     }
+
+    @Test("配对深链携带备选地址并按顺序去重")
+    func alternateEndpointsRoundTrip() throws {
+        let secret = Base64URL.encode(Data(repeating: 3, count: 32))
+        let publicKey = Base64URL.encode(Data(repeating: 4, count: 32))
+        let primary = URL(string: "http://stophemo.local:48473")!
+        let value = try PairingDeepLink(
+            endpoint: primary,
+            alternateEndpoints: [
+                URL(string: "http://192.168.43.12:48473")!,
+                URL(string: "http://192.168.2.1:48473")!,
+                primary,
+            ],
+            pairingId: "pair-demo-002",
+            pairingSecret: secret,
+            initiatorPublicKey: publicKey
+        )
+        let url = try value.url()
+        let parsed = try PairingDeepLink(url: url)
+        #expect(parsed.endpoint == primary)
+        #expect(
+            parsed.alternateEndpoints.map(\.absoluteString)
+                == ["http://192.168.43.12:48473", "http://192.168.2.1:48473"]
+        )
+        #expect(parsed == value)
+    }
+
+    @Test("备选地址必须也是局域网地址且不与主地址重复占位")
+    func alternateEndpointsValidation() throws {
+        let secret = Base64URL.encode(Data(repeating: 5, count: 32))
+        let publicKey = Base64URL.encode(Data(repeating: 6, count: 32))
+        #expect(throws: PairingDeepLinkError.invalidEndpoint) {
+            _ = try PairingDeepLink(
+                endpoint: URL(string: "http://192.168.1.10:48473")!,
+                alternateEndpoints: [URL(string: "http://example.com")!],
+                pairingId: "pair-demo-003",
+                pairingSecret: secret,
+                initiatorPublicKey: publicKey
+            )
+        }
+    }
+
+    @Test("非 alt 字段重复仍然被拒绝")
+    func duplicateNonAlternateFieldRejected() throws {
+        let secret = Base64URL.encode(Data(repeating: 7, count: 32))
+        let publicKey = Base64URL.encode(Data(repeating: 8, count: 32))
+        let raw = "wootodo://pair?endpoint=http%3A%2F%2F192.168.1.10%3A48473"
+            + "&pairingId=a&pairingId=b"
+            + "&pairingSecret=\(secret)&initiatorPublicKey=\(publicKey)"
+        #expect(throws: PairingDeepLinkError.duplicateOrUnknownField) {
+            _ = try PairingDeepLink(url: URL(string: raw)!)
+        }
+    }
+
+    @Test("局域网候选地址按 Wi-Fi、桥接、其他网卡排序")
+    func candidateHostOrdering() {
+        #expect(
+            LocalNetworkSyncEndpointResolver.candidateHosts(
+                localHost: "mac.local",
+                privateIPv4s: ["192.168.2.1", "10.0.0.9"]
+            ) == ["mac.local", "192.168.2.1", "10.0.0.9"]
+        )
+        #expect(
+            LocalNetworkSyncEndpointResolver.candidateHosts(localHost: nil, privateIPv4s: [])
+                .isEmpty
+        )
+    }
 }

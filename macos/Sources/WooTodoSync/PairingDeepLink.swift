@@ -144,6 +144,9 @@ public enum PairingDeepLinkError: Error, Equatable, LocalizedError {
 
 public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
     public let endpoint: URL
+    /// 同一台主机上其他可能可达的地址。手机端会按顺序重试。
+    /// 热点拓扑下 `xxx.local` 常常解析不到或解析到错网卡，必须靠这些备选地址。
+    public let alternateEndpoints: [URL]
     public let pairingId: String
     public let pairingSecret: String
     public let initiatorPublicKey: String
@@ -151,6 +154,7 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
 
     public init(
         endpoint: URL,
+        alternateEndpoints: [URL] = [],
         pairingId: String,
         pairingSecret: String,
         initiatorPublicKey: String,
@@ -158,6 +162,15 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
     ) throws {
         guard SyncEndpointPolicy.isAllowed(endpoint) else {
             throw PairingDeepLinkError.invalidEndpoint
+        }
+        var seen = Set([endpoint.absoluteString])
+        let resolvedAlternates = try alternateEndpoints.compactMap { candidate -> URL? in
+            guard SyncEndpointPolicy.isAllowed(candidate) else {
+                throw PairingDeepLinkError.invalidEndpoint
+            }
+            let key = candidate.absoluteString
+            guard seen.insert(key).inserted else { return nil }
+            return candidate
         }
         let identifierCharacters = CharacterSet(
             charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._:-"
@@ -179,6 +192,7 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
             throw PairingDeepLinkError.invalidPublicKey
         }
         self.endpoint = endpoint
+        self.alternateEndpoints = resolvedAlternates
         self.pairingId = pairingId
         self.pairingSecret = pairingSecret
         self.initiatorPublicKey = initiatorPublicKey
@@ -193,13 +207,14 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
             throw PairingDeepLinkError.invalidScheme
         }
         let requiredNames = Set(["endpoint", "pairingId", "pairingSecret", "initiatorPublicKey"])
-        let allowedNames = requiredNames.union(["vaultId"])
+        let allowedNames = requiredNames.union(["vaultId", "alt"])
         let items = components.queryItems ?? []
         let names = items.map(\.name)
+        let repeatedNames = names.filter { $0 == "alt" }.count
         guard names.count >= requiredNames.count,
               Set(names).isSuperset(of: requiredNames),
               Set(names).isSubset(of: allowedNames),
-              names.count == Set(names).count else {
+              names.count == Set(names).count + max(0, repeatedNames - 1) else {
             throw PairingDeepLinkError.duplicateOrUnknownField
         }
         func value(_ name: String) throws -> String {
@@ -220,8 +235,17 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
         } else {
             vaultId = nil
         }
+        let alternateEndpoints: [URL] = try items
+            .filter { $0.name == "alt" }
+            .map { item in
+                guard let raw = item.value, !raw.isEmpty, let candidate = URL(string: raw) else {
+                    throw PairingDeepLinkError.invalidEndpoint
+                }
+                return candidate
+            }
         try self.init(
             endpoint: endpoint,
+            alternateEndpoints: alternateEndpoints,
             pairingId: value("pairingId"),
             pairingSecret: value("pairingSecret"),
             initiatorPublicKey: value("initiatorPublicKey"),
@@ -239,6 +263,7 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
             URLQueryItem(name: "pairingSecret", value: pairingSecret),
             URLQueryItem(name: "initiatorPublicKey", value: initiatorPublicKey),
         ] + (vaultId.map { [URLQueryItem(name: "vaultId", value: $0)] } ?? [])
+            + alternateEndpoints.map { URLQueryItem(name: "alt", value: $0.absoluteString) }
         guard let url = components.url else {
             throw PairingDeepLinkError.cannotEncode
         }
@@ -247,7 +272,7 @@ public struct PairingDeepLink: Equatable, Sendable, CustomStringConvertible, Cus
 
     /// 严禁把完整深链写入日志；description 固定隐藏 secret 与临时公钥。
     public var description: String {
-        "PairingDeepLink(endpoint: \(endpoint.absoluteString), pairingId: \(pairingId), pairingSecret: <已隐藏>, initiatorPublicKey: <已隐藏>)"
+        "PairingDeepLink(endpoint: \(endpoint.absoluteString), alternates: \(alternateEndpoints.count), pairingId: \(pairingId), pairingSecret: <已隐藏>, initiatorPublicKey: <已隐藏>)"
     }
 
     public var debugDescription: String { description }

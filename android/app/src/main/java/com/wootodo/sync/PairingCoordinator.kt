@@ -88,20 +88,15 @@ class PairingCoordinator(
         var sessionKeyToDestroy: ByteArray? = null
 
         try {
-            val transport = transportFactory(link.endpoint)
             onProgress(PairingProgress.Claiming)
-            val claim = transport.claimPairing(
-                link.pairingId,
-                PairingClaimRequest(
-                    pairingSecret = link.pairingSecret,
-                    deviceToken = deviceToken,
-                    device = DeviceRegistration(
-                        name = normalizedDeviceName,
-                        platform = DevicePlatform.ANDROID,
-                        publicKey = keyPair.publicKeyBase64Url,
-                    ),
-                ),
+            val established = claimOnReachableEndpoint(
+                link = link,
+                deviceName = normalizedDeviceName,
+                deviceToken = deviceToken,
+                keyPair = keyPair,
             )
+            val transport = established.transport
+            val claim = established.claim
             currentCoroutineContext().ensureActive()
             validateClaim(link, claim)
 
@@ -152,6 +147,7 @@ class PairingCoordinator(
                         }
                         val credentials = openCredentials(
                             link = link,
+                            endpoint = established.endpoint,
                             claim = claim,
                             result = result,
                             deviceToken = deviceToken,
@@ -199,8 +195,52 @@ class PairingCoordinator(
         }
     }
 
+    private class EstablishedPairing(
+        val transport: PairingTransport,
+        val claim: PairingClaimData,
+        val endpoint: String,
+    )
+
+    /**
+     * 按主地址、备选地址的顺序逐个尝试。热点或双网卡场景下第一个地址常常不可达，
+     * 只有传输层失败才换下一个；服务端返回的业务错误直接上抛，不重复消耗配对会话。
+     */
+    private suspend fun claimOnReachableEndpoint(
+        link: PairingDeepLink,
+        deviceName: String,
+        deviceToken: String,
+        keyPair: PairingKeyPair,
+    ): EstablishedPairing {
+        var lastFailure: SyncApiException? = null
+        for (candidate in link.endpointCandidates) {
+            currentCoroutineContext().ensureActive()
+            try {
+                val transport = transportFactory(candidate)
+                val claim = transport.claimPairing(
+                    link.pairingId,
+                    PairingClaimRequest(
+                        pairingSecret = link.pairingSecret,
+                        deviceToken = deviceToken,
+                        device = DeviceRegistration(
+                            name = deviceName,
+                            platform = DevicePlatform.ANDROID,
+                            publicKey = keyPair.publicKeyBase64Url,
+                        ),
+                    ),
+                )
+                return EstablishedPairing(transport, claim, candidate)
+            } catch (error: SyncApiException.Transport) {
+                lastFailure = error
+            } catch (error: SyncApiException.InvalidEndpoint) {
+                lastFailure = error
+            }
+        }
+        throw lastFailure ?: PairingException.InvalidResult
+    }
+
     private fun openCredentials(
         link: PairingDeepLink,
+        endpoint: String,
         claim: PairingClaimData,
         result: PairingResultData,
         deviceToken: String,
@@ -231,7 +271,7 @@ class PairingCoordinator(
         )
         try {
             return SyncCredentials(
-                endpoint = link.endpoint,
+                endpoint = endpoint,
                 vaultId = vaultId,
                 deviceId = deviceId,
                 deviceToken = deviceToken,

@@ -605,8 +605,11 @@ final class SyncSettingsStore: ObservableObject {
             guard created.initiatorPublicKey == keyPair.publicKeyBase64URL else {
                 throw InitiatorPairingStateError.responseMismatch
             }
+            let alternates = LocalNetworkSyncEndpointResolver.endpointCandidates()
+                .filter { $0.absoluteString != credentials.endpoint.absoluteString }
             let deepLink = try PairingDeepLink(
                 endpoint: credentials.endpoint,
+                alternateEndpoints: alternates,
                 pairingId: created.pairingId,
                 pairingSecret: created.pairingSecret,
                 initiatorPublicKey: created.initiatorPublicKey,

@@ -28,6 +28,49 @@ class PairingDeepLinkTest {
     }
 
     @Test
+    fun `配对深链携带备选地址并按顺序去重`() {
+        val secret = Base64Url.encode(ByteArray(32) { 1 })
+        val publicKey = Base64Url.encode(ByteArray(32) { 2 })
+        val link = PairingDeepLink(
+            endpoint = "http://mac.local:48473",
+            pairingId = "pair-alt-001",
+            pairingSecret = secret,
+            initiatorPublicKey = publicKey,
+            vaultId = "vault-alt",
+            alternateEndpoints = listOf(
+                "http://192.168.43.12:48473",
+                "http://192.168.2.1:48473",
+                "http://mac.local:48473",
+            ),
+        )
+
+        val parsed = PairingDeepLink.parse(link.toUri())
+
+        assertEquals("http://mac.local:48473", parsed.endpoint)
+        assertEquals(
+            listOf("http://mac.local:48473", "http://192.168.43.12:48473", "http://192.168.2.1:48473"),
+            parsed.endpointCandidates,
+        )
+        assertEquals(listOf("http://192.168.43.12:48473", "http://192.168.2.1:48473"), parsed.alternateEndpoints)
+    }
+
+    @Test
+    fun `备选地址必须同样是局域网地址`() {
+        val secret = Base64Url.encode(ByteArray(32) { 3 })
+        val publicKey = Base64Url.encode(ByteArray(32) { 4 })
+        assertThrows(IllegalArgumentException::class.java) {
+            PairingDeepLink(
+                endpoint = "http://192.168.1.10:48473",
+                pairingId = "pair-alt-002",
+                pairingSecret = secret,
+                initiatorPublicKey = publicKey,
+                alternateEndpoints = listOf("http://example.com:48473"),
+            )
+            Unit
+        }
+    }
+
+    @Test
     fun `配对深链拒绝未知字段和短密钥`() {
         assertThrows(IllegalArgumentException::class.java) {
             PairingDeepLink.parse(

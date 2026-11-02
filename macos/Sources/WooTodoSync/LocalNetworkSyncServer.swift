@@ -908,9 +908,11 @@ private extension SyncPulledOperation {
 }
 
 public enum LocalNetworkSyncEndpointResolver {
-    public static func preferredEndpoint(
+    /// 按可用性排序的全部候选地址：mDNS 主机名优先，其次是本机私有 IPv4。
+    /// 热点或双网卡场景下单一地址经常不可达，配对链接需要把备选地址一起告诉手机。
+    public static func endpointCandidates(
         port: UInt16 = LocalNetworkSyncConstants.defaultPort
-    ) throws -> URL {
+    ) -> [URL] {
         let processHost = ProcessInfo.processInfo.hostName.lowercased()
         let localHost: String? = {
             if processHost.hasSuffix(".local") { return processHost }
@@ -919,21 +921,40 @@ public enum LocalNetworkSyncEndpointResolver {
             }
             return nil
         }()
-        // `.local` 主机名会随 mDNS 解析到当前地址，不把 DHCP 分配的 IPv4 固化进配对身份。
-        for host in candidateHosts(localHost: localHost, privateIPv4: privateIPv4Address()) {
+        var urls: [URL] = []
+        var seen = Set<String>()
+        for host in candidateHosts(localHost: localHost, privateIPv4s: privateIPv4Addresses()) {
             var components = URLComponents()
             components.scheme = "http"
             components.host = host
             components.port = Int(port)
-            if let url = components.url, SyncEndpointPolicy.scope(of: url) == .localNetwork {
-                return url
-            }
+            guard let url = components.url,
+                  SyncEndpointPolicy.scope(of: url) == .localNetwork else { continue }
+            guard seen.insert(url.absoluteString).inserted else { continue }
+            urls.append(url)
         }
-        throw LocalSyncServerError.cannotResolveEndpoint
+        return urls
     }
 
+    public static func preferredEndpoint(
+        port: UInt16 = LocalNetworkSyncConstants.defaultPort
+    ) throws -> URL {
+        guard let first = endpointCandidates(port: port).first else {
+            throw LocalSyncServerError.cannotResolveEndpoint
+        }
+        return first
+    }
+
+    /// 候选主机名：`.local` 在前，然后是各网卡的私有 IPv4（Wi-Fi 优先，热点桥接次之）。
     static func candidateHosts(localHost: String?, privateIPv4: String?) -> [String] {
         [localHost, privateIPv4].compactMap { $0 }
+    }
+
+    static func candidateHosts(localHost: String?, privateIPv4s: [String]) -> [String] {
+        var hosts: [String] = []
+        if let localHost { hosts.append(localHost) }
+        hosts.append(contentsOf: privateIPv4s)
+        return hosts
     }
 
     /// Mac 作为局域网主机时通过回环访问自己的服务；对外公布的地址仍供其他设备使用。
@@ -958,11 +979,14 @@ public enum LocalNetworkSyncEndpointResolver {
         return value.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
     }
 
-    private static func privateIPv4Address() -> String? {
+    /// 枚举本机可用的私有 IPv4：排除回环、VPN、点对点与 AirDrop 等不可从手机访问的接口，
+    /// Wi-Fi / 以太网在前，macOS 网络共享的热点桥接（bridge*）次之。
+    private static func privateIPv4Addresses() -> [String] {
         var pointer: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&pointer) == 0, let first = pointer else { return nil }
+        guard getifaddrs(&pointer) == 0, let first = pointer else { return [] }
         defer { freeifaddrs(pointer) }
 
+        var collected: [(name: String, address: String)] = []
         var current: UnsafeMutablePointer<ifaddrs>? = first
         while let interfacePointer = current {
             let interface = interfacePointer.pointee
@@ -973,6 +997,8 @@ public enum LocalNetworkSyncEndpointResolver {
                   (Int32(interface.ifa_flags) & IFF_LOOPBACK) == 0 else {
                 continue
             }
+            let name = String(cString: interface.ifa_name)
+            guard !isUnreachableInterface(name) else { continue }
             var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             let result = getnameinfo(
                 address,
@@ -985,9 +1011,34 @@ public enum LocalNetworkSyncEndpointResolver {
             )
             guard result == 0 else { continue }
             let value = String(cString: buffer)
-            if isPrivateIPv4(value) { return value }
+            guard isPrivateIPv4(value), !collected.contains(where: { $0.address == value }) else {
+                continue
+            }
+            collected.append((name: name, address: value))
         }
-        return nil
+        let ranked = collected.map { entry in
+            (name: entry.name, address: entry.address, rank: interfaceRank(entry.name))
+        }
+        let sorted = ranked.sorted { left, right in
+            if left.rank != right.rank { return left.rank < right.rank }
+            return left.name < right.name
+        }
+        return sorted.map { $0.address }
+    }
+
+    private static func isUnreachableInterface(_ name: String) -> Bool {
+        let excluded = ["utun", "ipsec", "ppp", "awdl", "llw", "anpi", "gif", "stf", "ap1"]
+        return excluded.contains { name.hasPrefix($0) }
+    }
+
+    private static func interfaceRank(_ name: String) -> Int {
+        if name.hasPrefix("en") { return 0 }
+        if name.hasPrefix("bridge") { return 1 }
+        return 2
+    }
+
+    private static func privateIPv4Address() -> String? {
+        privateIPv4Addresses().first
     }
 
     private static func isPrivateIPv4(_ value: String) -> Bool {

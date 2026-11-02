@@ -46,6 +46,62 @@ class PairingCoordinatorTest {
     }
 
     @Test
+    fun `主地址不可达时按备选地址重试并保存可用地址`() = runBlocking {
+        val alternate = "http://192.168.43.12:48473"
+        val fixture = PairingFixture(alternateEndpoints = listOf(alternate))
+        val store = MemoryCredentialsStore()
+        val attempts = mutableListOf<String>()
+        val coordinator = PairingCoordinator(
+            transportFactory = { endpoint ->
+                attempts += endpoint
+                if (endpoint != alternate) {
+                    throw SyncApiException.Transport(java.net.ConnectException("地址不可达"))
+                }
+                fixture.transport
+            },
+            credentialsStore = store,
+            keyPairFactory = { fixture.claimant },
+            tokenFactory = { fixture.deviceToken.copyOf() },
+            clockMillis = { fixture.now },
+            pause = {},
+        )
+
+        coordinator.pair(fixture.link, "Android 测试设备")
+
+        assertEquals(listOf(fixture.link.endpoint, alternate), attempts)
+        assertEquals(alternate, requireNotNull(store.credentials).endpoint)
+    }
+
+    @Test
+    fun `全部候选地址都不可达时抛出传输错误且不落盘`() = runBlocking {
+        val fixture = PairingFixture(alternateEndpoints = listOf("http://192.168.43.12:48473"))
+        val store = MemoryCredentialsStore()
+        val attempts = mutableListOf<String>()
+        val coordinator = PairingCoordinator(
+            transportFactory = { endpoint ->
+                attempts += endpoint
+                throw SyncApiException.Transport(java.net.ConnectException("地址不可达"))
+            },
+            credentialsStore = store,
+            keyPairFactory = { fixture.claimant },
+            tokenFactory = { fixture.deviceToken.copyOf() },
+            clockMillis = { fixture.now },
+            pause = {},
+        )
+
+        var failure: Throwable? = null
+        try {
+            coordinator.pair(fixture.link, "Android 测试设备")
+        } catch (error: Throwable) {
+            failure = error
+        }
+
+        assertTrue(failure is SyncApiException.Transport)
+        assertEquals(2, attempts.size)
+        assertNull(store.credentials)
+    }
+
+    @Test
     fun `确认结果发起方公钥不一致时拒绝落盘`() = runBlocking {
         val fixture = PairingFixture(wrongInitiatorInResult = true)
         val store = MemoryCredentialsStore()
@@ -145,6 +201,7 @@ class PairingCoordinatorTest {
 
 private class PairingFixture(
     wrongInitiatorInResult: Boolean = false,
+    alternateEndpoints: List<String> = emptyList(),
 ) {
     val now = 1_000L
     val expiresAt = 601_000L
@@ -162,6 +219,7 @@ private class PairingFixture(
         pairingSecret = Base64Url.encode(pairingSecret),
         initiatorPublicKey = initiator.publicKeyBase64Url,
         vaultId = vaultId,
+        alternateEndpoints = alternateEndpoints,
     )
     val transport = ConfirmingPairingTransport(this, wrongInitiatorInResult)
 }

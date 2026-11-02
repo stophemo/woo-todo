@@ -77,37 +77,47 @@ data class PairingDeepLink(
     val pairingSecret: String,
     val initiatorPublicKey: String,
     val vaultId: String? = null,
+    /** 同一台主机的其他可能可达地址，热点拓扑下 `.local` 经常解析不到。 */
+    val alternateEndpoints: List<String> = emptyList(),
 ) {
     init {
         require(SyncEndpointPolicy.isAllowed(URI(endpoint)))
+        alternateEndpoints.forEach { require(SyncEndpointPolicy.isAllowed(URI(it))) }
         require(identifier.matches(pairingId))
         vaultId?.let { require(identifier.matches(it)) }
         require(Base64Url.decode(pairingSecret).size == 32)
         require(Base64Url.decode(initiatorPublicKey).size == 32)
     }
 
+    /** 主地址在前、备选地址在后，去重后供连接时逐个尝试。 */
+    val endpointCandidates: List<String>
+        get() = (listOf(endpoint) + alternateEndpoints).distinct()
+
     fun toUri(): String {
-        val query = linkedMapOf(
+        val params = linkedMapOf(
             "endpoint" to endpoint,
             "pairingId" to pairingId,
             "pairingSecret" to pairingSecret,
             "initiatorPublicKey" to initiatorPublicKey,
         ).apply { vaultId?.let { put("vaultId", it) } }
-            .entries.joinToString("&") { (key, value) ->
+            .entries.map { (key, value) -> key to value }
+            .toMutableList()
+        alternateEndpoints.distinct().filter { it != endpoint }.forEach { params += "alt" to it }
+        val query = params.joinToString("&") { (key, value) ->
             "$key=${URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")}"
         }
         return "wootodo://pair?$query"
     }
 
     override fun toString(): String =
-        "PairingDeepLink(endpoint=$endpoint, pairingId=$pairingId, " +
-            "pairingSecret=<已隐藏>, initiatorPublicKey=<已隐藏>)"
+        "PairingDeepLink(endpoint=$endpoint, alternates=${alternateEndpoints.size}, " +
+            "pairingId=$pairingId, pairingSecret=<已隐藏>, initiatorPublicKey=<已隐藏>)"
 
     companion object {
         private val identifier = Regex("^[A-Za-z0-9._:-]{1,128}$")
         private val requiredKeys =
             setOf("endpoint", "pairingId", "pairingSecret", "initiatorPublicKey")
-        private val allowedKeys = requiredKeys + "vaultId"
+        private val allowedKeys = requiredKeys + "vaultId" + "alt"
 
         fun parse(source: String): PairingDeepLink {
             val uri = URI(source)
@@ -116,12 +126,19 @@ data class PairingDeepLink(
                     uri.rawPath.isNullOrEmpty() && uri.rawFragment == null,
             )
             val values = linkedMapOf<String, String>()
+            val alternates = mutableListOf<String>()
             uri.rawQuery?.split('&')?.filter { it.isNotEmpty() }?.forEach { part ->
                 val pair = part.split('=', limit = 2)
                 require(pair.size == 2)
                 val key = decode(pair[0])
-                require(key in allowedKeys && key !in values)
-                values[key] = decode(pair[1])
+                require(key in allowedKeys)
+                // alt 允许重复出现，其余字段仍然不能重复。
+                if (key == "alt") {
+                    alternates += decode(pair[1])
+                } else {
+                    require(key !in values)
+                    values[key] = decode(pair[1])
+                }
             }
             require(values.keys.containsAll(requiredKeys))
             require(values.keys.all { it in allowedKeys })
@@ -135,6 +152,8 @@ data class PairingDeepLink(
                 pairingSecret,
                 publicKey,
                 values["vaultId"],
+                // 备选地址去重且剔除与主地址相同的项，避免重复消耗配对尝试。
+                alternates.distinct().filter { it != endpoint },
             )
         }
 

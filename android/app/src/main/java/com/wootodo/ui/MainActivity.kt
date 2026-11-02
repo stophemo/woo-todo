@@ -90,6 +90,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var syncStatus: TextView
     private lateinit var screenTitle: TextView
     private lateinit var dayCounterText: TextView
+    private lateinit var titleEditHint: View
     private lateinit var scopeGroup: RadioGroup
     private var pairingDialog: AlertDialog? = null
     private var pairingSwitchDialog: AlertDialog? = null
@@ -170,6 +171,13 @@ class MainActivity : AppCompatActivity() {
         syncStatus = findViewById(R.id.sync_status)
         screenTitle = findViewById(R.id.screen_title)
         dayCounterText = findViewById(R.id.day_counter_text)
+        titleEditHint = findViewById(R.id.title_edit_hint)
+        // 标题就长在主界面上，点它直接改，不再只能从“更多”菜单里找。
+        findViewById<View>(R.id.title_area).setOnClickListener {
+            if (scopeGroup.checkedRadioButtonId == R.id.scope_today) {
+                showDayCounterSettings()
+            }
+        }
         syncStatus.enableReadOnlyTextSelection()
         dayCounterText.enableReadOnlyTextSelection()
 
@@ -968,6 +976,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderDayCounter() {
         val isToday = scopeGroup.checkedRadioButtonId == R.id.scope_today
+        titleEditHint.isVisible = isToday
         if (!isToday) {
             screenTitle.isVisible = true
             dayCounterText.isVisible = false

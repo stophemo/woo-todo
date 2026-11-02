@@ -96,6 +96,7 @@
     <string name="task_reminder_channel_name">待办提醒</string>
     <string name="task_reminder_channel_description">按每条待办设置的时间发送本地通知</string>
     <string name="day_counter_settings_title">今日显示与小组件</string>
+    <string name="title_edit_hint">编辑今日标题</string>
     <string name="widget_background_opacity">小组件背景不透明度：%1$d%%</string>
     <string name="display_header_template">标题模板</string>
     <string name="display_header_hint">例如：今日任务</string>

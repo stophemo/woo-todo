@@ -27,15 +27,39 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <TextView
-                    android:id="@+id/screen_title"
+                <LinearLayout
+                    android:id="@+id/title_area"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="@string/today_title"
-                    android:textAppearance="?attr/textAppearanceHeadlineMedium"
-                    android:textColor="@color/header_text"
-                    android:textStyle="bold" />
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="2dp">
+
+                    <TextView
+                        android:id="@+id/screen_title"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:text="@string/today_title"
+                        android:textAppearance="?attr/textAppearanceHeadlineMedium"
+                        android:textColor="@color/header_text"
+                        android:textStyle="bold" />
+
+                    <ImageView
+                        android:id="@+id/title_edit_hint"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginStart="8dp"
+                        android:contentDescription="@string/title_edit_hint"
+                        android:src="@drawable/ic_edit"
+                        app:tint="@color/header_muted" />
+                </LinearLayout>
 
                 <Button
                     android:id="@+id/sync_button"

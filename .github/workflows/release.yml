@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+  # 只构建正式签名包、不发布 Release。用于真机验收。
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,6 +17,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: 只接受规范稳定版本
+        if: github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
@@ -24,6 +27,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 校验手写发布说明
+        if: github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
@@ -85,9 +89,12 @@ jobs:
         working-directory: android
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
           SOURCE_VERSION="$(./gradlew -q printVersionName)"
-          test "$SOURCE_VERSION" = "$VERSION"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            test "$SOURCE_VERSION" = "${GITHUB_REF_NAME#v}"
+          else
+            echo "手动构建：使用源码版本 $SOURCE_VERSION"
+          fi
 
       - name: 恢复 Android 签名密钥
         env:
@@ -115,7 +122,11 @@ jobs:
           test -n "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$APK"
           mkdir -p release
-          cp "$APK" "release/Woo-Todo-${GITHUB_REF_NAME}-android.apk"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            cp "$APK" "release/Woo-Todo-${GITHUB_REF_NAME}-android.apk"
+          else
+            cp "$APK" "release/Woo-Todo-android.apk"
+          fi
 
       - name: 上传 Android 产物
         uses: actions/upload-artifact@v4
@@ -181,9 +192,13 @@ jobs:
       - name: 打包并验证应用
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
           SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' macos/Resources/Info.plist)"
-          test "$SOURCE_VERSION" = "$VERSION"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            test "$SOURCE_VERSION" = "${GITHUB_REF_NAME#v}"
+          else
+            echo "手动构建：使用源码版本 $SOURCE_VERSION"
+          fi
+          VERSION="$SOURCE_VERSION"
           MARKETING_VERSION="$VERSION" BUILD_NUMBER="$GITHUB_RUN_NUMBER" \
             ./macos/scripts/package-app.sh --zip
           APP="macos/dist/Woo Todo.app"
@@ -197,9 +212,14 @@ jobs:
           test -f "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
           codesign --verify --deep --strict --verbose=2 "$APP"
           mkdir -p release
-          mv "$ZIP" "release/Woo-Todo-${GITHUB_REF_NAME}-macos-arm64.zip"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            mv "$ZIP" "release/Woo-Todo-${GITHUB_REF_NAME}-macos-arm64.zip"
+          else
+            mv "$ZIP" "release/Woo-Todo-macos-arm64.zip"
+          fi
 
       - name: 生成并校验 Sparkle 更新源
+        if: github.event_name == 'push'
         run: |
           set -euo pipefail
           test -n "$SPARKLE_ED25519_PRIVATE_KEY"
@@ -320,8 +340,8 @@ jobs:
       - android
       - macos
       - windows
-    # Windows 任务被跳过时仍然发布，失败或取消则不发布。
-    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    # Windows 任务被跳过时仍然发布，失败或取消则不发布；手动构建不产生 Release。
+    if: github.event_name == 'push' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

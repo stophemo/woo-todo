@@ -29,6 +29,6 @@ struct QRCodeGeometryTests {
     func rendersLongerPayload() throws {
         let rendered = try #require(QRCodeRenderer.render(longPayload + "&alt=http://172.20.10.2:48473"))
         #expect(rendered.modules >= 45)
-        #expect(rendered.pointSide <= 360)
+        #expect(rendered.pointSide <= 260)
     }
 }

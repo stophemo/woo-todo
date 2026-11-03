@@ -794,18 +794,19 @@ private struct QRCodeView: View {
             } else {
                 Image(systemName: "qrcode")
                     .font(.system(size: 80))
+                    .frame(width: 240, height: 240)
             }
         }
-        .frame(minWidth: 340, minHeight: 340)
-        .padding(12)
+        .padding(8)
         .background(.white, in: RoundedRectangle(cornerRadius: 10))
         .accessibilityLabel(accessibilityLabel)
     }
 }
 
 enum QRCodeRenderer {
-    private static let quietZoneModules = 4
-    private static let targetPointSide = 340
+    // 静默区取 2 个模块足够识别，4 个会显得白边很重。
+    private static let quietZoneModules = 2
+    private static let targetPointSide = 240
 
     struct Rendered {
         let image: NSImage

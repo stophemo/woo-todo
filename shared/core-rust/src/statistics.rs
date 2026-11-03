@@ -65,10 +65,14 @@ pub fn calculate_statistics(
             counts(tasks.iter().filter(|task| task.time_type == value)),
         );
     }
+    // 内置三类始终出现；自定义分类只统计真正用到的，避免列表被空分类撑长。
+    let mut lines: std::collections::BTreeSet<QuestLine> =
+        QuestLine::builtin().into_iter().collect();
+    lines.extend(tasks.iter().map(|task| task.quest_line.clone()));
     let mut by_quest_line = BTreeMap::new();
-    for value in [QuestLine::Main, QuestLine::Side, QuestLine::Extra] {
+    for value in lines {
         by_quest_line.insert(
-            value,
+            value.clone(),
             counts(tasks.iter().filter(|task| task.quest_line == value)),
         );
     }
@@ -92,7 +96,7 @@ pub fn calculate_statistics(
             ended
                 .iter()
                 .copied()
-                .filter(|task| task.quest_line == QuestLine::Main),
+                .filter(|task| task.quest_line.id() == QuestLine::MAIN_ID),
         ),
         by_time_type,
         by_quest_line,

@@ -252,7 +252,7 @@ impl WireTaskPayload {
             period_start: task.period_start,
             deadline_date: task.deadline_date,
             timezone: task.timezone.clone(),
-            quest_line: task.quest_line,
+            quest_line: task.quest_line.clone(),
             state: task.state,
             recurrence: task.recurrence,
             sort_order: i64::from(task.sort_order),
@@ -377,6 +377,50 @@ pub struct WireDisplayConfigurationPayload {
     pub subtitle_template: String,
     pub start_date: NaiveDate,
     pub deadline_date: NaiveDate,
+    /// 任务分类定义；缺省或空表示沿用内置三类，旧版本读写不受影响。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quest_lines: Vec<WireQuestLine>,
+}
+
+/// 一条任务分类定义。`order` 即优先级，越小越靠前。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WireQuestLine {
+    pub id: String,
+    pub name: String,
+    pub order: i32,
+}
+
+impl WireQuestLine {
+    pub const MAXIMUM_NAME_CHARS: usize = 12;
+    pub const MAXIMUM_ORDER: i32 = 63;
+
+    pub fn new(id: impl Into<String>, name: impl Into<String>, order: i32) -> CoreResult<Self> {
+        let value = Self {
+            id: id.into(),
+            name: name.into(),
+            order,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn validate(&self) -> CoreResult<()> {
+        QuestLine::new(self.id.clone())?;
+        let name = self.name.trim();
+        if name.is_empty()
+            || self.name.chars().count() > Self::MAXIMUM_NAME_CHARS
+            || self.name.chars().any(is_json_newline)
+        {
+            return Err(CoreError::validation(
+                "任务分类名称必须为 1-12 个字符且不含换行",
+            ));
+        }
+        if !(0..=Self::MAXIMUM_ORDER).contains(&self.order) {
+            return Err(CoreError::validation("任务分类排序值超出范围"));
+        }
+        Ok(())
+    }
 }
 
 impl WireDisplayConfigurationPayload {
@@ -394,9 +438,44 @@ impl WireDisplayConfigurationPayload {
             subtitle_template: subtitle_template.into(),
             start_date,
             deadline_date,
+            quest_lines: Vec::new(),
         };
         value.validate()?;
         Ok(value)
+    }
+
+    /// 覆盖分类定义并重新校验；空列表表示回到内置三类。
+    pub fn with_quest_lines(mut self, quest_lines: Vec<WireQuestLine>) -> CoreResult<Self> {
+        self.quest_lines = quest_lines;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// 按优先级排序后的分类定义；未自定义时返回内置三类。
+    pub fn sorted_quest_lines(&self) -> Vec<WireQuestLine> {
+        if self.quest_lines.is_empty() {
+            return QuestLine::builtin()
+                .into_iter()
+                .enumerate()
+                .map(|(index, line)| WireQuestLine {
+                    name: match line.id() {
+                        QuestLine::MAIN_ID => "主线",
+                        QuestLine::SIDE_ID => "支线",
+                        _ => "外传",
+                    }
+                    .to_owned(),
+                    id: line.id().to_owned(),
+                    order: index as i32,
+                })
+                .collect();
+        }
+        let mut lines = self.quest_lines.clone();
+        lines.sort_by(|left, right| {
+            left.order
+                .cmp(&right.order)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        lines
     }
 
     pub fn validate(&self) -> CoreResult<()> {
@@ -412,6 +491,24 @@ impl WireDisplayConfigurationPayload {
             || self.subtitle_template.chars().any(is_json_newline)
         {
             return Err(CoreError::validation("显示模板长度超限或包含换行"));
+        }
+        self.validate_quest_lines()
+    }
+
+    fn validate_quest_lines(&self) -> CoreResult<()> {
+        if self.quest_lines.len() > QuestLine::MAXIMUM_DEFINITIONS {
+            return Err(CoreError::validation("任务分类数量超过上限"));
+        }
+        let mut ids = std::collections::BTreeSet::new();
+        let mut orders = std::collections::BTreeSet::new();
+        for line in &self.quest_lines {
+            line.validate()?;
+            if !ids.insert(line.id.clone()) {
+                return Err(CoreError::validation("任务分类标识重复"));
+            }
+            if !orders.insert(line.order) {
+                return Err(CoreError::validation("任务分类优先级重复"));
+            }
         }
         Ok(())
     }

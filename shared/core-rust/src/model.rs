@@ -20,12 +20,113 @@ pub enum TimeType {
     Someday,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum QuestLine {
-    Main,
-    Side,
-    Extra,
+/// 任务分类标识。
+///
+/// 内置三类保留 `main` / `side` / `extra` 三个 id；其余 id 由用户在设备上自定义，
+/// 分类的显示名与顺序属于显示配置，随同步下发，任务本身只保存 id。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct QuestLine(String);
+
+impl QuestLine {
+    pub const MAIN_ID: &'static str = "main";
+    pub const SIDE_ID: &'static str = "side";
+    pub const EXTRA_ID: &'static str = "extra";
+    pub const MAXIMUM_ID_BYTES: usize = 32;
+    /// 与 schema 的上限保持一致。
+    pub const MAXIMUM_DEFINITIONS: usize = 8;
+
+    pub fn new(id: impl Into<String>) -> CoreResult<Self> {
+        let value = id.into();
+        if !is_valid_quest_line_id(&value) {
+            return Err(CoreError::validation(
+                "任务分类标识必须是 1-32 位小写字母、数字、下划线或连字符，且以字母或数字开头",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn main() -> Self {
+        Self(Self::MAIN_ID.to_owned())
+    }
+
+    pub fn side() -> Self {
+        Self(Self::SIDE_ID.to_owned())
+    }
+
+    pub fn extra() -> Self {
+        Self(Self::EXTRA_ID.to_owned())
+    }
+
+    /// 内置三分类，按默认优先级排列。
+    pub fn builtin() -> [Self; 3] {
+        [Self::main(), Self::side(), Self::extra()]
+    }
+
+    pub fn id(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_builtin(&self) -> bool {
+        matches!(
+            self.0.as_str(),
+            Self::MAIN_ID | Self::SIDE_ID | Self::EXTRA_ID
+        )
+    }
+}
+
+pub fn is_valid_quest_line_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() || bytes.len() > QuestLine::MAXIMUM_ID_BYTES {
+        return false;
+    }
+    let first = bytes[0];
+    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
+        return false;
+    }
+    bytes[1..].iter().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_' || *byte == b'-'
+    })
+}
+
+impl std::fmt::Display for QuestLine {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl From<QuestLine> for String {
+    fn from(value: QuestLine) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<String> for QuestLine {
+    type Error = CoreError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for QuestLine {
+    type Error = CoreError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl Serialize for QuestLine {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for QuestLine {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Self::new(raw).map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

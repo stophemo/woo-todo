@@ -122,7 +122,7 @@ impl TaskRepository {
         now: i64,
     ) -> CoreResult<String> {
         let period_start = normalize_start(time_type, target_date);
-        let sort_order = self.next_sort_order(time_type, period_start, quest_line)?;
+        let sort_order = self.next_sort_order(time_type, period_start, &quest_line)?;
         let task = TodoTask::create(
             title,
             time_type,
@@ -166,14 +166,14 @@ impl TaskRepository {
         current.title = validate_title(title)?;
         current.time_type = time_type;
         current.period_start = period_start;
-        current.quest_line = quest_line;
+        current.quest_line = quest_line.clone();
         current.recurrence = if repeats && time_type != TimeType::Someday {
             Recurrence::Repeat
         } else {
             Recurrence::Once
         };
         if moved {
-            current.sort_order = self.next_sort_order(time_type, period_start, quest_line)?;
+            current.sort_order = self.next_sort_order(time_type, period_start, &quest_line)?;
         }
         current.updated_at = now;
         current.reminder_time = if time_type == TimeType::Someday {
@@ -921,7 +921,7 @@ impl TaskRepository {
         &self,
         time_type: TimeType,
         period_start: Option<NaiveDate>,
-        quest_line: QuestLine,
+        quest_line: &QuestLine,
     ) -> CoreResult<i32> {
         let value: i32 = self.connection.query_row(
             r#"
@@ -2048,7 +2048,7 @@ fn upsert(transaction: &Transaction<'_>, task: &TodoTask) -> CoreResult<()> {
             time_type_wire(task.time_type),
             task.period_start
                 .map(|value| value.format("%Y-%m-%d").to_string()),
-            quest_line_wire(task.quest_line),
+            quest_line_wire(&task.quest_line),
             state_wire(task.state),
             recurrence_wire(task.recurrence),
             task.sort_order,
@@ -2080,14 +2080,7 @@ fn parse_time_type(value: &str) -> rusqlite::Result<TimeType> {
 }
 
 fn parse_quest_line(value: &str) -> rusqlite::Result<QuestLine> {
-    match value {
-        "main" => Ok(QuestLine::Main),
-        "side" => Ok(QuestLine::Side),
-        "extra" => Ok(QuestLine::Extra),
-        _ => Err(sql_conversion(CoreError::validation(
-            "数据库 quest_line 无效",
-        ))),
-    }
+    QuestLine::new(value).map_err(sql_conversion)
 }
 
 fn parse_state(value: &str) -> rusqlite::Result<TaskState> {
@@ -2117,12 +2110,8 @@ fn time_type_wire(value: TimeType) -> &'static str {
     crate::period::time_type_wire(value)
 }
 
-fn quest_line_wire(value: QuestLine) -> &'static str {
-    match value {
-        QuestLine::Main => "main",
-        QuestLine::Side => "side",
-        QuestLine::Extra => "extra",
-    }
+fn quest_line_wire(value: &QuestLine) -> &str {
+    value.id()
 }
 
 fn state_wire(value: TaskState) -> &'static str {

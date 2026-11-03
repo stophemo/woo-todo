@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 
+const QUEST_LINE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/u;
+
 const files = [
   "shared/schema/task.schema.json",
   "shared/schema/sync.schema.json",
@@ -250,6 +252,42 @@ function deterministicOccurrenceId(seriesId, timeType, periodStart) {
   ].join("-");
 }
 
+function validateQuestLines(questLines) {
+  if (questLines === undefined) return;
+  if (!Array.isArray(questLines) || questLines.length === 0 || questLines.length > 8) {
+    throw new Error("任务分类定义数量无效");
+  }
+  const ids = new Set();
+  const orders = new Set();
+  for (const line of questLines) {
+    const keys = Object.keys(line ?? {});
+    if (
+      keys.length !== 3
+      || !keys.includes("id")
+      || !keys.includes("name")
+      || !keys.includes("order")
+    ) {
+      throw new Error("任务分类定义字段无效");
+    }
+    if (typeof line.id !== "string" || !QUEST_LINE_PATTERN.test(line.id) || ids.has(line.id)) {
+      throw new Error("任务分类标识无效或重复");
+    }
+    ids.add(line.id);
+    if (
+      typeof line.name !== "string"
+      || line.name.trim().length === 0
+      || codePointLength(line.name) > 12
+      || /[\r\n\u000B\u000C\u0085\u2028\u2029]/u.test(line.name)
+    ) {
+      throw new Error("任务分类名称无效");
+    }
+    if (!Number.isInteger(line.order) || line.order < 0 || line.order > 63 || orders.has(line.order)) {
+      throw new Error("任务分类优先级无效或重复");
+    }
+    orders.add(line.order);
+  }
+}
+
 function validateTaskPayload(payload) {
   const maximumSafeInteger = Number.MAX_SAFE_INTEGER;
   const identifierPattern = /^[A-Za-z0-9._:-]+$/;
@@ -269,14 +307,18 @@ function validateTaskPayload(payload) {
     return;
   }
   if (payload.entityType === "displayConfiguration") {
-    const expectedKeys = new Set([
+    const allowedKeys = new Set([
+      "protocolVersion", "entityType", "id", "headerTemplate",
+      "subtitleTemplate", "startDate", "deadlineDate", "questLines",
+    ]);
+    const requiredKeys = [
       "protocolVersion", "entityType", "id", "headerTemplate",
       "subtitleTemplate", "startDate", "deadlineDate",
-    ]);
+    ];
     const actualKeys = Object.keys(payload);
     if (
-      actualKeys.length !== expectedKeys.size
-      || actualKeys.some((key) => !expectedKeys.has(key))
+      requiredKeys.some((key) => !actualKeys.includes(key))
+      || actualKeys.some((key) => !allowedKeys.has(key))
       || payload.id !== "display.today.configuration"
       || typeof payload.headerTemplate !== "string"
       || codePointLength(payload.headerTemplate) > 80
@@ -291,6 +333,7 @@ function validateTaskPayload(payload) {
     }
     parseDateKey(payload.startDate);
     parseDateKey(payload.deadlineDate);
+    validateQuestLines(payload.questLines);
     return;
   }
   if (payload.entityType !== "task") {
@@ -313,6 +356,9 @@ function validateTaskPayload(payload) {
     || codePointLength(payload.title) > 120
   ) {
     throw new Error("任务 ID、seriesId 或标题长度无效");
+  }
+  if (typeof payload.questLine !== "string" || !QUEST_LINE_PATTERN.test(payload.questLine)) {
+    throw new Error("任务分类标识无效");
   }
   if (!isBoundedInteger(payload.sortOrder, 2_147_483_647)) {
     throw new Error("任务排序值越界");

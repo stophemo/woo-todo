@@ -5,7 +5,8 @@ use rusqlite::Connection;
 use tempfile::tempdir;
 use woo_todo_core::{
     QuestLine, Recurrence, ReminderTime, TaskRepository, TaskState, TimeType, TodoTask,
-    notification_plans, occurrence_id, settle,
+    WireDisplayConfigurationPayload, WireQuestLine, calculate_statistics, notification_plans,
+    occurrence_id, settle,
 };
 
 fn date(value: &str) -> NaiveDate {
@@ -17,7 +18,7 @@ fn task(id: &str, start: &str, repeats: bool, now: i64) -> TodoTask {
         "每日复盘",
         TimeType::Day,
         date(start),
-        QuestLine::Main,
+        QuestLine::main(),
         repeats,
         0,
         now,
@@ -145,7 +146,7 @@ fn repository_round_trips_and_settles_idempotently() {
             "月度复盘",
             TimeType::Month,
             date("2026-05-22"),
-            QuestLine::Main,
+            QuestLine::main(),
             true,
             None,
             None,
@@ -180,7 +181,7 @@ fn repository_round_trips_optional_deadline() {
             "带截止日期的任务",
             TimeType::Day,
             date("2026-07-28"),
-            QuestLine::Main,
+            QuestLine::main(),
             false,
             None,
             Some(deadline),
@@ -212,7 +213,7 @@ fn repository_keeps_overdue_once_tasks_in_current_scope() {
             "跨日后仍待办",
             TimeType::Day,
             yesterday,
-            QuestLine::Main,
+            QuestLine::main(),
             false,
             None,
             None,
@@ -224,7 +225,7 @@ fn repository_keeps_overdue_once_tasks_in_current_scope() {
             "跨日重复任务",
             TimeType::Day,
             yesterday,
-            QuestLine::Side,
+            QuestLine::side(),
             true,
             None,
             None,
@@ -354,7 +355,7 @@ fn repository_rejects_deleted_and_mutated_settled_tasks_transactionally() {
             "只结算一次",
             TimeType::Day,
             date("2026-07-24"),
-            QuestLine::Main,
+            QuestLine::main(),
             false,
             None,
             None,
@@ -388,7 +389,7 @@ fn repository_clears_selected_and_all_history_idempotently() {
             "已完成",
             TimeType::Day,
             date("2026-07-24"),
-            QuestLine::Main,
+            QuestLine::main(),
             false,
             None,
             None,
@@ -400,7 +401,7 @@ fn repository_clears_selected_and_all_history_idempotently() {
             "已 Pass",
             TimeType::Day,
             date("2026-07-24"),
-            QuestLine::Side,
+            QuestLine::side(),
             false,
             None,
             None,
@@ -412,7 +413,7 @@ fn repository_clears_selected_and_all_history_idempotently() {
             "保留待办",
             TimeType::Day,
             date("2026-07-24"),
-            QuestLine::Extra,
+            QuestLine::extra(),
             false,
             None,
             None,
@@ -447,7 +448,7 @@ fn repository_reopens_only_current_completed_tasks_and_resettles_idempotently() 
             "误点完成的每日复盘",
             TimeType::Day,
             date("2026-07-24"),
-            QuestLine::Main,
+            QuestLine::main(),
             true,
             None,
             None,
@@ -503,7 +504,7 @@ fn someday_task_cannot_repeat_or_schedule_notification() {
         "闲时阅读",
         TimeType::Someday,
         date("2026-07-24"),
-        QuestLine::Extra,
+        QuestLine::extra(),
         true,
         0,
         1,
@@ -518,4 +519,98 @@ fn someday_task_cannot_repeat_or_schedule_notification() {
 
     value.recurrence = Recurrence::Repeat;
     assert!(value.validate().is_err());
+}
+
+#[test]
+fn 自定义任务分类标识按协议规则校验() {
+    for valid in [
+        "main",
+        "side",
+        "extra",
+        "work",
+        "deep-work",
+        "v2_side",
+        "a1",
+    ] {
+        let line = QuestLine::new(valid).expect(valid);
+        assert_eq!(line.id(), valid);
+    }
+    for invalid in [
+        "",
+        "Main",
+        "工作",
+        "-lead",
+        "_lead",
+        "has space",
+        &"x".repeat(33),
+    ] {
+        assert!(QuestLine::new(invalid).is_err(), "{invalid} 不应通过校验");
+    }
+    assert!(QuestLine::main().is_builtin());
+    assert!(!QuestLine::new("work").unwrap().is_builtin());
+}
+
+#[test]
+fn 统计会覆盖任务里出现的自定义分类() {
+    let reference = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap();
+    let custom = QuestLine::new("work").unwrap();
+    let mut custom_task = task("task-custom", "2026-07-15", false, 1_000);
+    custom_task.quest_line = custom.clone();
+    let snapshot = calculate_statistics(&[custom_task], reference, 10);
+    let counts = snapshot
+        .by_quest_line
+        .get(&custom)
+        .expect("自定义分类应出现在统计里");
+    assert_eq!(counts.pending, 1);
+    // 内置三类即使没有任务也保留，列表不会忽长忽短。
+    assert_eq!(snapshot.by_quest_line.len(), 4);
+}
+
+#[test]
+fn 显示配置携带分类定义且按优先级排序() {
+    let reference = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap();
+    let payload = WireDisplayConfigurationPayload::new("今日任务", "", reference, reference)
+        .unwrap()
+        .with_quest_lines(vec![
+            WireQuestLine::new("work", "工作", 1).unwrap(),
+            WireQuestLine::new("main", "主线", 0).unwrap(),
+        ])
+        .unwrap();
+    let sorted_lines = payload.sorted_quest_lines();
+    let sorted: Vec<&str> = sorted_lines.iter().map(|line| line.id.as_str()).collect();
+    assert_eq!(sorted, ["main", "work"]);
+
+    let json = serde_json::to_string(&payload).unwrap();
+    let decoded: WireDisplayConfigurationPayload = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, payload);
+
+    // 缺省时回退内置三类，保证老数据可读。
+    let legacy =
+        WireDisplayConfigurationPayload::new("今日任务", "", reference, reference).unwrap();
+    assert!(legacy.quest_lines.is_empty());
+    assert_eq!(legacy.sorted_quest_lines().len(), 3);
+}
+
+#[test]
+fn 显示配置拒绝重复或超限的分类定义() {
+    let reference = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap();
+    let base = WireDisplayConfigurationPayload::new("今日任务", "", reference, reference).unwrap();
+    assert!(
+        base.clone()
+            .with_quest_lines(vec![
+                WireQuestLine::new("a", "A", 0).unwrap(),
+                WireQuestLine::new("a", "B", 1).unwrap(),
+            ])
+            .is_err()
+    );
+    assert!(
+        base.clone()
+            .with_quest_lines(vec![
+                WireQuestLine::new("a", "A", 0).unwrap(),
+                WireQuestLine::new("b", "B", 0).unwrap(),
+            ])
+            .is_err()
+    );
+    assert!(WireQuestLine::new("a", "", 0).is_err());
+    assert!(WireQuestLine::new("a", "一二三四五六七八九十一二三", 0).is_err());
 }

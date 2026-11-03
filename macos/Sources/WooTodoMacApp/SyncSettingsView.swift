@@ -785,52 +785,72 @@ private struct QRCodeView: View {
 
     var body: some View {
         Group {
-            if let image = QRCodeRenderer.render(payload) {
-                Image(nsImage: image)
+            if let rendered = QRCodeRenderer.render(payload) {
+                // 必须按整数倍显示：非整数缩放会让模块边界丢行或重行，扫码器直接解不出来。
+                Image(nsImage: rendered.image)
                     .interpolation(.none)
                     .resizable()
-                    .scaledToFit()
+                    .frame(width: rendered.pointSide, height: rendered.pointSide)
             } else {
                 Image(systemName: "qrcode")
                     .font(.system(size: 80))
             }
         }
-        .frame(width: 260, height: 260)
-        .padding(8)
+        .frame(minWidth: 340, minHeight: 340)
+        .padding(12)
         .background(.white, in: RoundedRectangle(cornerRadius: 10))
         .accessibilityLabel(accessibilityLabel)
     }
 }
 
-private enum QRCodeRenderer {
-    private static let quietZoneModules: CGFloat = 4
+enum QRCodeRenderer {
+    private static let quietZoneModules = 4
+    private static let targetPointSide = 340
 
-    static func render(_ payload: String) -> NSImage? {
+    struct Rendered {
+        let image: NSImage
+        /// QR 模块数（含静默区）。
+        let modules: Int
+        /// 以点为单位，且是模块数的整数倍。
+        let pointSide: CGFloat
+    }
+
+    /// 每个模块占多少点。只取整数，避免非整数缩放让模块边界丢行或重行。
+    private static func pointsPerModule(modules: Int) -> Int {
+        max(3, targetPointSide / max(1, modules))
+    }
+
+    static func render(_ payload: String) -> Rendered? {
         guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
         filter.setValue(Data(payload.utf8), forKey: "inputMessage")
-        filter.setValue("M", forKey: "inputCorrectionLevel")
+        // 配对串随备选地址变长，纠错等级越高模块越密。白底黑码且尺寸足够时
+        // L 级已经够用，换来更大的模块更容易扫中。
+        filter.setValue(payload.utf8.count > 160 ? "L" : "M", forKey: "inputCorrectionLevel")
         guard let output = filter.outputImage else { return nil }
+
         let extent = output.extent.integral
+        let modules = Int(extent.width) + quietZoneModules * 2
+        let perModule = pointsPerModule(modules: modules)
         let paddedExtent = CGRect(
             x: 0,
             y: 0,
-            width: extent.width + quietZoneModules * 2,
-            height: extent.height + quietZoneModules * 2
+            width: extent.width + CGFloat(quietZoneModules * 2),
+            height: extent.height + CGFloat(quietZoneModules * 2)
         )
         let positioned = output.transformed(
             by: CGAffineTransform(
-                translationX: quietZoneModules - extent.minX,
-                y: quietZoneModules - extent.minY
+                translationX: CGFloat(quietZoneModules) - extent.minX,
+                y: CGFloat(quietZoneModules) - extent.minY
             )
         )
-        let whiteBackground = CIImage(
-            color: CIColor(red: 1, green: 1, blue: 1)
-        ).cropped(to: paddedExtent)
+        let whiteBackground = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: paddedExtent)
         let padded = positioned.composited(over: whiteBackground)
-        let scaled = padded.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        // 位图按「每模块点数的两倍」放大，Retina 下正好一像素对一像素。
+        let pixelScale = CGFloat(perModule * 2)
+        let scaled = padded.transformed(by: CGAffineTransform(scaleX: pixelScale, y: pixelScale))
         let representation = NSCIImageRep(ciImage: scaled)
         let image = NSImage(size: representation.size)
         image.addRepresentation(representation)
-        return image
+        return Rendered(image: image, modules: modules, pointSide: CGFloat(modules * perModule))
     }
 }

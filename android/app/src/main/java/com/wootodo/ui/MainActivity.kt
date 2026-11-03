@@ -86,7 +86,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var taskList: RecyclerView
     private lateinit var emptyView: TextView
     private lateinit var emptyState: View
-    private lateinit var syncButton: Button
     private lateinit var syncStatus: TextView
     private lateinit var screenTitle: TextView
     private lateinit var dayCounterText: TextView
@@ -167,7 +166,6 @@ class MainActivity : AppCompatActivity() {
         taskList = findViewById(R.id.task_list)
         emptyView = findViewById(R.id.empty_view)
         emptyState = findViewById(R.id.empty_state)
-        syncButton = findViewById(R.id.sync_button)
         syncStatus = findViewById(R.id.sync_status)
         screenTitle = findViewById(R.id.screen_title)
         dayCounterText = findViewById(R.id.day_counter_text)
@@ -234,7 +232,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.reminder_settings_button).setOnClickListener { anchor ->
             showMoreMenu(anchor)
         }
-        syncButton.setOnClickListener { handleSyncAction() }
+        // 配对不再占用顶栏按钮：状态行本身和“更多”菜单都能进入连接与同步。
+        syncStatus.setOnClickListener { handleSyncAction(anchor = syncStatus) }
         // 凭据在 Application 的后台初始化中读取；先按当前快照渲染，避免启动窗口仍可点击。
         renderSyncState((application as WooTodoApplication).syncRuntime.state.value)
         refreshSyncTransportMode()
@@ -675,6 +674,11 @@ class MainActivity : AppCompatActivity() {
             }
             menu.add(0, MENU_DAY_COUNTER, order++, R.string.day_counter_settings_title)
             menu.add(0, MENU_REMINDER, order++, R.string.reminder_settings_title)
+            if ((application as WooTodoApplication).syncRuntime.state.value == SyncRuntimeState.Unpaired) {
+                menu.add(0, MENU_PAIR_DEVICE, order++, R.string.pair_device_menu)
+            } else {
+                menu.add(0, MENU_SYNC_NOW, order++, R.string.sync_now)
+            }
             menu.add(0, MENU_SYNC_METHOD, order++, R.string.sync_method_settings)
             menu.add(0, MENU_CHECK_UPDATE, order++, R.string.check_for_updates)
             setOnMenuItemClickListener { item ->
@@ -684,6 +688,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     MENU_DAY_COUNTER -> showDayCounterSettings()
                     MENU_REMINDER -> showReminderSettings()
+                    MENU_PAIR_DEVICE -> showPairingMethodMenu(anchor)
+                    MENU_SYNC_NOW -> synchronizeNow()
                     MENU_SYNC_METHOD -> showPairingMethodMenu(anchor)
                     MENU_CHECK_UPDATE -> checkForAppUpdate(manual = true)
                     else -> return@setOnMenuItemClickListener false
@@ -1258,27 +1264,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun handleSyncAction() {
+    private fun handleSyncAction(anchor: View) {
         when ((application as WooTodoApplication).syncRuntime.state.value) {
             SyncRuntimeState.Loading,
             SyncRuntimeState.Running,
             -> Unit
 
-            SyncRuntimeState.Unpaired -> showPairingMethodMenu(syncButton)
+            SyncRuntimeState.Unpaired -> showPairingMethodMenu(anchor)
             else -> synchronizeNow()
         }
     }
 
     private fun renderSyncState(state: SyncRuntimeState) {
         latestSyncState = state
-        syncButton.isEnabled = state != SyncRuntimeState.Loading && state != SyncRuntimeState.Running
-        syncButton.setText(
-            if (state == SyncRuntimeState.Unpaired) {
-                R.string.sync_pairing_help
-            } else {
-                R.string.sync_now
-            },
-        )
         val statusText = when (state) {
             SyncRuntimeState.Loading -> getString(R.string.sync_loading)
             SyncRuntimeState.Unpaired -> getString(R.string.sync_unpaired)
@@ -1430,6 +1428,8 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_REMINDER = 1
         private const val MENU_DAY_COUNTER = 4
         private const val MENU_SYNC_METHOD = 5
+        private const val MENU_PAIR_DEVICE = 6
+        private const val MENU_SYNC_NOW = 7
         private const val MENU_CHECK_UPDATE = 6
         private const val MENU_AVAILABLE_UPDATE = 8
         private const val STATE_PAIRING_ACTIVE = "pairing_active"

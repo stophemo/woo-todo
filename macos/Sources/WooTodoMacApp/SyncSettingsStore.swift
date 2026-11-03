@@ -605,8 +605,12 @@ final class SyncSettingsStore: ObservableObject {
             guard created.initiatorPublicKey == keyPair.publicKeyBase64URL else {
                 throw InitiatorPairingStateError.responseMismatch
             }
-            let alternates = LocalNetworkSyncEndpointResolver.endpointCandidates()
-                .filter { $0.absoluteString != credentials.endpoint.absoluteString }
+            // 只带两个备选：再多也扫不准，二维码密度反而上升。
+            let alternates = Array(
+                LocalNetworkSyncEndpointResolver.endpointCandidates()
+                    .filter { $0.absoluteString != credentials.endpoint.absoluteString }
+                    .prefix(2)
+            )
             let deepLink = try PairingDeepLink(
                 endpoint: credentials.endpoint,
                 alternateEndpoints: alternates,

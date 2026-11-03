@@ -162,8 +162,9 @@
     <string name="android_device_name">Android 设备</string>
     <string name="sync_now">同步</string>
     <string name="sync_loading">正在读取同步配置…</string>
-    <string name="sync_unpaired">尚未连接 · 点击“配对”选择连接方式</string>
+    <string name="sync_unpaired">尚未连接 · 点击这里选择连接方式</string>
     <string name="sync_pairing_help">配对</string>
+    <string name="pair_device_menu">配对设备</string>
     <string name="sync_method_settings">同步方式与切换</string>
     <string name="sync_switch_title">确认切换同步方式？</string>
     <string name="sync_switch_to_webdav">切换到第三方 WebDAV</string>

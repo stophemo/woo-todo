@@ -61,16 +61,6 @@
                         app:tint="@color/header_muted" />
                 </LinearLayout>
 
-                <Button
-                    android:id="@+id/sync_button"
-                    style="@style/Widget.Material3.Button.TextButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="0dp"
-                    android:paddingHorizontal="8dp"
-                    android:text="@string/sync_now"
-                    android:textColor="@color/purple_light" />
-
                 <ImageButton
                     android:id="@+id/insights_button"
                     android:layout_width="44dp"
@@ -105,7 +95,10 @@
                 android:id="@+id/sync_status"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingVertical="4dp"
                 android:text="@string/sync_unpaired"
                 android:textAppearance="?attr/textAppearanceBodySmall"
                 android:textColor="@color/header_muted" />

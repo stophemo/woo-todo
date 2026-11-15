@@ -340,8 +340,9 @@ jobs:
       - android
       - macos
       - windows
-    # Windows 任务被跳过时仍然发布，失败或取消则不发布；手动构建不产生 Release。
-    if: github.event_name == 'push' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    # 依赖里有被跳过的任务（未启用 Windows）时，必须显式用 always() 才会执行；
+    # 真正失败或被取消仍然不发布，手动构建也不产生 Release。
+    if: always() && github.event_name == 'push' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -355,7 +355,7 @@ object SyncJsonCodec {
             .put("periodStart", task.periodStart ?: JSONObject.NULL)
             .apply { task.deadlineDate?.let { put("deadlineDate", it) } }
             .put("timezone", task.timezone)
-            .put("questLine", task.questLine.value)
+            .put("questLine", task.questLine)
             .put("state", task.state.value)
             .put("recurrence", task.recurrence.value)
             .put("sortOrder", task.sortOrder)
@@ -384,7 +384,7 @@ object SyncJsonCodec {
             periodStart = value.nullableString("periodStart"),
             deadlineDate = value.nullableString("deadlineDate"),
             timezone = value.string("timezone"),
-            questLine = WireQuestLine.fromWire(value.string("questLine")),
+            questLine = value.string("questLine"),
             state = WireTaskState.fromWire(value.string("state")),
             recurrence = WireRecurrence.fromWire(value.string("recurrence")),
             sortOrder = value.nonNegativeLong("sortOrder"),
@@ -429,6 +429,11 @@ object SyncJsonCodec {
             .put("subtitleTemplate", payload.subtitleTemplate)
             .put("startDate", payload.startDate)
             .put("deadlineDate", payload.deadlineDate)
+            .apply {
+                if (payload.questLines.isNotEmpty()) {
+                    put("questLines", encodeQuestLines(payload.questLines))
+                }
+            }
     }
 
     private fun decodeDisplayConfiguration(value: JSONObject): DisplayConfigurationPayload {
@@ -437,6 +442,7 @@ object SyncJsonCodec {
                 "protocolVersion", "entityType", "id", "headerTemplate",
                 "subtitleTemplate", "startDate", "deadlineDate",
             ),
+            setOf("questLines"),
         )
         return DisplayConfigurationPayload(
             protocolVersion = value.nonNegativeInt("protocolVersion"),
@@ -446,7 +452,39 @@ object SyncJsonCodec {
             subtitleTemplate = value.string("subtitleTemplate"),
             startDate = value.string("startDate"),
             deadlineDate = value.string("deadlineDate"),
+            questLines = if (value.has("questLines") && !value.isNull("questLines")) {
+                decodeQuestLines(value.array("questLines"))
+            } else {
+                emptyList()
+            },
         ).also(::validateDisplayConfiguration)
+    }
+
+    private fun encodeQuestLines(categories: List<QuestLineDefinition>): JSONArray =
+        JSONArray().apply {
+            categories.forEach { category ->
+                put(
+                    JSONObject()
+                        .put("id", category.id)
+                        .put("name", category.name)
+                        .put("order", category.order),
+                )
+            }
+        }
+
+    private fun decodeQuestLines(value: JSONArray): List<QuestLineDefinition> {
+        if (value.length() == 0 || value.length() > 8) {
+            throw ProtocolJsonException("questLines 数量必须在 1 到 8 之间")
+        }
+        return (0 until value.length()).map { index ->
+            val category = value.objectAt(index)
+            category.requireKeys(setOf("id", "name", "order"))
+            QuestLineDefinition(
+                id = category.string("id"),
+                name = category.string("name"),
+                order = category.nonNegativeInt("order"),
+            )
+        }
     }
 
     private fun validateDisplayConfiguration(payload: DisplayConfigurationPayload) {
@@ -461,6 +499,25 @@ object SyncJsonCodec {
         require(!LINE_BREAK.containsMatchIn(payload.subtitleTemplate))
         validateDisplayDate(payload.startDate)
         validateDisplayDate(payload.deadlineDate)
+        validateQuestLines(payload.questLines)
+    }
+
+    private fun validateQuestLines(categories: List<QuestLineDefinition>) {
+        if (categories.isEmpty()) return
+        require(categories.size <= 8) { "任务分类数量超过上限" }
+        val ids = HashSet<String>()
+        val orders = HashSet<Int>()
+        categories.forEach { category ->
+            require(QUEST_LINE.matches(category.id)) { "任务分类标识无效" }
+            require(ids.add(category.id)) { "任务分类标识重复" }
+            require(
+                category.name.hasWireCodePointLength(1..12) &&
+                    !LINE_BREAK.containsMatchIn(category.name),
+            ) { "任务分类名称无效" }
+            require(category.order in 0..63 && orders.add(category.order)) {
+                "任务分类排序值无效或重复"
+            }
+        }
     }
 
     private fun validateDisplayDate(value: String) {
@@ -477,6 +534,7 @@ object SyncJsonCodec {
                 IDENTIFIER.matches(task.seriesId),
         )
         require(task.title.hasWireCodePointLength(1..120) && task.timezone == WIRE_FIXED_TIMEZONE)
+        require(QUEST_LINE.matches(task.questLine)) { "questLine 不是合法的分类标识" }
         require(task.sortOrder in 0..WIRE_MAXIMUM_SORT_ORDER)
         require(task.createdAt in 0..WIRE_MAXIMUM_SAFE_INTEGER)
         require(task.updatedAt in 0..WIRE_MAXIMUM_SAFE_INTEGER)
@@ -539,6 +597,7 @@ object SyncJsonCodec {
     }
 
     private val IDENTIFIER = Regex("^[A-Za-z0-9._:-]+$")
+    private val QUEST_LINE = Regex("^[a-z0-9][a-z0-9_-]{0,31}$")
     private val DATE_KEY = Regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
     private val REMINDER_TIME = Regex("^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
     private val LINE_BREAK = Regex("\\R")

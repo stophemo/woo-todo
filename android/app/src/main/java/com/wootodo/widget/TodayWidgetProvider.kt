@@ -15,7 +15,6 @@ import com.wootodo.WooTodoApplication
 import com.wootodo.display.DayCounterPreferences
 import com.wootodo.display.TraditionalCalendarInfo
 import com.wootodo.domain.TaskDateRules
-import com.wootodo.domain.TaskTimeType
 import com.wootodo.ui.EditTaskActivity
 import com.wootodo.ui.MainActivity
 import com.wootodo.ui.labelRes
@@ -164,10 +163,7 @@ object TodayWidgetUpdater {
         PendingIntent.getActivity(
             context,
             widgetId + 10_000,
-            Intent(context, EditTaskActivity::class.java).apply {
-                putExtra(EditTaskActivity.EXTRA_TIME_TYPE, TaskTimeType.DAY.rawValue)
-                putExtra(EditTaskActivity.EXTRA_TARGET_DATE, TaskDateRules.today().toString())
-            },
+            Intent(context, EditTaskActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 

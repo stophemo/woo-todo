@@ -101,7 +101,7 @@ class BackupTransferTest {
             id = "task-roundtrip-0001",
             state = WireTaskState.COMPLETED,
             settledAt = 98_765,
-        )
+        ).copy(deadlineDate = "2026-07-16")
 
         val restored = original.toTaskEntity()
         val roundTrip = restored.toWirePayload()
@@ -243,7 +243,7 @@ class BackupTransferTest {
         timeType = WireTimeType.DAY,
         periodStart = "2026-07-16",
         timezone = WIRE_FIXED_TIMEZONE,
-        questLine = WireQuestLine.MAIN,
+        questLine = "main",
         state = state,
         recurrence = WireRecurrence.ONCE,
         sortOrder = 7,

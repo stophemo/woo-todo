@@ -104,69 +104,6 @@
                 android:textColor="@color/header_muted" />
         </LinearLayout>
 
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fillViewport="true"
-            android:paddingStart="16dp"
-            android:paddingTop="12dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="6dp"
-            android:scrollbars="none">
-
-            <RadioGroup
-                android:id="@+id/scope_group"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <RadioButton
-                    android:id="@+id/scope_today"
-                    style="@style/WooTodo.ScopeButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:layout_marginEnd="4dp"
-                    android:checked="true"
-                    android:maxLines="1"
-                    android:text="@string/scope_today" />
-
-                <RadioButton
-                    android:id="@+id/scope_tomorrow"
-                    style="@style/WooTodo.ScopeButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:layout_marginEnd="4dp"
-                    android:maxLines="1"
-                    android:text="@string/scope_tomorrow" />
-
-                <RadioButton
-                    android:id="@+id/scope_week"
-                    style="@style/WooTodo.ScopeButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:layout_marginEnd="4dp"
-                    android:maxLines="1"
-                    android:text="@string/scope_week" />
-
-                <RadioButton
-                    android:id="@+id/scope_month"
-                    style="@style/WooTodo.ScopeButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:layout_marginEnd="4dp"
-                    android:maxLines="1"
-                    android:text="@string/scope_month" />
-
-                <RadioButton
-                    android:id="@+id/scope_leisure"
-                    style="@style/WooTodo.ScopeButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:maxLines="1"
-                    android:text="@string/scope_leisure" />
-            </RadioGroup>
-        </HorizontalScrollView>
-
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"

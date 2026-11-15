@@ -54,11 +54,9 @@ internal fun TaskRowAction.labelRes(status: TaskStatus): Int = when (this) {
 /** 撤销删除时用原任务字段重建，沿用原排序位置。 */
 internal fun Task.toRestoreDraft(): TaskDraft = TaskDraft(
     title = title,
-    timeType = timeType,
-    targetDate = targetDate,
-    questLine = questLine,
-    recurrence = recurrence,
-    sortOrder = sortOrder,
+    categoryId = categoryId,
+    startDate = startDate,
+    endDate = endDate,
     reminderTime = reminderTime,
-    deadlineDate = deadlineDate,
+    sortOrder = sortOrder,
 )

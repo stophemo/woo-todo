@@ -11,7 +11,7 @@ class TaskMergePolicyTest {
     private val newer = EntityVersion(9, "device-pass")
 
     @Test
-    fun `截止前completed在两种到达顺序下均保留状态且字段取LWW`() {
+    fun `completed在两种到达顺序下均保留状态且字段取LWW`() {
         val completed = task(
             title = "完成时标题",
             state = WireTaskState.COMPLETED,
@@ -21,8 +21,8 @@ class TaskMergePolicyTest {
         val passed = task(
             title = "Pass端较新标题",
             state = WireTaskState.PASS,
-            settledAt = periodEnd,
-            updatedAt = periodEnd,
+            settledAt = instant("2026-07-16", 0, 0),
+            updatedAt = instant("2026-07-16", 0, 0),
         )
 
         val completedThenPass = TaskMergePolicy.resolve(completed, older, passed, newer)
@@ -33,29 +33,6 @@ class TaskMergePolicyTest {
         assertEquals("Pass端较新标题", completedThenPass.resolvedTask?.title)
         assertEquals(completed.settledAt, completedThenPass.resolvedTask?.settledAt)
         assertEquals(newer, completedThenPass.resolvedVersion)
-    }
-
-    @Test
-    fun `周期结束瞬间的completed不覆盖较新pass`() {
-        val completedAtBoundary = task(
-            title = "截止瞬间完成",
-            state = WireTaskState.COMPLETED,
-            settledAt = periodEnd,
-            updatedAt = periodEnd,
-        )
-        val passed = task(
-            title = "按时Pass",
-            state = WireTaskState.PASS,
-            settledAt = periodEnd,
-            updatedAt = periodEnd,
-        )
-
-        val first = TaskMergePolicy.resolve(completedAtBoundary, older, passed, newer)
-        val second = TaskMergePolicy.resolve(passed, newer, completedAtBoundary, older)
-
-        assertEquals(first, second)
-        assertEquals(WireTaskState.PASS, first.resolvedTask?.state)
-        assertEquals("按时Pass", first.resolvedTask?.title)
     }
 
     @Test
@@ -70,7 +47,7 @@ class TaskMergePolicyTest {
             title = "旧设备待办标题",
             state = WireTaskState.PENDING,
             settledAt = null,
-            updatedAt = periodEnd + 60_000,
+            updatedAt = instant("2026-07-16", 0, 0),
         )
 
         val completedThenPending = TaskMergePolicy.resolve(completed, older, stalePending, newer)
@@ -82,7 +59,7 @@ class TaskMergePolicyTest {
     }
 
     @Test
-    fun `显式reopen仅在版本较新且周期内时恢复pending`() {
+    fun `显式reopen仅在版本较新时恢复pending`() {
         val completed = task(
             title = "已完成",
             state = WireTaskState.COMPLETED,
@@ -117,41 +94,28 @@ class TaskMergePolicyTest {
     }
 
     @Test
-    fun `一次性任务跨周期的reopen仍可恢复pending`() {
-        val expiredReopen = task(
-            title = "跨周期恢复",
+    fun `reopen不再受周期限制且仍拒绝已结算快照`() {
+        val reopened = task(
+            title = "跨月恢复",
             state = WireTaskState.PENDING,
             settledAt = null,
-            updatedAt = periodEnd,
+            updatedAt = instant("2026-08-15", 0, 0),
         )
 
         val accepted = TaskMergePolicy.resolve(
             currentTask = null,
             currentVersion = null,
-            incomingTask = expiredReopen,
+            incomingTask = reopened,
             incomingVersion = newer,
             incomingKind = SyncOperationKind.REOPEN,
         )
-
         assertEquals(WireTaskState.PENDING, accepted.resolvedTask?.state)
-        assertEquals(newer, accepted.resolvedVersion)
-    }
-
-    @Test
-    fun `无本地版本时仍拒绝重复任务超出周期的reopen`() {
-        val expiredReopen = task(
-            title = "过期恢复",
-            state = WireTaskState.PENDING,
-            settledAt = null,
-            updatedAt = periodEnd,
-            recurrence = WireRecurrence.REPEAT,
-        )
 
         assertThrows(IllegalArgumentException::class.java) {
             TaskMergePolicy.resolve(
                 currentTask = null,
                 currentVersion = null,
-                incomingTask = expiredReopen,
+                incomingTask = reopened.copy(settledAt = 1),
                 incomingVersion = newer,
                 incomingKind = SyncOperationKind.REOPEN,
             )
@@ -163,17 +127,17 @@ class TaskMergePolicyTest {
         state: WireTaskState,
         settledAt: Long?,
         updatedAt: Long,
-        recurrence: WireRecurrence = WireRecurrence.ONCE,
     ): TaskInstancePayload = TaskInstancePayload(
         id = "550e8400-e29b-41d4-a716-446655440000",
         seriesId = "550e8400-e29b-41d4-a716-446655440000",
         title = title,
         timeType = WireTimeType.DAY,
         periodStart = "2026-07-15",
+        deadlineDate = "2026-07-20",
         timezone = "Asia/Shanghai",
-        questLine = WireQuestLine.MAIN,
+        questLine = "main",
         state = state,
-        recurrence = recurrence,
+        recurrence = WireRecurrence.ONCE,
         sortOrder = 0,
         createdAt = instant("2026-07-15", 8, 0),
         updatedAt = updatedAt,
@@ -186,7 +150,4 @@ class TaskMergePolicyTest {
             .atZone(ZoneId.of("Asia/Shanghai"))
             .toInstant()
             .toEpochMilli()
-
-    private val periodEnd: Long
-        get() = instant("2026-07-16", 0, 0)
 }

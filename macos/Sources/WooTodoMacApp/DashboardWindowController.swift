@@ -14,7 +14,8 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         webDavSettingsStore: WebDavSettingsStore,
         dayCounterStore: DayCounterStore,
         shortcutSettingsStore: ShortcutSettingsStore,
-        initialSection: DashboardSection = .today
+        localDataManager: LocalDataManager,
+        initialSection: DashboardSection = .tasks
     ) {
         self.store = store
         navigation = DashboardNavigation(selection: initialSection)
@@ -36,6 +37,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
             shortcutSettingsStore: shortcutSettingsStore,
+            localDataManager: localDataManager,
             navigation: navigation
         ))
         window.delegate = self
@@ -46,7 +48,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         fatalError("不支持从归档创建管理窗口")
     }
 
-    func show(section: DashboardSection = .today) {
+    func show(section: DashboardSection = .tasks) {
         navigation.selection = section
         store.reload()
         if let window, !window.setFrameUsingName("WooTodoDashboardWindow") {

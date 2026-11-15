@@ -8,11 +8,8 @@ import androidx.appcompat.view.ContextThemeWrapper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wootodo.R
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -84,11 +81,15 @@ class TaskRowContractInstrumentedTest {
         onEdit: (Task) -> Unit = {},
     ): View {
         val adapter = TaskAdapter(
+            context = context,
             onCheck = onCheck,
             onMenu = { _, _ -> },
             onEdit = onEdit,
         )
-        adapter.submitTasks(listOf(task))
+        adapter.submitSections(
+            sections = listOf(TaskListSection(TaskSectionKind.TODAY, listOf(task))),
+            categories = listOf(com.wootodo.domain.TaskCategory("main", "主线", 0)),
+        )
         val parent = FrameLayout(context)
         val rowIndex = (0 until adapter.itemCount).first {
             adapter.getItemViewType(it) == 1
@@ -102,11 +103,10 @@ class TaskRowContractInstrumentedTest {
         id = "task-$status",
         seriesId = "series-$status",
         title = "写周报",
-        timeType = TaskTimeType.DAY,
-        targetDate = LocalDate.of(2026, 7, 15),
-        questLine = QuestLine.MAIN,
+        categoryId = "main",
+        startDate = LocalDate.of(2026, 7, 15),
+        endDate = LocalDate.of(2026, 7, 15),
         status = status,
-        recurrence = Recurrence.ONCE,
         sortOrder = 0,
         createdAt = 0,
         updatedAt = 0,

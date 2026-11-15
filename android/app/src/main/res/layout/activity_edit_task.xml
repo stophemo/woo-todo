@@ -67,55 +67,56 @@
             android:text="@string/quest_line"
             android:textStyle="bold" />
 
-        <Spinner
-            android:id="@+id/quest_spinner"
+        <HorizontalScrollView
             android:layout_width="match_parent"
-            android:layout_height="48dp" />
-
-        <TextView
-            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/time_type"
-            android:textStyle="bold" />
+            android:fillViewport="true"
+            android:scrollbars="none">
 
-        <Spinner
-            android:id="@+id/time_spinner"
-            android:layout_width="match_parent"
-            android:layout_height="48dp" />
+            <RadioGroup
+                android:id="@+id/category_group"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
 
         <Button
-            android:id="@+id/date_button"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/select_date" />
-
-        <TextView
+            android:id="@+id/manage_categories_button"
+            style="?attr/materialButtonOutlinedStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/recurrence"
-            android:textStyle="bold" />
-
-        <Spinner
-            android:id="@+id/recurrence_spinner"
-            android:layout_width="match_parent"
-            android:layout_height="48dp" />
+            android:layout_marginTop="6dp"
+            android:minWidth="0dp"
+            android:text="@string/category_manage" />
 
         <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/deadline_switch"
+            android:id="@+id/date_range_switch"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/task_deadline_enabled" />
+            android:layout_marginTop="16dp"
+            android:text="@string/set_date_range" />
 
-        <Button
-            android:id="@+id/deadline_date_button"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+        <LinearLayout
+            android:id="@+id/date_range_container"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/task_deadline_not_set" />
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <Button
+                android:id="@+id/start_date_button"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/start_date_label" />
+
+            <Button
+                android:id="@+id/end_date_button"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/end_date_label" />
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"

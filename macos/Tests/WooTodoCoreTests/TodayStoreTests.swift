@@ -5,77 +5,36 @@ import Testing
 @Suite("TodayStore 今日任务管理")
 @MainActor
 struct TodayStoreTests {
-    @Test("快速新增会规范标题并创建今日主线单次任务")
-    func quickAddCreatesNormalizedOneTimeTask() throws {
-        let now = try #require(
-            ISO8601DateFormatter().date(from: "2026-07-17T22:30:00+08:00")
-        )
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let repository = TodayMemoryTaskRepository(tasks: [])
-        let store = TodayStore(repository: repository, engine: engine, now: { now })
-        let deadline = now.addingTimeInterval(3 * 86_400)
+    @Test("快速新增创建未分类无日期任务")
+    func quickAddCreatesUndatedInboxTask() throws {
+        let now = date("2026-07-17T22:30:00+08:00")
+        let repository = TodayMemoryRepository()
+        let store = TodayStore(repository: repository, now: { now })
         var changeCount = 0
         store.onTasksChanged = { changeCount += 1 }
 
-        let didAdd = store.add(
-            title: "  写明日计划\n",
-            tier: .mainline,
-            repeatsDaily: false,
-            deadlineDate: deadline
-        )
+        let didAdd = store.add(title: "  写明日计划\n")
 
         let task = try #require(repository.tasks.only)
         #expect(didAdd)
         #expect(task.title == "写明日计划")
-        #expect(task.timeScope == .daily)
-        #expect(task.tier == .mainline)
-        #expect(task.recurrence == .once)
+        #expect(task.categoryID == TaskCategory.inboxID)
+        #expect(task.startDate == nil)
+        #expect(task.endDate == nil)
         #expect(task.status == .pending)
-        #expect(task.deadlineDate == deadline)
         #expect(task.createdAt == now)
-        #expect(changeCount == 1)
-    }
-
-    @Test("快速新增保留任务级别、每日重复与提醒")
-    func quickAddPreservesOptions() throws {
-        let now = try #require(
-            ISO8601DateFormatter().date(from: "2026-07-17T10:00:00+08:00")
-        )
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let repository = TodayMemoryTaskRepository(tasks: [])
-        let store = TodayStore(repository: repository, engine: engine, now: { now })
-        let reminder = try TaskReminderTime(hour: 18, minute: 30)
-        var changeCount = 0
-        store.onTasksChanged = { changeCount += 1 }
-
-        let didAdd = store.add(
-            title: "晚间复盘",
-            tier: .side,
-            repeatsDaily: true,
-            reminderTime: reminder
-        )
-
-        let task = try #require(repository.tasks.only)
-        #expect(didAdd)
-        #expect(task.tier == .side)
-        #expect(task.recurrence == .repeating(RepeatRule(frequency: .daily)))
-        #expect(task.reminderTime == reminder)
-        #expect(task.period == engine.period(containing: now, for: .daily))
         #expect(changeCount == 1)
     }
 
     @Test("快速新增空白任务时不写入也不发送变更回调")
     func quickAddRejectsBlankTitle() throws {
-        let now = try #require(
-            ISO8601DateFormatter().date(from: "2026-07-17T22:30:00+08:00")
-        )
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let repository = TodayMemoryTaskRepository(tasks: [])
-        let store = TodayStore(repository: repository, engine: engine, now: { now })
+        let now = date("2026-07-17T22:30:00+08:00")
+        let repository = TodayMemoryRepository()
+        let store = TodayStore(repository: repository, now: { now })
         var changeCount = 0
         store.onTasksChanged = { changeCount += 1 }
 
-        let didAdd = store.add(title: " \n ", tier: .mainline, repeatsDaily: false)
+        let didAdd = store.add(title: " \n ")
 
         #expect(!didAdd)
         #expect(repository.tasks.isEmpty)
@@ -83,213 +42,156 @@ struct TodayStoreTests {
         #expect(changeCount == 0)
     }
 
-    @Test("未预先刷新时按今日周期的现有任务计算排序")
-    func quickAddUsesPersistedCurrentPeriodForSortIndex() throws {
-        let now = try #require(
-            ISO8601DateFormatter().date(from: "2026-07-17T22:30:00+08:00")
+    @Test("面板只显示逾期、今天、无日期和今天结算任务")
+    func reloadFiltersRelevantTasks() throws {
+        let now = date("2026-07-18T10:00:00+08:00")
+        let overdue = try TodoTask(
+            title: "逾期",
+            categoryID: "main",
+            startDate: date("2026-07-16"),
+            endDate: date("2026-07-17")
         )
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let today = try #require(engine.period(containing: now, for: .daily))
-        let tomorrow = try #require(
-            engine.period(containing: today.end.addingTimeInterval(1), for: .daily)
+        let active = try TodoTask(
+            title: "进行中",
+            categoryID: "main",
+            startDate: date("2026-07-18"),
+            endDate: date("2026-07-20")
         )
-        let currentTask = try TodoTask(
-            title: "今日已有任务",
-            timeScope: .daily,
-            tier: .mainline,
-            period: today,
-            sortIndex: 4,
-            createdAt: now
+        let undated = try TodoTask(title: "无日期", categoryID: "inbox")
+        let future = try TodoTask(
+            title: "未来",
+            categoryID: "main",
+            startDate: date("2026-07-20"),
+            endDate: date("2026-07-21")
         )
-        let tomorrowTask = try TodoTask(
-            title: "明日任务",
-            timeScope: .daily,
-            tier: .mainline,
-            period: tomorrow,
-            sortIndex: 99,
-            createdAt: now
+        var completedToday = try TodoTask(
+            title: "今天完成",
+            categoryID: "side",
+            startDate: date("2026-07-18"),
+            endDate: date("2026-07-18")
         )
-        let repository = TodayMemoryTaskRepository(tasks: [currentTask, tomorrowTask])
-        let store = TodayStore(repository: repository, engine: engine, now: { now })
+        completedToday.status = .completed
+        completedToday.completedAt = now
+        var completedYesterday = try TodoTask(
+            title: "昨天完成",
+            categoryID: "side",
+            startDate: date("2026-07-17"),
+            endDate: date("2026-07-17")
+        )
+        completedYesterday.status = .completed
+        completedYesterday.completedAt = date("2026-07-17T10:00:00+08:00")
+        let repository = TodayMemoryRepository(tasks: [
+            overdue, active, undated, future, completedToday, completedYesterday,
+        ])
+        let store = TodayStore(repository: repository, now: { now })
 
-        let didAdd = store.add(title: "今日新增任务", tier: .mainline, repeatsDaily: false)
-
-        let added = try #require(repository.tasks.first { $0.title == "今日新增任务" })
-        #expect(didAdd)
-        #expect(added.period == today)
-        #expect(added.sortIndex == 5)
-    }
-
-    @Test("同组已有完成项时仍可拖动剩余待办")
-    func pendingTasksRemainReorderableAfterCompletion() throws {
-        let now = try #require(
-            ISO8601DateFormatter().date(from: "2026-07-17T10:00:00+08:00")
-        )
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let period = try #require(engine.period(containing: now, for: .daily))
-        let first = try TodoTask(
-            title: "先做",
-            timeScope: .daily,
-            tier: .mainline,
-            period: period,
-            sortIndex: 0,
-            createdAt: now
-        )
-        var completed = try TodoTask(
-            title: "已完成",
-            timeScope: .daily,
-            tier: .mainline,
-            period: period,
-            sortIndex: 1,
-            createdAt: now.addingTimeInterval(1)
-        )
-        completed.status = .completed
-        completed.completedAt = now
-        let last = try TodoTask(
-            title: "后做",
-            timeScope: .daily,
-            tier: .mainline,
-            period: period,
-            sortIndex: 2,
-            createdAt: now.addingTimeInterval(2)
-        )
-        let repository = TodayMemoryTaskRepository(tasks: [first, completed, last])
-        let store = TodayStore(repository: repository, engine: engine, now: { now })
         store.reload()
 
-        store.move(tier: .mainline, fromOffsets: IndexSet(integer: 1), toOffset: 0)
-
-        let pending = repository.tasks
-            .filter { $0.status == .pending }
-            .sorted(by: TodoTask.displayOrder)
-        #expect(pending.map(\.title) == ["后做", "先做"])
-        #expect(repository.tasks.first { $0.id == completed.id }?.status == .completed)
+        #expect(Set(store.tasks.map(\.id)) == [
+            overdue.id, active.id, undated.id, completedToday.id,
+        ])
     }
 
-    @Test("当前周期已完成任务可以撤销且重复操作保持幂等")
-    func completedTaskCanBeReopenedIdempotently() throws {
-        let now = try #require(
-            ISO8601DateFormatter().date(from: "2026-07-17T10:00:00+08:00")
-        )
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let period = try #require(engine.period(containing: now, for: .daily))
-        var task = try TodoTask(
-            title: "误点完成",
-            timeScope: .daily,
-            tier: .mainline,
-            period: period,
-            createdAt: now.addingTimeInterval(-60)
-        )
-        task.status = .completed
-        task.completedAt = now.addingTimeInterval(-30)
-        let repository = TodayMemoryTaskRepository(tasks: [task])
-        let store = TodayStore(repository: repository, engine: engine, now: { now })
+    @Test("完成和撤销完成会更新面板")
+    func toggleCompletionUpdatesTasks() throws {
+        let now = date("2026-07-17T10:00:00+08:00")
+        let task = try TodoTask(title: "误点完成", categoryID: "main", createdAt: now)
+        let repository = TodayMemoryRepository(tasks: [task])
+        let store = TodayStore(repository: repository, now: { now })
         var changeCount = 0
         store.onTasksChanged = { changeCount += 1 }
         store.reload()
 
         store.toggleCompletion(id: task.id)
-
-        let reopened = try #require(repository.tasks.first)
-        #expect(reopened.status == .pending)
-        #expect(reopened.completedAt == nil)
-        #expect(reopened.updatedAt == now)
+        #expect(repository.tasks.only?.status == .completed)
+        #expect(repository.tasks.only?.completedAt == now)
         #expect(changeCount == 1)
 
-        #expect(try repository.reopenCompleted(id: task.id, at: now) == false)
-        #expect(repository.tasks.first?.status == .pending)
+        store.toggleCompletion(id: task.id)
+        #expect(repository.tasks.only?.status == .pending)
+        #expect(repository.tasks.only?.completedAt == nil)
+        #expect(changeCount == 2)
     }
 
-    @Test("过期重复周期与Pass任务不能恢复为待办")
-    func expiredAndPassedTasksCannotBeReopened() throws {
-        let now = try #require(
-            ISO8601DateFormatter().date(from: "2026-07-18T10:00:00+08:00")
-        )
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let yesterday = try #require(
-            engine.period(containing: now.addingTimeInterval(-86_400), for: .daily)
-        )
-        var completed = try TodoTask(
-            title: "昨日完成",
-            timeScope: .daily,
-            tier: .mainline,
-            recurrence: .repeating(RepeatRule(frequency: .daily)),
-            period: yesterday,
-            createdAt: yesterday.start
-        )
-        completed.status = .completed
-        completed.completedAt = yesterday.start.addingTimeInterval(60)
-        var passed = try TodoTask(
-            title: "昨日 Pass",
-            timeScope: .daily,
-            tier: .mainline,
-            period: yesterday,
-            createdAt: yesterday.start.addingTimeInterval(1)
-        )
-        passed.status = .pass
-        passed.completedAt = yesterday.end
-        let repository = TodayMemoryTaskRepository(tasks: [completed, passed])
+    @Test("编辑日期范围会移入或移出面板")
+    func editDateRangeMovesTaskInAndOut() throws {
+        let now = date("2026-07-17T10:00:00+08:00")
+        let task = try TodoTask(title: "安排今天", categoryID: "main", createdAt: now)
+        let repository = TodayMemoryRepository(tasks: [task])
+        let store = TodayStore(repository: repository, now: { now })
+        store.reload()
+        #expect(store.tasks.map(\.id) == [task.id])
 
-        #expect(try repository.reopenCompleted(id: completed.id, at: now) == false)
-        #expect(try repository.reopenCompleted(id: passed.id, at: now) == false)
+        store.edit(
+            id: task.id,
+            title: "安排今天",
+            categoryID: "main",
+            startDate: date("2026-07-17"),
+            endDate: date("2026-07-17"),
+            reminderTime: nil
+        )
+        #expect(store.tasks.map(\.id) == [task.id])
+
+        store.edit(
+            id: task.id,
+            title: "安排未来",
+            categoryID: "main",
+            startDate: date("2026-07-20"),
+            endDate: date("2026-07-20"),
+            reminderTime: nil
+        )
+        #expect(store.tasks.isEmpty)
+        #expect(repository.tasks.only?.startDate == date("2026-07-20"))
     }
 
-    @Test("过期一次性任务会保留至手动 Pass")
-    func overdueOneTimeTaskRemainsUntilPassed() throws {
-        let now = try #require(
-            ISO8601DateFormatter().date(from: "2026-07-18T10:00:00+08:00")
+    @Test("新增排序值取现有最大值加一")
+    func quickAddUsesPersistedMaxSortIndex() throws {
+        let now = date("2026-07-17T22:30:00+08:00")
+        let existing = try TodoTask(
+            title: "已有任务",
+            categoryID: "main",
+            sortIndex: 4,
+            createdAt: now
         )
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let yesterday = try #require(
-            engine.period(containing: now.addingTimeInterval(-86_400), for: .daily)
-        )
+        let repository = TodayMemoryRepository(tasks: [existing])
+        let store = TodayStore(repository: repository, now: { now })
+
+        let didAdd = store.add(title: "新增任务")
+
+        let added = try #require(repository.tasks.first { $0.title == "新增任务" })
+        #expect(didAdd)
+        #expect(added.sortIndex == 5)
+    }
+
+    @Test("放弃后任务以已结算状态留在今天")
+    func passKeepsTaskAsSettledToday() throws {
+        let now = date("2026-07-18T10:00:00+08:00")
         let task = try TodoTask(
             title: "昨日未完成",
-            timeScope: .daily,
-            tier: .mainline,
-            period: yesterday,
-            createdAt: yesterday.start
+            categoryID: "main",
+            startDate: date("2026-07-17"),
+            endDate: date("2026-07-17")
         )
-        let repository = TodayMemoryTaskRepository(tasks: [task])
-        let store = TodayStore(repository: repository, engine: engine, now: { now })
-
+        let repository = TodayMemoryRepository(tasks: [task])
+        let store = TodayStore(repository: repository, now: { now })
         store.reload()
         #expect(store.tasks.map(\.id) == [task.id])
 
         store.pass(id: task.id)
-        #expect(store.tasks.isEmpty)
+
+        #expect(store.tasks.only?.status == .pass)
         #expect(repository.tasks.only?.status == .pass)
     }
 
-    @Test("过期一次性任务当天完成后仍可见且可撤销")
-    func overdueOneTimeTaskRemainsVisibleAfterCompletion() throws {
-        let now = try #require(
-            ISO8601DateFormatter().date(from: "2026-07-18T10:00:00+08:00")
-        )
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let yesterday = try #require(
-            engine.period(containing: now.addingTimeInterval(-86_400), for: .daily)
-        )
-        let task = try TodoTask(
-            title: "昨日待办",
-            timeScope: .daily,
-            tier: .mainline,
-            period: yesterday,
-            createdAt: yesterday.start
-        )
-        let repository = TodayMemoryTaskRepository(tasks: [task])
-        let store = TodayStore(repository: repository, engine: engine, now: { now })
-        store.reload()
-
-        store.toggleCompletion(id: task.id)
-
-        #expect(store.tasks.only?.status == .completed)
-        #expect(store.tasks.only?.completedAt == now)
-
-        store.toggleCompletion(id: task.id)
-
-        #expect(store.tasks.only?.status == .pending)
-        #expect(store.tasks.only?.completedAt == nil)
+    private func date(_ value: String) -> Date {
+        if value.count == 10 {
+            return TodoTask.protocolCalendar.date(from: DateComponents(
+                year: Int(value.prefix(4)),
+                month: Int(value.dropFirst(5).prefix(2)),
+                day: Int(value.suffix(2))
+            ))!
+        }
+        return ISO8601DateFormatter().date(from: value)!
     }
 }
 
@@ -297,34 +199,15 @@ private extension Array {
     var only: Element? { count == 1 ? first : nil }
 }
 
-private final class TodayMemoryTaskRepository: TaskRepository {
+private final class TodayMemoryRepository: TaskRepository {
     var tasks: [TodoTask]
+    var categories: [TaskCategory] = TaskCategory.defaults
 
-    init(tasks: [TodoTask]) {
+    init(tasks: [TodoTask] = []) {
         self.tasks = tasks
     }
 
     func fetchAll() throws -> [TodoTask] { tasks }
-
-    func fetchTasks(
-        scope: TimeScope,
-        in period: TaskPeriod?,
-        includeOverdueOnce: Bool
-    ) throws -> [TodoTask] {
-        tasks.filter { task in
-            guard task.timeScope == scope else { return false }
-            guard let period else { return true }
-            guard let taskPeriod = task.period else { return false }
-            let overlaps = taskPeriod.start < period.end && taskPeriod.end > period.start
-            let carriedOnce = includeOverdueOnce && task.recurrence == .once &&
-                taskPeriod.end <= period.start && (
-                    task.status == .pending ||
-                        (task.status == .completed &&
-                            task.completedAt.map { period.contains($0) } == true)
-                )
-            return overlaps || carriedOnce
-        }
-    }
 
     func save(_ updated: [TodoTask]) throws {
         for task in updated {
@@ -339,8 +222,6 @@ private final class TodayMemoryTaskRepository: TaskRepository {
     func reopenCompleted(id: UUID, at date: Date) throws -> Bool {
         guard let index = tasks.firstIndex(where: { $0.id == id }),
               tasks[index].status == .completed else { return false }
-        if case .repeating = tasks[index].recurrence,
-           (tasks[index].period?.end ?? .distantFuture) <= date { return false }
         tasks[index].status = .pending
         tasks[index].completedAt = nil
         tasks[index].updatedAt = date
@@ -357,5 +238,27 @@ private final class TodayMemoryTaskRepository: TaskRepository {
             task.status != .pending && (ids == nil || ids?.contains(task.id) == true)
         }
         return before - tasks.count
+    }
+
+    func fetchCategories() throws -> [TaskCategory] { categories }
+
+    func saveCategories(_ categories: [TaskCategory]) throws {
+        self.categories = categories
+    }
+
+    @discardableResult
+    func reassignPendingCategory(
+        from: String,
+        to: String,
+        at date: Date
+    ) throws -> Int {
+        var count = 0
+        for index in tasks.indices where tasks[index].status == .pending &&
+            tasks[index].categoryID == from {
+            tasks[index].categoryID = to
+            tasks[index].updatedAt = date
+            count += 1
+        }
+        return count
     }
 }

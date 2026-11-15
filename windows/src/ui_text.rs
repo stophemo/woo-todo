@@ -10,11 +10,12 @@ pub fn time_type_label(value: TimeType) -> &'static str {
     }
 }
 
-pub fn quest_line_label(value: QuestLine) -> &'static str {
-    match value {
-        QuestLine::Main => "主线",
-        QuestLine::Side => "支线",
-        QuestLine::Extra => "外传",
+pub fn quest_line_label(value: QuestLine) -> String {
+    match value.id() {
+        QuestLine::MAIN_ID => "主线".to_owned(),
+        QuestLine::SIDE_ID => "支线".to_owned(),
+        QuestLine::EXTRA_ID => "外传".to_owned(),
+        _ => value.id().to_owned(),
     }
 }
 
@@ -100,7 +101,7 @@ mod tests {
             time_type: TimeType::Week,
             period_start: NaiveDate::from_ymd_opt(2026, 7, 27),
             timezone: "Asia/Shanghai".to_owned(),
-            quest_line: QuestLine::Main,
+            quest_line: QuestLine::main(),
             state: TaskState::Pending,
             recurrence: Recurrence::Once,
             sort_order: 0,
@@ -111,7 +112,7 @@ mod tests {
             deadline_date: None,
         };
         assert_eq!(time_type_label(TimeType::Week), "每周");
-        assert_eq!(quest_line_label(QuestLine::Main), "主线");
+        assert_eq!(quest_line_label(QuestLine::main()), "主线");
         assert_eq!(state_label(TaskState::Pending), "待完成");
         assert_eq!(period_label(&task), "07-27 起一周");
         assert_eq!(
@@ -133,7 +134,7 @@ mod tests {
             time_type: TimeType::Day,
             period_start: NaiveDate::from_ymd_opt(2026, 7, 27),
             timezone: "Asia/Shanghai".to_owned(),
-            quest_line: QuestLine::Main,
+            quest_line: QuestLine::main(),
             state: TaskState::Pending,
             recurrence: Recurrence::Once,
             sort_order: 0,

@@ -17,14 +17,14 @@ enum WooTodoTheme {
     static let yellow = Color(red: 240 / 255, green: 200 / 255, blue: 90 / 255)
     static let lineOnDark = Color.white.opacity(0.09)
     static let taskLineOnDark = Color.white.opacity(0.07)
-}
 
-extension QuestTier {
-    var accentColor: Color {
-        switch self {
-        case .mainline: WooTodoTheme.purple
-        case .side: WooTodoTheme.green
-        case .extra: WooTodoTheme.orange
+    static func categoryColor(order: Int) -> Color {
+        switch order % 5 {
+        case 0: purple
+        case 1: green
+        case 2: orange
+        case 3: yellow
+        default: purpleLight
         }
     }
 }

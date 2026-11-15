@@ -2,11 +2,6 @@ import Foundation
 
 public protocol TaskRepository: AnyObject {
     func fetchAll() throws -> [TodoTask]
-    func fetchTasks(
-        scope: TimeScope,
-        in period: TaskPeriod?,
-        includeOverdueOnce: Bool
-    ) throws -> [TodoTask]
     func deletedTaskIDs() throws -> Set<UUID>
     func save(_ tasks: [TodoTask]) throws
     @discardableResult
@@ -14,40 +9,25 @@ public protocol TaskRepository: AnyObject {
     func delete(id: UUID) throws
     @discardableResult
     func clearHistory(ids: Set<UUID>?) throws -> Int
+    func fetchCategories() throws -> [TaskCategory]
+    func saveCategories(_ categories: [TaskCategory]) throws
+    @discardableResult
+    func reassignPendingCategory(from: String, to: String, at date: Date) throws -> Int
 }
 
 public extension TaskRepository {
-    func fetchTasks(scope: TimeScope, in period: TaskPeriod?) throws -> [TodoTask] {
-        try fetchTasks(scope: scope, in: period, includeOverdueOnce: false)
-    }
-
     func deletedTaskIDs() throws -> Set<UUID> { [] }
 
     func save(_ task: TodoTask) throws {
         try save([task])
     }
-}
 
-public struct LazySettlementService {
-    private let repository: TaskRepository
-    private let engine: PeriodEngine
+    func fetchCategories() throws -> [TaskCategory] { TaskCategory.defaults }
 
-    public init(repository: TaskRepository, engine: PeriodEngine) {
-        self.repository = repository
-        self.engine = engine
-    }
+    func saveCategories(_ categories: [TaskCategory]) throws {}
 
     @discardableResult
-    public func settle(at now: Date = Date()) throws -> SettlementResult {
-        let result = engine.settle(
-            try repository.fetchAll(),
-            at: now,
-            reservedTaskIDs: try repository.deletedTaskIDs()
-        )
-        let affected = result.changedTaskIDs.union(result.generatedTaskIDs)
-        if !affected.isEmpty {
-            try repository.save(result.tasks.filter { affected.contains($0.id) })
-        }
-        return result
+    func reassignPendingCategory(from: String, to: String, at date: Date) throws -> Int {
+        0
     }
 }

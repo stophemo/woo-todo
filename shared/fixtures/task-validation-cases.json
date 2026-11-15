@@ -101,9 +101,82 @@
         "updatedAt": 1,
         "settledAt": null
       }
+    },
+    {
+      "name": "自定义分类标识可用",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000006",
+        "seriesId": "00000000-0000-4000-8000-000000000006",
+        "title": "自定义分类任务",
+        "timeType": "day",
+        "periodStart": "2026-07-16",
+        "deadlineDate": "2026-07-20",
+        "timezone": "Asia/Shanghai",
+        "questLine": "work",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "显示配置可携带分类定义",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "displayConfiguration",
+        "id": "display.today.configuration",
+        "headerTemplate": "",
+        "subtitleTemplate": "",
+        "startDate": "2000-01-01",
+        "deadlineDate": "2000-01-01",
+        "questLines": [
+          { "id": "inbox", "name": "未分类", "order": 0 },
+          { "id": "work", "name": "工作", "order": 1 }
+        ]
+      }
     }
   ],
   "invalid": [
+    {
+      "name": "拒绝非法分类标识",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "task",
+        "id": "00000000-0000-4000-8000-000000000033",
+        "seriesId": "00000000-0000-4000-8000-000000000033",
+        "title": "非法分类",
+        "timeType": "day",
+        "periodStart": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "questLine": "Work",
+        "state": "pending",
+        "recurrence": "once",
+        "sortOrder": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+        "settledAt": null
+      }
+    },
+    {
+      "name": "拒绝重复分类排序",
+      "payload": {
+        "protocolVersion": 1,
+        "entityType": "displayConfiguration",
+        "id": "display.today.configuration",
+        "headerTemplate": "",
+        "subtitleTemplate": "",
+        "startDate": "2000-01-01",
+        "deadlineDate": "2000-01-01",
+        "questLines": [
+          { "id": "inbox", "name": "未分类", "order": 0 },
+          { "id": "work", "name": "工作", "order": 0 }
+        ]
+      }
+    },
     {
       "name": "拒绝包含非 ASCII 字符的任务 ID",
       "payload": {

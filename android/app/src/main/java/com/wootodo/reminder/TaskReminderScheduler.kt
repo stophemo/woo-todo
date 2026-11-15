@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 
 object TaskReminderPolicy {
     fun triggerAt(task: Task, zoneId: ZoneId = TaskDateRules.zoneId): Instant? {
-        val date = task.targetDate ?: return null
+        val date = task.startDate ?: task.endDate ?: return null
         val time = task.reminderTime ?: return null
         if (task.status != TaskStatus.PENDING) return null
         return date.atTime(time).atZone(zoneId).toInstant()

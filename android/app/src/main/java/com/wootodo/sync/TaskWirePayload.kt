@@ -14,15 +14,6 @@ enum class WireTimeType(val value: String) {
     }
 }
 
-enum class WireQuestLine(val value: String) {
-    MAIN("main"), SIDE("side"), EXTRA("extra");
-
-    companion object {
-        fun fromWire(value: String): WireQuestLine = entries.firstOrNull { it.value == value }
-            ?: throw IllegalArgumentException("未知任务线：$value")
-    }
-}
-
 enum class WireTaskState(val value: String) {
     PENDING("pending"), COMPLETED("completed"), PASS("pass");
 
@@ -41,6 +32,12 @@ enum class WireRecurrence(val value: String) {
     }
 }
 
+data class QuestLineDefinition(
+    val id: String,
+    val name: String,
+    val order: Int,
+)
+
 sealed interface TaskWirePayload {
     val protocolVersion: Int
     val entityType: String
@@ -57,7 +54,7 @@ data class TaskInstancePayload(
     val periodStart: String?,
     val deadlineDate: String? = null,
     val timezone: String,
-    val questLine: WireQuestLine,
+    val questLine: String,
     val state: WireTaskState,
     val recurrence: WireRecurrence,
     val sortOrder: Long,
@@ -82,4 +79,5 @@ data class DisplayConfigurationPayload(
     val subtitleTemplate: String,
     val startDate: String,
     val deadlineDate: String,
+    val questLines: List<QuestLineDefinition> = emptyList(),
 ) : TaskWirePayload

@@ -524,7 +524,7 @@ object BackupPackageCodec {
                     "$path.deadlineDate",
                 ),
                 timezone = root.string("timezone", "$path.timezone"),
-                questLine = WireQuestLine.fromWire(root.string("questLine", "$path.questLine")),
+                questLine = root.string("questLine", "$path.questLine"),
                 state = WireTaskState.fromWire(root.string("state", "$path.state")),
                 recurrence = WireRecurrence.fromWire(root.string("recurrence", "$path.recurrence")),
                 sortOrder = root.long("sortOrder", "$path.sortOrder", 0..WIRE_MAXIMUM_SORT_ORDER),
@@ -635,7 +635,7 @@ object BackupPackageCodec {
         append(",\"periodStart\":")
         if (task.periodStart == null) append("null") else appendJsonString(task.periodStart)
         append(",\"protocolVersion\":").append(task.protocolVersion)
-        append(",\"questLine\":").appendJsonString(task.questLine.value)
+        append(",\"questLine\":").appendJsonString(task.questLine)
         append(",\"recurrence\":").appendJsonString(task.recurrence.value)
         append(",\"seriesId\":").appendJsonString(task.seriesId)
         if (task.reminderTime != null) {

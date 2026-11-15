@@ -5,33 +5,33 @@ import android.app.AlertDialog
 import android.app.TimePickerDialog
 import android.os.Bundle
 import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
-import android.widget.Spinner
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.data.TaskRepository
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
 import com.wootodo.domain.Task
+import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskDraft
-import com.wootodo.domain.TaskRules
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.widget.TodayWidgetUpdater
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 class EditTaskActivity : AppCompatActivity() {
@@ -39,24 +39,24 @@ class EditTaskActivity : AppCompatActivity() {
     private lateinit var pageTitle: TextView
     private lateinit var settledNotice: TextView
     private lateinit var titleInput: EditText
-    private lateinit var questSpinner: Spinner
-    private lateinit var timeSpinner: Spinner
-    private lateinit var dateButton: Button
-    private lateinit var recurrenceSpinner: Spinner
-    private lateinit var deadlineSwitch: SwitchCompat
-    private lateinit var deadlineDateButton: Button
+    private lateinit var categoryGroup: RadioGroup
+    private lateinit var manageCategoriesButton: Button
+    private lateinit var dateRangeSwitch: SwitchCompat
+    private lateinit var dateRangeContainer: LinearLayout
+    private lateinit var startDateButton: Button
+    private lateinit var endDateButton: Button
     private lateinit var reminderSwitch: SwitchCompat
     private lateinit var reminderTimeButton: Button
     private lateinit var saveButton: Button
     private lateinit var deleteButton: Button
-    private val questLines = QuestLine.entries
-    private val timeTypes = TaskTimeType.entries
-    private var recurrenceOptions: List<Recurrence> = Recurrence.entries
-    private var selectedDate: LocalDate = TaskDateRules.today()
-    private var selectedDeadlineDate: LocalDate = TaskDateRules.today()
+    private var categories: List<TaskCategory> = TaskCategories.defaults
+    private var selectedCategoryId: String = TaskCategories.INBOX_ID
+    private var dateRangeEnabled = false
+    private var startDate: LocalDate = TaskDateRules.today()
+    private var endDate: LocalDate = TaskDateRules.today()
     private var reminderTime: LocalTime = LocalTime.of(9, 0)
     private var editingTask: Task? = null
-    private var isLoadingTask = false
+    private var isLoading = true
     private var initialSnapshot: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,17 +67,18 @@ class EditTaskActivity : AppCompatActivity() {
         settledNotice = findViewById(R.id.settled_notice)
         titleInput = findViewById(R.id.title_input)
         titleInput.enableEditableTextActions()
-        questSpinner = findViewById(R.id.quest_spinner)
-        timeSpinner = findViewById(R.id.time_spinner)
-        dateButton = findViewById(R.id.date_button)
-        recurrenceSpinner = findViewById(R.id.recurrence_spinner)
-        deadlineSwitch = findViewById(R.id.deadline_switch)
-        deadlineDateButton = findViewById(R.id.deadline_date_button)
+        categoryGroup = findViewById(R.id.category_group)
+        manageCategoriesButton = findViewById(R.id.manage_categories_button)
+        dateRangeSwitch = findViewById(R.id.date_range_switch)
+        dateRangeContainer = findViewById(R.id.date_range_container)
+        startDateButton = findViewById(R.id.start_date_button)
+        endDateButton = findViewById(R.id.end_date_button)
         reminderSwitch = findViewById(R.id.reminder_switch)
         reminderTimeButton = findViewById(R.id.reminder_time_button)
         saveButton = findViewById(R.id.save_button)
         deleteButton = findViewById(R.id.delete_button)
         repository = (application as WooTodoApplication).taskRepository
+
         findViewById<View>(R.id.back_button).setOnClickListener { attemptClose() }
         onBackPressedDispatcher.addCallback(
             this,
@@ -86,239 +87,228 @@ class EditTaskActivity : AppCompatActivity() {
             },
         )
 
-        val restoredDate = savedInstanceState?.getString(STATE_SELECTED_DATE)
-        (restoredDate ?: intent.getStringExtra(EXTRA_TARGET_DATE))?.let { encoded ->
-            runCatching { LocalDate.parse(encoded) }.getOrNull()?.let { selectedDate = it }
+        categoryGroup.setOnCheckedChangeListener { _, checkedId ->
+            selectedCategoryId = categoryGroup.findViewById<RadioButton>(checkedId)
+                ?.tag as? String
+                ?: TaskCategories.INBOX_ID
         }
-        selectedDeadlineDate = selectedDate
-        setupSpinners()
-        dateButton.setOnClickListener { showDatePicker() }
-        deadlineSwitch.setOnCheckedChangeListener { _, _ -> updateDeadlineControls() }
-        deadlineDateButton.setOnClickListener { showDeadlineDatePicker() }
+        manageCategoriesButton.setOnClickListener { manageCategories() }
+        dateRangeSwitch.setOnCheckedChangeListener { _, enabled ->
+            dateRangeEnabled = enabled
+            dateRangeContainer.isVisible = enabled
+            if (enabled && startDate.isAfter(endDate)) endDate = startDate
+            updateDateButtons()
+            updateReminderControls()
+        }
+        startDateButton.setOnClickListener { showDatePicker(isStart = true) }
+        endDateButton.setOnClickListener { showDatePicker(isStart = false) }
         reminderSwitch.setOnCheckedChangeListener { _, _ -> updateReminderControls() }
         reminderTimeButton.setOnClickListener { showReminderTimePicker() }
         saveButton.setOnClickListener { saveTask() }
         deleteButton.setOnClickListener { confirmDelete() }
 
-        val taskId = intent.getStringExtra(EXTRA_TASK_ID)
-        if (taskId == null) {
-            if (savedInstanceState != null) {
-                restoreDraftState(savedInstanceState)
-            } else {
-                val initialType = intent.getStringExtra(EXTRA_TIME_TYPE)
-                    ?.let { runCatching { TaskTimeType.fromRaw(it) }.getOrNull() }
-                    ?: TaskTimeType.DAY
-                timeSpinner.setSelection(timeTypes.indexOf(initialType))
-                updateDateButton(initialType)
-            }
-            initialSnapshot = currentSnapshot()
-        } else {
-            loadTask(taskId, savedInstanceState)
-        }
-    }
-
-    /** 记录进入页面时的表单快照，用于返回时提醒未保存的修改。 */
-    private fun currentSnapshot(): String = listOf(
-        titleInput.text.toString(),
-        selectedDate.toString(),
-        questSpinner.selectedItemPosition,
-        timeSpinner.selectedItemPosition,
-        selectedRecurrenceOrOnce().rawValue,
-        deadlineSwitch.isChecked,
-        selectedDeadlineDate.toString(),
-        reminderSwitch.isChecked,
-        reminderTime.toString(),
-    ).joinToString("|")
-
-    private fun hasUnsavedChanges(): Boolean {
-        val baseline = initialSnapshot ?: return false
-        return currentSnapshot() != baseline
-    }
-
-    private fun attemptClose() {
-        if (!hasUnsavedChanges()) {
-            finish()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.editor_discard_title)
-            .setMessage(R.string.editor_discard_message)
-            .setNegativeButton(R.string.editor_discard_cancel, null)
-            .setPositiveButton(R.string.editor_discard_confirm) { _, _ -> finish() }
-            .show()
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString(STATE_TITLE, titleInput.text.toString())
-        outState.putString(STATE_SELECTED_DATE, selectedDate.toString())
-        questLines.getOrNull(questSpinner.selectedItemPosition)?.let {
-            outState.putString(STATE_QUEST_LINE, it.rawValue)
-        }
-        timeTypes.getOrNull(timeSpinner.selectedItemPosition)?.let {
-            outState.putString(STATE_TIME_TYPE, it.rawValue)
-        }
-        outState.putString(STATE_RECURRENCE, selectedRecurrenceOrOnce().rawValue)
-        outState.putBoolean(STATE_DEADLINE_ENABLED, deadlineSwitch.isChecked)
-        outState.putString(STATE_DEADLINE_DATE, selectedDeadlineDate.toString())
-        outState.putBoolean(STATE_REMINDER_ENABLED, reminderSwitch.isChecked)
-        outState.putString(STATE_REMINDER_TIME, reminderTime.toString())
-        super.onSaveInstanceState(outState)
-    }
-
-    private fun setupSpinners() {
-        questSpinner.adapter = simpleAdapter(questLines.map { getString(it.labelRes()) })
-        timeSpinner.adapter = simpleAdapter(timeTypes.map { getString(it.labelRes()) })
-        timeSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                val type = timeTypes[position]
-                updateRecurrenceOptions(type, selectedRecurrenceOrOnce())
-                updateDateButton(type)
-                updateReminderControls()
-                updateDeadlineControls()
-            }
-
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-        }
-        recurrenceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                updateDeadlineControls()
-            }
-
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-        }
-        updateRecurrenceOptions(TaskTimeType.DAY, Recurrence.ONCE)
-    }
-
-    private fun updateRecurrenceOptions(type: TaskTimeType, preferred: Recurrence) {
-        recurrenceOptions = TaskRules.allowedRecurrences(type)
-        recurrenceSpinner.adapter = simpleAdapter(
-            recurrenceOptions.map { getString(it.labelRes()) },
-        )
-        val selection = recurrenceOptions.indexOf(preferred).takeIf { it >= 0 } ?: 0
-        recurrenceSpinner.setSelection(selection)
-    }
-
-    private fun selectedRecurrenceOrOnce(): Recurrence =
-        recurrenceOptions.getOrNull(recurrenceSpinner.selectedItemPosition) ?: Recurrence.ONCE
-
-    private fun loadTask(taskId: String, restoredState: Bundle?) {
-        isLoadingTask = true
         lifecycleScope.launch {
-            val task = repository.get(taskId)
-            if (task == null) {
-                finish()
-                return@launch
-            }
-            editingTask = task
-            val pending = task.status == TaskStatus.PENDING
-            pageTitle.setText(R.string.edit_task)
-            if (restoredState == null) {
-                titleInput.setText(task.title)
-                questSpinner.setSelection(questLines.indexOf(task.questLine))
-                selectedDate = task.targetDate ?: TaskDateRules.today()
-                timeSpinner.setSelection(timeTypes.indexOf(task.timeType))
-                updateRecurrenceOptions(task.timeType, task.recurrence)
-                updateDateButton(task.timeType)
-                reminderTime = task.reminderTime ?: reminderTime
-                reminderSwitch.isChecked = task.reminderTime != null
-                selectedDeadlineDate = task.deadlineDate ?: selectedDate
-                deadlineSwitch.isChecked = task.deadlineDate != null
-                updateReminderControls()
-                updateDeadlineControls()
+            categories = repository.allCategories()
+            setupCategoryChips()
+            val taskId = intent.getStringExtra(EXTRA_TASK_ID)
+            if (taskId == null) {
+                applyDraftDefaults(savedInstanceState)
+                applyEditable(true)
             } else {
-                // 旋转后的异步数据库读取只恢复实体身份，不能覆盖用户尚未保存的草稿。
-                restoreDraftState(restoredState, fallback = task)
+                val task = repository.get(taskId)
+                if (task == null) {
+                    finish()
+                    return@launch
+                }
+                editingTask = task
+                applyTask(task, savedInstanceState)
+                applyEditable(task.status == TaskStatus.PENDING)
             }
-            deleteButton.isVisible = pending
-            saveButton.isEnabled = pending
-            applySettledState(task)
-            isLoadingTask = false
+            isLoading = false
             initialSnapshot = currentSnapshot()
         }
     }
 
-    /** 已结算任务只能查看：禁用全部输入，避免看起来可改但保存无效。 */
-    private fun applySettledState(task: Task) {
-        val editable = !isReadOnly(task.status)
+    private fun setupCategoryChips() {
+        categoryGroup.removeAllViews()
+        categories.forEach { category ->
+            val chip = com.google.android.material.radiobutton.MaterialRadioButton(this).apply {
+                id = View.generateViewId()
+                tag = category.id
+                text = category.name
+                maxLines = 1
+                buttonDrawable = null
+                setBackgroundResource(R.drawable.scope_button_background)
+                setTextColor(
+                    androidx.core.content.ContextCompat.getColorStateList(
+                        this@EditTaskActivity,
+                        R.color.scope_button_text,
+                    ),
+                )
+                gravity = android.view.Gravity.CENTER
+                minHeight = dp(38)
+                minWidth = 0
+                setPadding(dp(8), 0, dp(8), 0)
+                layoutParams = RadioGroup.LayoutParams(
+                    RadioGroup.LayoutParams.WRAP_CONTENT,
+                    dp(38),
+                ).apply { marginEnd = dp(4) }
+            }
+            categoryGroup.addView(chip)
+            if (category.id == selectedCategoryId) chip.isChecked = true
+        }
+        if (categoryGroup.checkedRadioButtonId == View.NO_ID) {
+            categoryGroup.check(categoryGroup.getChildAt(0)?.id ?: View.NO_ID)
+        }
+    }
+
+    private fun applyDraftDefaults(state: Bundle?) {
+        val today = TaskDateRules.today()
+        startDate = today
+        endDate = today
+        selectedCategoryId = state?.getString(STATE_CATEGORY_ID) ?: TaskCategories.INBOX_ID
+        titleInput.setText(state?.getString(STATE_TITLE).orEmpty())
+        dateRangeEnabled = state?.getBoolean(STATE_DATE_RANGE_ENABLED) ?: false
+        state?.getString(STATE_START_DATE)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?.let { startDate = it }
+        state?.getString(STATE_END_DATE)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?.let { endDate = it }
+        reminderTime = state?.getString(STATE_REMINDER_TIME)
+            ?.let { runCatching { LocalTime.parse(it) }.getOrNull() }
+            ?: reminderTime
+        reminderSwitch.isChecked = state?.getBoolean(STATE_REMINDER_ENABLED) ?: false
+        setupCategoryChips()
+        dateRangeSwitch.isChecked = dateRangeEnabled
+        dateRangeContainer.isVisible = dateRangeEnabled
+        updateDateButtons()
+        updateReminderControls()
+    }
+
+    private fun applyTask(task: Task, state: Bundle?) {
+        pageTitle.setText(
+            if (task.status == TaskStatus.PENDING) R.string.edit_task else R.string.view_task_title,
+        )
+        selectedCategoryId = state?.getString(STATE_CATEGORY_ID) ?: task.categoryId
+        titleInput.setText(state?.getString(STATE_TITLE) ?: task.title)
+        startDate = state?.getString(STATE_START_DATE)
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: task.startDate
+            ?: TaskDateRules.today()
+        endDate = state?.getString(STATE_END_DATE)
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?: task.endDate
+            ?: startDate
+        dateRangeEnabled = state?.getBoolean(STATE_DATE_RANGE_ENABLED)
+            ?: (task.startDate != null && task.endDate != null)
+        reminderTime = state?.getString(STATE_REMINDER_TIME)
+            ?.let { runCatching { LocalTime.parse(it) }.getOrNull() }
+            ?: task.reminderTime
+            ?: reminderTime
+        reminderSwitch.isChecked = state?.getBoolean(STATE_REMINDER_ENABLED)
+            ?: (task.reminderTime != null)
+        setupCategoryChips()
+        dateRangeSwitch.isChecked = dateRangeEnabled
+        dateRangeContainer.isVisible = dateRangeEnabled
+        updateDateButtons()
+        updateReminderControls()
+        deleteButton.isVisible = task.status == TaskStatus.PENDING
+    }
+
+    private fun applyEditable(editable: Boolean) {
         settledNotice.isVisible = !editable
-        pageTitle.setText(if (editable) R.string.edit_task else R.string.view_task_title)
         listOf(
             titleInput,
-            questSpinner,
-            timeSpinner,
-            dateButton,
-            recurrenceSpinner,
-            deadlineSwitch,
-            deadlineDateButton,
+            manageCategoriesButton,
+            dateRangeSwitch,
+            startDateButton,
+            endDateButton,
             reminderSwitch,
             reminderTimeButton,
         ).forEach { it.isEnabled = editable }
+        categoryGroup.children().forEach { it.isEnabled = editable }
         saveButton.isVisible = editable
-        deleteButton.isVisible = editable
+        deleteButton.isVisible = editable &&
+            editingTask != null &&
+            editingTask?.status == TaskStatus.PENDING
     }
 
-    private fun restoreDraftState(state: Bundle, fallback: Task? = null) {
-        titleInput.setText(state.getString(STATE_TITLE) ?: fallback?.title.orEmpty())
-        selectedDate = state.getString(STATE_SELECTED_DATE)
-            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-            ?: fallback?.targetDate
-            ?: selectedDate
-        val questLine = state.getString(STATE_QUEST_LINE)
-            ?.let { runCatching { QuestLine.fromRaw(it) }.getOrNull() }
-            ?: fallback?.questLine
-            ?: QuestLine.MAIN
-        val timeType = state.getString(STATE_TIME_TYPE)
-            ?.let { runCatching { TaskTimeType.fromRaw(it) }.getOrNull() }
-            ?: fallback?.timeType
-            ?: TaskTimeType.DAY
-        val recurrence = state.getString(STATE_RECURRENCE)
-            ?.let { runCatching { Recurrence.fromRaw(it) }.getOrNull() }
-            ?: fallback?.recurrence
-            ?: Recurrence.ONCE
-        selectedDeadlineDate = state.getString(STATE_DEADLINE_DATE)
-            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-            ?: fallback?.deadlineDate
-            ?: selectedDate
-        reminderTime = state.getString(STATE_REMINDER_TIME)
-            ?.let { runCatching { LocalTime.parse(it) }.getOrNull() }
-            ?: fallback?.reminderTime
-            ?: reminderTime
-        reminderSwitch.isChecked = state.getBoolean(
-            STATE_REMINDER_ENABLED,
-            fallback?.reminderTime != null,
+    private fun updateDateButtons() {
+        startDateButton.text = getString(
+            R.string.date_button_format,
+            getString(R.string.start_date_label),
+            startDate.format(dateFormatter),
         )
-        deadlineSwitch.isChecked = state.getBoolean(
-            STATE_DEADLINE_ENABLED,
-            fallback?.deadlineDate != null,
+        endDateButton.text = getString(
+            R.string.date_button_format,
+            getString(R.string.end_date_label),
+            endDate.format(dateFormatter),
         )
-        questSpinner.setSelection(questLines.indexOf(questLine))
-        timeSpinner.setSelection(timeTypes.indexOf(timeType))
-        updateRecurrenceOptions(timeType, recurrence)
-        updateDateButton(timeType)
-        updateReminderControls()
-        updateDeadlineControls()
+    }
+
+    private fun updateReminderControls() {
+        val available = dateRangeEnabled
+        reminderSwitch.isEnabled = available
+        if (!available) reminderSwitch.isChecked = false
+        reminderTimeButton.isEnabled = available && reminderSwitch.isChecked
+        reminderTimeButton.text = if (reminderSwitch.isChecked && available) {
+            getString(R.string.task_reminder_time, reminderTime.toString())
+        } else {
+            getString(R.string.task_reminder_not_set)
+        }
+    }
+
+    private fun showDatePicker(isStart: Boolean) {
+        val current = if (isStart) startDate else endDate
+        DatePickerDialog(
+            this,
+            { _, year, month, day ->
+                val picked = LocalDate.of(year, month + 1, day)
+                if (isStart) {
+                    startDate = picked
+                    if (endDate.isBefore(startDate)) endDate = picked
+                } else {
+                    endDate = picked
+                    if (startDate.isAfter(endDate)) startDate = picked
+                }
+                updateDateButtons()
+            },
+            current.year,
+            current.monthValue - 1,
+            current.dayOfMonth,
+        ).show()
+    }
+
+    private fun showReminderTimePicker() {
+        TimePickerDialog(
+            this,
+            { _, hour, minute ->
+                reminderTime = LocalTime.of(hour, minute)
+                reminderSwitch.isChecked = true
+                updateReminderControls()
+            },
+            reminderTime.hour,
+            reminderTime.minute,
+            true,
+        ).show()
     }
 
     private fun saveTask() {
-        if (isLoadingTask) return
+        if (isLoading) return
         val title = titleInput.text.toString().trim()
         if (title.isBlank()) {
             titleInput.error = getString(R.string.title_required)
             return
         }
-        val type = timeTypes[timeSpinner.selectedItemPosition]
+        if (dateRangeEnabled && startDate.isAfter(endDate)) {
+            Toast.makeText(this, R.string.date_range_invalid, Toast.LENGTH_SHORT).show()
+            return
+        }
         val draft = TaskDraft(
             title = title,
-            timeType = type,
-            targetDate = if (type == TaskTimeType.LEISURE) null else selectedDate,
-            questLine = questLines[questSpinner.selectedItemPosition],
-            recurrence = selectedRecurrenceOrOnce(),
-            deadlineDate = selectedDeadlineDate.takeIf {
-                deadlineSwitch.isChecked && selectedRecurrenceOrOnce() == Recurrence.ONCE
-            },
-            reminderTime = reminderTime.takeIf {
-                reminderSwitch.isChecked && type != TaskTimeType.LEISURE
-            },
+            categoryId = selectedCategoryId,
+            startDate = startDate.takeIf { dateRangeEnabled },
+            endDate = endDate.takeIf { dateRangeEnabled },
+            reminderTime = reminderTime.takeIf { dateRangeEnabled && reminderSwitch.isChecked },
         )
         saveButton.isEnabled = false
         lifecycleScope.launch {
@@ -340,70 +330,15 @@ class EditTaskActivity : AppCompatActivity() {
         }
     }
 
-    private fun showDatePicker() {
-        DatePickerDialog(
-            this,
-            { _, year, month, day ->
-                selectedDate = LocalDate.of(year, month + 1, day)
-                if (!deadlineSwitch.isChecked) selectedDeadlineDate = selectedDate
-                updateDateButton(timeTypes[timeSpinner.selectedItemPosition])
-            },
-            selectedDate.year,
-            selectedDate.monthValue - 1,
-            selectedDate.dayOfMonth,
-        ).show()
-    }
-
-    private fun showReminderTimePicker() {
-        TimePickerDialog(
-            this,
-            { _, hour, minute ->
-                reminderTime = LocalTime.of(hour, minute)
-                reminderSwitch.isChecked = true
-                updateReminderControls()
-            },
-            reminderTime.hour,
-            reminderTime.minute,
-            true,
-        ).show()
-    }
-
-    private fun showDeadlineDatePicker() {
-        DatePickerDialog(
-            this,
-            { _, year, month, day ->
-                selectedDeadlineDate = LocalDate.of(year, month + 1, day)
-                deadlineSwitch.isChecked = true
-                updateDeadlineControls()
-            },
-            selectedDeadlineDate.year,
-            selectedDeadlineDate.monthValue - 1,
-            selectedDeadlineDate.dayOfMonth,
-        ).show()
-    }
-
-    private fun updateDeadlineControls() {
-        val available = selectedRecurrenceOrOnce() == Recurrence.ONCE
-        deadlineSwitch.isEnabled = available
-        if (!available) deadlineSwitch.isChecked = false
-        deadlineDateButton.isEnabled = available && deadlineSwitch.isChecked
-        deadlineDateButton.text = if (deadlineSwitch.isChecked && available) {
-            getString(R.string.task_deadline_date, selectedDeadlineDate)
-        } else {
-            getString(R.string.task_deadline_not_set)
-        }
-    }
-
-    private fun updateReminderControls() {
-        val type = timeTypes.getOrNull(timeSpinner.selectedItemPosition) ?: TaskTimeType.DAY
-        val available = type != TaskTimeType.LEISURE
-        reminderSwitch.isEnabled = available
-        if (!available) reminderSwitch.isChecked = false
-        reminderTimeButton.isEnabled = available && reminderSwitch.isChecked
-        reminderTimeButton.text = if (reminderSwitch.isChecked && available) {
-            getString(R.string.task_reminder_time, reminderTime.toString())
-        } else {
-            getString(R.string.task_reminder_not_set)
+    private fun manageCategories() {
+        CategoryManagerDialog.show(this, repository) { updated ->
+            categories = updated
+            if (categories.none { it.id == selectedCategoryId }) {
+                selectedCategoryId = TaskCategories.INBOX_ID
+            }
+            setupCategoryChips()
+            (application as WooTodoApplication).notifyLocalMutation()
+            TodayWidgetUpdater.updateAllAsync(applicationContext)
         }
     }
 
@@ -432,34 +367,61 @@ class EditTaskActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateDateButton(type: TaskTimeType) {
-        dateButton.isVisible = type != TaskTimeType.LEISURE
-        val normalized = TaskDateRules.normalizeTargetDate(type, selectedDate)
-        dateButton.text = when (type) {
-            TaskTimeType.DAY -> "日期：$normalized"
-            TaskTimeType.WEEK -> "所在周：$normalized 起"
-            TaskTimeType.MONTH -> "月份：${normalized?.year}-${normalized?.monthValue.toString().padStart(2, '0')}"
-            TaskTimeType.LEISURE -> getString(R.string.select_date)
+    private fun attemptClose() {
+        if (isLoading || !hasUnsavedChanges()) {
+            finish()
+            return
         }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.editor_discard_title)
+            .setMessage(R.string.editor_discard_message)
+            .setNegativeButton(R.string.editor_discard_cancel, null)
+            .setPositiveButton(R.string.editor_discard_confirm) { _, _ -> finish() }
+            .show()
     }
 
-    private fun simpleAdapter(labels: List<String>): ArrayAdapter<String> =
-        ArrayAdapter(this, android.R.layout.simple_spinner_item, labels).also {
-            it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        }
+    private fun hasUnsavedChanges(): Boolean {
+        val baseline = initialSnapshot ?: return false
+        return currentSnapshot() != baseline
+    }
+
+    private fun currentSnapshot(): String = listOf(
+        titleInput.text.toString(),
+        selectedCategoryId,
+        dateRangeEnabled,
+        startDate,
+        endDate,
+        reminderSwitch.isChecked,
+        reminderTime,
+    ).joinToString("|")
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_TITLE, titleInput.text.toString())
+        outState.putString(STATE_CATEGORY_ID, selectedCategoryId)
+        outState.putBoolean(STATE_DATE_RANGE_ENABLED, dateRangeEnabled)
+        outState.putString(STATE_START_DATE, startDate.toString())
+        outState.putString(STATE_END_DATE, endDate.toString())
+        outState.putBoolean(STATE_REMINDER_ENABLED, reminderSwitch.isChecked)
+        outState.putString(STATE_REMINDER_TIME, reminderTime.toString())
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    private fun RadioGroup.children(): Sequence<RadioButton> =
+        (0 until childCount).mapNotNull { getChildAt(it) as? RadioButton }.asSequence()
 
     companion object {
         const val EXTRA_TASK_ID = "task_id"
-        const val EXTRA_TIME_TYPE = "time_type"
-        const val EXTRA_TARGET_DATE = "target_date"
-        private const val STATE_TITLE = "editor_title"
-        private const val STATE_SELECTED_DATE = "editor_selected_date"
-        private const val STATE_QUEST_LINE = "editor_quest_line"
-        private const val STATE_TIME_TYPE = "editor_time_type"
-        private const val STATE_RECURRENCE = "editor_recurrence"
-        private const val STATE_DEADLINE_ENABLED = "editor_deadline_enabled"
-        private const val STATE_DEADLINE_DATE = "editor_deadline_date"
-        private const val STATE_REMINDER_ENABLED = "editor_reminder_enabled"
-        private const val STATE_REMINDER_TIME = "editor_reminder_time"
+        const val STATE_TITLE = "editor_title"
+        const val STATE_CATEGORY_ID = "editor_category_id"
+        const val STATE_DATE_RANGE_ENABLED = "editor_date_range_enabled"
+        const val STATE_START_DATE = "editor_start_date"
+        const val STATE_END_DATE = "editor_end_date"
+        const val STATE_REMINDER_ENABLED = "editor_reminder_enabled"
+        const val STATE_REMINDER_TIME = "editor_reminder_time"
+        val dateFormatter: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("M月d日", Locale.SIMPLIFIED_CHINESE)
     }
 }

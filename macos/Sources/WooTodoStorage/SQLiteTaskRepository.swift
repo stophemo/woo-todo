@@ -131,59 +131,6 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
-    public func fetchTasks(
-        scope: TimeScope,
-        in period: TaskPeriod?,
-        includeOverdueOnce: Bool
-    ) throws -> [TodoTask] {
-        try withLock {
-            if let period {
-                let scoped = try query(
-                    """
-                    SELECT id, series_id, title, time_scope, tier, status,
-                           recurrence_json, period_start, period_end, sort_index,
-                           created_at, updated_at, completed_at, reminder_time, deadline_date
-                    FROM tasks
-                    WHERE time_scope = ?
-                    ORDER BY CASE tier
-                        WHEN 'main' THEN 0
-                        WHEN 'side' THEN 1
-                        ELSE 2
-                    END, sort_index, created_at
-                    """,
-                    bindings: [.text(scope.rawValue)]
-                )
-                return scoped.filter { task in
-                    guard let taskPeriod = task.period else { return false }
-                    let overlaps = taskPeriod.start < period.end && taskPeriod.end > period.start
-                    let carriedOnce = includeOverdueOnce && task.recurrence == .once &&
-                        taskPeriod.end <= period.start && (
-                            task.status == .pending ||
-                                (task.status == .completed &&
-                                    task.completedAt.map { period.contains($0) } == true)
-                        )
-                    return overlaps || carriedOnce
-                }
-            }
-
-            return try query(
-                """
-                SELECT id, series_id, title, time_scope, tier, status,
-                       recurrence_json, period_start, period_end, sort_index,
-                       created_at, updated_at, completed_at, reminder_time, deadline_date
-                FROM tasks
-                WHERE time_scope = ?
-                ORDER BY CASE tier
-                    WHEN 'main' THEN 0
-                    WHEN 'side' THEN 1
-                    ELSE 2
-                END, sort_index, created_at
-                """,
-                bindings: [.text(scope.rawValue)]
-            )
-        }
-    }
-
     public func deletedTaskIDs() throws -> Set<UUID> {
         try withLock {
             let statement = try prepare(
@@ -255,27 +202,27 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
 
                     sqlite3_reset(statement)
                     sqlite3_clear_bindings(statement)
-                    let recurrenceData = try encoder.encode(task.recurrence)
-                    guard let recurrenceJSON = String(data: recurrenceData, encoding: .utf8) else {
-                        throw SQLiteRepositoryError.invalidRecord("重复规则无法编码")
+                    let recurrenceJSON = "{\"once\":{}}"
+                    let calendar = TodoTask.protocolCalendar
+                    let periodEnd = task.endDate.flatMap {
+                        calendar.date(byAdding: .day, value: 1, to: $0)
                     }
-
                     let values: [SQLiteValue] = [
                         .text(task.id.uuidString),
                         .text(task.seriesID.uuidString),
                         .text(task.title),
-                        .text(task.timeScope.rawValue),
-                        .text(task.tier.rawValue),
+                        .text(task.startDate == nil ? "someday" : "day"),
+                        .text(task.categoryID),
                         .text(task.status.rawValue),
                         .text(recurrenceJSON),
-                        task.period.map { .double($0.start.timeIntervalSince1970) } ?? .null,
-                        task.period.map { .double($0.end.timeIntervalSince1970) } ?? .null,
+                        task.startDate.map { .double($0.timeIntervalSince1970) } ?? .null,
+                        periodEnd.map { .double($0.timeIntervalSince1970) } ?? .null,
                         .integer(Int64(task.sortIndex)),
                         .double(task.createdAt.timeIntervalSince1970),
                         .double(task.updatedAt.timeIntervalSince1970),
                         task.completedAt.map { .double($0.timeIntervalSince1970) } ?? .null,
                         task.reminderTime.map { .text($0.wireValue) } ?? .null,
-                        task.deadlineDate.map { .double($0.timeIntervalSince1970) } ?? .null
+                        task.endDate.map { .double($0.timeIntervalSince1970) } ?? .null
                     ]
                     try bind(values, to: statement)
                     guard sqlite3_step(statement) == SQLITE_DONE else {
@@ -305,9 +252,6 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         try withLock {
             guard var task = try storedTask(id: id),
                   task.status == .completed else { return false }
-            if let period = task.period,
-               period.end <= date,
-               case .repeating = task.recurrence { return false }
 
             task.status = .pending
             task.completedAt = nil
@@ -405,6 +349,114 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 throw error
             }
         }
+    }
+
+    public func fetchCategories() throws -> [TaskCategory] {
+        try withLock {
+            let values = try queryCategories()
+            return values.isEmpty ? TaskCategory.defaults : values
+        }
+    }
+
+    public func saveCategories(_ categories: [TaskCategory]) throws {
+        let normalized = TaskCategory.normalizeList(categories)
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try execute("DELETE FROM task_categories")
+                let statement = try prepare(
+                    """
+                    INSERT INTO task_categories(id, name, sort_order, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """
+                )
+                defer { sqlite3_finalize(statement) }
+                let now = Date().timeIntervalSince1970
+                for category in normalized {
+                    sqlite3_reset(statement)
+                    sqlite3_clear_bindings(statement)
+                    try bind([
+                        .text(category.id),
+                        .text(category.name),
+                        .integer(Int64(category.order)),
+                        .double(now),
+                    ], to: statement)
+                    guard sqlite3_step(statement) == SQLITE_DONE else {
+                        throw statementError()
+                    }
+                }
+                if let configuration = syncConfiguration {
+                    try enqueueLocalDisplayConfiguration(
+                        Self.categorySyncPayload(normalized),
+                        configuration: configuration
+                    )
+                } else if hasPersistedSyncIdentity {
+                    try recordDeferredDisplayConfiguration()
+                }
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    private static func categorySyncPayload(
+        _ categories: [TaskCategory]
+    ) throws -> WireDisplayConfigurationPayload {
+        try WireDisplayConfigurationPayload(
+            headerTemplate: "",
+            subtitleTemplate: "",
+            startDate: "2000-01-01",
+            deadlineDate: "2000-01-01",
+            questLines: try categories.map { category in
+                try WireQuestLineDefinition(
+                    id: category.id,
+                    name: category.name,
+                    order: category.order
+                )
+            }
+        )
+    }
+
+    @discardableResult
+    public func reassignPendingCategory(
+        from: String,
+        to: String,
+        at date: Date
+    ) throws -> Int {
+        let tasks = try fetchAll().filter {
+            $0.status == .pending && $0.categoryID == from
+        }
+        guard !tasks.isEmpty else { return 0 }
+        let updated = tasks.map { task in
+            var value = task
+            value.categoryID = to
+            value.updatedAt = date
+            return value
+        }
+        try save(updated)
+        return updated.count
+    }
+
+    private func queryCategories() throws -> [TaskCategory] {
+        let statement = try prepare(
+            "SELECT id, name, sort_order FROM task_categories ORDER BY sort_order ASC, id ASC"
+        )
+        defer { sqlite3_finalize(statement) }
+        var values: [TaskCategory] = []
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            let id = text(at: 0, from: statement)
+            let name = text(at: 1, from: statement)
+            let order = Int(sqlite3_column_int64(statement, 2))
+            if let category = try? TaskCategory(id: id, name: name, order: order) {
+                values.append(category)
+            }
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else { throw statementError() }
+        return values
     }
 
     private func migrate() throws {
@@ -581,6 +633,25 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         if try !tableHasColumn("sync_display_configuration", columnName: "is_local_override") {
             try execute(
                 "ALTER TABLE sync_display_configuration ADD COLUMN is_local_override INTEGER NOT NULL DEFAULT 1"
+            )
+        }
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_categories (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        let now = Date().timeIntervalSince1970
+        for category in TaskCategory.defaults {
+            try execute(
+                """
+                INSERT OR IGNORE INTO task_categories(id, name, sort_order, updated_at)
+                VALUES ('\(category.id)', '\(category.name.replacingOccurrences(of: "'", with: "''"))', \(category.order), \(now))
+                """
             )
         }
         try execute("PRAGMA user_version = 7")
@@ -833,6 +904,13 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             """
         ) {
             try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
+        }
+        let categories = TaskCategory.normalizeList(try queryCategories())
+        if categories != TaskCategory.defaults {
+            try enqueueLocalDisplayConfiguration(
+                Self.categorySyncPayload(categories),
+                configuration: configuration
+            )
         }
         for deletion in try deferredDeletions() {
             try deleteTaskRow(entityID: deletion.entityID)
@@ -1232,11 +1310,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             }
 
             if try hasDeferredDisplayConfiguration() {
-                guard let displayConfiguration = try displayConfiguration() else {
-                    throw SQLiteRepositoryError.invalidRecord("待同步显示配置缺少正文")
-                }
                 try enqueueLocalDisplayConfiguration(
-                    displayConfiguration,
+                    Self.categorySyncPayload(TaskCategory.normalizeList(try queryCategories())),
                     configuration: configuration
                 )
             }
@@ -1543,29 +1618,12 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         for task: TodoTask,
         timeZone: TimeZone
     ) throws -> WireTaskPayload {
-        let timeType: WireTaskTimeType
-        switch task.timeScope {
-        case .daily: timeType = .day
-        case .weekly: timeType = .week
-        case .monthly: timeType = .month
-        case .anytime: timeType = .someday
-        }
-        let questLine: WireQuestLine
-        switch task.tier {
-        case .mainline: questLine = .main
-        case .side: questLine = .side
-        case .extra: questLine = .extra
-        }
+        let ranged = task.startDate != nil && task.endDate != nil
         let state: WireTaskState
         switch task.status {
         case .pending: state = .pending
         case .completed: state = .completed
         case .pass: state = .pass
-        }
-        let recurrence: WireRecurrence
-        switch task.recurrence {
-        case .once: recurrence = .once
-        case .repeating: recurrence = .repeatRule
         }
         let settledAt = task.status == .pending
             ? nil
@@ -1575,17 +1633,17 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             id: canonicalEntityID(task.id.uuidString),
             seriesId: canonicalEntityID(task.seriesID.uuidString),
             title: task.title,
-            timeType: timeType,
-            periodStart: task.period.map { dateKey($0.start, timeZone: timeZone) },
-            deadlineDate: task.deadlineDate.map { dateKey($0, timeZone: timeZone) },
+            timeType: ranged ? .day : .someday,
+            periodStart: task.startDate.map { dateKey($0, timeZone: timeZone) },
+            deadlineDate: task.endDate.map { dateKey($0, timeZone: timeZone) },
             timezone: timeZone.identifier,
-            questLine: questLine,
+            questLine: task.categoryID,
             state: state,
-            recurrence: recurrence,
+            recurrence: .once,
             sortOrder: Int64(task.sortIndex),
             createdAt: milliseconds(since1970: task.createdAt),
             updatedAt: milliseconds(since1970: task.updatedAt),
-            reminderTime: task.reminderTime?.wireValue,
+            reminderTime: ranged ? task.reminderTime?.wireValue : nil,
             settledAt: settledAt
         )
     }
@@ -1828,6 +1886,73 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 isDeleted: false,
                 deletedAt: nil
             ))
+            if !payload.questLines.isEmpty {
+                try replaceCategoriesFromRemote(payload.questLines)
+                try reconcileUnknownPendingCategories()
+            }
+        }
+    }
+
+    private func replaceCategoriesFromRemote(
+        _ definitions: [WireQuestLineDefinition]
+    ) throws {
+        let categories = TaskCategory.normalizeList(
+            try definitions.map { definition in
+                try TaskCategory(
+                    id: definition.id,
+                    name: definition.name,
+                    order: definition.order
+                )
+            }
+        )
+        try execute("DELETE FROM task_categories")
+        let statement = try prepare(
+            """
+            INSERT INTO task_categories(id, name, sort_order, updated_at)
+            VALUES (?, ?, ?, ?)
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        let now = Date().timeIntervalSince1970
+        for category in categories {
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
+            try bind([
+                .text(category.id),
+                .text(category.name),
+                .integer(Int64(category.order)),
+                .double(now),
+            ], to: statement)
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+        }
+    }
+
+    private func reconcileUnknownPendingCategories() throws {
+        let known = Set(try queryCategories().map(\.id))
+        let pending = try query(
+            """
+            SELECT id, series_id, title, time_scope, tier, status,
+                   recurrence_json, period_start, period_end, sort_index,
+                   created_at, updated_at, completed_at, reminder_time, deadline_date
+            FROM tasks
+            WHERE status = 'pending'
+            ORDER BY created_at, id
+            """
+        )
+        let now = Date()
+        for task in pending where !known.contains(task.categoryID) {
+            var updated = task
+            updated.categoryID = TaskCategory.inboxID
+            updated.updatedAt = now
+            try upsertTaskRow(updated)
+            if let configuration = syncConfiguration {
+                try enqueueLocalTask(updated, kind: .upsert, configuration: configuration)
+            } else if hasPersistedSyncIdentity {
+                try recordDeferredUpsert(
+                    entityID: canonicalEntityID(updated.id.uuidString),
+                    kind: .upsert
+                )
+            }
         }
     }
 
@@ -1929,18 +2054,11 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     }
 
     private func isCompletionWithinDeadline(_ task: TodoTask) -> Bool {
-        guard task.status == .completed,
-              let completedAt = task.completedAt else { return false }
-        if task.timeScope == .anytime { return true }
-        guard let deadline = task.period?.end else { return false }
-        return completedAt < deadline
+        task.status == .completed && task.completedAt != nil
     }
 
     private func isValidReopen(_ task: TodoTask) -> Bool {
-        guard task.status == .pending, task.completedAt == nil else { return false }
-        if case .once = task.recurrence { return true }
-        guard let deadline = task.period?.end else { return task.timeScope == .anytime }
-        return task.updatedAt < deadline
+        task.status == .pending && task.completedAt == nil
     }
 
     private func maximumVersion(
@@ -1979,66 +2097,67 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
               let timeZone = TimeZone(identifier: payload.timezone) else {
             throw SQLiteRepositoryError.invalidRecord("远端任务的 ID、排序或时区无效")
         }
-        let scope: TimeScope
-        switch payload.timeType {
-        case .day: scope = .daily
-        case .week: scope = .weekly
-        case .month: scope = .monthly
-        case .someday: scope = .anytime
-        }
-        let tier: QuestTier
-        switch payload.questLine {
-        case .main: tier = .mainline
-        case .side: tier = .side
-        case .extra: tier = .extra
-        }
         let status: TaskStatus
         switch payload.state {
         case .pending: status = .pending
         case .completed: status = .completed
         case .pass: status = .pass
         }
-        let recurrence: RecurrenceRule
-        switch payload.recurrence {
-        case .once: recurrence = .once
-        case .repeatRule: recurrence = .repeating(RepeatRule(frequency: scope))
-        }
-
-        let period: TaskPeriod?
-        if let periodStart = payload.periodStart {
-            guard let date = date(fromKey: periodStart, timeZone: timeZone),
-                  let calculated = PeriodEngine(timeZone: timeZone)
-                    .period(containing: date, for: scope),
-                  calculated.start == date else {
-                throw SQLiteRepositoryError.invalidRecord("远端任务的周期起点无效")
+        let start = payload.periodStart.flatMap { date(fromKey: $0, timeZone: timeZone) }
+        let deadline = payload.deadlineDate.flatMap { date(fromKey: $0, timeZone: timeZone) }
+        var calendar = TodoTask.protocolCalendar
+        calendar.timeZone = timeZone
+        let defaultEnd: Date?
+        switch payload.timeType {
+        case .day:
+            defaultEnd = start
+        case .week:
+            defaultEnd = start.flatMap { calendar.date(byAdding: .day, value: 6, to: $0) }
+        case .month:
+            defaultEnd = start.flatMap { value in
+                calendar.dateInterval(of: .month, for: value).map { interval in
+                    calendar.date(byAdding: .day, value: -1, to: interval.end) ?? value
+                }
             }
-            period = calculated
-        } else {
-            period = nil
+        case .someday:
+            defaultEnd = nil
         }
+        let end: Date?
+        switch (start, deadline) {
+        case (nil, nil):
+            end = nil
+        case (nil, let deadline?):
+            end = deadline
+        case (let start?, nil):
+            end = defaultEnd ?? start
+        case (let start?, let deadline?):
+            end = max(defaultEnd ?? start, deadline)
+        }
+        let effectiveStart = start ?? end
         let settledDate = payload.settledAt.map(date(fromMilliseconds:))
         return try TodoTask(
             id: id,
             seriesID: seriesID,
             title: payload.title,
-            timeScope: scope,
-            tier: tier,
+            categoryID: payload.questLine,
             status: status,
-            recurrence: recurrence,
-            period: period,
+            startDate: effectiveStart,
+            endDate: end,
             sortIndex: sortIndex,
             createdAt: date(fromMilliseconds: payload.createdAt),
             updatedAt: date(fromMilliseconds: payload.updatedAt),
-            reminderTime: payload.reminderTime.flatMap(TaskReminderTime.init(wireValue:)),
-            deadlineDate: payload.deadlineDate.flatMap { date(fromKey: $0, timeZone: timeZone) },
+            reminderTime: effectiveStart == nil
+                ? nil
+                : payload.reminderTime.flatMap(TaskReminderTime.init(wireValue:)),
             completedAt: status == .pending ? nil : settledDate
         )
     }
 
     private func upsertTaskRow(_ task: TodoTask) throws {
-        let recurrenceData = try encoder.encode(task.recurrence)
-        guard let recurrenceJSON = String(data: recurrenceData, encoding: .utf8) else {
-            throw SQLiteRepositoryError.invalidRecord("重复规则无法编码")
+        let recurrenceJSON = "{\"once\":{}}"
+        let calendar = TodoTask.protocolCalendar
+        let periodEnd = task.endDate.flatMap {
+            calendar.date(byAdding: .day, value: 1, to: $0)
         }
         let statement = try prepare(
             """
@@ -2068,18 +2187,18 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             .text(task.id.uuidString),
             .text(task.seriesID.uuidString),
             .text(task.title),
-            .text(task.timeScope.rawValue),
-            .text(task.tier.rawValue),
+            .text(task.startDate == nil ? "someday" : "day"),
+            .text(task.categoryID),
             .text(task.status.rawValue),
             .text(recurrenceJSON),
-            task.period.map { .double($0.start.timeIntervalSince1970) } ?? .null,
-            task.period.map { .double($0.end.timeIntervalSince1970) } ?? .null,
+            task.startDate.map { .double($0.timeIntervalSince1970) } ?? .null,
+            periodEnd.map { .double($0.timeIntervalSince1970) } ?? .null,
             .integer(Int64(task.sortIndex)),
             .double(task.createdAt.timeIntervalSince1970),
             .double(task.updatedAt.timeIntervalSince1970),
             task.completedAt.map { .double($0.timeIntervalSince1970) } ?? .null,
             task.reminderTime.map { .text($0.wireValue) } ?? .null,
-            task.deadlineDate.map { .double($0.timeIntervalSince1970) } ?? .null,
+            task.endDate.map { .double($0.timeIntervalSince1970) } ?? .null,
         ], to: statement)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
     }
@@ -2347,45 +2466,62 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         guard
             let id = UUID(uuidString: text(at: 0, from: statement)),
             let seriesID = UUID(uuidString: text(at: 1, from: statement)),
-            let scope = TimeScope(rawValue: text(at: 3, from: statement)),
-            let tier = QuestTier(rawValue: text(at: 4, from: statement)),
-            let status = TaskStatus(rawValue: text(at: 5, from: statement)),
-            let recurrenceData = text(at: 6, from: statement).data(using: .utf8)
+            let status = TaskStatus(rawValue: text(at: 5, from: statement))
         else {
-            throw SQLiteRepositoryError.invalidRecord("枚举或标识符无法解析")
+            throw SQLiteRepositoryError.invalidRecord("任务标识或状态无法解析")
         }
-
-        let recurrence: RecurrenceRule
-        do {
-            recurrence = try decoder.decode(RecurrenceRule.self, from: recurrenceData)
-        } catch {
-            throw SQLiteRepositoryError.invalidRecord("重复规则无法解析")
+        let categoryID = text(at: 4, from: statement)
+        guard TaskCategory.isValidID(categoryID) else {
+            throw SQLiteRepositoryError.invalidRecord("任务分类标识无法解析")
         }
-
-        let period: TaskPeriod?
-        if sqlite3_column_type(statement, 7) == SQLITE_NULL {
-            period = nil
+        let scope = text(at: 3, from: statement)
+        let start = optionalDate(at: 7, from: statement)
+        let periodEnd = optionalDate(at: 8, from: statement)
+        let deadline = optionalDate(at: 14, from: statement)
+        let calendar = TodoTask.protocolCalendar
+        let defaultEnd: Date?
+        if let periodEnd {
+            defaultEnd = calendar.date(byAdding: .day, value: -1, to: periodEnd)
         } else {
-            period = TaskPeriod(
-                start: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7)),
-                end: Date(timeIntervalSince1970: sqlite3_column_double(statement, 8))
-            )
+            switch scope {
+            case "day":
+                defaultEnd = start
+            case "week":
+                defaultEnd = start.flatMap { calendar.date(byAdding: .day, value: 6, to: $0) }
+            case "month":
+                defaultEnd = start.flatMap { value in
+                    calendar.dateInterval(of: .month, for: value).map { interval in
+                        calendar.date(byAdding: .day, value: -1, to: interval.end) ?? value
+                    }
+                }
+            default:
+                defaultEnd = nil
+            }
         }
-
+        let end: Date?
+        switch (start, deadline) {
+        case (nil, nil):
+            end = nil
+        case (nil, let deadline?):
+            end = deadline
+        case (let start?, nil):
+            end = defaultEnd ?? start
+        case (let start?, let deadline?):
+            end = max(defaultEnd ?? start, deadline)
+        }
+        let effectiveStart = start ?? end
         return try TodoTask(
             id: id,
             seriesID: seriesID,
             title: text(at: 2, from: statement),
-            timeScope: scope,
-            tier: tier,
+            categoryID: categoryID,
             status: status,
-            recurrence: recurrence,
-            period: period,
+            startDate: effectiveStart,
+            endDate: end,
             sortIndex: Int(sqlite3_column_int64(statement, 9)),
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 10)),
             updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 11)),
-            reminderTime: try reminderTime(at: 13, from: statement),
-            deadlineDate: optionalDate(at: 14, from: statement),
+            reminderTime: effectiveStart == nil ? nil : try reminderTime(at: 13, from: statement),
             completedAt: optionalDate(at: 12, from: statement)
         )
     }

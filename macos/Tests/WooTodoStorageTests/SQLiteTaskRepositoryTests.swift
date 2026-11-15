@@ -6,20 +6,17 @@ import WooTodoSync
 
 @Suite("SQLite 本地仓储")
 struct SQLiteTaskRepositoryTests {
-    @Test("可以保存、更新和筛选，已结算任务不可改写")
+    @Test("可以保存、更新和读取，已结算任务不可改写")
     func repositoryRoundTrip() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let now = ISO8601DateFormatter().date(from: "2026-07-15T12:00:00+08:00")!
+        let now = date("2026-07-15T12:00:00+08:00")
         var task = try TodoTask(
             title: "完成 M1 骨架",
-            timeScope: .daily,
-            tier: .mainline,
-            recurrence: .repeating(RepeatRule(frequency: .daily)),
-            period: engine.period(containing: now, for: .daily),
+            categoryID: "main",
+            startDate: date("2026-07-15"),
+            endDate: date("2026-07-20"),
             sortIndex: 3,
-            createdAt: now,
-            deadlineDate: now.addingTimeInterval(5 * 86_400)
+            createdAt: now
         )
 
         try repository.save(task)
@@ -29,12 +26,11 @@ struct SQLiteTaskRepositoryTests {
         task.completedAt = now.addingTimeInterval(60)
         task.updatedAt = now.addingTimeInterval(60)
         try repository.save(task)
-        let today = try repository.fetchTasks(
-            scope: .daily,
-            in: engine.period(containing: now, for: .daily)
-        )
-        #expect(today.first?.status == .completed)
-        #expect(today.first?.completedAt == task.completedAt)
+        let stored = try #require(try repository.fetchAll().first)
+        #expect(stored.status == .completed)
+        #expect(stored.completedAt == task.completedAt)
+        #expect(stored.startDate == date("2026-07-15"))
+        #expect(stored.endDate == date("2026-07-20"))
 
         do {
             try repository.delete(id: task.id)
@@ -53,43 +49,25 @@ struct SQLiteTaskRepositoryTests {
             // 预期错误。
         }
         #expect(try repository.fetchAll() == [task])
-
-        let pending = try TodoTask(
-            title: "可以删除",
-            timeScope: .daily,
-            tier: .side,
-            period: engine.period(containing: now, for: .daily),
-            sortIndex: 4,
-            createdAt: now.addingTimeInterval(1)
-        )
-        try repository.save(pending)
-        try repository.delete(id: pending.id)
-        #expect(try repository.fetchAll() == [task])
     }
 
     @Test("历史记录可批量清除并生成幂等删除记录")
     func clearHistory() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
-        let now = ISO8601DateFormatter().date(from: "2026-07-15T12:00:00+08:00")!
+        let now = date("2026-07-15T12:00:00+08:00")
         var completed = try TodoTask(
             title: "已完成",
-            timeScope: .anytime,
-            tier: .mainline,
-            period: nil,
+            categoryID: "main",
             createdAt: now
         )
         var passed = try TodoTask(
-            title: "已 Pass",
-            timeScope: .anytime,
-            tier: .side,
-            period: nil,
+            title: "已放弃",
+            categoryID: "side",
             createdAt: now.addingTimeInterval(1)
         )
         let pending = try TodoTask(
             title: "保留待办",
-            timeScope: .anytime,
-            tier: .extra,
-            period: nil,
+            categoryID: "extra",
             createdAt: now.addingTimeInterval(2)
         )
         try repository.save([completed, passed, pending])
@@ -110,83 +88,47 @@ struct SQLiteTaskRepositoryTests {
         #expect(try repository.deletedTaskIDs() == [completed.id, passed.id])
     }
 
-    @Test("闲时任务可以无周期保存")
+    @Test("无日期任务可以保存并读取")
     func anytimeTaskRoundTrip() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
-        let createdAt = ISO8601DateFormatter().date(from: "2026-07-15T12:00:00+08:00")!
+        let createdAt = date("2026-07-15T12:00:00+08:00")
         let task = try TodoTask(
             title: "闲时阅读",
-            timeScope: .anytime,
-            tier: .extra,
-            period: nil,
+            categoryID: "extra",
             createdAt: createdAt
         )
         try repository.save(task)
 
-        #expect(try repository.fetchTasks(scope: .anytime, in: nil) == [task])
+        #expect(try repository.fetchAll() == [task])
     }
 
-    @Test("过期一次性任务会保留待办或完成当天")
-    func overdueOnceRequiresExplicitInclusion() throws {
+    @Test("日期范围写入后读取一致")
+    func dateRangeRoundTrip() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let yesterday = ISO8601DateFormatter().date(from: "2026-07-14T12:00:00+08:00")!
-        let today = ISO8601DateFormatter().date(from: "2026-07-15T12:00:00+08:00")!
-        let task = try TodoTask(
-            title: "昨日未完成",
-            timeScope: .daily,
-            tier: .mainline,
-            period: engine.period(containing: yesterday, for: .daily),
-            createdAt: yesterday
+        let ranged = try TodoTask(
+            title: "多日任务",
+            categoryID: "work",
+            startDate: date("2026-07-13"),
+            endDate: date("2026-07-25")
         )
-        try repository.save(task)
-        let todayPeriod = try #require(engine.period(containing: today, for: .daily))
+        try repository.save(ranged)
 
-        #expect(try repository.fetchTasks(scope: .daily, in: todayPeriod).isEmpty)
-        #expect(
-            try repository.fetchTasks(
-                scope: .daily,
-                in: todayPeriod,
-                includeOverdueOnce: true
-            ) == [task]
-        )
-
-        var completed = task
-        completed.status = .completed
-        completed.completedAt = today
-        completed.updatedAt = today
-        try repository.save(completed)
-
-        #expect(try repository.fetchTasks(scope: .daily, in: todayPeriod).isEmpty)
-        #expect(
-            try repository.fetchTasks(
-                scope: .daily,
-                in: todayPeriod,
-                includeOverdueOnce: true
-            ) == [completed]
-        )
-
-        let tomorrow = today.addingTimeInterval(86_400)
-        let tomorrowPeriod = try #require(engine.period(containing: tomorrow, for: .daily))
-        #expect(
-            try repository.fetchTasks(
-                scope: .daily,
-                in: tomorrowPeriod,
-                includeOverdueOnce: true
-            ).isEmpty
-        )
+        let stored = try repository.fetchAll()
+        let storedRanged = try #require(stored.first { $0.id == ranged.id })
+        #expect(storedRanged.categoryID == "work")
+        #expect(storedRanged.startDate == date("2026-07-13"))
+        #expect(storedRanged.endDate == date("2026-07-25"))
     }
 
-    @Test("一次性完成项跨周期可恢复，过期重复周期不能恢复")
+    @Test("完成项可以撤销且不再受周期限制")
     func reopenCompletedTask() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
-        let engine = PeriodEngine(timeZone: TimeZone(identifier: "Asia/Shanghai")!)
-        let now = ISO8601DateFormatter().date(from: "2026-07-15T12:00:00+08:00")!
+        let now = date("2026-07-15T12:00:00+08:00")
         var task = try TodoTask(
             title: "误点完成",
-            timeScope: .daily,
-            tier: .mainline,
-            period: engine.period(containing: now, for: .daily),
+            categoryID: "main",
+            startDate: date("2026-07-15"),
+            endDate: date("2026-07-15"),
             createdAt: now.addingTimeInterval(-60)
         )
         task.status = .completed
@@ -201,33 +143,39 @@ struct SQLiteTaskRepositoryTests {
         #expect(try repository.reopenCompleted(id: task.id, at: now) == false)
 
         reopened.status = .completed
-        reopened.completedAt = now
-        reopened.updatedAt = now
+        reopened.completedAt = date("2026-09-01")
+        reopened.updatedAt = date("2026-09-01")
         try repository.save(reopened)
-        let periodEnd = try #require(reopened.period?.end)
-        #expect(try repository.reopenCompleted(id: task.id, at: periodEnd))
+        #expect(try repository.reopenCompleted(id: task.id, at: date("2026-09-02")))
         reopened = try #require(try repository.fetchAll().first { $0.id == task.id })
         #expect(reopened.status == .pending)
-        #expect(reopened.completedAt == nil)
+    }
 
-        var repeating = try TodoTask(
-            title: "昨日重复任务",
-            timeScope: .daily,
-            tier: .mainline,
-            recurrence: .repeating(RepeatRule(frequency: .daily)),
-            period: engine.period(containing: now, for: .daily),
-            createdAt: now.addingTimeInterval(-60)
-        )
-        repeating.status = .completed
-        repeating.completedAt = now
-        repeating.updatedAt = now
-        try repository.save(repeating)
+    @Test("分类可保存、读取并在删除时重分配待办")
+    func categoriesRoundTripAndReassign() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let work = try TaskCategory(id: "work", name: "工作", order: 4)
+        let categories = TaskCategory.normalizeList(TaskCategory.defaults + [work])
+        try repository.saveCategories(categories)
+        #expect(try repository.fetchCategories() == categories)
 
-        #expect(try repository.reopenCompleted(id: repeating.id, at: periodEnd) == false)
-        let storedRepeating = try #require(
-            try repository.fetchAll().first { $0.id == repeating.id }
+        let pending = try TodoTask(title: "工作待办", categoryID: "work")
+        let completed = try TodoTask(
+            title: "工作完成",
+            categoryID: "work",
+            status: .completed,
+            completedAt: Date()
         )
-        #expect(storedRepeating.status == .completed)
+        try repository.save([pending, completed])
+
+        #expect(try repository.reassignPendingCategory(
+            from: "work",
+            to: TaskCategory.inboxID,
+            at: Date()
+        ) == 1)
+        let stored = try repository.fetchAll()
+        #expect(stored.first { $0.id == pending.id }?.categoryID == TaskCategory.inboxID)
+        #expect(stored.first { $0.id == completed.id }?.categoryID == "work")
     }
 
     @Test("显示配置在仓储关闭并重新打开后仍保留")
@@ -252,5 +200,18 @@ struct SQLiteTaskRepositoryTests {
 
         let reopened = try SQLiteTaskRepository(databaseURL: databaseURL)
         #expect(try reopened.displayConfiguration() == payload)
+    }
+
+    private func date(_ value: String) -> Date {
+        if value.count == 10 {
+            var calendar = TodoTask.protocolCalendar
+            calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+            return calendar.date(from: DateComponents(
+                year: Int(value.prefix(4)),
+                month: Int(value.dropFirst(5).prefix(2)),
+                day: Int(value.suffix(2))
+            ))!
+        }
+        return ISO8601DateFormatter().date(from: value)!
     }
 }

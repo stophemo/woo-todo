@@ -1,10 +1,12 @@
 package com.wootodo.ui
 
+import android.content.res.ColorStateList
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -14,32 +16,36 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
-import com.wootodo.domain.QuestLine
+import com.wootodo.data.TaskRepository
+import com.wootodo.domain.CategoryActivity
 import com.wootodo.domain.StatisticsEngine
 import com.wootodo.domain.StatisticsSnapshot
-import com.wootodo.domain.StatusCounts
 import com.wootodo.domain.Task
+import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskDateRules
-import com.wootodo.domain.TaskTimeType
-import com.wootodo.domain.TrendBucket
-import com.wootodo.data.TaskRepository
+import com.wootodo.domain.TaskStatus
+import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class InsightsActivity : AppCompatActivity() {
-    private lateinit var endedRate: TextView
-    private lateinit var mainRate: TextView
-    private lateinit var dailyTrend: TextView
-    private lateinit var weeklyTrend: TextView
-    private lateinit var monthlyTrend: TextView
-    private lateinit var timeTypeCounts: TextView
-    private lateinit var questLineCounts: TextView
+    private lateinit var statWeekValue: TextView
+    private lateinit var statStreakValue: TextView
+    private lateinit var statOnTimeValue: TextView
+    private lateinit var statPendingValue: TextView
+    private lateinit var activitySummary: TextView
+    private lateinit var activityChart: ActivityBarChartView
+    private lateinit var categoryBreakdown: LinearLayout
     private lateinit var recentHistoryList: LinearLayout
     private lateinit var historySelectButton: Button
     private lateinit var historyDeleteSelectedButton: Button
     private lateinit var historyClearAllButton: Button
     private lateinit var repository: TaskRepository
+    private var categories: List<TaskCategory> = TaskCategories.defaults
     private var historyTasks: List<Task> = emptyList()
     private val selectedHistoryIds = linkedSetOf<String>()
     private var selectingHistory = false
@@ -50,13 +56,13 @@ class InsightsActivity : AppCompatActivity() {
         setContentView(R.layout.activity_insights)
         applySystemBarInsets(findViewById(R.id.insights_root))
         findViewById<View>(R.id.insights_back_button).setOnClickListener { finish() }
-        endedRate = findViewById(R.id.ended_rate)
-        mainRate = findViewById(R.id.main_rate)
-        dailyTrend = findViewById(R.id.daily_trend)
-        weeklyTrend = findViewById(R.id.weekly_trend)
-        monthlyTrend = findViewById(R.id.monthly_trend)
-        timeTypeCounts = findViewById(R.id.time_type_counts)
-        questLineCounts = findViewById(R.id.quest_line_counts)
+        statWeekValue = findViewById(R.id.stat_week_value)
+        statStreakValue = findViewById(R.id.stat_streak_value)
+        statOnTimeValue = findViewById(R.id.stat_on_time_value)
+        statPendingValue = findViewById(R.id.stat_pending_value)
+        activitySummary = findViewById(R.id.activity_summary)
+        activityChart = findViewById(R.id.activity_chart)
+        categoryBreakdown = findViewById(R.id.category_breakdown)
         recentHistoryList = findViewById(R.id.recent_history_list)
         historySelectButton = findViewById(R.id.history_select_button)
         historyDeleteSelectedButton = findViewById(R.id.history_delete_selected_button)
@@ -67,57 +73,94 @@ class InsightsActivity : AppCompatActivity() {
         }
         historyClearAllButton.setOnClickListener { confirmClearHistory(ids = null) }
         listOf(
-            endedRate,
-            mainRate,
-            dailyTrend,
-            weeklyTrend,
-            monthlyTrend,
-            timeTypeCounts,
-            questLineCounts,
+            statWeekValue,
+            statStreakValue,
+            statOnTimeValue,
+            statPendingValue,
+            activitySummary,
         ).forEach { it.enableReadOnlyTextSelection() }
 
         repository = (application as WooTodoApplication).taskRepository
         lifecycleScope.launch {
-            if (repository.autoPassExpired() > 0) {
-                (application as WooTodoApplication).notifyLocalMutation()
-            }
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                repository.observeAllTasks().collect { tasks ->
-                    render(
-                        StatisticsEngine.calculate(
-                            tasks,
-                            TaskDateRules.today(),
-                            recentHistoryLimit = Int.MAX_VALUE,
-                        ),
-                    )
-                }
+                combine(
+                    repository.observeAllTasks(),
+                    repository.observeCategories(),
+                ) { tasks, categories -> tasks to categories }
+                    .collect { (tasks, categories) ->
+                        this@InsightsActivity.categories = categories
+                        render(
+                            StatisticsEngine.calculate(
+                                tasks = tasks,
+                                referenceDate = TaskDateRules.today(),
+                                zoneId = TaskDateRules.zoneId,
+                                recentHistoryLimit = Int.MAX_VALUE,
+                            ),
+                        )
+                    }
             }
         }
     }
 
     private fun render(snapshot: StatisticsSnapshot) {
-        endedRate.text = getString(
-            R.string.ended_fulfillment,
-            formatRate(snapshot.endedPeriodFulfillmentRate),
-        )
-        mainRate.text = getString(
-            R.string.main_fulfillment,
-            formatRate(snapshot.mainQuestFulfillmentRate),
-        )
-        dailyTrend.text = formatTrend(snapshot.dailyTrend, TaskTimeType.DAY)
-        weeklyTrend.text = formatTrend(snapshot.weeklyTrend, TaskTimeType.WEEK)
-        monthlyTrend.text = formatTrend(snapshot.monthlyTrend, TaskTimeType.MONTH)
-        timeTypeCounts.text = TaskTimeType.entries.joinToString("\n") { type ->
-            formatCounts(getString(type.labelRes()), snapshot.byTimeType.getValue(type))
-        }
-        questLineCounts.text = QuestLine.entries.joinToString("\n") { line ->
-            formatCounts(getString(line.labelRes()), snapshot.byQuestLine.getValue(line))
-        }
+        statWeekValue.text = snapshot.completedThisWeek.toString()
+        statStreakValue.text = getString(R.string.stats_streak_value, snapshot.currentStreakDays)
+        statOnTimeValue.text = formatRate(snapshot.onTimeRate)
+        statPendingValue.text = snapshot.pendingCount.toString()
+        val total = snapshot.dailyActivity.sumOf { it.completed }
+        activitySummary.text = getString(R.string.stats_activity_summary, total)
+        activityChart.setData(snapshot.dailyActivity)
+        renderCategories(snapshot.categoryActivity)
         historyTasks = snapshot.recentHistory
         val availableIds = historyTasks.mapTo(HashSet(), Task::id)
         selectedHistoryIds.retainAll(availableIds)
         if (historyTasks.isEmpty()) selectingHistory = false
         renderHistory()
+    }
+
+    private fun renderCategories(activity: List<CategoryActivity>) {
+        categoryBreakdown.removeAllViews()
+        if (activity.isEmpty()) {
+            categoryBreakdown.addView(historyText(getString(R.string.stats_no_categories)))
+            return
+        }
+        activity.forEach { item ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(8), 0, dp(8))
+            }
+            val header = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+            header.addView(
+                TextView(this).apply {
+                    text = TaskCategories.resolveName(item.categoryId, categories)
+                    textSize = 16f
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                },
+            )
+            header.addView(
+                TextView(this).apply {
+                    text = getString(
+                        R.string.stats_category_count,
+                        item.completed,
+                        (item.ratio * 100).roundToInt(),
+                    )
+                    textSize = 13f
+                    setTextColor(getColor(R.color.muted))
+                },
+            )
+            row.addView(header)
+            row.addView(
+                ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100
+                    progress = (item.ratio * 100).roundToInt()
+                    progressTintList = ColorStateList.valueOf(getColor(R.color.primary))
+                    progressBackgroundTintList = ColorStateList.valueOf(getColor(R.color.line))
+                },
+            )
+            categoryBreakdown.addView(row)
+        }
     }
 
     private fun renderHistory() {
@@ -217,57 +260,19 @@ class InsightsActivity : AppCompatActivity() {
         String.format(Locale.SIMPLIFIED_CHINESE, "%.0f%%", it * 100)
     } ?: getString(R.string.no_rate)
 
-    private fun formatCounts(label: String, counts: StatusCounts): String =
-        getString(
-            R.string.counts_format,
-            label,
-            counts.completed,
-            counts.pass,
-            counts.pending,
+    private fun formatHistory(task: Task): String {
+        val date = task.settledAt
+            ?.let { Instant.ofEpochMilli(it).atZone(TaskDateRules.zoneId).toLocalDate() }
+            ?.format(dayFormatter)
+            .orEmpty()
+        return getString(
+            R.string.history_item_format,
+            task.title,
+            TaskCategories.resolveName(task.categoryId, categories),
+            getString(task.status.labelRes()),
+            date,
         )
-
-    private fun formatTrend(buckets: List<TrendBucket>, timeType: TaskTimeType): String {
-        if (buckets.isEmpty()) return getString(R.string.trend_no_records)
-        val recorded = visibleTrendBuckets(buckets)
-        if (recorded.isEmpty()) return getString(R.string.trend_no_records)
-        // 全零周期不再逐行占位，否则大字体手机上一屏只能看到 3 行数字。
-        val lines = recorded.map { bucket ->
-            val period = when (timeType) {
-                TaskTimeType.DAY -> bucket.startDate.format(dayFormatter)
-                TaskTimeType.WEEK -> getString(
-                    R.string.trend_week_period,
-                    bucket.startDate.format(dayFormatter),
-                )
-                TaskTimeType.MONTH -> bucket.startDate.format(monthFormatter)
-                TaskTimeType.LEISURE -> ""
-            }
-            val rate = if (bucket.isEnded) {
-                formatRate(bucket.fulfillmentRate)
-            } else {
-                getString(R.string.trend_in_progress)
-            }
-            getString(
-                R.string.trend_item_format,
-                period,
-                rate,
-                bucket.completed,
-                bucket.pass,
-            )
-        }.toMutableList()
-        val hidden = hiddenTrendBucketCount(buckets)
-        if (hidden > 0) {
-            lines += getString(R.string.trend_empty_periods, hidden)
-        }
-        return lines.joinToString("\n")
     }
-
-    private fun formatHistory(task: Task): String = getString(
-        R.string.history_item_format,
-        task.title,
-        getString(task.timeType.labelRes()),
-        getString(task.questLine.labelRes()),
-        getString(task.status.labelRes()),
-    )
 
     private fun historyText(value: String): TextView = TextView(this).apply {
         text = value
@@ -276,13 +281,11 @@ class InsightsActivity : AppCompatActivity() {
         enableReadOnlyTextSelection()
     }
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
     private companion object {
         val dayFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern(
             "M月d日",
-            Locale.SIMPLIFIED_CHINESE,
-        )
-        val monthFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern(
-            "yyyy年M月",
             Locale.SIMPLIFIED_CHINESE,
         )
     }

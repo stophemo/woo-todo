@@ -254,6 +254,28 @@ internal object AppUpdatePolicy {
     }
 }
 
+internal object AppUpdatePromptPolicy {
+    const val PROMPT_COOLDOWN_MILLIS = 24L * 60L * 60L * 1_000L
+
+    fun shouldPrompt(
+        lastPromptedVersion: String?,
+        lastPromptedAt: Long,
+        skippedVersion: String?,
+        version: String,
+        now: Long,
+        manual: Boolean,
+    ): Boolean {
+        if (manual) return true
+        if (skippedVersion == version) return false
+        if (lastPromptedVersion != version) return true
+        val elapsed = when {
+            lastPromptedAt <= 0L || now < lastPromptedAt -> Long.MAX_VALUE
+            else -> now - lastPromptedAt
+        }
+        return elapsed >= PROMPT_COOLDOWN_MILLIS
+    }
+}
+
 internal class AppUpdatePreferences(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(
         FILE_NAME,
@@ -298,6 +320,35 @@ internal class AppUpdatePreferences(context: Context) {
             .remove(KEY_AVAILABLE_APK_URL)
             .remove(KEY_LAST_HANDLED_VERSION)
             .remove(KEY_LEGACY_LAST_PROMPTED_VERSION)
+            .remove(KEY_LAST_PROMPTED_VERSION)
+            .remove(KEY_LAST_PROMPTED_AT)
+            .remove(KEY_SKIPPED_VERSION)
+            .apply()
+    }
+
+    @Synchronized
+    fun shouldPrompt(release: GitHubRelease, manual: Boolean, now: Long): Boolean =
+        AppUpdatePromptPolicy.shouldPrompt(
+            lastPromptedVersion = preferences.getString(KEY_LAST_PROMPTED_VERSION, null),
+            lastPromptedAt = preferences.getLong(KEY_LAST_PROMPTED_AT, 0L),
+            skippedVersion = preferences.getString(KEY_SKIPPED_VERSION, null),
+            version = release.versionLabel,
+            now = now,
+            manual = manual,
+        )
+
+    @Synchronized
+    fun markPrompted(version: String, now: Long) {
+        preferences.edit()
+            .putString(KEY_LAST_PROMPTED_VERSION, version)
+            .putLong(KEY_LAST_PROMPTED_AT, now)
+            .apply()
+    }
+
+    @Synchronized
+    fun skipVersion(version: String) {
+        preferences.edit()
+            .putString(KEY_SKIPPED_VERSION, version)
             .apply()
     }
 
@@ -351,5 +402,8 @@ internal class AppUpdatePreferences(context: Context) {
         const val KEY_AVAILABLE_APK_URL = "available_apk_url"
         const val KEY_LAST_HANDLED_VERSION = "last_handled_version"
         const val KEY_LEGACY_LAST_PROMPTED_VERSION = "last_prompted_version"
+        const val KEY_LAST_PROMPTED_VERSION = "prompted_version_current"
+        const val KEY_LAST_PROMPTED_AT = "prompted_at"
+        const val KEY_SKIPPED_VERSION = "skipped_version"
     }
 }

@@ -7,10 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wootodo.data.SQLiteTaskStore
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskEntity
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -173,11 +170,10 @@ class SQLiteBackupDatabaseInstrumentedTest {
             id = id,
             seriesId = "series-$id",
             title = "SQLite 备份任务",
-            timeType = TaskTimeType.DAY,
-            targetDate = LocalDate.of(2026, 7, 16),
-            questLine = QuestLine.MAIN,
+            categoryId = "main",
+            startDate = LocalDate.of(2026, 7, 16),
+            endDate = LocalDate.of(2026, 7, 16),
             status = status,
-            recurrence = Recurrence.ONCE,
             sortOrder = 4,
             createdAt = 1_000,
             updatedAt = 2_000,
@@ -194,8 +190,9 @@ class SQLiteBackupDatabaseInstrumentedTest {
         title = "SQLite 恢复任务",
         timeType = WireTimeType.DAY,
         periodStart = "2026-07-16",
+        deadlineDate = "2026-07-16",
         timezone = WIRE_FIXED_TIMEZONE,
-        questLine = WireQuestLine.MAIN,
+        questLine = "main",
         state = state,
         recurrence = WireRecurrence.ONCE,
         sortOrder = 4,

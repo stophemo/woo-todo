@@ -1,46 +1,93 @@
 import Foundation
 
-/// 任务所属的时间维度。
-public enum TimeScope: String, Codable, CaseIterable, Sendable {
-    case daily = "day"
-    case weekly = "week"
-    case monthly = "month"
-    case anytime = "someday"
+/// 任务类型（分类）。order 越小越靠前。
+public struct TaskCategory: Identifiable, Codable, Equatable, Hashable, Sendable {
+    public static let inboxID = "inbox"
+    public static let maximumCount = 8
+    public static let maximumNameLength = 12
 
-    public var displayName: String {
-        switch self {
-        case .daily: "每日"
-        case .weekly: "每周"
-        case .monthly: "每月"
-        case .anytime: "闲时"
+    private static let idPattern = "^[a-z0-9][a-z0-9_-]{0,31}$"
+    private static let customIDCharacters = Array("abcdefghijklmnopqrstuvwxyz0123456789")
+
+    public let id: String
+    public var name: String
+    public var order: Int
+
+    public static let defaults: [TaskCategory] = [
+        try! TaskCategory(id: inboxID, name: "未分类", order: 0),
+        try! TaskCategory(id: "main", name: "主线", order: 1),
+        try! TaskCategory(id: "side", name: "支线", order: 2),
+        try! TaskCategory(id: "extra", name: "外传", order: 3),
+    ]
+
+    public init(id: String, name: String, order: Int) throws {
+        guard Self.isValidID(id) else { throw TaskValidationError.invalidCategory }
+        let normalizedName = try Self.normalizeName(name)
+        guard (0...63).contains(order) else { throw TaskValidationError.invalidCategory }
+        self.id = id
+        self.name = normalizedName
+        self.order = order
+    }
+
+    public static func isValidID(_ value: String) -> Bool {
+        value.range(of: idPattern, options: .regularExpression) != nil
+    }
+
+    public static func normalizeName(_ value: String) throws -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+              normalized.unicodeScalars.count <= maximumNameLength,
+              !normalized.contains(where: { $0.isNewline }) else {
+            throw TaskValidationError.invalidCategory
         }
+        return normalized
+    }
+
+    /// 补齐 inbox、去重、按当前顺序重排 order，并限制最多 8 个。
+    public static func normalizeList(_ input: [TaskCategory]) -> [TaskCategory] {
+        var inbox: TaskCategory?
+        var seenIds = Set<String>()
+        var seenNames = Set<String>()
+        var values: [TaskCategory] = []
+        for category in input {
+            guard let name = try? normalizeName(category.name),
+                  isValidID(category.id),
+                  seenIds.insert(category.id).inserted,
+                  seenNames.insert(name).inserted else {
+                continue
+            }
+            let normalized = try? TaskCategory(id: category.id, name: name, order: 0)
+            guard let normalized else { continue }
+            if category.id == inboxID {
+                inbox = normalized
+            } else {
+                values.append(normalized)
+            }
+        }
+        let inboxValue = inbox ?? (try! TaskCategory(id: inboxID, name: "未分类", order: 0))
+        values.insert(inboxValue, at: 0)
+        return values.prefix(maximumCount).enumerated().map { index, category in
+            try! TaskCategory(id: category.id, name: category.name, order: index)
+        }
+    }
+
+    public static func newID(existing: Set<String>) -> String {
+        for _ in 0..<64 {
+            let suffix = String((0..<7).map { _ in customIDCharacters.randomElement()! })
+            let candidate = "c\(suffix)"
+            if !existing.contains(candidate) { return candidate }
+        }
+        preconditionFailure("无法生成唯一分类 ID")
+    }
+
+    public static func resolveName(id: String, categories: [TaskCategory]) -> String {
+        categories.first(where: { $0.id == id })?.name
+            ?? defaults.first(where: { $0.id == id })?.name
+            ?? "未分类"
     }
 }
 
-/// 游戏化任务级别，同时决定默认展示优先级。
-public enum QuestTier: String, Codable, CaseIterable, Sendable {
-    case mainline = "main"
-    case side
-    case extra
-
-    public var displayName: String {
-        switch self {
-        case .mainline: "主线"
-        case .side: "支线"
-        case .extra: "外传"
-        }
-    }
-
-    public var priority: Int {
-        switch self {
-        case .mainline: 0
-        case .side: 1
-        case .extra: 2
-        }
-    }
-}
-
-/// Pass 是到期未完成的最终状态，会进入履约统计。
+/// Pass 是放弃后的最终状态，会进入历史；不再自动产生。
 public enum TaskStatus: String, Codable, CaseIterable, Sendable {
     case pending
     case completed
@@ -50,58 +97,27 @@ public enum TaskStatus: String, Codable, CaseIterable, Sendable {
         switch self {
         case .pending: "待完成"
         case .completed: "已完成"
-        case .pass: "Pass"
+        case .pass: "已放弃"
         }
-    }
-}
-
-public struct RepeatRule: Codable, Equatable, Sendable {
-    public let frequency: TimeScope
-    public let interval: Int
-
-    public init(frequency: TimeScope, interval: Int = 1) {
-        self.frequency = frequency
-        self.interval = max(1, interval)
-    }
-}
-
-public enum RecurrenceRule: Codable, Equatable, Sendable {
-    case once
-    case repeating(RepeatRule)
-}
-
-/// 左闭右开的周期区间，例如一天为 [今日 00:00, 明日 00:00)。
-public struct TaskPeriod: Codable, Equatable, Hashable, Sendable {
-    public let start: Date
-    public let end: Date
-
-    public init(start: Date, end: Date) {
-        precondition(start < end, "任务周期的开始时间必须早于结束时间")
-        self.start = start
-        self.end = end
-    }
-
-    public func contains(_ date: Date) -> Bool {
-        start <= date && date < end
     }
 }
 
 public enum TaskValidationError: LocalizedError, Equatable {
     case emptyTitle
     case titleTooLong
-    case missingPeriod
-    case unexpectedPeriod
-    case invalidRecurrence
+    case invalidDates
+    case invalidCategory
     case invalidReminderTime
+    case invalidState
 
     public var errorDescription: String? {
         switch self {
         case .emptyTitle: "任务内容不能为空"
         case .titleTooLong: "任务内容不能超过 120 个 Unicode 字符"
-        case .missingPeriod: "每日、每周和每月任务必须指定周期"
-        case .unexpectedPeriod: "闲时任务不能指定周期"
-        case .invalidRecurrence: "重复频率必须与时间维度一致；v1 仅支持每周期一次，闲时任务不能重复"
-        case .invalidReminderTime: "提醒时间必须是 00:00 到 23:59"
+        case .invalidDates: "开始日期和结束日期必须同时设置或同时为空，且开始不能晚于结束"
+        case .invalidCategory: "任务类型无效：名称需为 1–12 个字符，标识需为 1–32 位小写字母、数字、下划线或连字符"
+        case .invalidReminderTime: "提醒时间必须是 00:00 到 23:59，且任务需要有日期"
+        case .invalidState: "任务状态与结算时间组合无效"
         }
     }
 }
@@ -136,39 +152,33 @@ public struct TaskReminderTime: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-/// 一条任务代表某个周期中的一次履约机会；重复任务通过 seriesID 串联。
+/// 一条任务。日期范围同时为空表示“未安排”，否则必须同时有开始和结束日期。
 public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public let seriesID: UUID
     public var title: String
-    public var timeScope: TimeScope
-    public var tier: QuestTier
+    public var categoryID: String
     public var status: TaskStatus
-    public var recurrence: RecurrenceRule
-    public var period: TaskPeriod?
+    public var startDate: Date?
+    public var endDate: Date?
     public var sortIndex: Int
     public let createdAt: Date
     public var updatedAt: Date
     public var reminderTime: TaskReminderTime?
-    /// 用户可选的任务截止日；不会自动改变任务状态。
-    public var deadlineDate: Date?
-    /// completed 与 Pass 共用的结算时间；沿用字段名以兼容现有本地数据库。
     public var completedAt: Date?
 
     public init(
         id: UUID = UUID(),
         seriesID: UUID? = nil,
         title: String,
-        timeScope: TimeScope,
-        tier: QuestTier,
+        categoryID: String,
         status: TaskStatus = .pending,
-        recurrence: RecurrenceRule = .once,
-        period: TaskPeriod?,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
         sortIndex: Int = 0,
         createdAt: Date = Date(),
         updatedAt: Date? = nil,
         reminderTime: TaskReminderTime? = nil,
-        deadlineDate: Date? = nil,
         completedAt: Date? = nil
     ) throws {
         let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -176,39 +186,57 @@ public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
         guard normalizedTitle.unicodeScalars.count <= 120 else {
             throw TaskValidationError.titleTooLong
         }
-        guard (timeScope == .anytime) == (period == nil) else {
-            throw timeScope == .anytime
-                ? TaskValidationError.unexpectedPeriod
-                : TaskValidationError.missingPeriod
+        guard TaskCategory.isValidID(categoryID) else {
+            throw TaskValidationError.invalidCategory
         }
-        if case let .repeating(rule) = recurrence,
-           rule.frequency == .anytime || rule.frequency != timeScope || rule.interval != 1 {
-            throw TaskValidationError.invalidRecurrence
+        guard (startDate == nil) == (endDate == nil) else {
+            throw TaskValidationError.invalidDates
+        }
+        let calendar = Self.protocolCalendar
+        let normalizedStart = startDate.map { calendar.startOfDay(for: $0) }
+        let normalizedEnd = endDate.map { calendar.startOfDay(for: $0) }
+        if let start = normalizedStart, let end = normalizedEnd, start > end {
+            throw TaskValidationError.invalidDates
+        }
+        if reminderTime != nil, normalizedStart == nil {
+            throw TaskValidationError.invalidReminderTime
+        }
+        if status == .pending {
+            guard completedAt == nil else { throw TaskValidationError.invalidState }
+        } else {
+            guard completedAt != nil else { throw TaskValidationError.invalidState }
         }
 
         self.id = id
         self.seriesID = seriesID ?? id
         self.title = normalizedTitle
-        self.timeScope = timeScope
-        self.tier = tier
+        self.categoryID = categoryID
         self.status = status
-        self.recurrence = recurrence
-        self.period = period
+        self.startDate = normalizedStart
+        self.endDate = normalizedEnd
         self.sortIndex = sortIndex
         self.createdAt = createdAt
         self.updatedAt = updatedAt ?? createdAt
-        self.reminderTime = timeScope == .anytime ? nil : reminderTime
-        self.deadlineDate = deadlineDate
+        self.reminderTime = normalizedStart == nil ? nil : reminderTime
         self.completedAt = completedAt
     }
 
     public static func displayOrder(_ lhs: TodoTask, _ rhs: TodoTask) -> Bool {
-        if lhs.tier.priority != rhs.tier.priority {
-            return lhs.tier.priority < rhs.tier.priority
+        if lhs.status != rhs.status {
+            return lhs.status == .pending
         }
         if lhs.sortIndex != rhs.sortIndex {
             return lhs.sortIndex < rhs.sortIndex
         }
         return lhs.createdAt < rhs.createdAt
+    }
+
+    public static var protocolCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "zh_CN")
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        calendar.firstWeekday = 2
+        calendar.minimumDaysInFirstWeek = 4
+        return calendar
     }
 }

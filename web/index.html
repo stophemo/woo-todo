@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>无我待办 | 本地优先的跨设备待办</title>
-  <meta name="description" content="无我待办是一款本地优先的待办应用。手机规划，电脑执行；macOS 与 Android 各自本地运行，并通过端到端加密同步保持一致。">
+  <meta name="description" content="无我待办是一款本地优先的待办应用。标题优先，类型和起止日期可选；macOS 与 Android 各自本地运行，并通过端到端加密同步保持一致。">
   <meta name="author" content="Woo Todo">
   <meta name="theme-color" content="#191c1a">
   <meta name="color-scheme" content="light">
@@ -13,7 +13,7 @@
   <meta property="og:locale" content="zh_CN">
   <meta property="og:url" content="https://woo-todo.vercel.app/">
   <meta property="og:title" content="无我待办 | 本地优先的跨设备待办">
-  <meta property="og:description" content="手机规划，电脑执行。macOS 与 Android 均可本地使用，同一网络即可加密同步。">
+  <meta property="og:description" content="写下要做的事，按需添加类型和起止日期。macOS 与 Android 均可本地使用，同一网络即可加密同步。">
   <meta property="og:image" content="https://woo-todo.vercel.app/assets/og-cover.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -38,7 +38,7 @@
         <a href="#download">下载</a>
         <a href="https://github.com/stophemo/woo-todo" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
-      <a class="header-action" href="#download">下载 v0.2.3</a>
+      <a class="header-action" href="#download">下载 v0.2.4</a>
     </div>
   </header>
 
@@ -47,13 +47,13 @@
       <div class="hero-grid" aria-hidden="true"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="eyebrow">v0.2.3 · macOS / Android</p>
+          <p class="eyebrow">v0.2.4 · macOS / Android</p>
           <h1 id="hero-title">无我待办</h1>
-          <p class="hero-tagline">手机规划，电脑执行。</p>
-          <p class="hero-summary">任务始终先留在本地。用手机安排今天和明天，在 Mac 桌面任务板上继续完成；没有网络也不耽误记录。</p>
+          <p class="hero-tagline">写下要做的事，完成即止。</p>
+          <p class="hero-summary">任务始终先留在本地。写下标题，按需添加类型和起止日期；没有日期的任务完成即止，不在时间流逝中被自动结算。</p>
           <div class="hero-actions" aria-label="正式版下载">
-            <a class="button button-light" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.3/Woo-Todo-v0.2.3-macos-arm64.zip">下载 macOS</a>
-            <a class="button button-outline" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.3/Woo-Todo-v0.2.3-android.apk">下载 Android</a>
+            <a class="button button-light" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.4/Woo-Todo-v0.2.4-macos-arm64.zip">下载 macOS</a>
+            <a class="button button-outline" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.4/Woo-Todo-v0.2.4-android.apk">下载 Android</a>
           </div>
           <p class="hero-note">本地优先 · 断网可用 · MIT 开源</p>
         </div>
@@ -85,13 +85,13 @@
                   <input type="checkbox" data-task-checkbox checked>
                   <span class="task-check" aria-hidden="true"></span>
                   <span class="task-name">整理今日开发计划</span>
-                  <span class="task-period">每日</span>
+                  <span class="task-period">工作 · 11月15日</span>
                 </label>
                 <label class="task-row">
                   <input type="checkbox" data-task-checkbox>
                   <span class="task-check" aria-hidden="true"></span>
                   <span class="task-name">完成版本发布清单</span>
-                  <span class="task-period">今日</span>
+                  <span class="task-period">工作 · 11月15日–11月18日</span>
                 </label>
               </section>
               <section class="task-group" aria-labelledby="sideline-title">
@@ -100,13 +100,13 @@
                   <input type="checkbox" data-task-checkbox checked>
                   <span class="task-check" aria-hidden="true"></span>
                   <span class="task-name">回复开源仓库反馈</span>
-                  <span class="task-period">每日</span>
+                  <span class="task-period">学习 · 未安排</span>
                 </label>
                 <label class="task-row">
                   <input type="checkbox" data-task-checkbox>
                   <span class="task-check" aria-hidden="true"></span>
                   <span class="task-name">确认上午设备验收</span>
-                  <span class="task-period">今日</span>
+                  <span class="task-period">工作 · 今天</span>
                 </label>
               </section>
               <section class="task-group task-group-extra" aria-labelledby="extra-title">
@@ -115,7 +115,7 @@
                   <input type="checkbox" data-task-checkbox>
                   <span class="task-check" aria-hidden="true"></span>
                   <span class="task-name">整理桌面文件</span>
-                  <span class="task-period">闲时</span>
+                  <span class="task-period">未分类 · 未安排</span>
                 </label>
               </section>
             </div>
@@ -141,11 +141,11 @@
         <div class="availability-inner">
           <div class="availability-item">
             <span>macOS</span>
-            <strong>v0.2.3 正式版</strong>
+            <strong>v0.2.4 正式版</strong>
           </div>
           <div class="availability-item">
             <span>Android</span>
-            <strong>v0.2.3 正式版</strong>
+            <strong>v0.2.4 正式版</strong>
           </div>
         </div>
       </div>
@@ -162,18 +162,18 @@
         <div class="feature-list">
           <article class="feature-row">
             <span class="feature-index">01</span>
-            <h3>先分清时间和轻重</h3>
-            <p>按今日、本周、本月与闲时安排任务，再用主线、支线、外传区分优先级。重复任务会在下一个周期继续出现。</p>
+            <h3>先写下要做的事</h3>
+            <p>任务只需要标题，类型和起止日期都可以留空。类型支持自定义标签；无日期任务完成即止，不会被自动 Pass。</p>
           </article>
           <article class="feature-row">
             <span class="feature-index">02</span>
-            <h3>手机安排，电脑执行</h3>
-            <p>Android 提供今日与明日规划、提醒和桌面 Widget；Mac 通过菜单栏、快捷键与桌面任务板承接执行。</p>
+            <h3>手机记录，电脑执行</h3>
+            <p>Android 提供统一任务列表、定时提醒和桌面 Widget；Mac 通过菜单栏、快捷键与悬浮任务板承接执行。</p>
           </article>
           <article class="feature-row">
             <span class="feature-index">03</span>
-            <h3>本地记录，随时可用</h3>
-            <p>新增、修改、完成与排序直接写入本机。断网时继续工作，恢复连接后再同步积压变化。</p>
+            <h3>看见完成节奏</h3>
+            <p>统计页展示本周完成、连续天数、按时率、14 天趋势与类型分布，历史记录可以多选清理。</p>
           </article>
         </div>
       </div>
@@ -229,7 +229,7 @@
           <ol>
             <li><span>1</span>Mac 开启“同一网络同步”</li>
             <li><span>2</span>Android 扫描配对二维码</li>
-            <li><span>3</span>同网时自动同步任务和设置</li>
+            <li><span>3</span>同网时自动同步任务、类型和历史</li>
           </ol>
           <div>
             <p>离开当前网络仍可正常编辑，重新连接后会自动补齐。</p>
@@ -243,10 +243,10 @@
       <div class="section-inner">
         <header class="download-heading">
           <div>
-            <p class="section-kicker">v0.2.3</p>
+            <p class="section-kicker">v0.2.4</p>
             <h2 id="download-title">下载正式版</h2>
           </div>
-          <p>macOS 与 Android 提供 v0.2.3 正式版，两者都支持应用内更新。</p>
+          <p>macOS 与 Android 提供 v0.2.4 正式版，两者都支持应用内更新。</p>
         </header>
 
         <div class="download-list">
@@ -255,22 +255,22 @@
               <span class="platform-mark platform-macos">M</span>
               <div><strong>macOS</strong><small>macOS 15+ · Apple Silicon</small></div>
             </div>
-            <p>菜单栏入口、快捷新增与悬浮任务板。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.3/Woo-Todo-v0.2.3-macos-arm64.zip">下载 ZIP</a>
+            <p>统一任务列表、悬浮任务板、统计与本机数据清理。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.4/Woo-Todo-v0.2.4-macos-arm64.zip">下载 ZIP</a>
           </article>
           <article class="download-item">
             <div class="platform-name">
               <span class="platform-mark platform-android">A</span>
               <div><strong>Android</strong><small>Android 13+</small></div>
             </div>
-            <p>今日与明日规划、定时提醒和桌面 Widget。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.3/Woo-Todo-v0.2.3-android.apk">下载 APK</a>
+            <p>统一任务列表、定时提醒、桌面 Widget 与统计。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.4/Woo-Todo-v0.2.4-android.apk">下载 APK</a>
           </article>
         </div>
 
         <div class="release-links">
-          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.3">查看发布说明</a>
-          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.2.3/SHA256SUMS.txt">SHA-256 校验</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.4">查看发布说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.2.4/SHA256SUMS.txt">SHA-256 校验</a>
           <a href="https://github.com/stophemo/woo-todo">GitHub 源代码</a>
         </div>
       </div>

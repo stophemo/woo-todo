@@ -16,7 +16,7 @@ class PlanningReminderReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         val appContext = context.applicationContext
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            val handledDate = LocalDate.now()
+            val handledDate = TaskDateRules.today()
             if (!ReminderPreferences.load(appContext).enabled) {
                 ReminderScheduler.schedule(appContext)
                 pendingResult.finish()

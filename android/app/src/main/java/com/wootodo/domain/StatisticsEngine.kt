@@ -1,147 +1,135 @@
 package com.wootodo.domain
 
+import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.temporal.TemporalAdjusters
 
-data class StatusCounts(
-    val completed: Int = 0,
-    val pass: Int = 0,
-    val pending: Int = 0,
-) {
-    val total: Int get() = completed + pass + pending
+data class DayActivity(
+    val date: LocalDate,
+    val completed: Int,
+)
 
-    fun add(status: TaskStatus): StatusCounts =
-        when (status) {
-            TaskStatus.COMPLETED -> copy(completed = completed + 1)
-            TaskStatus.PASS -> copy(pass = pass + 1)
-            TaskStatus.PENDING -> copy(pending = pending + 1)
-        }
-}
-
-data class TrendBucket(
-    val startDate: LocalDate,
-    val endDateExclusive: LocalDate,
-    val completed: Int = 0,
-    val pass: Int = 0,
-    val isEnded: Boolean,
-) {
-    /** 样本数与履约率分母一致，不包含异常未结算的待办记录。 */
-    val sampleCount: Int get() = completed + pass
-
-    /** 当前周期尚未结束时不生成履约率，避免用阶段进度冒充最终结果。 */
-    val fulfillmentRate: Double?
-        get() = if (isEnded && sampleCount > 0) completed.toDouble() / sampleCount else null
-}
+data class CategoryActivity(
+    val categoryId: String,
+    val completed: Int,
+    val ratio: Double,
+)
 
 data class StatisticsSnapshot(
-    val endedPeriodFulfillmentRate: Double?,
-    val mainQuestFulfillmentRate: Double?,
-    val byTimeType: Map<TaskTimeType, StatusCounts>,
-    val byQuestLine: Map<QuestLine, StatusCounts>,
-    val dailyTrend: List<TrendBucket>,
-    val weeklyTrend: List<TrendBucket>,
-    val monthlyTrend: List<TrendBucket>,
+    val completedThisWeek: Int,
+    val currentStreakDays: Int,
+    val onTimeRate: Double?,
+    val pendingCount: Int,
+    val dailyActivity: List<DayActivity>,
+    val categoryActivity: List<CategoryActivity>,
     val recentHistory: List<Task>,
 )
 
 object StatisticsEngine {
+    private const val ACTIVITY_DAYS = 14
+    private const val CATEGORY_DAYS = 30
+
     fun calculate(
         tasks: List<Task>,
         referenceDate: LocalDate,
-        recentHistoryLimit: Int = 20,
+        zoneId: ZoneId = TaskDateRules.zoneId,
+        recentHistoryLimit: Int = Int.MAX_VALUE,
     ): StatisticsSnapshot {
         require(recentHistoryLimit >= 0)
-        val endedTasks = tasks.filter { task ->
-            isEndedPeriod(task, referenceDate) && task.status != TaskStatus.PENDING
+        val completionDates = tasks
+            .filter { it.status == TaskStatus.COMPLETED }
+            .mapNotNull { task -> completionDate(task, zoneId)?.let { task to it } }
+            .toMap()
+        val completedWithDate = completionDates.keys.toList()
+        val weekStart = referenceDate.with(
+            TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY),
+        )
+        val completedThisWeek = completedWithDate.count { task ->
+            val date = completionDates.getValue(task)
+            !date.isBefore(weekStart) && !date.isAfter(referenceDate)
         }
-        val mainEndedTasks = endedTasks.filter { it.questLine == QuestLine.MAIN }
-        return StatisticsSnapshot(
-            endedPeriodFulfillmentRate = fulfillmentRate(endedTasks),
-            mainQuestFulfillmentRate = fulfillmentRate(mainEndedTasks),
-            byTimeType = TaskTimeType.entries.associateWith { type ->
-                tasks.asSequence()
-                    .filter { it.timeType == type }
-                    .fold(StatusCounts()) { counts, task -> counts.add(task.status) }
-            },
-            byQuestLine = QuestLine.entries.associateWith { line ->
-                tasks.asSequence()
-                    .filter { it.questLine == line }
-                    .fold(StatusCounts()) { counts, task -> counts.add(task.status) }
-            },
-            dailyTrend = trend(tasks, TaskTimeType.DAY, 7, referenceDate),
-            weeklyTrend = trend(tasks, TaskTimeType.WEEK, 8, referenceDate),
-            monthlyTrend = trend(tasks, TaskTimeType.MONTH, 6, referenceDate),
-            recentHistory = tasks.asSequence()
-                .filter { it.status != TaskStatus.PENDING && it.settledAt != null }
-                .sortedWith(
-                    compareByDescending<Task> { it.settledAt }
-                        .thenByDescending { it.updatedAt }
-                        .thenBy { it.id },
+        val completedDates = completedWithDate.mapNotNull { completionDates[it] }.toSet()
+        val streak = currentStreak(completedDates, referenceDate)
+
+        val onTimeSamples = completedWithDate.filter { it.endDate != null }
+        val onTimeRate = if (onTimeSamples.isEmpty()) {
+            null
+        } else {
+            val onTime = onTimeSamples.count { task ->
+                val date = completionDates.getValue(task)
+                !date.isAfter(requireNotNull(task.endDate))
+            }
+            onTime.toDouble() / onTimeSamples.size
+        }
+
+        val dailyActivity = (ACTIVITY_DAYS - 1 downTo 0).map { offset ->
+            val date = referenceDate.minusDays(offset.toLong())
+            DayActivity(
+                date = date,
+                completed = completedWithDate.count { completionDates[it] == date },
+            )
+        }
+
+        val categoryStart = referenceDate.minusDays((CATEGORY_DAYS - 1).toLong())
+        val recentCompleted = completedWithDate.filter { task ->
+            val date = completionDates.getValue(task)
+            !date.isBefore(categoryStart) && !date.isAfter(referenceDate)
+        }
+        val categoryActivity = recentCompleted
+            .groupingBy(Task::categoryId)
+            .eachCount()
+            .map { (categoryId, count) ->
+                CategoryActivity(
+                    categoryId = categoryId,
+                    completed = count,
+                    ratio = if (recentCompleted.isEmpty()) {
+                        0.0
+                    } else {
+                        count.toDouble() / recentCompleted.size
+                    },
                 )
-                .take(recentHistoryLimit)
-                .toList(),
+            }
+            .sortedWith(compareByDescending<CategoryActivity> { it.completed }.thenBy { it.categoryId })
+
+        val history = tasks
+            .filter { it.status != TaskStatus.PENDING && it.settledAt != null }
+            .sortedWith(
+                compareByDescending<Task> { it.settledAt }
+                    .thenByDescending { it.updatedAt }
+                    .thenBy { it.id },
+            )
+            .take(recentHistoryLimit)
+
+        return StatisticsSnapshot(
+            completedThisWeek = completedThisWeek,
+            currentStreakDays = streak,
+            onTimeRate = onTimeRate,
+            pendingCount = tasks.count { it.status == TaskStatus.PENDING },
+            dailyActivity = dailyActivity,
+            categoryActivity = categoryActivity,
+            recentHistory = history,
         )
     }
 
-    fun isEndedPeriod(task: Task, referenceDate: LocalDate): Boolean {
-        val targetDate = task.targetDate ?: return false
-        val cutoff = when (task.timeType) {
-            TaskTimeType.DAY -> referenceDate
-            TaskTimeType.WEEK -> TaskDateRules.normalizeTargetDate(TaskTimeType.WEEK, referenceDate)
-            TaskTimeType.MONTH -> TaskDateRules.normalizeTargetDate(TaskTimeType.MONTH, referenceDate)
-            TaskTimeType.LEISURE -> null
-        } ?: return false
-        return targetDate.isBefore(cutoff)
+    private fun completionDate(task: Task, zoneId: ZoneId): LocalDate? =
+        task.settledAt?.let {
+            Instant.ofEpochMilli(it).atZone(zoneId).toLocalDate()
+        }
+
+    private fun currentStreak(completedDates: Set<LocalDate>, today: LocalDate): Int {
+        val start = when {
+            today in completedDates -> today
+            today.minusDays(1) in completedDates -> today.minusDays(1)
+            else -> return 0
+        }
+        var cursor = start
+        var count = 0
+        while (cursor in completedDates) {
+            count += 1
+            cursor = cursor.minusDays(1)
+        }
+        return count
     }
-
-    private fun trend(
-        tasks: List<Task>,
-        timeType: TaskTimeType,
-        bucketCount: Int,
-        referenceDate: LocalDate,
-    ): List<TrendBucket> {
-        val currentStart = TaskDateRules.normalizeTargetDate(timeType, referenceDate)
-            ?: return emptyList()
-        val outcomesByStart = tasks.asSequence()
-            .filter { task ->
-                task.timeType == timeType &&
-                    task.targetDate != null &&
-                    task.status != TaskStatus.PENDING
-            }
-            .groupBy { task ->
-                TaskDateRules.normalizeTargetDate(timeType, task.targetDate!!)
-            }
-
-        return (bucketCount - 1 downTo 0).map { offset ->
-            val start = offsetStart(currentStart, timeType, offset)
-            val end = nextStart(start, timeType)
-            val outcomes = outcomesByStart[start].orEmpty()
-            TrendBucket(
-                startDate = start,
-                endDateExclusive = end,
-                completed = outcomes.count { it.status == TaskStatus.COMPLETED },
-                pass = outcomes.count { it.status == TaskStatus.PASS },
-                isEnded = !end.isAfter(referenceDate),
-            )
-        }
-    }
-
-    private fun offsetStart(start: LocalDate, timeType: TaskTimeType, offset: Int): LocalDate =
-        when (timeType) {
-            TaskTimeType.DAY -> start.minusDays(offset.toLong())
-            TaskTimeType.WEEK -> start.minusWeeks(offset.toLong())
-            TaskTimeType.MONTH -> start.minusMonths(offset.toLong())
-            TaskTimeType.LEISURE -> start
-        }
-
-    private fun nextStart(start: LocalDate, timeType: TaskTimeType): LocalDate =
-        when (timeType) {
-            TaskTimeType.DAY -> start.plusDays(1)
-            TaskTimeType.WEEK -> start.plusWeeks(1)
-            TaskTimeType.MONTH -> start.plusMonths(1)
-            TaskTimeType.LEISURE -> start
-        }
-
-    private fun fulfillmentRate(tasks: List<Task>): Double? =
-        tasks.takeIf { it.isNotEmpty() }
-            ?.let { ended -> ended.count { it.status == TaskStatus.COMPLETED }.toDouble() / ended.size }
 }

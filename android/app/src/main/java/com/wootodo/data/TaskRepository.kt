@@ -1,13 +1,12 @@
 package com.wootodo.data
 
-import com.wootodo.domain.Recurrence
-import com.wootodo.domain.OccurrenceId
 import com.wootodo.domain.Task
+import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskDateRules
+import com.wootodo.domain.TaskDateState
 import com.wootodo.domain.TaskDraft
-import com.wootodo.domain.TaskRules
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import java.time.Clock
 import java.time.LocalDate
 import java.util.UUID
@@ -18,98 +17,65 @@ class TaskRepository(
     private val store: TaskStore,
     private val clock: Clock = Clock.system(TaskDateRules.zoneId),
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
+    private val categoryIdFactory: (Set<String>) -> String = TaskCategories::newId,
 ) {
     fun observeAllTasks(): Flow<List<Task>> = store.observeAll().map { entities ->
-        entities.map(TaskEntity::toDomain).sortedWith(TaskRules.ordering)
+        entities.map(TaskEntity::toDomain).sortedWith(ordering)
     }
 
     suspend fun allTasks(): List<Task> =
-        store.getAll().map(TaskEntity::toDomain).sortedWith(TaskRules.ordering)
+        store.getAll().map(TaskEntity::toDomain).sortedWith(ordering)
 
-    fun observeForScope(timeType: TaskTimeType, referenceDate: LocalDate): Flow<List<Task>> {
-        val source = if (timeType == TaskTimeType.LEISURE) {
-            store.observeLeisure()
-        } else {
-            val targetDate = requireNotNull(TaskDateRules.targetForScope(timeType, referenceDate))
-            val currentTarget = TaskDateRules.targetForScope(
-                timeType,
-                LocalDate.now(clock),
-            )
-            store.observeForPeriod(
-                timeType,
-                targetDate,
-                includeOverdueOnce = currentTarget == targetDate,
-            )
-        }
-        return source.map { entities ->
-            entities.map(TaskEntity::toDomain).sortedWith(TaskRules.ordering)
-        }
+    fun observeCategories(): Flow<List<TaskCategory>> = store.observeCategories().map { categories ->
+        if (categories.isEmpty()) TaskCategories.defaults else categories
     }
+
+    suspend fun allCategories(): List<TaskCategory> =
+        store.getCategories().ifEmpty { TaskCategories.defaults }
 
     suspend fun get(id: String): Task? = store.getById(id)?.toDomain()
 
     suspend fun create(draft: TaskDraft): String {
-        require(draft.title.isNotBlank()) { "任务标题不能为空" }
-        require(draft.title.codePointCount(0, draft.title.length) <= 120) {
-            "任务标题不能超过 120 个 Unicode 字符"
-        }
+        val title = validateTitle(draft.title)
+        val (start, end) = validateDates(draft.startDate, draft.endDate)
+        val categoryId = resolveCategory(draft.categoryId)
         val now = clock.millis()
+        val sortOrder = draft.sortOrder
+            ?: ((store.getAll().maxOfOrNull { it.sortOrder } ?: -1) + 1)
         val id = idFactory()
-        val recurrence = TaskRules.sanitizeRecurrence(draft.timeType, draft.recurrence)
-        val targetDate = normalizedTarget(draft.timeType, draft.targetDate)
-        val sortOrder = draft.sortOrder ?: (
-            (store.maximumSortOrder(draft.timeType, targetDate, draft.questLine) ?: -1) + 1
-            )
         store.insert(
             TaskEntity(
                 id = id,
                 seriesId = id,
-                title = draft.title.trim(),
-                timeType = draft.timeType,
-                targetDate = targetDate,
-                questLine = draft.questLine,
+                title = title,
+                categoryId = categoryId,
+                startDate = start,
+                endDate = end,
                 status = TaskStatus.PENDING,
-                recurrence = recurrence,
                 sortOrder = sortOrder,
                 createdAt = now,
                 updatedAt = now,
                 settledAt = null,
-                reminderTime = if (draft.timeType == TaskTimeType.LEISURE) null else draft.reminderTime,
-                deadlineDate = draft.deadlineDate.takeIf { recurrence == Recurrence.ONCE },
+                reminderTime = draft.reminderTime.takeIf { start != null },
             ),
         )
         return id
     }
 
     suspend fun update(id: String, draft: TaskDraft): Boolean {
-        require(draft.title.isNotBlank()) { "任务标题不能为空" }
-        require(draft.title.codePointCount(0, draft.title.length) <= 120) {
-            "任务标题不能超过 120 个 Unicode 字符"
-        }
         val current = store.getById(id) ?: return false
         if (current.status != TaskStatus.PENDING) return false
-        val targetDate = normalizedTarget(draft.timeType, draft.targetDate)
-        val movedToAnotherGroup = current.timeType != draft.timeType ||
-            current.targetDate != targetDate || current.questLine != draft.questLine
-        val sortOrder = when {
-            draft.sortOrder != null -> draft.sortOrder
-            movedToAnotherGroup -> (
-                (store.maximumSortOrder(draft.timeType, targetDate, draft.questLine) ?: -1) + 1
-                )
-            else -> current.sortOrder
-        }
+        val title = validateTitle(draft.title)
+        val (start, end) = validateDates(draft.startDate, draft.endDate)
+        val categoryId = resolveCategory(draft.categoryId)
         return store.update(
             current.copy(
-                title = draft.title.trim(),
-                timeType = draft.timeType,
-                targetDate = targetDate,
-                questLine = draft.questLine,
-                recurrence = TaskRules.sanitizeRecurrence(draft.timeType, draft.recurrence),
-                reminderTime = if (draft.timeType == TaskTimeType.LEISURE) null else draft.reminderTime,
-                deadlineDate = draft.deadlineDate.takeIf {
-                    TaskRules.sanitizeRecurrence(draft.timeType, draft.recurrence) == Recurrence.ONCE
-                },
-                sortOrder = sortOrder,
+                title = title,
+                categoryId = categoryId,
+                startDate = start,
+                endDate = end,
+                reminderTime = draft.reminderTime.takeIf { start != null },
+                sortOrder = draft.sortOrder ?: current.sortOrder,
                 updatedAt = clock.millis(),
             ),
         )
@@ -124,96 +90,112 @@ class TaskRepository(
 
     suspend fun settle(id: String, status: TaskStatus): Boolean {
         require(status == TaskStatus.COMPLETED || status == TaskStatus.PASS)
-        val now = clock.millis()
-        return store.settleAndSchedule(id, status, now) { current ->
-            nextOccurrence(current, now)
-        }
+        return store.settle(id, status, clock.millis())
     }
 
-    suspend fun toggleCompletion(
-        id: String,
-        referenceDate: LocalDate = LocalDate.now(clock),
-    ): Boolean {
+    suspend fun toggleCompletion(id: String): Boolean {
         val current = store.getById(id) ?: return false
         return when (current.status) {
             TaskStatus.PENDING -> settle(id, TaskStatus.COMPLETED)
-            TaskStatus.COMPLETED -> reopenCompleted(current, referenceDate)
+            TaskStatus.COMPLETED -> reopen(id)
             TaskStatus.PASS -> false
         }
     }
 
-    /** 只把已完成任务恢复为待办；不会把待办重新结算，供撤销完成使用。 */
-    suspend fun reopen(
-        id: String,
-        referenceDate: LocalDate = LocalDate.now(clock),
-    ): Boolean {
+    suspend fun reopen(id: String): Boolean {
         val current = store.getById(id) ?: return false
         if (current.status != TaskStatus.COMPLETED) return false
-        return reopenCompleted(current, referenceDate)
+        return store.reopenCompleted(id, clock.millis())
     }
 
-    suspend fun tasksForToday(date: LocalDate = LocalDate.now(clock)): List<Task> =
-        store.getForDay(date).map(TaskEntity::toDomain).sortedWith(TaskRules.ordering)
-
-    suspend fun autoPassExpired(referenceDate: LocalDate = LocalDate.now(clock)): Int {
-        val weekCutoff = requireNotNull(
-            TaskDateRules.normalizeTargetDate(TaskTimeType.WEEK, referenceDate),
-        )
-        val monthCutoff = requireNotNull(
-            TaskDateRules.normalizeTargetDate(TaskTimeType.MONTH, referenceDate),
-        )
-        var settledCount = 0
-        while (true) {
-            val expired = store.getExpiredPending(referenceDate, weekCutoff, monthCutoff)
-            if (expired.isEmpty()) return settledCount
-            var settledThisRound = 0
-            expired.forEach { task ->
-                if (settle(task.id, TaskStatus.PASS)) {
-                    settledCount += 1
-                    settledThisRound += 1
-                }
-            }
-            if (settledThisRound == 0) return settledCount
+    suspend fun tasksForToday(date: LocalDate = LocalDate.now(clock)): List<Task> {
+        val zone = clock.zone
+        return allTasks().filter { task ->
+            TaskDateState.isRelevantOn(task, date) ||
+                TaskDateState.isSettledOn(task, date, zone)
         }
     }
 
-    suspend fun countTasksForDay(date: LocalDate): Int = store.countForDay(date)
-
-    suspend fun reorder(idsInOrder: List<String>) {
-        store.reorder(idsInOrder, clock.millis())
+    suspend fun countTasksForDay(date: LocalDate): Int = store.getAll().count { task ->
+        task.status == TaskStatus.PENDING &&
+            task.startDate != null &&
+            task.endDate != null &&
+            !task.startDate.isAfter(date) &&
+            !task.endDate.isBefore(date)
     }
 
-    private fun normalizedTarget(timeType: TaskTimeType, date: LocalDate?): LocalDate? {
-        if (timeType == TaskTimeType.LEISURE) return null
-        return TaskDateRules.normalizeTargetDate(timeType, date ?: LocalDate.now(clock))
-    }
-
-    private suspend fun reopenCompleted(task: TaskEntity, referenceDate: LocalDate): Boolean {
-        val currentPeriod = TaskDateRules.normalizeTargetDate(task.timeType, referenceDate)
-        val expired = task.recurrence != Recurrence.ONCE &&
-            task.timeType != TaskTimeType.LEISURE &&
-            (task.targetDate == null || currentPeriod == null || task.targetDate.isBefore(currentPeriod))
-        if (expired) return false
-        return store.reopenCompleted(task.id, clock.millis())
-    }
-
-    private fun nextOccurrence(current: TaskEntity, now: Long): TaskEntity? {
-        if (current.recurrence == Recurrence.ONCE || current.timeType == TaskTimeType.LEISURE) {
-            return null
-        }
-        val currentDate = current.targetDate ?: LocalDate.now(clock)
-        val advancedDate = TaskDateRules.nextOccurrenceDate(currentDate, current.recurrence)
-            ?: return null
-        val targetDate = TaskDateRules.normalizeTargetDate(current.timeType, advancedDate)
-            ?: return null
-        return current.copy(
-            id = OccurrenceId.create(current.seriesId, current.timeType, targetDate),
-            targetDate = targetDate,
-            status = TaskStatus.PENDING,
-            createdAt = now,
-            updatedAt = now,
-            settledAt = null,
-            deadlineDate = null,
+    suspend fun addCategory(name: String): TaskCategory? {
+        val current = allCategories()
+        if (current.size >= TaskCategories.MAXIMUM_COUNT) return null
+        val normalized = TaskCategories.normalizeName(name) ?: return null
+        if (current.any { it.name == normalized }) return null
+        val category = TaskCategory(
+            id = categoryIdFactory(current.mapTo(HashSet()) { it.id }),
+            name = normalized,
+            order = current.size,
         )
+        val updated = TaskCategories.normalizeList(current + category)
+        store.replaceCategories(updated, clock.millis())
+        return updated.firstOrNull { it.id == category.id }
+    }
+
+    suspend fun renameCategory(id: String, name: String): Boolean {
+        val normalized = TaskCategories.normalizeName(name) ?: return false
+        val current = allCategories()
+        if (current.none { it.id == id }) return false
+        if (current.any { it.id != id && it.name == normalized }) return false
+        val updated = current.map { category ->
+            if (category.id == id) category.copy(name = normalized) else category
+        }
+        store.replaceCategories(TaskCategories.normalizeList(updated), clock.millis())
+        return true
+    }
+
+    suspend fun deleteCategory(id: String): Boolean {
+        if (id == TaskCategories.INBOX_ID) return false
+        val current = allCategories()
+        if (current.none { it.id == id }) return false
+        val now = clock.millis()
+        store.reassignPendingCategory(id, TaskCategories.INBOX_ID, now)
+        store.replaceCategories(
+            TaskCategories.normalizeList(current.filterNot { it.id == id }),
+            now,
+        )
+        return true
+    }
+
+    private suspend fun resolveCategory(categoryId: String): String {
+        val categories = allCategories()
+        return categoryId.takeIf { id -> categories.any { it.id == id } }
+            ?: TaskCategories.INBOX_ID
+    }
+
+    private fun validateTitle(title: String): String {
+        val normalized = title.trim()
+        require(normalized.isNotEmpty()) { "任务标题不能为空" }
+        require(normalized.codePointCount(0, normalized.length) <= 120) {
+            "任务标题不能超过 120 个 Unicode 字符"
+        }
+        return normalized
+    }
+
+    private fun validateDates(start: LocalDate?, end: LocalDate?): Pair<LocalDate?, LocalDate?> {
+        require((start == null) == (end == null)) { "开始日期和结束日期必须同时设置或同时为空" }
+        if (start != null && end != null) {
+            require(!start.isAfter(end)) { "开始日期不能晚于结束日期" }
+        }
+        return start to end
+    }
+
+    private val ordering: Comparator<Task> = compareBy<Task> { statusRank(it.status) }
+        .thenBy { it.startDate ?: LocalDate.MAX }
+        .thenBy { it.sortOrder }
+        .thenBy { it.createdAt }
+        .thenBy { it.id }
+
+    private fun statusRank(status: TaskStatus): Int = when (status) {
+        TaskStatus.PENDING -> 0
+        TaskStatus.COMPLETED -> 1
+        TaskStatus.PASS -> 2
     }
 }

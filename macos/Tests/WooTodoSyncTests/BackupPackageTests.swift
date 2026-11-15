@@ -96,7 +96,7 @@ struct BackupPackageTests {
             timeType: .day,
             periodStart: "2026-07-21",
             timezone: "Asia/Shanghai",
-            questLine: .main,
+            questLine: "main",
             state: .pending,
             recurrence: .once,
             sortOrder: 0,

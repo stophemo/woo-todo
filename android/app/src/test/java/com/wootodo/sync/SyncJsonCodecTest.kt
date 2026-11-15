@@ -108,12 +108,84 @@ class SyncJsonCodecTest {
     }
 
     @Test
-    fun `显示配置payload严格编解码`() {
+    fun `自定义分类和日期范围payload字段正确`() {
+        val ranged = TaskInstancePayload(
+            id = "550e8400-e29b-41d4-a716-446655440000",
+            seriesId = "550e8400-e29b-41d4-a716-446655440000",
+            title = "工作范围",
+            timeType = WireTimeType.DAY,
+            periodStart = "2026-07-15",
+            deadlineDate = "2026-07-20",
+            timezone = "Asia/Shanghai",
+            questLine = "work",
+            state = WireTaskState.PENDING,
+            recurrence = WireRecurrence.ONCE,
+            sortOrder = 0,
+            createdAt = 1,
+            updatedAt = 1,
+            settledAt = null,
+        )
+        val rangedJson = JSONObject(SyncJsonCodec.encodeTaskPayload(ranged))
+        assertEquals("day", rangedJson.getString("timeType"))
+        assertEquals("2026-07-15", rangedJson.getString("periodStart"))
+        assertEquals("2026-07-20", rangedJson.getString("deadlineDate"))
+        assertEquals("work", rangedJson.getString("questLine"))
+        assertEquals(ranged, SyncJsonCodec.decodeTaskPayload(rangedJson.toString()))
+
+        val undated = ranged.copy(
+            timeType = WireTimeType.SOMEDAY,
+            periodStart = null,
+            deadlineDate = null,
+            reminderTime = null,
+        )
+        val undatedJson = JSONObject(SyncJsonCodec.encodeTaskPayload(undated))
+        assertEquals("someday", undatedJson.getString("timeType"))
+        assertTrue(undatedJson.isNull("periodStart"))
+        assertFalse(undatedJson.has("deadlineDate"))
+        assertEquals(undated, SyncJsonCodec.decodeTaskPayload(undatedJson.toString()))
+    }
+
+    @Test
+    fun `非法分类标识被拒绝`() {
+        val valid = JSONObject(
+            SyncJsonCodec.encodeTaskPayload(
+                TaskInstancePayload(
+                    id = "550e8400-e29b-41d4-a716-446655440000",
+                    seriesId = "550e8400-e29b-41d4-a716-446655440000",
+                    title = "分类",
+                    timeType = WireTimeType.SOMEDAY,
+                    periodStart = null,
+                    timezone = "Asia/Shanghai",
+                    questLine = "work",
+                    state = WireTaskState.PENDING,
+                    recurrence = WireRecurrence.ONCE,
+                    sortOrder = 0,
+                    createdAt = 1,
+                    updatedAt = 1,
+                    settledAt = null,
+                ),
+            ),
+        )
+        listOf("Work", "work space", "", "工作").forEach { invalid ->
+            assertThrows(Exception::class.java) {
+                SyncJsonCodec.decodeTaskPayload(
+                    JSONObject(valid.toString()).put("questLine", invalid).toString(),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `显示配置payload严格编解码并携带questLines`() {
         val payload = DisplayConfigurationPayload(
             headerTemplate = "{dateLong} {weekdayEn}",
             subtitleTemplate = "已走过 {elapsedMonthsDays}，距截止 {deadlineMonthsDays}",
             startDate = "2020-01-01",
             deadlineDate = "2026-12-31",
+            questLines = listOf(
+                QuestLineDefinition("inbox", "未分类", 0),
+                QuestLineDefinition("work", "工作", 1),
+            ),
         )
 
         val encoded = SyncJsonCodec.encodeTaskPayload(payload)
@@ -122,11 +194,66 @@ class SyncJsonCodecTest {
         assertEquals(
             setOf(
                 "protocolVersion", "entityType", "id", "headerTemplate",
-                "subtitleTemplate", "startDate", "deadlineDate",
+                "subtitleTemplate", "startDate", "deadlineDate", "questLines",
             ),
             objectValue.keys().asSequence().toSet(),
         )
         assertEquals(payload, SyncJsonCodec.decodeTaskPayload(encoded))
+
+        val withoutCategories = DisplayConfigurationPayload(
+            headerTemplate = "",
+            subtitleTemplate = "",
+            startDate = "2000-01-01",
+            deadlineDate = "2000-01-01",
+        )
+        val legacy = JSONObject(SyncJsonCodec.encodeTaskPayload(withoutCategories))
+        assertFalse(legacy.has("questLines"))
+        assertEquals(
+            withoutCategories,
+            SyncJsonCodec.decodeTaskPayload(legacy.toString()),
+        )
+    }
+
+    @Test
+    fun `显示配置questLines拒绝重复和超限`() {
+        fun payload(categories: List<QuestLineDefinition>) = DisplayConfigurationPayload(
+            headerTemplate = "",
+            subtitleTemplate = "",
+            startDate = "2000-01-01",
+            deadlineDate = "2000-01-01",
+            questLines = categories,
+        )
+        val valid = JSONObject(
+            SyncJsonCodec.encodeTaskPayload(
+                payload(listOf(QuestLineDefinition("inbox", "未分类", 0))),
+            ),
+        )
+        val invalid = listOf(
+            payload(
+                listOf(
+                    QuestLineDefinition("inbox", "未分类", 0),
+                    QuestLineDefinition("inbox", "重复", 1),
+                ),
+            ),
+            payload(
+                listOf(
+                    QuestLineDefinition("inbox", "未分类", 0),
+                    QuestLineDefinition("work", "工作", 0),
+                ),
+            ),
+            payload(listOf(QuestLineDefinition("inbox", "", 0))),
+            payload((0 until 9).map { QuestLineDefinition("c$it", "分类$it", it) }),
+        )
+        invalid.forEach { value ->
+            assertThrows(Exception::class.java) {
+                SyncJsonCodec.decodeTaskPayload(
+                    JSONObject(SyncJsonCodec.encodeTaskPayload(payload(value.questLines))
+                        .let { if (value.questLines.isEmpty()) it else it })
+                        .toString(),
+                )
+            }
+        }
+        assertTrue(SyncJsonCodec.decodeTaskPayload(valid.toString()) is DisplayConfigurationPayload)
     }
 
     @Test

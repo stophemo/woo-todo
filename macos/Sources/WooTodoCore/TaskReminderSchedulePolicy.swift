@@ -8,11 +8,11 @@ public enum TaskReminderSchedulePolicy {
         timeZone: TimeZone = protocolTimeZone
     ) -> Date? {
         guard task.status == .pending,
-              let period = task.period,
+              let date = task.startDate ?? task.endDate,
               let reminderTime = task.reminderTime else { return nil }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        var components = calendar.dateComponents([.year, .month, .day], from: period.start)
+        var components = calendar.dateComponents([.year, .month, .day], from: date)
         components.timeZone = timeZone
         components.hour = reminderTime.hour
         components.minute = reminderTime.minute

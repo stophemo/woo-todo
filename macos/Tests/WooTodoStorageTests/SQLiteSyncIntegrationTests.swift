@@ -15,7 +15,7 @@ struct SQLiteSyncIntegrationTests {
         )
         let start = date("2026-07-15T08:00:00+08:00")
         var first = try makeTask(title: "初始任务", createdAt: start)
-        first.deadlineDate = date("2026-07-20T00:00:00+08:00")
+        first.endDate = date("2026-07-20T00:00:00+08:00")
         try repository.save(first)
 
         first.title = "修改标题"
@@ -521,202 +521,6 @@ struct SQLiteSyncIntegrationTests {
         #expect(recovered.first?.entityId == task.id.uuidString.lowercased())
     }
 
-    @Test("离线删除重复实例跨重启不复活且恢复后只产生 tombstone")
-    func deferredRecurringDeletionSurvivesRestart() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("woo-todo-deferred-repeat-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let path = directory.appendingPathComponent("tasks.sqlite").path
-        let configuration = syncConfiguration()
-        let timeZone = TimeZone(identifier: "Asia/Shanghai")!
-        let engine = PeriodEngine(timeZone: timeZone)
-        let seriesID = UUID()
-        let firstDate = date("2026-07-15T08:00:00+08:00")
-        let reloadDate = date("2026-07-16T12:00:00+08:00")
-        let firstPeriod = try #require(engine.period(containing: firstDate, for: .daily))
-        let repeated = try TodoTask(
-            seriesID: seriesID,
-            title: "每日重复任务",
-            timeScope: .daily,
-            tier: .mainline,
-            recurrence: .repeating(RepeatRule(frequency: .daily)),
-            period: firstPeriod,
-            createdAt: firstDate
-        )
-        let nextPeriod = try #require(engine.period(containing: reloadDate, for: .daily))
-        let occurrenceID = OccurrenceIDGenerator.makeID(
-            seriesID: seriesID,
-            scope: .daily,
-            periodStart: nextPeriod.start,
-            timeZone: timeZone
-        )
-
-        do {
-            let repository = try SQLiteTaskRepository(
-                path: path,
-                syncConfiguration: configuration
-            )
-            try repository.save(repeated)
-            try LazySettlementService(repository: repository, engine: engine).settle(at: reloadDate)
-            #expect(try repository.fetchAll().contains { $0.id == occurrenceID })
-            let baseline = try await repository.pendingOperations(limit: 50)
-            try await repository.acknowledgeOperations(opIds: baseline.map(\.opId))
-        }
-
-        do {
-            let localOnly = try SQLiteTaskRepository(path: path)
-            try localOnly.delete(id: occurrenceID)
-            try LazySettlementService(repository: localOnly, engine: engine).settle(at: reloadDate)
-            #expect(try !localOnly.fetchAll().contains { $0.id == occurrenceID })
-            #expect(try await localOnly.pendingOperations(limit: 50).isEmpty)
-        }
-
-        let restarted = try SQLiteTaskRepository(path: path)
-        try LazySettlementService(repository: restarted, engine: engine).settle(at: reloadDate)
-        #expect(try !restarted.fetchAll().contains { $0.id == occurrenceID })
-
-        try restarted.configureSync(configuration)
-        let recovered = try await restarted.pendingOperations(limit: 50)
-        #expect(recovered.count == 1)
-        #expect(recovered.first?.entityId == occurrenceID.uuidString.lowercased())
-        #expect(recovered.first?.kind == .delete)
-        guard let operation = recovered.first,
-              case .tombstone(let tombstone) = try open(
-                operation,
-                configuration: configuration
-              ) else {
-            Issue.record("恢复密钥后应只补录被删重复实例的 tombstone")
-            return
-        }
-        #expect(tombstone.id == occurrenceID.uuidString.lowercased())
-    }
-
-    @Test("从未配对时删除重复实例也会跨重启保留并在首次绑定补发 tombstone")
-    func localOnlyRecurringDeletionSurvivesRestartAndFirstBinding() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("woo-todo-local-repeat-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let path = directory.appendingPathComponent("tasks.sqlite").path
-        let timeZone = TimeZone(identifier: "Asia/Shanghai")!
-        let engine = PeriodEngine(timeZone: timeZone)
-        let seriesID = UUID()
-        let firstDate = date("2026-07-15T08:00:00+08:00")
-        let reloadDate = date("2026-07-16T12:00:00+08:00")
-        let firstPeriod = try #require(engine.period(containing: firstDate, for: .daily))
-        let repeated = try TodoTask(
-            seriesID: seriesID,
-            title: "尚未配对的每日任务",
-            timeScope: .daily,
-            tier: .mainline,
-            recurrence: .repeating(RepeatRule(frequency: .daily)),
-            period: firstPeriod,
-            createdAt: firstDate
-        )
-        let nextPeriod = try #require(engine.period(containing: reloadDate, for: .daily))
-        let occurrenceID = OccurrenceIDGenerator.makeID(
-            seriesID: seriesID,
-            scope: .daily,
-            periodStart: nextPeriod.start,
-            timeZone: timeZone
-        )
-
-        do {
-            let repository = try SQLiteTaskRepository(path: path)
-            try repository.save(repeated)
-            try LazySettlementService(repository: repository, engine: engine).settle(at: reloadDate)
-            #expect(try repository.fetchAll().contains { $0.id == occurrenceID })
-            try repository.delete(id: occurrenceID)
-            try LazySettlementService(repository: repository, engine: engine).settle(at: reloadDate)
-            #expect(try !repository.fetchAll().contains { $0.id == occurrenceID })
-            #expect(try await repository.pendingOperations(limit: 50).isEmpty)
-        }
-
-        let restarted = try SQLiteTaskRepository(path: path)
-        try LazySettlementService(repository: restarted, engine: engine).settle(at: reloadDate)
-        #expect(try !restarted.fetchAll().contains { $0.id == occurrenceID })
-
-        let configuration = syncConfiguration()
-        try restarted.configureSync(configuration)
-        let recovered = try await restarted.pendingOperations(limit: 50)
-        let deletion = try #require(
-            recovered.first { $0.entityId == occurrenceID.uuidString.lowercased() }
-        )
-        #expect(deletion.kind == .delete)
-        guard case .tombstone(let tombstone) = try open(
-            deletion,
-            configuration: configuration
-        ) else {
-            Issue.record("首次绑定应补发本地删除记录")
-            return
-        }
-        #expect(tombstone.id == occurrenceID.uuidString.lowercased())
-    }
-
-    @Test("备份往返保留纯本地删除屏障且重复实例跨重启不复活")
-    func backupRoundTripPreservesLocalDeletionBarrier() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("woo-todo-backup-tombstone-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let restoredPath = directory.appendingPathComponent("restored.sqlite").path
-        let timeZone = TimeZone(identifier: "Asia/Shanghai")!
-        let engine = PeriodEngine(timeZone: timeZone)
-        let seriesID = UUID()
-        let firstDate = date("2026-07-15T08:00:00+08:00")
-        let reloadDate = date("2026-07-16T12:00:00+08:00")
-        let firstPeriod = try #require(engine.period(containing: firstDate, for: .daily))
-        let repeated = try TodoTask(
-            seriesID: seriesID,
-            title: "备份中的每日任务",
-            timeScope: .daily,
-            tier: .mainline,
-            recurrence: .repeating(RepeatRule(frequency: .daily)),
-            period: firstPeriod,
-            createdAt: firstDate
-        )
-        let nextPeriod = try #require(engine.period(containing: reloadDate, for: .daily))
-        let occurrenceID = OccurrenceIDGenerator.makeID(
-            seriesID: seriesID,
-            scope: .daily,
-            periodStart: nextPeriod.start,
-            timeZone: timeZone
-        )
-
-        let source = try SQLiteTaskRepository(path: ":memory:")
-        try source.save(repeated)
-        try LazySettlementService(repository: source, engine: engine).settle(at: reloadDate)
-        try source.delete(id: occurrenceID)
-        let backup = try source.makeBackupContents(timeZone: timeZone)
-        #expect(backup.tombstones.map(\.id) == [occurrenceID.uuidString.lowercased()])
-
-        do {
-            let restored = try SQLiteTaskRepository(path: restoredPath)
-            try restored.restoreBackupPayloads(
-                backup.tasks,
-                tombstones: backup.tombstones
-            )
-            try LazySettlementService(repository: restored, engine: engine).settle(at: reloadDate)
-            #expect(try !restored.fetchAll().contains { $0.id == occurrenceID })
-            #expect(try restored.makeBackupTombstones() == backup.tombstones)
-        }
-
-        let restarted = try SQLiteTaskRepository(path: restoredPath)
-        try LazySettlementService(repository: restarted, engine: engine).settle(at: reloadDate)
-        #expect(try !restarted.fetchAll().contains { $0.id == occurrenceID })
-        #expect(try restarted.makeBackupTombstones() == backup.tombstones)
-    }
-
     @Test("远端 LWW 更新 cursor 且不会反向写入 outbox")
     func remoteLWWAndLamportClock() async throws {
         let configuration = syncConfiguration()
@@ -766,6 +570,189 @@ struct SQLiteSyncIntegrationTests {
         try repository.save(localEdit)
         let localOperation = try #require(try await repository.pendingOperations(limit: 1).first)
         #expect(localOperation.lamport == 3)
+    }
+
+    @Test("保存自定义分类会入队占位显示配置")
+    func savingCategoriesEnqueuesRedactedDisplayConfiguration() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let localDisplay = try displayConfiguration(header: "本机标题", subtitle: "本机副标题")
+        try repository.saveDisplayConfiguration(localDisplay)
+        let categories = TaskCategory.normalizeList(
+            TaskCategory.defaults + [try TaskCategory(id: "work", name: "工作", order: 4)]
+        )
+
+        try repository.saveCategories(categories)
+
+        let operations = try await repository.pendingOperations(limit: 50)
+        #expect(operations.count == 1)
+        guard case .displayConfiguration(let payload) = try open(
+            operations[0],
+            configuration: configuration
+        ) else {
+            Issue.record("分类同步应使用显示配置正文")
+            return
+        }
+        #expect(payload.headerTemplate == "")
+        #expect(payload.subtitleTemplate == "")
+        #expect(payload.startDate == "2000-01-01")
+        #expect(payload.deadlineDate == "2000-01-01")
+        #expect(payload.questLines.map(\.id) == categories.map(\.id))
+        #expect(try repository.displayConfiguration() == localDisplay)
+    }
+
+    @Test("默认分类首次绑定不产生分类操作")
+    func defaultCategoriesProduceNoBaseline() async throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        try repository.configureSync(syncConfiguration())
+
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+    }
+
+    @Test("自定义分类首次绑定产生基线")
+    func customCategoriesProduceBaselineOnFirstBinding() async throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let categories = TaskCategory.normalizeList(
+            TaskCategory.defaults + [try TaskCategory(id: "work", name: "工作", order: 4)]
+        )
+        try repository.saveCategories(categories)
+        let configuration = syncConfiguration()
+        try repository.configureSync(configuration)
+
+        let operations = try await repository.pendingOperations(limit: 50)
+        #expect(operations.count == 1)
+        guard case .displayConfiguration(let payload) = try open(
+            operations[0],
+            configuration: configuration
+        ) else {
+            Issue.record("首次绑定应补发分类基线")
+            return
+        }
+        #expect(payload.questLines.map(\.id) == categories.map(\.id))
+    }
+
+    @Test("远端分类列表会替换并重分配未知待办")
+    func remoteCategoriesReplaceAndReassignPendingTasks() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let localDisplay = try displayConfiguration(header: "保留本机标题")
+        try repository.saveDisplayConfiguration(localDisplay)
+        let categories = TaskCategory.normalizeList(
+            TaskCategory.defaults + [try TaskCategory(id: "work", name: "工作", order: 4)]
+        )
+        try repository.saveCategories(categories)
+        let pending = try TodoTask(
+            title: "工作待办",
+            categoryID: "work",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        let settled = try TodoTask(
+            title: "工作完成",
+            categoryID: "work",
+            status: .completed,
+            createdAt: date("2026-07-15T09:00:00+08:00"),
+            completedAt: date("2026-07-15T10:00:00+08:00")
+        )
+        try repository.save([pending, settled])
+        let existing = try await repository.pendingOperations(limit: 50)
+        try await repository.acknowledgeOperations(opIds: existing.map(\.opId))
+
+        let remote = try WireDisplayConfigurationPayload(
+            headerTemplate: "",
+            subtitleTemplate: "",
+            startDate: "2000-01-01",
+            deadlineDate: "2000-01-01",
+            questLines: [
+                try WireQuestLineDefinition(id: "inbox", name: "未分类", order: 0),
+                try WireQuestLineDefinition(id: "main", name: "主线", order: 1),
+            ]
+        )
+        try await repository.applyRemoteOperations([
+            try remoteDisplayConfigurationOperation(
+                remote,
+                lamport: 10,
+                serverSequence: 1,
+                deviceID: "device-remote",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+
+        #expect(try repository.fetchCategories().map(\.id) == ["inbox", "main"])
+        let stored = try repository.fetchAll()
+        #expect(stored.first { $0.id == pending.id }?.categoryID == "inbox")
+        #expect(stored.first { $0.id == settled.id }?.categoryID == "work")
+        #expect(try repository.displayConfiguration() == localDisplay)
+        let reassigned = try await repository.pendingOperations(limit: 50)
+        #expect(reassigned.contains {
+            $0.entityId == pending.id.uuidString.lowercased() && $0.kind == .upsert
+        })
+    }
+
+    @Test("远端空分类不会修改本机分类")
+    func emptyRemoteCategoriesDoNotChangeLocalCategories() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let categories = TaskCategory.normalizeList(
+            TaskCategory.defaults + [try TaskCategory(id: "work", name: "工作", order: 4)]
+        )
+        try repository.saveCategories(categories)
+        let existing = try await repository.pendingOperations(limit: 50)
+        try await repository.acknowledgeOperations(opIds: existing.map(\.opId))
+
+        try await repository.applyRemoteOperations([
+            try remoteDisplayConfigurationOperation(
+                try displayConfiguration(header: "远端标题"),
+                lamport: 10,
+                serverSequence: 1,
+                deviceID: "device-remote",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+
+        #expect(try repository.fetchCategories() == categories)
+    }
+
+    @Test("替换同步绑定保留分类并重建基线")
+    func replacingSyncBindingPreservesCategories() async throws {
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: syncConfiguration()
+        )
+        let categories = TaskCategory.normalizeList(
+            TaskCategory.defaults + [try TaskCategory(id: "work", name: "工作", order: 4)]
+        )
+        try repository.saveCategories(categories)
+        let existing = try await repository.pendingOperations(limit: 50)
+        try await repository.acknowledgeOperations(opIds: existing.map(\.opId))
+        let replacement = SQLiteSyncConfiguration(
+            vaultId: "vault-replacement",
+            deviceId: "device-replacement",
+            vaultKey: Data((32..<64).map { UInt8($0) }),
+            timeZone: TimeZone(identifier: "Asia/Shanghai")!
+        )
+
+        try repository.replaceSyncBinding(with: replacement)
+
+        #expect(try repository.fetchCategories() == categories)
+        let operations = try await repository.pendingOperations(limit: 50)
+        #expect(operations.count == 1)
+        guard case .displayConfiguration(let payload) = try open(
+            operations[0],
+            configuration: replacement
+        ) else {
+            Issue.record("换绑后应补发分类基线")
+            return
+        }
+        #expect(payload.questLines.map(\.id) == categories.map(\.id))
     }
 
     @Test("远端显示配置不会覆盖本机标题副标题，也不回写 outbox")
@@ -1462,8 +1449,8 @@ struct SQLiteSyncIntegrationTests {
         #expect(result.completedAt == nil)
     }
 
-    @Test("显式 reopen 仍拒绝跨周期重复任务")
-    func explicitReopenRejectsExpiredRepeatingTask() async throws {
+    @Test("显式 reopen 可以跨周期恢复待办")
+    func explicitReopenAcrossPeriodRestoresPending() async throws {
         let configuration = syncConfiguration()
         let repository = try SQLiteTaskRepository(
             path: ":memory:",
@@ -1475,7 +1462,6 @@ struct SQLiteSyncIntegrationTests {
             id: id,
             title: "每日复盘",
             status: .completed,
-            recurrence: .repeating(RepeatRule(frequency: .daily)),
             createdAt: createdAt,
             updatedAt: date("2026-07-15T20:00:00+08:00"),
             settledAt: date("2026-07-15T20:00:00+08:00")
@@ -1483,7 +1469,6 @@ struct SQLiteSyncIntegrationTests {
         let reopened = try makeTask(
             id: id,
             title: "每日复盘",
-            recurrence: .repeating(RepeatRule(frequency: .daily)),
             createdAt: createdAt,
             updatedAt: date("2026-07-16T00:00:00+08:00")
         )
@@ -1499,25 +1484,26 @@ struct SQLiteSyncIntegrationTests {
             ),
         ], advancingCursorTo: 1)
 
-        await #expect(throws: SQLiteRepositoryError.self) {
-            try await repository.applyRemoteOperations([
-                try remoteTaskOperation(
-                    reopened,
-                    kind: .reopen,
-                    lamport: 9,
-                    serverSequence: 2,
-                    deviceID: "device-reopen",
-                    configuration: configuration
-                ),
-            ], advancingCursorTo: 2)
-        }
+        try await repository.applyRemoteOperations([
+            try remoteTaskOperation(
+                reopened,
+                kind: .reopen,
+                lamport: 9,
+                serverSequence: 2,
+                deviceID: "device-reopen",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 2)
+
         let cursor = try await repository.currentCursor()
-        #expect(cursor == 1)
-        #expect(try repository.fetchAll() == [completed])
+        #expect(cursor == 2)
+        let result = try #require(try repository.fetchAll().first)
+        #expect(result.status == .pending)
+        #expect(result.completedAt == nil)
     }
 
-    @Test("左闭右开周期的截止瞬间 completed 不享有领域优先级")
-    func completionAtDeadlineDoesNotOverrideNewerPass() async throws {
+    @Test("completed 优先于 pass 且保留有效完成字段")
+    func completionOverridesNewerPass() async throws {
         let configuration = syncConfiguration()
         let repository = try SQLiteTaskRepository(
             path: ":memory:",
@@ -1562,7 +1548,7 @@ struct SQLiteSyncIntegrationTests {
             ),
         ], advancingCursorTo: 2)
 
-        #expect(try repository.fetchAll().first?.status == .pass)
+        #expect(try repository.fetchAll().first?.status == .completed)
         #expect(try repository.fetchAll().first?.title == "按时 Pass")
     }
 
@@ -1614,21 +1600,19 @@ private func makeTask(
     id: UUID = UUID(),
     title: String,
     status: TaskStatus = .pending,
-    recurrence: RecurrenceRule = .once,
     createdAt: Date,
     updatedAt: Date? = nil,
     settledAt: Date? = nil,
     sortIndex: Int = 0
 ) throws -> TodoTask {
-    let timeZone = TimeZone(identifier: "Asia/Shanghai")!
+    let day = TodoTask.protocolCalendar.startOfDay(for: createdAt)
     return try TodoTask(
         id: id,
         title: title,
-        timeScope: .daily,
-        tier: .mainline,
+        categoryID: "main",
         status: status,
-        recurrence: recurrence,
-        period: PeriodEngine(timeZone: timeZone).period(containing: createdAt, for: .daily),
+        startDate: day,
+        endDate: day,
         sortIndex: sortIndex,
         createdAt: createdAt,
         updatedAt: updatedAt ?? createdAt,
@@ -1666,11 +1650,8 @@ private func remoteTaskOperation(
     case .completed: state = .completed
     case .pass: state = .pass
     }
-    let recurrence: WireRecurrence
-    switch task.recurrence {
-    case .once: recurrence = .once
-    case .repeating: recurrence = .repeatRule
-    }
+    let recurrence = WireRecurrence.once
+    let ranged = task.startDate != nil && task.endDate != nil
     let formatter = DateFormatter()
     formatter.calendar = Calendar(identifier: .gregorian)
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -1680,10 +1661,11 @@ private func remoteTaskOperation(
         id: entityID,
         seriesId: task.seriesID.uuidString.lowercased(),
         title: task.title,
-        timeType: .day,
-        periodStart: task.period.map { formatter.string(from: $0.start) },
+        timeType: ranged ? .day : .someday,
+        periodStart: task.startDate.map { formatter.string(from: $0) },
+        deadlineDate: task.endDate.map { formatter.string(from: $0) },
         timezone: configuration.timeZone.identifier,
-        questLine: .main,
+        questLine: task.categoryID,
         state: state,
         recurrence: recurrence,
         sortOrder: Int64(task.sortIndex),

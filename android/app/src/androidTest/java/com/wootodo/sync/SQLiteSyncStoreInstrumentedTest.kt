@@ -6,10 +6,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wootodo.data.SQLiteTaskStore
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskEntity
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
+import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
@@ -129,7 +128,7 @@ class SQLiteSyncStoreInstrumentedTest {
         val replacementStore = SQLiteSyncStore(database, replacement)
         assertEquals(replacement.vaultId to replacement.deviceId, boundIdentity())
         assertEquals(
-            setOf(task.id, DISPLAY_CONFIGURATION_ENTITY_ID),
+            setOf(task.id),
             replacementStore.pendingOperations(50).map { it.entityId }.toSet(),
         )
     }
@@ -163,14 +162,7 @@ class SQLiteSyncStoreInstrumentedTest {
         val taskStore = SQLiteTaskStore(database)
         val task = localTask("task-reopen-outbox", "误点完成")
         taskStore.insert(task)
-        assertTrue(
-            taskStore.settleAndSchedule(
-                id = task.id,
-                status = TaskStatus.COMPLETED,
-                settledAt = 2_000,
-                nextTask = { null },
-            ),
-        )
+        assertTrue(taskStore.settle(task.id, TaskStatus.COMPLETED, 2_000))
         assertTrue(taskStore.reopenCompleted(task.id, updatedAt = 3_000))
 
         val operations = syncStore.pendingOperations(50)
@@ -225,22 +217,8 @@ class SQLiteSyncStoreInstrumentedTest {
         val passed = localTask("task-clear-passed", "已 Pass")
         val pending = localTask("task-clear-pending", "保留待办")
         listOf(completed, passed, pending).forEach { taskStore.insert(it) }
-        assertTrue(
-            taskStore.settleAndSchedule(
-                completed.id,
-                TaskStatus.COMPLETED,
-                settledAt = 4_000,
-                nextTask = { null },
-            ),
-        )
-        assertTrue(
-            taskStore.settleAndSchedule(
-                passed.id,
-                TaskStatus.PASS,
-                settledAt = 4_001,
-                nextTask = { null },
-            ),
-        )
+        assertTrue(taskStore.settle(completed.id, TaskStatus.COMPLETED, 4_000))
+        assertTrue(taskStore.settle(passed.id, TaskStatus.PASS, 4_001))
         syncStore.acknowledgeOperations(syncStore.pendingOperations(50).map { it.opId })
 
         assertEquals(2, taskStore.deleteSettled(ids = null, deletedAt = 5_000))
@@ -277,26 +255,15 @@ class SQLiteSyncStoreInstrumentedTest {
     }
 
     @Test
-    fun `重复下一实例命中删除屏障时只结算当前任务`() = runBlocking {
+    fun `结算任务不会自动生成下一实例`() = runBlocking {
         val taskStore = SQLiteTaskStore(database)
-        val current = localTask("task-recurrence-current", "当前重复任务")
-        val deletedNext = localTask("task-recurrence-next", "已删除的下一实例")
-        taskStore.insert(deletedNext)
-        assertTrue(taskStore.deletePending(deletedNext.id, deletedAt = 8_765))
+        val current = localTask("task-once-current", "一次性任务")
         taskStore.insert(current)
 
-        assertTrue(
-            taskStore.settleAndSchedule(
-                id = current.id,
-                status = TaskStatus.COMPLETED,
-                settledAt = 9_876,
-                nextTask = { deletedNext },
-            ),
-        )
+        assertTrue(taskStore.settle(current.id, TaskStatus.COMPLETED, 9_876))
 
         assertEquals(TaskStatus.COMPLETED, taskStatus(current.id))
-        assertNull(taskTitle(deletedNext.id))
-        assertEquals(1, rowCount("sync_deferred_deletions"))
+        assertEquals(1, rowCount("tasks"))
     }
 
     @Test
@@ -809,15 +776,104 @@ class SQLiteSyncStoreInstrumentedTest {
         assertEquals("WebDAV 裁剪后", taskTitle("task-webdav-trim"))
     }
 
-    private fun localTask(id: String, title: String): TaskEntity = TaskEntity(
+    @Test
+    fun `自定义分类保存会入队占位显示配置`() = runBlocking {
+        val syncStore = SQLiteSyncStore(database, credentials)
+        val taskStore = SQLiteTaskStore(database)
+        val categories = TaskCategories.normalizeList(
+            TaskCategories.defaults + TaskCategory("work", "工作", 4),
+        )
+
+        taskStore.replaceCategories(categories, 10_000)
+
+        val operation = syncStore.pendingOperations(50).single()
+        val payload = decrypt(operation) as DisplayConfigurationPayload
+        assertEquals("", payload.headerTemplate)
+        assertEquals("", payload.subtitleTemplate)
+        assertEquals("2000-01-01", payload.startDate)
+        assertEquals("2000-01-01", payload.deadlineDate)
+        assertEquals(categories.map { it.id }, payload.questLines.map { it.id })
+    }
+
+    @Test
+    fun `远端分类列表会重分配未知pending任务`() = runBlocking {
+        val taskStore = SQLiteTaskStore(database)
+        val task = localTask("task-unknown-category", "未知分类任务", categoryId = "work")
+        taskStore.insert(task)
+        val refreshed = mutableListOf<DisplayConfigurationPayload>()
+        val receiver = SQLiteSyncStore(
+            database = database,
+            credentials = credentials,
+            onDisplayConfigurationChanged = refreshed::add,
+        )
+
+        receiver.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 1,
+                    opId = "operation-categories",
+                    lamport = 10,
+                    payload = displayConfiguration("分类").copy(
+                        questLines = listOf(
+                            QuestLineDefinition(TaskCategories.INBOX_ID, "未分类", 0),
+                            QuestLineDefinition("main", "主线", 1),
+                        ),
+                    ),
+                ),
+            ),
+            advancingCursorTo = 1,
+        )
+
+        assertEquals(
+            listOf(TaskCategories.INBOX_ID, "main"),
+            taskStore.getCategories().map { it.id },
+        )
+        assertEquals(
+            TaskCategories.INBOX_ID,
+            taskStore.getById(task.id)?.categoryId,
+        )
+        assertEquals(1, refreshed.size)
+    }
+
+    @Test
+    fun `远端空questLines不会修改本机分类`() = runBlocking {
+        val taskStore = SQLiteTaskStore(database)
+        val before = taskStore.getCategories()
+        val refreshed = mutableListOf<DisplayConfigurationPayload>()
+        val receiver = SQLiteSyncStore(
+            database = database,
+            credentials = credentials,
+            onDisplayConfigurationChanged = refreshed::add,
+        )
+
+        receiver.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 1,
+                    opId = "operation-empty-categories",
+                    lamport = 10,
+                    payload = displayConfiguration("空分类"),
+                ),
+            ),
+            advancingCursorTo = 1,
+        )
+
+        assertEquals(before, taskStore.getCategories())
+        assertTrue(refreshed.isEmpty())
+    }
+
+    private fun localTask(
+        id: String,
+        title: String,
+        categoryId: String = "main",
+    ): TaskEntity = TaskEntity(
         id = id,
         seriesId = id,
         title = title,
-        timeType = TaskTimeType.DAY,
-        targetDate = LocalDate.of(2026, 7, 16),
-        questLine = QuestLine.MAIN,
+        categoryId = categoryId,
+        startDate = LocalDate.of(2026, 7, 16),
+        endDate = LocalDate.of(2026, 7, 16),
         status = TaskStatus.PENDING,
-        recurrence = Recurrence.ONCE,
         sortOrder = 0,
         createdAt = 1_000,
         updatedAt = 1_000,
@@ -830,8 +886,9 @@ class SQLiteSyncStoreInstrumentedTest {
         title = title,
         timeType = WireTimeType.DAY,
         periodStart = "2026-07-16",
+        deadlineDate = "2026-07-16",
         timezone = "Asia/Shanghai",
-        questLine = WireQuestLine.MAIN,
+        questLine = "main",
         state = WireTaskState.PENDING,
         recurrence = WireRecurrence.ONCE,
         sortOrder = 0,
@@ -1001,6 +1058,7 @@ class SQLiteSyncStoreInstrumentedTest {
             "sync_entity_versions",
             "sync_tombstones",
             "sync_deferred_deletions",
+            "task_categories",
         )
     }
 }

@@ -189,7 +189,8 @@ class WooTodoApplication : Application() {
     private fun onRemoteDisplayConfigurationChanged(
         payload: com.wootodo.sync.DisplayConfigurationPayload,
     ) {
-        DayCounterPreferences.applyRemote(this, payload)
+        // 远端显示配置只同步分类；标题、副标题与计时日期仍只留本机。
+        taskStore.invalidateCategoriesFromSync()
         TodayWidgetUpdater.updateAllAsync(this)
     }
 
@@ -446,7 +447,6 @@ class WooTodoApplication : Application() {
                 activeSyncBackend() != null
             }.getOrDefault(false)
             try {
-                taskRepository.autoPassExpired()
                 TodayWidgetUpdater.updateAll(this@WooTodoApplication)
                 TaskReminderScheduler.scheduleAll(this@WooTodoApplication)
             } finally {

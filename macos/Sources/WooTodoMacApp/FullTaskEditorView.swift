@@ -3,62 +3,61 @@ import WooTodoCore
 
 struct FullTaskInput {
     let title: String
-    let scope: TimeScope
-    let targetDate: Date
-    let tier: QuestTier
-    let repeats: Bool
+    let categoryID: String
+    let startDate: Date?
+    let endDate: Date?
     let reminderTime: TaskReminderTime?
-    let deadlineDate: Date?
 }
 
 enum FullTaskEditorMode {
-    case create(defaultScope: TimeScope, targetDate: Date)
+    case create
     case edit(TodoTask)
 }
 
 struct FullTaskEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var title: String
-    @State private var scope: TimeScope
-    @State private var targetDate: Date
-    @State private var tier: QuestTier
-    @State private var repeats: Bool
+    @State private var categoryID: String
+    @State private var dateRangeEnabled: Bool
+    @State private var startDate: Date
+    @State private var endDate: Date
     @State private var reminderEnabled: Bool
     @State private var reminderDate: Date
-    @State private var deadlineEnabled: Bool
-    @State private var deadlineDate: Date
 
     let mode: FullTaskEditorMode
+    let categories: [TaskCategory]
     let save: (FullTaskInput) -> Void
 
-    init(mode: FullTaskEditorMode, save: @escaping (FullTaskInput) -> Void) {
+    init(
+        mode: FullTaskEditorMode,
+        categories: [TaskCategory],
+        save: @escaping (FullTaskInput) -> Void
+    ) {
         self.mode = mode
+        self.categories = categories.isEmpty ? TaskCategory.defaults : categories
         self.save = save
+        let fallbackCategory = self.categories.first(where: { $0.id == TaskCategory.inboxID })?.id
+            ?? self.categories.first?.id
+            ?? TaskCategory.inboxID
         switch mode {
-        case let .create(defaultScope, targetDate):
+        case .create:
             _title = State(initialValue: "")
-            _scope = State(initialValue: defaultScope)
-            _targetDate = State(initialValue: targetDate)
-            _tier = State(initialValue: .mainline)
-            _repeats = State(initialValue: false)
+            _categoryID = State(initialValue: fallbackCategory)
+            _dateRangeEnabled = State(initialValue: false)
+            _startDate = State(initialValue: Calendar.current.startOfDay(for: Date()))
+            _endDate = State(initialValue: Calendar.current.startOfDay(for: Date()))
             _reminderEnabled = State(initialValue: false)
             _reminderDate = State(initialValue: Self.defaultReminderDate)
-            _deadlineEnabled = State(initialValue: false)
-            _deadlineDate = State(initialValue: targetDate)
         case let .edit(task):
             _title = State(initialValue: task.title)
-            _scope = State(initialValue: task.timeScope)
-            _targetDate = State(initialValue: task.period?.start ?? task.createdAt)
-            _tier = State(initialValue: task.tier)
+            _categoryID = State(initialValue: self.categories.contains(where: {
+                $0.id == task.categoryID
+            }) ? task.categoryID : fallbackCategory)
+            _dateRangeEnabled = State(initialValue: task.startDate != nil && task.endDate != nil)
+            _startDate = State(initialValue: task.startDate ?? Date())
+            _endDate = State(initialValue: task.endDate ?? task.startDate ?? Date())
             _reminderEnabled = State(initialValue: task.reminderTime != nil)
             _reminderDate = State(initialValue: Self.date(for: task.reminderTime))
-            _deadlineEnabled = State(initialValue: task.deadlineDate != nil)
-            _deadlineDate = State(initialValue: task.deadlineDate ?? task.period?.start ?? Date())
-            if case .repeating = task.recurrence {
-                _repeats = State(initialValue: true)
-            } else {
-                _repeats = State(initialValue: false)
-            }
         }
     }
 
@@ -72,30 +71,45 @@ struct FullTaskEditorView: View {
                 .onSubmit(commit)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("时间范围")
+                Text("类型")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Picker("时间范围", selection: $scope) {
-                    ForEach(TimeScope.allCases, id: \.self) { scope in
-                        Text(scope.displayName).tag(scope)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(categories) { category in
+                            Button {
+                                categoryID = category.id
+                            } label: {
+                                Text(category.name)
+                                    .font(.callout)
+                                    .foregroundStyle(
+                                        categoryID == category.id ? Color.white : Color.primary
+                                    )
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        categoryID == category.id
+                                            ? WooTodoTheme.purple
+                                            : Color.secondary.opacity(0.12),
+                                        in: Capsule()
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
             }
 
-            if scope != .anytime {
-                VStack(alignment: .leading, spacing: 8) {
-                    DatePicker(
-                        targetDateLabel,
-                        selection: $targetDate,
-                        displayedComponents: .date
-                    )
-                    Text(targetPeriodDescription)
+            Toggle("设置时间范围", isOn: $dateRangeEnabled)
+
+            if dateRangeEnabled {
+                DatePicker("开始日期", selection: $startDate, displayedComponents: .date)
+                DatePicker("结束日期", selection: $endDate, displayedComponents: .date)
+                if startDate > endDate {
+                    Text("开始日期不能晚于结束日期")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.red)
                 }
-                Toggle(repeatLabel, isOn: $repeats)
                 Toggle("在指定时间提醒", isOn: $reminderEnabled)
                 if reminderEnabled {
                     DatePicker(
@@ -104,33 +118,6 @@ struct FullTaskEditorView: View {
                         displayedComponents: .hourAndMinute
                     )
                 }
-            } else {
-                Text("闲时任务没有目标周期，也不会自动 Pass。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Toggle("设置截止日期", isOn: $deadlineEnabled)
-                .disabled(repeats)
-            if deadlineEnabled && !repeats {
-                DatePicker(
-                    "截止日期",
-                    selection: $deadlineDate,
-                    displayedComponents: .date
-                )
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("任务级别")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Picker("任务级别", selection: $tier) {
-                    ForEach(QuestTier.allCases, id: \.self) { tier in
-                        Text(tier.displayName).tag(tier)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
             }
 
             HStack {
@@ -139,22 +126,20 @@ struct FullTaskEditorView: View {
                     .keyboardShortcut(.cancelAction)
                 Button("保存", action: commit)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(normalizedTitle.isEmpty)
+                    .disabled(normalizedTitle.isEmpty || (dateRangeEnabled && startDate > endDate))
             }
         }
         .padding(22)
         .frame(width: 430)
-        .onChange(of: scope) { _, newScope in
-            if newScope == .anytime {
-                repeats = false
+        .onChange(of: dateRangeEnabled) { _, enabled in
+            if !enabled {
                 reminderEnabled = false
+            } else if startDate > endDate {
+                endDate = startDate
             }
         }
-        .onChange(of: repeats) { _, enabled in
-            if enabled { deadlineEnabled = false }
-        }
-        .onChange(of: targetDate) { _, selected in
-            if !deadlineEnabled { deadlineDate = selected }
+        .onChange(of: startDate) { _, value in
+            if endDate < value { endDate = value }
         }
     }
 
@@ -167,43 +152,15 @@ struct FullTaskEditorView: View {
         title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var targetDateLabel: String {
-        switch scope {
-        case .daily: "目标日期"
-        case .weekly: "目标周内任意一天"
-        case .monthly: "目标月内任意一天"
-        case .anytime: ""
-        }
-    }
-
-    private var repeatLabel: String {
-        switch scope {
-        case .daily: "每天重复"
-        case .weekly: "每周重复"
-        case .monthly: "每月重复"
-        case .anytime: ""
-        }
-    }
-
-    private var targetPeriodDescription: String {
-        guard let period = PeriodEngine().period(containing: targetDate, for: scope) else {
-            return ""
-        }
-        return "目标周期：\(TaskPeriodText.text(for: period, scope: scope))"
-    }
-
     private func commit() {
         guard !normalizedTitle.isEmpty else { return }
+        if dateRangeEnabled && startDate > endDate { return }
         save(FullTaskInput(
             title: normalizedTitle,
-            scope: scope,
-            targetDate: targetDate,
-            tier: tier,
-            repeats: repeats && scope != .anytime,
-            reminderTime: reminderEnabled && scope != .anytime ? selectedReminderTime : nil,
-            deadlineDate: deadlineEnabled && !repeats
-                ? Calendar.current.startOfDay(for: deadlineDate)
-                : nil
+            categoryID: categoryID,
+            startDate: dateRangeEnabled ? startDate : nil,
+            endDate: dateRangeEnabled ? endDate : nil,
+            reminderTime: dateRangeEnabled && reminderEnabled ? selectedReminderTime : nil
         ))
         dismiss()
     }
@@ -228,26 +185,5 @@ struct FullTaskEditorView: View {
             second: 0,
             of: Date()
         ) ?? defaultReminderDate
-    }
-}
-
-enum TaskPeriodText {
-    static func text(for task: TodoTask) -> String {
-        guard let period = task.period else { return "闲时" }
-        return text(for: period, scope: task.timeScope)
-    }
-
-    static func text(for period: TaskPeriod, scope: TimeScope) -> String {
-        switch scope {
-        case .daily:
-            return period.start.formatted(.dateTime.year().month().day())
-        case .weekly:
-            let finalDay = period.end.addingTimeInterval(-1)
-            return "\(period.start.formatted(.dateTime.month().day()))–\(finalDay.formatted(.dateTime.month().day()))"
-        case .monthly:
-            return period.start.formatted(.dateTime.year().month())
-        case .anytime:
-            return "闲时"
-        }
     }
 }

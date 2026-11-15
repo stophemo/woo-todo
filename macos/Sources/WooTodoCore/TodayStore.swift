@@ -4,32 +4,29 @@ import Foundation
 @MainActor
 public final class TodayStore: ObservableObject {
     @Published public private(set) var tasks: [TodoTask] = []
+    @Published public private(set) var categories: [TaskCategory] = TaskCategory.defaults
     @Published public private(set) var errorMessage: String?
 
     public var onTasksChanged: (() -> Void)?
 
     private let repository: TaskRepository
-    private var engine: PeriodEngine
     private let now: () -> Date
 
-    public init(
-        repository: TaskRepository,
-        engine: PeriodEngine = PeriodEngine(),
-        now: @escaping () -> Date = Date.init
-    ) {
+    public init(repository: TaskRepository, now: @escaping () -> Date = Date.init) {
         self.repository = repository
-        self.engine = engine
         self.now = now
     }
 
     public func reload() {
         perform {
             let date = now()
-            try LazySettlementService(repository: repository, engine: engine).settle(at: date)
-            let period = engine.period(containing: date, for: .daily)!
-            tasks = try repository
-                .fetchTasks(scope: .daily, in: period, includeOverdueOnce: true)
-                .sorted(by: TodoTask.displayOrder)
+            categories = TaskCategory.normalizeList(try repository.fetchCategories())
+            tasks = try repository.fetchAll()
+                .filter {
+                    TaskDateState.isRelevant($0, on: date) ||
+                        TaskDateState.isSettled($0, on: date)
+                }
+                .sorted(by: dashboardOrder)
         }
     }
 
@@ -37,31 +34,21 @@ public final class TodayStore: ObservableObject {
     @discardableResult
     public func add(
         title: String,
-        tier: QuestTier,
-        repeatsDaily: Bool,
-        reminderTime: TaskReminderTime? = nil,
-        deadlineDate: Date? = nil
+        categoryID: String = TaskCategory.inboxID,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
+        reminderTime: TaskReminderTime? = nil
     ) -> Bool {
         let didAdd = perform {
             let date = now()
-            let period = engine.period(containing: date, for: .daily)
-            let maxIndex = try repository
-                .fetchTasks(scope: .daily, in: period, includeOverdueOnce: true)
-                .filter { $0.tier == tier }
-                .map(\.sortIndex)
-                .max() ?? -1
             let task = try TodoTask(
                 title: title,
-                timeScope: .daily,
-                tier: tier,
-                recurrence: repeatsDaily
-                    ? .repeating(RepeatRule(frequency: .daily))
-                    : .once,
-                period: period,
-                sortIndex: maxIndex + 1,
+                categoryID: resolvedCategory(categoryID),
+                startDate: startDate,
+                endDate: endDate,
+                sortIndex: nextSortIndex(),
                 createdAt: date,
-                reminderTime: reminderTime,
-                deadlineDate: repeatsDaily ? nil : deadlineDate
+                reminderTime: reminderTime
             )
             try repository.save(task)
         }
@@ -75,31 +62,29 @@ public final class TodayStore: ObservableObject {
     public func edit(
         id: UUID,
         title: String,
-        tier: QuestTier,
-        repeatsDaily: Bool,
-        reminderTime: TaskReminderTime? = nil,
-        deadlineDate: Date? = nil
+        categoryID: String,
+        startDate: Date?,
+        endDate: Date?,
+        reminderTime: TaskReminderTime?
     ) {
         guard tasks.first(where: { $0.id == id })?.status == .pending else { return }
         if perform({
-            guard var task = tasks.first(where: { $0.id == id }) else { return }
-            let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalized.isEmpty else { throw TaskValidationError.emptyTitle }
-            if task.tier != tier {
-                task.sortIndex = (tasks
-                    .filter { $0.tier == tier }
-                    .map(\.sortIndex)
-                    .max() ?? -1) + 1
-            }
-            task.title = normalized
-            task.tier = tier
-            task.recurrence = repeatsDaily
-                ? .repeating(RepeatRule(frequency: .daily))
-                : .once
-            task.reminderTime = reminderTime
-            task.deadlineDate = repeatsDaily ? nil : deadlineDate
-            task.updatedAt = now()
-            try repository.save(task)
+            guard let existing = tasks.first(where: { $0.id == id }) else { return }
+            let replacement = try TodoTask(
+                id: existing.id,
+                seriesID: existing.seriesID,
+                title: title,
+                categoryID: resolvedCategory(categoryID),
+                status: existing.status,
+                startDate: startDate,
+                endDate: endDate,
+                sortIndex: existing.sortIndex,
+                createdAt: existing.createdAt,
+                updatedAt: now(),
+                reminderTime: reminderTime,
+                completedAt: existing.completedAt
+            )
+            try repository.save(replacement)
             reload()
         }) {
             onTasksChanged?()
@@ -132,48 +117,14 @@ public final class TodayStore: ObservableObject {
     }
 
     public func pass(id: UUID) {
-        guard var task = tasks.first(where: { $0.id == id }), task.status == .pending else {
-            return
-        }
+        guard var task = tasks.first(where: { $0.id == id }),
+              task.status == .pending else { return }
         if perform({
             let date = now()
             task.status = .pass
             task.completedAt = date
             task.updatedAt = date
             try repository.save(task)
-            reload()
-        }) {
-            onTasksChanged?()
-        }
-    }
-
-    /// 仅允许在同一级别内排序，跨级别调整应走编辑入口。
-    public func move(tier: QuestTier, fromOffsets: IndexSet, toOffset: Int) {
-        if perform({
-            // 已结算任务是只读记录，不应阻止同组剩余待办继续排序。
-            var group = tasks
-                .filter { $0.tier == tier && $0.status == .pending }
-                .sorted(by: TodoTask.displayOrder)
-            let validOffsets = fromOffsets.filter { group.indices.contains($0) }.sorted()
-            guard !validOffsets.isEmpty else { return }
-
-            let moved = validOffsets.map { group[$0] }
-            for index in validOffsets.reversed() {
-                group.remove(at: index)
-            }
-            let removedBeforeDestination = validOffsets.filter { $0 < toOffset }.count
-            let insertionIndex = min(
-                max(0, toOffset - removedBeforeDestination),
-                group.count
-            )
-            group.insert(contentsOf: moved, at: insertionIndex)
-
-            let date = now()
-            for index in group.indices {
-                group[index].sortIndex = index
-                group[index].updatedAt = date
-            }
-            try repository.save(group)
             reload()
         }) {
             onTasksChanged?()
@@ -200,5 +151,26 @@ public final class TodayStore: ObservableObject {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    private func resolvedCategory(_ categoryID: String) -> String {
+        categories.contains(where: { $0.id == categoryID })
+            ? categoryID
+            : TaskCategory.inboxID
+    }
+
+    private func nextSortIndex() -> Int {
+        let persisted = (try? repository.fetchAll())?.map(\.sortIndex).max() ?? -1
+        return max(persisted, tasks.map(\.sortIndex).max() ?? -1) + 1
+    }
+
+    private func dashboardOrder(_ lhs: TodoTask, _ rhs: TodoTask) -> Bool {
+        let lhsOrder = categories.first(where: { $0.id == lhs.categoryID })?.order ?? Int.max
+        let rhsOrder = categories.first(where: { $0.id == rhs.categoryID })?.order ?? Int.max
+        if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
+        let lhsEnd = lhs.endDate ?? .distantFuture
+        let rhsEnd = rhs.endDate ?? .distantFuture
+        if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
+        return TodoTask.displayOrder(lhs, rhs)
     }
 }

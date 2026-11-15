@@ -3,29 +3,34 @@ import Foundation
 
 @MainActor
 public final class DashboardStore: ObservableObject {
+    @Published public private(set) var allTasks: [TodoTask] = []
+    @Published public private(set) var categories: [TaskCategory] = TaskCategory.defaults
     @Published public private(set) var statistics: StatisticsSnapshot = .empty
     @Published public private(set) var referenceDate = Date()
     @Published public private(set) var errorMessage: String?
-    @Published private var sectionTasks: [TimeScope: [TodoTask]] = [:]
 
     public var onTasksChanged: (() -> Void)?
 
     private let repository: TaskRepository
-    private let engine: PeriodEngine
     private let statisticsEngine: StatisticsEngine
     private let now: () -> Date
-    private var allTasks: [TodoTask] = []
 
     public init(
         repository: TaskRepository,
-        engine: PeriodEngine = PeriodEngine(),
         statisticsEngine: StatisticsEngine = StatisticsEngine(),
         now: @escaping () -> Date = Date.init
     ) {
         self.repository = repository
-        self.engine = engine
         self.statisticsEngine = statisticsEngine
         self.now = now
+    }
+
+    public var sections: [TaskListSection] {
+        TaskListPresenter.sections(
+            tasks: allTasks,
+            categories: categories,
+            on: referenceDate
+        )
     }
 
     public var recentHistory: [TodoTask] { statistics.recentHistory }
@@ -42,38 +47,19 @@ public final class DashboardStore: ObservableObject {
             }
     }
 
-    public func tasks(for scope: TimeScope) -> [TodoTask] {
-        sectionTasks[scope] ?? []
+    public func categoryName(for id: String) -> String {
+        TaskCategory.resolveName(id: id, categories: categories)
     }
 
     public func reload() {
         do {
             errorMessage = nil
             let date = now()
-            try LazySettlementService(repository: repository, engine: engine).settle(at: date)
             let loaded = try repository.fetchAll()
             allTasks = loaded
+            categories = TaskCategory.normalizeList(try repository.fetchCategories())
             referenceDate = date
             statistics = statisticsEngine.calculate(tasks: loaded, at: date)
-
-            var sections: [TimeScope: [TodoTask]] = [:]
-            for scope in TimeScope.allCases {
-                let tasks = loaded.filter { task in
-                    guard task.timeScope == scope else { return false }
-                    if scope == .anytime { return true }
-                    if task.period.map({ $0.end > date }) ?? false { return true }
-                    guard task.recurrence == .once else { return false }
-                    if task.status == .pending { return true }
-                    guard task.status == .completed,
-                          let completedAt = task.completedAt,
-                          let currentPeriod = engine.period(containing: date, for: scope) else {
-                        return false
-                    }
-                    return currentPeriod.contains(completedAt)
-                }
-                sections[scope] = tasks.sorted(by: dashboardOrder)
-            }
-            sectionTasks = sections
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -81,26 +67,21 @@ public final class DashboardStore: ObservableObject {
 
     public func add(
         title: String,
-        scope: TimeScope,
-        targetDate: Date,
-        tier: QuestTier,
-        repeats: Bool,
-        reminderTime: TaskReminderTime? = nil,
-        deadlineDate: Date? = nil
+        categoryID: String = TaskCategory.inboxID,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
+        reminderTime: TaskReminderTime? = nil
     ) {
         mutate {
             let date = now()
-            let period = engine.period(containing: targetDate, for: scope)
             let task = try TodoTask(
                 title: title,
-                timeScope: scope,
-                tier: tier,
-                recurrence: recurrence(scope: scope, repeats: repeats),
-                period: period,
-                sortIndex: nextSortIndex(scope: scope, tier: tier, period: period),
+                categoryID: resolvedCategory(categoryID),
+                startDate: startDate,
+                endDate: endDate,
+                sortIndex: nextSortIndex(),
                 createdAt: date,
-                reminderTime: reminderTime,
-                deadlineDate: repeats ? nil : deadlineDate
+                reminderTime: reminderTime
             )
             try repository.save(task)
         }
@@ -109,37 +90,26 @@ public final class DashboardStore: ObservableObject {
     public func edit(
         id: UUID,
         title: String,
-        scope: TimeScope,
-        targetDate: Date,
-        tier: QuestTier,
-        repeats: Bool,
-        reminderTime: TaskReminderTime? = nil,
-        deadlineDate: Date? = nil
+        categoryID: String,
+        startDate: Date?,
+        endDate: Date?,
+        reminderTime: TaskReminderTime?
     ) {
         guard allTasks.first(where: { $0.id == id })?.status == .pending else { return }
         mutate {
             guard let existing = allTasks.first(where: { $0.id == id }) else { return }
-            let date = now()
-            let period = engine.period(containing: targetDate, for: scope)
-            let groupChanged = existing.timeScope != scope
-                || existing.tier != tier
-                || existing.period != period
             let replacement = try TodoTask(
                 id: existing.id,
                 seriesID: existing.seriesID,
                 title: title,
-                timeScope: scope,
-                tier: tier,
+                categoryID: resolvedCategory(categoryID),
                 status: existing.status,
-                recurrence: recurrence(scope: scope, repeats: repeats),
-                period: period,
-                sortIndex: groupChanged
-                    ? nextSortIndex(scope: scope, tier: tier, period: period)
-                    : existing.sortIndex,
+                startDate: startDate,
+                endDate: endDate,
+                sortIndex: existing.sortIndex,
                 createdAt: existing.createdAt,
-                updatedAt: date,
+                updatedAt: now(),
                 reminderTime: reminderTime,
-                deadlineDate: repeats ? nil : deadlineDate,
                 completedAt: existing.completedAt
             )
             try repository.save(replacement)
@@ -168,8 +138,22 @@ public final class DashboardStore: ObservableObject {
 
     public func delete(id: UUID) {
         guard allTasks.first(where: { $0.id == id })?.status == .pending else { return }
+        mutate { try repository.delete(id: id) }
+    }
+
+    public func updateCategories(_ categories: [TaskCategory]) {
+        let normalized = TaskCategory.normalizeList(categories)
         mutate {
-            try repository.delete(id: id)
+            let date = now()
+            let known = Set(normalized.map(\.id))
+            for category in self.categories where !known.contains(category.id) {
+                _ = try repository.reassignPendingCategory(
+                    from: category.id,
+                    to: TaskCategory.inboxID,
+                    at: date
+                )
+            }
+            try repository.saveCategories(normalized)
         }
     }
 
@@ -177,15 +161,12 @@ public final class DashboardStore: ObservableObject {
         let available = Set(history.map(\.id))
         let targets = ids.map { $0.intersection(available) } ?? available
         guard !targets.isEmpty else { return }
-        mutate {
-            _ = try repository.clearHistory(ids: targets)
-        }
+        mutate { _ = try repository.clearHistory(ids: targets) }
     }
 
     public func pass(id: UUID) {
-        guard var task = allTasks.first(where: { $0.id == id }), task.status == .pending else {
-            return
-        }
+        guard var task = allTasks.first(where: { $0.id == id }),
+              task.status == .pending else { return }
         mutate {
             let date = now()
             task.status = .pass
@@ -206,27 +187,13 @@ public final class DashboardStore: ObservableObject {
         }
     }
 
-    private func recurrence(scope: TimeScope, repeats: Bool) -> RecurrenceRule {
-        guard repeats, scope != .anytime else { return .once }
-        return .repeating(RepeatRule(frequency: scope))
+    private func resolvedCategory(_ categoryID: String) -> String {
+        categories.contains(where: { $0.id == categoryID })
+            ? categoryID
+            : TaskCategory.inboxID
     }
 
-    private func nextSortIndex(
-        scope: TimeScope,
-        tier: QuestTier,
-        period: TaskPeriod?
-    ) -> Int {
-        let maximum = allTasks
-            .filter { $0.timeScope == scope && $0.tier == tier && $0.period == period }
-            .map(\.sortIndex)
-            .max() ?? -1
-        return maximum + 1
-    }
-
-    private func dashboardOrder(_ lhs: TodoTask, _ rhs: TodoTask) -> Bool {
-        let lhsStart = lhs.period?.start ?? .distantPast
-        let rhsStart = rhs.period?.start ?? .distantPast
-        if lhsStart != rhsStart { return lhsStart < rhsStart }
-        return TodoTask.displayOrder(lhs, rhs)
+    private func nextSortIndex() -> Int {
+        (allTasks.map(\.sortIndex).max() ?? -1) + 1
     }
 }

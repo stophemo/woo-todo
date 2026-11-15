@@ -5,15 +5,13 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskEntity
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
-import com.wootodo.domain.TaskDateRules
+import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
 import java.time.LocalTime
-import java.time.ZoneId
+import java.time.YearMonth
 import java.util.UUID
 
 data class EntityVersion(val lamport: Long, val deviceId: String) : Comparable<EntityVersion> {
@@ -108,38 +106,11 @@ object TaskMergePolicy {
         else -> null
     }
 
-    fun isValidCompletion(task: TaskInstancePayload): Boolean {
-        if (task.state != WireTaskState.COMPLETED || task.settledAt == null) return false
-        if (task.timeType == WireTimeType.SOMEDAY) return true
-        val periodStart = task.periodStart?.let(LocalDate::parse) ?: return false
-        val periodEnd = when (task.timeType) {
-            WireTimeType.DAY -> periodStart.plusDays(1)
-            WireTimeType.WEEK -> periodStart.plusWeeks(1)
-            WireTimeType.MONTH -> periodStart.plusMonths(1)
-            WireTimeType.SOMEDAY -> return true
-        }
-        val endMillis = periodEnd.atStartOfDay(ZoneId.of(task.timezone))
-            .toInstant()
-            .toEpochMilli()
-        return task.settledAt < endMillis
-    }
+    fun isValidCompletion(task: TaskInstancePayload): Boolean =
+        task.state == WireTaskState.COMPLETED && task.settledAt != null
 
-    fun isValidReopen(task: TaskInstancePayload): Boolean {
-        if (task.state != WireTaskState.PENDING || task.settledAt != null) return false
-        if (task.recurrence == WireRecurrence.ONCE) return true
-        if (task.timeType == WireTimeType.SOMEDAY) return true
-        val periodStart = task.periodStart?.let(LocalDate::parse) ?: return false
-        val periodEnd = when (task.timeType) {
-            WireTimeType.DAY -> periodStart.plusDays(1)
-            WireTimeType.WEEK -> periodStart.plusWeeks(1)
-            WireTimeType.MONTH -> periodStart.plusMonths(1)
-            WireTimeType.SOMEDAY -> return true
-        }
-        val endMillis = periodEnd.atStartOfDay(ZoneId.of(task.timezone))
-            .toInstant()
-            .toEpochMilli()
-        return task.updatedAt < endMillis
-    }
+    fun isValidReopen(task: TaskInstancePayload): Boolean =
+        task.state == WireTaskState.PENDING && task.settledAt == null
 }
 
 /** 仓储层独立校验拉取页，避免绕过 Coordinator 时推进错误 cursor。 */
@@ -170,6 +141,8 @@ object RemotePagePolicy {
 }
 
 object SQLiteLocalMutationRecorder {
+    private const val CATEGORY_SYNC_DATE = "2000-01-01"
+
     fun recordTask(
         database: SQLiteDatabase,
         task: TaskEntity,
@@ -203,6 +176,45 @@ object SQLiteLocalMutationRecorder {
             createdAt = normalizedTask.updatedAt,
         )
         writeVersion(database, normalizedTask.id, version, isTombstone = false)
+    }
+
+    /**
+     * 分类定义借用显示配置实体同步；标题、副标题和计时日期用固定占位，
+     * 接收端只应用 questLines，不会覆盖本机显示设置。
+     */
+    fun recordCategoryConfiguration(
+        database: SQLiteDatabase,
+        categories: List<TaskCategory>,
+        createdAt: Long,
+    ) {
+        if (categories.isEmpty()) return
+        val payload = DisplayConfigurationPayload(
+            headerTemplate = "",
+            subtitleTemplate = "",
+            startDate = CATEGORY_SYNC_DATE,
+            deadlineDate = CATEGORY_SYNC_DATE,
+            questLines = categories
+                .sortedBy { it.order }
+                .map { QuestLineDefinition(it.id, it.name, it.order) },
+        )
+        recordDisplayConfiguration(database, payload, createdAt)
+    }
+
+    private fun recordDisplayConfiguration(
+        database: SQLiteDatabase,
+        payload: DisplayConfigurationPayload,
+        createdAt: Long,
+    ) {
+        val version = nextLocalVersion(database) ?: return
+        enqueue(
+            database = database,
+            entityId = payload.id,
+            kind = SyncOperationKind.UPSERT,
+            version = version,
+            payloadJson = SyncJsonCodec.encodeTaskPayload(payload),
+            createdAt = createdAt,
+        )
+        writeVersion(database, payload.id, version, isTombstone = false)
     }
 
     fun recordDeletion(database: SQLiteDatabase, entityId: String, deletedAt: Long) {
@@ -637,7 +649,6 @@ class SQLiteSyncStore(
                 }
             }
         }
-        val displayConfiguration = readDisplayConfiguration(sqlite)
         existingTasks.forEach { task ->
             SQLiteLocalMutationRecorder.recordTask(
                 sqlite,
@@ -648,7 +659,15 @@ class SQLiteSyncStore(
         deferredDeletions.forEach { (entityId, deletedAt) ->
             SQLiteLocalMutationRecorder.recordDeletion(sqlite, entityId, deletedAt)
         }
-        // 显示配置不再作为同步基线：标题、副标题与计时模板只留在本机。
+        // 显示配置不再作为同步基线；分类与默认值不同时作为独立基线入队。
+        val categories = readCategories(sqlite)
+        if (categories.isNotEmpty() && categories != TaskCategories.defaults) {
+            SQLiteLocalMutationRecorder.recordCategoryConfiguration(
+                sqlite,
+                categories,
+                System.currentTimeMillis(),
+            )
+        }
     }
 
     private fun materializeOperation(
@@ -711,11 +730,82 @@ class SQLiteSyncStore(
         val incomingVersion = EntityVersion(operation.lamport, operation.deviceId)
         val currentVersion = readVersion(sqlite, payload.id)
         require(currentVersion?.isTombstone != true) { "显示配置不能处于删除状态" }
-        // 显示配置已改为设备本地设置：只推进版本水位，绝不覆盖本机偏好。
         if (currentVersion == null || incomingVersion > currentVersion.version) {
             writeVersion(sqlite, payload.id, incomingVersion, isTombstone = false)
+            if (payload.questLines.isNotEmpty()) {
+                replaceCategories(sqlite, payload.questLines)
+                reconcileUnknownPendingCategories(sqlite)
+                return payload
+            }
         }
+        // 标题、副标题与计时日期仍只留本机；这里最多只应用分类列表。
         return null
+    }
+
+    private fun replaceCategories(
+        sqlite: SQLiteDatabase,
+        definitions: List<QuestLineDefinition>,
+    ) {
+        val categories = TaskCategories.normalizeList(
+            definitions.map { TaskCategory(it.id, it.name, it.order) },
+        )
+        sqlite.delete(TABLE_CATEGORIES, null, null)
+        val now = System.currentTimeMillis()
+        categories.forEach { category ->
+            sqlite.insertOrThrow(
+                TABLE_CATEGORIES,
+                null,
+                ContentValues(4).apply {
+                    put("id", category.id)
+                    put("name", category.name)
+                    put("sort_order", category.order)
+                    put("updated_at", now)
+                },
+            )
+        }
+    }
+
+    private fun reconcileUnknownPendingCategories(sqlite: SQLiteDatabase) {
+        val known = sqlite.query(
+            TABLE_CATEGORIES,
+            arrayOf("id"),
+            null,
+            null,
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            buildSet {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+        }
+        val pending = sqlite.query(
+            TABLE_TASKS,
+            null,
+            "status = ?",
+            arrayOf(TaskStatus.PENDING.rawValue),
+            null,
+            null,
+            "created_at ASC, id ASC",
+        ).use { it.toTaskList() }
+        val now = System.currentTimeMillis()
+        pending.filter { it.categoryId !in known }.forEach { task ->
+            val updated = task.copy(categoryId = TaskCategories.INBOX_ID, updatedAt = now)
+            sqlite.update(
+                TABLE_TASKS,
+                ContentValues(2).apply {
+                    put("quest_line", TaskCategories.INBOX_ID)
+                    put("updated_at", now)
+                },
+                "id = ?",
+                arrayOf(task.id),
+            )
+            SQLiteLocalMutationRecorder.recordTask(
+                sqlite,
+                updated,
+                SyncOperationKind.UPSERT,
+            )
+        }
     }
 
     private fun applyTask(
@@ -962,6 +1052,29 @@ private fun readTask(database: SQLiteDatabase, id: String): TaskEntity? = databa
     if (!cursor.moveToFirst()) null else cursor.toTaskEntity()
 }
 
+private fun readCategories(database: SQLiteDatabase): List<TaskCategory> =
+    database.query(
+        TABLE_CATEGORIES,
+        arrayOf("id", "name", "sort_order"),
+        null,
+        null,
+        null,
+        null,
+        "sort_order ASC, id ASC",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    TaskCategory(
+                        id = cursor.getString(0),
+                        name = cursor.getString(1),
+                        order = cursor.getInt(2),
+                    ),
+                )
+            }
+        }
+    }
+
 fun readDisplayConfiguration(database: SQLiteDatabase): DisplayConfigurationPayload? =
     database.query(
         TABLE_DISPLAY_CONFIGURATION,
@@ -1019,92 +1132,131 @@ fun writeDisplayConfiguration(
     ) { "显示配置写入失败" }
 }
 
-private fun Cursor.toTaskEntity(): TaskEntity = TaskEntity(
-    id = getString(getColumnIndexOrThrow("id")),
-    seriesId = getString(getColumnIndexOrThrow("series_id")),
-    title = getString(getColumnIndexOrThrow("title")),
-    timeType = TaskTimeType.fromRaw(getString(getColumnIndexOrThrow("time_type"))),
-    targetDate = getColumnIndexOrThrow("target_date").let { index ->
+private fun Cursor.toTaskList(): List<TaskEntity> = buildList {
+    while (moveToNext()) add(toTaskEntity())
+}
+
+private fun Cursor.toTaskEntity(): TaskEntity {
+    val start = getColumnIndexOrThrow("target_date").let { index ->
         if (isNull(index)) null else LocalDate.parse(getString(index))
-    },
-    questLine = QuestLine.fromRaw(getString(getColumnIndexOrThrow("quest_line"))),
-    status = TaskStatus.fromRaw(getString(getColumnIndexOrThrow("status"))),
-    recurrence = Recurrence.fromRaw(getString(getColumnIndexOrThrow("recurrence"))),
-    sortOrder = getInt(getColumnIndexOrThrow("sort_order")),
-    createdAt = getLong(getColumnIndexOrThrow("created_at")),
-    updatedAt = getLong(getColumnIndexOrThrow("updated_at")),
-    settledAt = getColumnIndexOrThrow("settled_at").let { index ->
-        if (isNull(index)) null else getLong(index)
-    },
-    reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
-        if (isNull(index)) null else LocalTime.parse(getString(index))
-    },
-    deadlineDate = getColumnIndexOrThrow("deadline_date").let { index ->
+    }
+    val deadline = getColumnIndexOrThrow("deadline_date").let { index ->
         if (isNull(index)) null else LocalDate.parse(getString(index))
-    },
-)
+    }
+    val timeType = getString(getColumnIndexOrThrow("time_type")).lowercase()
+    val defaultEnd = when (timeType) {
+        "day" -> start
+        "week" -> start?.plusDays(6)
+        "month" -> start?.let { YearMonth.from(it).atEndOfMonth() }
+        else -> null
+    }
+    val end = when {
+        start == null && deadline == null -> null
+        start == null -> deadline
+        deadline == null -> defaultEnd ?: start
+        defaultEnd == null -> maxOf(start, deadline)
+        else -> maxOf(defaultEnd, deadline)
+    }
+    val effectiveStart = if (start == null && end != null) end else start
+    return TaskEntity(
+        id = getString(getColumnIndexOrThrow("id")),
+        seriesId = getString(getColumnIndexOrThrow("series_id")),
+        title = getString(getColumnIndexOrThrow("title")),
+        categoryId = getString(getColumnIndexOrThrow("quest_line")),
+        startDate = effectiveStart,
+        endDate = end,
+        status = TaskStatus.fromRaw(getString(getColumnIndexOrThrow("status"))),
+        sortOrder = getInt(getColumnIndexOrThrow("sort_order")),
+        createdAt = getLong(getColumnIndexOrThrow("created_at")),
+        updatedAt = getLong(getColumnIndexOrThrow("updated_at")),
+        settledAt = getColumnIndexOrThrow("settled_at").let { index ->
+            if (isNull(index)) null else getLong(index)
+        },
+        reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
+            if (isNull(index) || effectiveStart == null) null else LocalTime.parse(getString(index))
+        },
+    )
+}
 
 private fun TaskEntity.toContentValues(): ContentValues = ContentValues(14).apply {
     put("id", id)
     put("series_id", seriesId)
     put("title", title)
-    put("time_type", timeType.rawValue)
-    if (targetDate == null) putNull("target_date") else put("target_date", targetDate.toString())
-    put("quest_line", questLine.rawValue)
+    put(
+        "time_type",
+        if (startDate == null && endDate == null) "someday" else "day",
+    )
+    if (startDate == null) putNull("target_date") else put("target_date", startDate.toString())
+    put("quest_line", categoryId)
     put("status", status.rawValue)
-    put("recurrence", recurrence.rawValue)
+    put("recurrence", "once")
     put("sort_order", sortOrder)
     put("created_at", createdAt)
     put("updated_at", updatedAt)
     if (settledAt == null) putNull("settled_at") else put("settled_at", settledAt)
-    if (reminderTime == null) putNull("reminder_time") else put("reminder_time", reminderTime.toString())
-    if (deadlineDate == null) putNull("deadline_date") else put("deadline_date", deadlineDate.toString())
+    if (reminderTime == null || startDate == null) {
+        putNull("reminder_time")
+    } else {
+        put("reminder_time", reminderTime.toString())
+    }
+    if (endDate == null) putNull("deadline_date") else put("deadline_date", endDate.toString())
 }
 
-fun TaskEntity.toWirePayload(): TaskInstancePayload = TaskInstancePayload(
-    id = id,
-    seriesId = seriesId,
-    title = title,
-    timeType = timeType.toWire(),
-    periodStart = targetDate?.toString(),
-    deadlineDate = deadlineDate?.toString(),
-    timezone = TaskDateRules.zoneId.id,
-    questLine = questLine.toWire(),
-    state = status.toWire(),
-    recurrence = if (recurrence == Recurrence.ONCE) WireRecurrence.ONCE else WireRecurrence.REPEAT,
-    sortOrder = sortOrder.toLong(),
-    createdAt = createdAt,
-    updatedAt = updatedAt,
-    settledAt = settledAt,
-    reminderTime = reminderTime?.toString(),
-)
+fun TaskEntity.toWirePayload(): TaskInstancePayload {
+    val start = startDate ?: endDate
+    val end = endDate ?: startDate
+    val ranged = start != null && end != null
+    return TaskInstancePayload(
+        id = id,
+        seriesId = seriesId,
+        title = title,
+        timeType = if (ranged) WireTimeType.DAY else WireTimeType.SOMEDAY,
+        periodStart = start?.toString(),
+        deadlineDate = end?.toString(),
+        timezone = WIRE_FIXED_TIMEZONE,
+        questLine = categoryId,
+        state = status.toWire(),
+        recurrence = WireRecurrence.ONCE,
+        sortOrder = sortOrder.toLong(),
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        settledAt = settledAt,
+        reminderTime = if (ranged) reminderTime?.toString() else null,
+    )
+}
 
 fun TaskInstancePayload.toTaskEntity(): TaskEntity {
-    require(timezone == TaskDateRules.zoneId.id) { "Android v1 仅支持 Asia/Shanghai 任务周期" }
+    require(timezone == WIRE_FIXED_TIMEZONE) { "Android v1 仅支持 Asia/Shanghai 任务" }
     require(sortOrder <= Int.MAX_VALUE) { "sortOrder 超出 Android 范围" }
+    val start = periodStart?.let(LocalDate::parse)
+    val deadline = deadlineDate?.let(LocalDate::parse)
+    val defaultEnd = when (timeType) {
+        WireTimeType.DAY -> start
+        WireTimeType.WEEK -> start?.plusDays(6)
+        WireTimeType.MONTH -> start?.let { YearMonth.from(it).atEndOfMonth() }
+        WireTimeType.SOMEDAY -> null
+    }
+    val end = when {
+        start == null && deadline == null -> null
+        start == null -> deadline
+        deadline == null -> defaultEnd ?: start
+        defaultEnd == null -> maxOf(start, deadline)
+        else -> maxOf(defaultEnd, deadline)
+    }
+    val effectiveStart = if (start == null && end != null) end else start
     return TaskEntity(
         id = id,
         seriesId = seriesId,
         title = title,
-        timeType = timeType.toDomain(),
-        targetDate = periodStart?.let(LocalDate::parse),
-        deadlineDate = deadlineDate?.let(LocalDate::parse),
-        questLine = questLine.toDomain(),
+        categoryId = questLine,
+        startDate = effectiveStart,
+        endDate = end,
         status = state.toDomain(),
-        recurrence = when (recurrence) {
-            WireRecurrence.ONCE -> Recurrence.ONCE
-            WireRecurrence.REPEAT -> when (timeType) {
-                WireTimeType.DAY -> Recurrence.DAILY
-                WireTimeType.WEEK -> Recurrence.WEEKLY
-                WireTimeType.MONTH -> Recurrence.MONTHLY
-                WireTimeType.SOMEDAY -> error("闲时任务不能重复")
-            }
-        },
         sortOrder = sortOrder.toInt(),
         createdAt = createdAt,
         updatedAt = updatedAt,
         settledAt = settledAt,
-        reminderTime = reminderTime?.let(LocalTime::parse),
+        reminderTime = if (effectiveStart == null) null else reminderTime?.let(LocalTime::parse),
     )
 }
 
@@ -1116,32 +1268,6 @@ private fun requireKindMatchesTask(kind: SyncOperationKind, payload: TaskInstanc
         SyncOperationKind.UPSERT, SyncOperationKind.REORDER -> Unit
         SyncOperationKind.DELETE -> error("delete 必须携带 tombstone")
     }
-}
-
-private fun TaskTimeType.toWire(): WireTimeType = when (this) {
-    TaskTimeType.DAY -> WireTimeType.DAY
-    TaskTimeType.WEEK -> WireTimeType.WEEK
-    TaskTimeType.MONTH -> WireTimeType.MONTH
-    TaskTimeType.LEISURE -> WireTimeType.SOMEDAY
-}
-
-private fun WireTimeType.toDomain(): TaskTimeType = when (this) {
-    WireTimeType.DAY -> TaskTimeType.DAY
-    WireTimeType.WEEK -> TaskTimeType.WEEK
-    WireTimeType.MONTH -> TaskTimeType.MONTH
-    WireTimeType.SOMEDAY -> TaskTimeType.LEISURE
-}
-
-private fun QuestLine.toWire(): WireQuestLine = when (this) {
-    QuestLine.MAIN -> WireQuestLine.MAIN
-    QuestLine.SIDE -> WireQuestLine.SIDE
-    QuestLine.EXTRA -> WireQuestLine.EXTRA
-}
-
-private fun WireQuestLine.toDomain(): QuestLine = when (this) {
-    WireQuestLine.MAIN -> QuestLine.MAIN
-    WireQuestLine.SIDE -> QuestLine.SIDE
-    WireQuestLine.EXTRA -> QuestLine.EXTRA
 }
 
 private fun TaskStatus.toWire(): WireTaskState = when (this) {
@@ -1156,6 +1282,8 @@ private fun WireTaskState.toDomain(): TaskStatus = when (this) {
     WireTaskState.PASS -> TaskStatus.PASS
 }
 
+private const val TABLE_TASKS = "tasks"
+private const val TABLE_CATEGORIES = "task_categories"
 private const val TABLE_OUTBOX = "sync_outbox"
 private const val TABLE_VERSIONS = "sync_entity_versions"
 private const val TABLE_TOMBSTONES = "sync_tombstones"

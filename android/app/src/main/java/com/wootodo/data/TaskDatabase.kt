@@ -1,9 +1,13 @@
 package com.wootodo.data
 
 import android.content.Context
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteException
 import android.database.sqlite.SQLiteOpenHelper
+import com.wootodo.domain.TaskCategories
+import java.time.LocalDate
+import java.time.YearMonth
 
 class TaskDatabase(context: Context) :
     SQLiteOpenHelper(context.applicationContext, DATABASE_NAME, null, DATABASE_VERSION) {
@@ -40,8 +44,12 @@ class TaskDatabase(context: Context) :
         if (oldVersion < 9 && !columnExists(database, "tasks", "deadline_date")) {
             database.execSQL("ALTER TABLE tasks ADD COLUMN deadline_date TEXT")
         }
+        if (oldVersion < 10) {
+            migrateToVersionTen(database)
+        }
         // 兼容曾经中断或裁剪过的旧升级：同步表均使用 IF NOT EXISTS，可安全幂等补齐。
         createSyncSchema(database)
+        createCategorySchema(database)
     }
 
     override fun onDowngrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -109,11 +117,11 @@ class TaskDatabase(context: Context) :
                 id TEXT NOT NULL PRIMARY KEY,
                 series_id TEXT NOT NULL,
                 title TEXT NOT NULL,
-                time_type TEXT NOT NULL CHECK(time_type IN ('day', 'week', 'month', 'someday')),
+                time_type TEXT NOT NULL,
                 target_date TEXT,
-                quest_line TEXT NOT NULL CHECK(quest_line IN ('main', 'side', 'extra')),
+                quest_line TEXT NOT NULL,
                 status TEXT NOT NULL CHECK(status IN ('pending', 'completed', 'pass')),
-                recurrence TEXT NOT NULL CHECK(recurrence IN ('once', 'daily', 'weekly', 'monthly')),
+                recurrence TEXT NOT NULL,
                 sort_order INTEGER NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
@@ -124,13 +132,41 @@ class TaskDatabase(context: Context) :
             """.trimIndent(),
         )
         database.execSQL(
-            "CREATE INDEX IF NOT EXISTS index_tasks_time_type_target_date " +
-                "ON tasks(time_type, target_date)",
+            "CREATE INDEX IF NOT EXISTS index_tasks_status_target_deadline " +
+                "ON tasks(status, target_date, deadline_date)",
         )
         database.execSQL(
-            "CREATE INDEX IF NOT EXISTS index_tasks_status ON tasks(status)",
+            "CREATE INDEX IF NOT EXISTS index_tasks_quest_line ON tasks(quest_line)",
         )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_tasks_series_id ON tasks(series_id)",
+        )
+        createCategorySchema(database)
         createSyncSchema(database)
+    }
+
+    private fun createCategorySchema(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS task_categories (
+                id TEXT NOT NULL PRIMARY KEY,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        val count = database.rawQuery("SELECT COUNT(*) FROM task_categories", null).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+        if (count == 0) {
+            TaskCategories.defaults.forEach { category ->
+                database.execSQL(
+                    "INSERT INTO task_categories(id, name, sort_order, updated_at) VALUES (?, ?, ?, ?)",
+                    arrayOf(category.id, category.name, category.order, System.currentTimeMillis()),
+                )
+            }
+        }
     }
 
     private fun createSyncSchema(database: SQLiteDatabase) {
@@ -245,6 +281,119 @@ class TaskDatabase(context: Context) :
         )
     }
 
+    private fun migrateToVersionTen(database: SQLiteDatabase) {
+        if (tableExists(database, "tasks_v9")) {
+            database.execSQL("DROP TABLE tasks_v9")
+        }
+        database.execSQL("ALTER TABLE tasks RENAME TO tasks_v9")
+        database.execSQL("DROP INDEX IF EXISTS index_tasks_time_type_target_date")
+        database.execSQL("DROP INDEX IF EXISTS index_tasks_status")
+        database.execSQL("DROP INDEX IF EXISTS index_tasks_status_target_deadline")
+        database.execSQL("DROP INDEX IF EXISTS index_tasks_quest_line")
+        database.execSQL("DROP INDEX IF EXISTS index_tasks_series_id")
+        createSchema(database)
+
+        database.rawQuery("SELECT * FROM tasks_v9", null).use { cursor ->
+            while (cursor.moveToNext()) {
+                val old = cursor.toLegacyTask()
+                val start = old.startDate
+                val end = old.endDate
+                database.execSQL(
+                    """
+                    INSERT INTO tasks (
+                        id, series_id, title, time_type, target_date, quest_line,
+                        status, recurrence, sort_order, created_at, updated_at,
+                        settled_at, reminder_time, deadline_date
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'once', ?, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                    arrayOf(
+                        old.id,
+                        old.seriesId,
+                        old.title,
+                        if (start == null && end == null) "someday" else "day",
+                        start?.toString(),
+                        old.categoryId,
+                        old.status,
+                        old.sortOrder,
+                        old.createdAt,
+                        old.updatedAt,
+                        old.settledAt,
+                        if (start == null && end == null) null else old.reminderTime,
+                        end?.toString(),
+                    ),
+                )
+            }
+        }
+        database.execSQL("DROP TABLE tasks_v9")
+        createCategorySchema(database)
+    }
+
+    private fun Cursor.toLegacyTask(): LegacyTask {
+        fun text(column: String): String? {
+            val index = getColumnIndexOrThrow(column)
+            return if (isNull(index)) null else getString(index)
+        }
+
+        fun long(column: String): Long? {
+            val index = getColumnIndexOrThrow(column)
+            return if (isNull(index)) null else getLong(index)
+        }
+
+        val target = text("target_date")?.let(LocalDate::parse)
+        val deadline = text("deadline_date")?.let(LocalDate::parse)
+        val timeType = text("time_type").orEmpty()
+        val defaultEnd = when (timeType) {
+            "day" -> target
+            "week" -> target?.plusDays(6)
+            "month" -> target?.let { date ->
+                YearMonth.from(date).atEndOfMonth()
+            }
+            else -> null
+        }
+        val start: LocalDate?
+        val end: LocalDate?
+        if (target == null) {
+            start = deadline
+            end = deadline
+        } else {
+            start = target
+            end = when {
+                deadline == null -> defaultEnd ?: target
+                defaultEnd == null -> maxOf(target, deadline)
+                else -> maxOf(defaultEnd, deadline)
+            }
+        }
+        return LegacyTask(
+            id = requireNotNull(text("id")),
+            seriesId = requireNotNull(text("series_id")),
+            title = requireNotNull(text("title")),
+            categoryId = requireNotNull(text("quest_line")),
+            status = requireNotNull(text("status")),
+            sortOrder = getInt(getColumnIndexOrThrow("sort_order")),
+            createdAt = getLong(getColumnIndexOrThrow("created_at")),
+            updatedAt = getLong(getColumnIndexOrThrow("updated_at")),
+            settledAt = long("settled_at"),
+            reminderTime = text("reminder_time"),
+            startDate = start,
+            endDate = end,
+        )
+    }
+
+    private data class LegacyTask(
+        val id: String,
+        val seriesId: String,
+        val title: String,
+        val categoryId: String,
+        val status: String,
+        val sortOrder: Int,
+        val createdAt: Long,
+        val updatedAt: Long,
+        val settledAt: Long?,
+        val reminderTime: String?,
+        val startDate: LocalDate?,
+        val endDate: LocalDate?,
+    )
+
     private fun tableExists(database: SQLiteDatabase, tableName: String): Boolean =
         database.rawQuery(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
@@ -260,6 +409,6 @@ class TaskDatabase(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 9
+        const val DATABASE_VERSION = 10
     }
 }

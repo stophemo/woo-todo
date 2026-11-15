@@ -4,12 +4,16 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import com.wootodo.domain.TaskDateRules
 import java.time.ZonedDateTime
 
 object ReminderScheduler {
     private const val REQUEST_CODE = 23_10
 
-    fun schedule(context: Context, now: ZonedDateTime = ZonedDateTime.now()) {
+    fun schedule(
+        context: Context,
+        now: ZonedDateTime = ZonedDateTime.now(TaskDateRules.zoneId),
+    ) {
         val appContext = context.applicationContext
         val alarmManager = appContext.getSystemService(AlarmManager::class.java)
         val settings = ReminderPreferences.load(appContext)

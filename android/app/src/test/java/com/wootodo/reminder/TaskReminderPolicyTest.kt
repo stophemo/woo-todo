@@ -1,10 +1,7 @@
 package com.wootodo.reminder
 
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -27,6 +24,27 @@ class TaskReminderPolicyTest {
     }
 
     @Test
+    fun `提醒锚点优先开始日期否则结束日期`() {
+        val startAnchored = task(reminderTime = LocalTime.of(23, 10)).copy(
+            startDate = LocalDate.of(2026, 7, 21),
+            endDate = LocalDate.of(2026, 7, 25),
+        )
+        assertEquals(
+            Instant.parse("2026-07-21T15:10:00Z"),
+            TaskReminderPolicy.triggerAt(startAnchored, zone),
+        )
+
+        val endAnchored = task(reminderTime = LocalTime.of(23, 10)).copy(
+            startDate = null,
+            endDate = LocalDate.of(2026, 7, 25),
+        )
+        assertEquals(
+            Instant.parse("2026-07-25T15:10:00Z"),
+            TaskReminderPolicy.triggerAt(endAnchored, zone),
+        )
+    }
+
+    @Test
     fun `已完成无日期或无时间的任务不排程`() {
         assertNull(TaskReminderPolicy.triggerAt(task(reminderTime = null), zone))
         assertNull(
@@ -38,8 +56,8 @@ class TaskReminderPolicyTest {
         assertNull(
             TaskReminderPolicy.triggerAt(
                 task(reminderTime = LocalTime.NOON).copy(
-                    timeType = TaskTimeType.LEISURE,
-                    targetDate = null,
+                    startDate = null,
+                    endDate = null,
                 ),
                 zone,
             ),
@@ -50,11 +68,10 @@ class TaskReminderPolicyTest {
         id = "00000000-0000-4000-8000-000000000001",
         seriesId = "00000000-0000-4000-8000-000000000001",
         title = "测试提醒",
-        timeType = TaskTimeType.DAY,
-        targetDate = LocalDate.of(2026, 7, 21),
-        questLine = QuestLine.MAIN,
+        categoryId = "main",
+        startDate = LocalDate.of(2026, 7, 21),
+        endDate = LocalDate.of(2026, 7, 21),
         status = TaskStatus.PENDING,
-        recurrence = Recurrence.ONCE,
         sortOrder = 0,
         createdAt = 1,
         updatedAt = 1,

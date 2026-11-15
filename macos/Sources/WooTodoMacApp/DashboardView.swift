@@ -1,62 +1,48 @@
+import AppKit
+import Charts
 import SwiftUI
 import WooTodoCore
 
 enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
-    case today
-    case week
-    case month
-    case someday
+    case tasks
     case history
     case statistics
     case sync
     case display
     case shortcuts
+    case localData
 
     var id: Self { self }
 
     static var taskSections: [Self] {
-        [.today, .week, .month, .someday, .history, .statistics]
+        [.tasks, .history, .statistics]
     }
 
     static var settingSections: [Self] {
-        [.display, .shortcuts, .sync]
+        [.display, .shortcuts, .sync, .localData]
     }
 
     var title: String {
         switch self {
-        case .today: "今日"
-        case .week: "本周"
-        case .month: "本月"
-        case .someday: "闲时"
+        case .tasks: "任务"
         case .history: "历史"
         case .statistics: "统计"
         case .sync: "同步"
         case .display: "显示"
         case .shortcuts: "快捷键"
+        case .localData: "本机数据"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .today: "sun.max"
-        case .week: "calendar.badge.clock"
-        case .month: "calendar"
-        case .someday: "sparkles"
+        case .tasks: "checklist"
         case .history: "clock.arrow.circlepath"
         case .statistics: "chart.bar"
         case .sync: "arrow.triangle.2.circlepath"
         case .display: "textformat"
         case .shortcuts: "command"
-        }
-    }
-
-    var scope: TimeScope? {
-        switch self {
-        case .today: .daily
-        case .week: .weekly
-        case .month: .monthly
-        case .someday: .anytime
-        case .history, .statistics, .sync, .display, .shortcuts: nil
+        case .localData: "externaldrive"
         }
     }
 }
@@ -65,7 +51,7 @@ enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
 final class DashboardNavigation: ObservableObject {
     @Published var selection: DashboardSection
 
-    init(selection: DashboardSection = .today) {
+    init(selection: DashboardSection = .tasks) {
         self.selection = selection
     }
 }
@@ -81,8 +67,10 @@ struct DashboardView: View {
     @ObservedObject var webDavSettingsStore: WebDavSettingsStore
     @ObservedObject var dayCounterStore: DayCounterStore
     @ObservedObject var shortcutSettingsStore: ShortcutSettingsStore
+    let localDataManager: LocalDataManager
     @ObservedObject var navigation: DashboardNavigation
     @State private var editorRequest: TaskEditorRequest?
+    @State private var showingCategories = false
 
     var body: some View {
         NavigationSplitView {
@@ -90,12 +78,18 @@ struct DashboardView: View {
                 Section("任务与统计") {
                     ForEach(DashboardSection.taskSections) { section in
                         Label(section.title, systemImage: section.systemImage)
+                            .foregroundStyle(
+                                navigation.selection == section ? Color.white : Color.primary
+                            )
                             .tag(section)
                     }
                 }
                 Section("设置") {
                     ForEach(DashboardSection.settingSections) { section in
                         Label(section.title, systemImage: section.systemImage)
+                            .foregroundStyle(
+                                navigation.selection == section ? Color.white : Color.primary
+                            )
                             .tag(section)
                     }
                 }
@@ -104,6 +98,7 @@ struct DashboardView: View {
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
         } detail: {
             detail
+                .background(Color(nsColor: .windowBackgroundColor))
                 .navigationTitle(navigation.selection.title)
                 .textSelection(.enabled)
         }
@@ -120,16 +115,19 @@ struct DashboardView: View {
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
+                if navigation.selection == .tasks {
+                    Button {
+                        showingCategories = true
+                    } label: {
+                        Label("管理类型", systemImage: "tag")
+                    }
+                }
                 if navigation.selection != .sync &&
                     navigation.selection != .display &&
-                    navigation.selection != .shortcuts {
+                    navigation.selection != .shortcuts &&
+                    navigation.selection != .localData {
                     Button {
-                        editorRequest = TaskEditorRequest(
-                            mode: .create(
-                                defaultScope: navigation.selection.scope ?? .daily,
-                                targetDate: store.referenceDate
-                            )
-                        )
+                        editorRequest = TaskEditorRequest(mode: .create)
                     } label: {
                         Label("新增任务", systemImage: "plus")
                     }
@@ -148,8 +146,16 @@ struct DashboardView: View {
             }
         }
         .sheet(item: $editorRequest) { request in
-            FullTaskEditorView(mode: request.mode) { input in
+            FullTaskEditorView(
+                mode: request.mode,
+                categories: store.categories
+            ) { input in
                 save(input, request: request)
+            }
+        }
+        .sheet(isPresented: $showingCategories) {
+            TaskCategorySettingsView(categories: store.categories) { categories in
+                store.updateCategories(categories)
             }
         }
         .tint(WooTodoTheme.purple)
@@ -159,60 +165,30 @@ struct DashboardView: View {
     @ViewBuilder
     private var detail: some View {
         switch navigation.selection {
-        case .today:
-            ScopedTasksView(
-                title: "今日与已规划的每日任务",
-                scope: .daily,
-                tasks: store.tasks(for: .daily),
-                referenceDate: store.referenceDate,
-                toggle: store.toggleCompletion,
-                pass: store.pass,
-                edit: edit,
-                delete: store.delete
-            )
-        case .week:
-            ScopedTasksView(
-                title: "本周与已规划的每周任务",
-                scope: .weekly,
-                tasks: store.tasks(for: .weekly),
-                referenceDate: store.referenceDate,
-                toggle: store.toggleCompletion,
-                pass: store.pass,
-                edit: edit,
-                delete: store.delete
-            )
-        case .month:
-            ScopedTasksView(
-                title: "本月与已规划的每月任务",
-                scope: .monthly,
-                tasks: store.tasks(for: .monthly),
-                referenceDate: store.referenceDate,
-                toggle: store.toggleCompletion,
-                pass: store.pass,
-                edit: edit,
-                delete: store.delete
-            )
-        case .someday:
-            ScopedTasksView(
-                title: "没有截止时间的闲时任务",
-                scope: .anytime,
-                tasks: store.tasks(for: .anytime),
-                referenceDate: store.referenceDate,
-                toggle: store.toggleCompletion,
-                pass: store.pass,
-                edit: edit,
-                delete: store.delete
+        case .tasks:
+            TaskSectionsView(
+                store: store,
+                edit: edit
             )
         case .history:
-            HistoryView(tasks: store.history, clear: store.clearHistory)
+            HistoryView(
+                tasks: store.history,
+                categories: store.categories,
+                clear: store.clearHistory
+            )
         case .statistics:
-            StatisticsView(snapshot: store.statistics)
+            StatisticsView(
+                snapshot: store.statistics,
+                categories: store.categories
+            )
         case .sync:
             SyncSettingsView(store: syncSettingsStore, webDavStore: webDavSettingsStore)
         case .display:
             DayCounterSettingsView(store: dayCounterStore)
         case .shortcuts:
             ShortcutSettingsView(store: shortcutSettingsStore)
+        case .localData:
+            LocalDataSettingsView(manager: localDataManager)
         }
     }
 
@@ -225,104 +201,60 @@ struct DashboardView: View {
         case .create:
             store.add(
                 title: input.title,
-                scope: input.scope,
-                targetDate: input.targetDate,
-                tier: input.tier,
-                repeats: input.repeats,
-                reminderTime: input.reminderTime,
-                deadlineDate: input.deadlineDate
+                categoryID: input.categoryID,
+                startDate: input.startDate,
+                endDate: input.endDate,
+                reminderTime: input.reminderTime
             )
         case let .edit(task):
             store.edit(
                 id: task.id,
                 title: input.title,
-                scope: input.scope,
-                targetDate: input.targetDate,
-                tier: input.tier,
-                repeats: input.repeats,
-                reminderTime: input.reminderTime,
-                deadlineDate: input.deadlineDate
+                categoryID: input.categoryID,
+                startDate: input.startDate,
+                endDate: input.endDate,
+                reminderTime: input.reminderTime
             )
         }
     }
 }
 
-private struct ScopedTasksView: View {
-    let title: String
-    let scope: TimeScope
-    let tasks: [TodoTask]
-    let referenceDate: Date
-    let toggle: (UUID) -> Void
-    let pass: (UUID) -> Void
+private struct TaskSectionsView: View {
+    @ObservedObject var store: DashboardStore
     let edit: (TodoTask) -> Void
-    let delete: (UUID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 12)
-            if tasks.isEmpty {
-                ContentUnavailableView(
-                    "暂无任务",
-                    systemImage: "checklist",
-                    description: Text("点击工具栏的加号创建任务。")
-                )
-            } else {
-                List {
-                    if scope == .anytime {
-                        taskRows(tasks, title: "闲时任务")
-                    } else {
-                        let current = tasks.filter { $0.period?.contains(referenceDate) == true }
-                        let overdue = tasks.filter { task in
-                            task.status == .pending && task.recurrence == .once &&
-                                task.period.map { $0.end <= referenceDate } == true
+        if store.sections.isEmpty {
+            ContentUnavailableView(
+                "暂无任务",
+                systemImage: "checklist",
+                description: Text("点击工具栏的加号创建任务。")
+            )
+        } else {
+            List {
+                ForEach(store.sections) { section in
+                    Section(section.kind.title) {
+                        ForEach(section.tasks) { task in
+                            DashboardTaskRow(
+                                task: task,
+                                categoryName: store.categoryName(for: task.categoryID),
+                                toggle: { store.toggleCompletion(id: task.id) },
+                                pass: { store.pass(id: task.id) },
+                                edit: { edit(task) },
+                                delete: { store.delete(id: task.id) }
+                            )
                         }
-                        let upcoming = tasks.filter { task in
-                            guard let period = task.period else { return false }
-                            return period.start > referenceDate
-                        }
-                        taskRows(overdue, title: "待处理")
-                        taskRows(current, title: currentTitle)
-                        taskRows(upcoming, title: "已规划")
                     }
                 }
-                .listStyle(.inset)
             }
-        }
-    }
-
-    private var currentTitle: String {
-        switch scope {
-        case .daily: "今日"
-        case .weekly: "本周"
-        case .monthly: "本月"
-        case .anytime: "闲时"
-        }
-    }
-
-    @ViewBuilder
-    private func taskRows(_ rows: [TodoTask], title: String) -> some View {
-        if !rows.isEmpty {
-            Section(title) {
-                ForEach(rows) { task in
-                    DashboardTaskRow(
-                        task: task,
-                        toggle: { toggle(task.id) },
-                        pass: { pass(task.id) },
-                        edit: { edit(task) },
-                        delete: { delete(task.id) }
-                    )
-                }
-            }
+            .listStyle(.inset)
         }
     }
 }
 
 private struct DashboardTaskRow: View {
     let task: TodoTask
+    let categoryName: String
     let toggle: () -> Void
     let pass: () -> Void
     let edit: () -> Void
@@ -346,20 +278,23 @@ private struct DashboardTaskRow: View {
                     .strikethrough(task.status == .completed)
                     .foregroundStyle(task.status == .completed ? .secondary : .primary)
                 HStack(spacing: 6) {
-                    TaskBadge(text: task.tier.displayName, accent: task.tier.accentColor)
-                    TaskBadge(text: TaskPeriodText.text(for: task))
-                    if case .repeating = task.recurrence {
-                        Image(systemName: "repeat")
+                    if task.categoryID != TaskCategory.inboxID {
+                        TaskBadge(text: categoryName, accent: WooTodoTheme.purple)
+                    }
+                    TaskBadge(text: dateRangeText)
+                    if task.status != .pending {
+                        TaskBadge(text: task.status.displayName)
+                    }
+                    if TaskDateState.isOverdue(task, on: Date()) {
+                        Label(overdueText, systemImage: "exclamationmark.circle")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
+                    if task.reminderTime != nil {
+                        Image(systemName: "bell")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                    }
-                    if let deadline = task.deadlineDate {
-                        Label(
-                            deadline.formatted(.dateTime.year().month().day()),
-                            systemImage: "calendar.badge.exclamationmark"
-                        )
-                        .font(.caption2)
-                        .foregroundStyle(deadline < Calendar.current.startOfDay(for: Date()) ? .red : .secondary)
+                            .help("已设置提醒")
                     }
                 }
             }
@@ -379,10 +314,29 @@ private struct DashboardTaskRow: View {
         .contextMenu {
             if task.status == .pending {
                 Button("编辑", action: edit)
-                Button("Pass", action: pass)
+                Button("放弃", action: pass)
                 Button("删除", role: .destructive, action: delete)
             }
         }
+    }
+
+    private var dateRangeText: String {
+        guard let start = task.startDate, let end = task.endDate else {
+            return "未安排"
+        }
+        let calendar = TodoTask.protocolCalendar
+        if calendar.isDate(start, inSameDayAs: end) {
+            return start.formatted(.dateTime.month().day())
+        }
+        return "\(start.formatted(.dateTime.month().day()))–\(end.formatted(.dateTime.month().day()))"
+    }
+
+    private var overdueText: String {
+        guard let end = task.endDate else { return "已逾期" }
+        let today = TodoTask.protocolCalendar.startOfDay(for: Date())
+        let endDay = TodoTask.protocolCalendar.startOfDay(for: end)
+        let days = TodoTask.protocolCalendar.dateComponents([.day], from: endDay, to: today).day ?? 0
+        return "已逾期 \(days) 天"
     }
 }
 
@@ -405,6 +359,7 @@ private struct TaskBadge: View {
 
 private struct HistoryView: View {
     let tasks: [TodoTask]
+    let categories: [TaskCategory]
     let clear: (Set<UUID>?) -> Void
     @State private var isSelecting = false
     @State private var selectedIDs = Set<UUID>()
@@ -457,7 +412,7 @@ private struct HistoryView: View {
                 ContentUnavailableView(
                     "暂无历史",
                     systemImage: "clock.arrow.circlepath",
-                    description: Text("完成或 Pass 的任务会出现在这里。")
+                    description: Text("完成或放弃的任务会出现在这里。")
                 )
             } else {
                 List(tasks) { task in
@@ -522,9 +477,15 @@ private struct HistoryView: View {
                     .foregroundStyle(.primary)
                 HStack(spacing: 6) {
                     TaskBadge(text: task.status.displayName)
-                    TaskBadge(text: task.timeScope.displayName)
-                    TaskBadge(text: task.tier.displayName)
-                    TaskBadge(text: TaskPeriodText.text(for: task))
+                    if task.categoryID != TaskCategory.inboxID {
+                        TaskBadge(
+                            text: TaskCategory.resolveName(
+                                id: task.categoryID,
+                                categories: categories
+                            )
+                        )
+                    }
+                    TaskBadge(text: historyDateText(task))
                 }
             }
             Spacer()
@@ -532,191 +493,196 @@ private struct HistoryView: View {
         .contentShape(Rectangle())
         .padding(.vertical, 3)
     }
+
+    private func historyDateText(_ task: TodoTask) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "M月d日"
+        if let completedAt = task.completedAt {
+            return formatter.string(from: completedAt)
+        }
+        if let start = task.startDate, let end = task.endDate {
+            if TodoTask.protocolCalendar.isDate(start, inSameDayAs: end) {
+                return formatter.string(from: start)
+            }
+            return "\(formatter.string(from: start))–\(formatter.string(from: end))"
+        }
+        return "未安排"
+    }
 }
 
 private struct StatisticsView: View {
     let snapshot: StatisticsSnapshot
+    let categories: [TaskCategory]
+
+    private var totalActivity: Int {
+        snapshot.dailyActivity.map(\.completed).reduce(0, +)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("只统计已经结束的周期，闲时和当前周期不进入履约率；趋势中的当前桶仅展示阶段计数。")
+                Text("按完成记录统计；放弃不进入完成率、趋势和类型分布。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                HStack(spacing: 14) {
-                    RateCard(title: "周期履约率", metric: snapshot.endedPeriods)
-                    RateCard(title: "主线履约率", metric: snapshot.mainlineEndedPeriods)
+                LazyVGrid(
+                    columns: [GridItem(.flexible()), GridItem(.flexible())],
+                    spacing: 12
+                ) {
+                    StatCard(title: "本周完成", value: "\(snapshot.completedThisWeek)")
+                    StatCard(title: "连续天数", value: "\(snapshot.currentStreakDays) 天")
+                    StatCard(
+                        title: "按时率",
+                        value: snapshot.onTimeRate?.formatted(
+                            .percent.precision(.fractionLength(0))
+                        ) ?? "—"
+                    )
+                    StatCard(title: "进行中", value: "\(snapshot.pendingCount)")
                 }
 
-                TrendTable(
-                    title: "最近 7 天",
-                    periodKind: .day,
-                    buckets: snapshot.dailyTrend
-                )
-                TrendTable(
-                    title: "最近 8 周",
-                    periodKind: .week,
-                    buckets: snapshot.weeklyTrend
-                )
-                TrendTable(
-                    title: "最近 6 个月",
-                    periodKind: .month,
-                    buckets: snapshot.monthlyTrend
-                )
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("最近 14 天完成趋势")
+                        .font(.headline)
+                    Text("共完成 \(totalActivity) 个任务")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if totalActivity == 0 {
+                        Text("最近还没有完成记录")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 120)
+                    } else {
+                        Chart(snapshot.dailyActivity) { day in
+                            BarMark(
+                                x: .value("日期", day.date, unit: .day),
+                                y: .value("完成", day.completed)
+                            )
+                            .foregroundStyle(WooTodoTheme.purple)
+                        }
+                        .chartXAxis {
+                            AxisMarks(values: .stride(by: .day, count: 2)) { _ in
+                                AxisGridLine()
+                                AxisValueLabel(format: .dateTime.month().day())
+                            }
+                        }
+                        .chartYAxis {
+                            AxisMarks(position: .leading)
+                        }
+                        .frame(height: 180)
+                        .accessibilityLabel("最近 14 天完成趋势")
+                        .accessibilityValue("共完成 \(totalActivity) 个任务")
+                    }
+                }
+                .padding(16)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
 
-                CountTable(
-                    title: "按时间范围",
-                    rows: TimeScope.allCases.map {
-                        ($0.displayName, snapshot.countsByScope[$0] ?? StatusCounts())
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("类型分布 · 近 30 天")
+                        .font(.headline)
+                    if snapshot.categoryActivity.isEmpty {
+                        Text("近 30 天还没有完成记录")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(snapshot.categoryActivity, id: \.categoryID) { item in
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text(
+                                        TaskCategory.resolveName(
+                                            id: item.categoryID,
+                                            categories: categories
+                                        )
+                                    )
+                                    Spacer()
+                                    Text(
+                                        "完成 \(item.completed) 个 · \(item.ratio.formatted(.percent.precision(.fractionLength(0))))"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                }
+                                ProgressView(value: item.ratio)
+                                    .tint(WooTodoTheme.purple)
+                            }
+                        }
                     }
-                )
-                CountTable(
-                    title: "按任务级别",
-                    rows: QuestTier.allCases.map {
-                        ($0.displayName, snapshot.countsByTier[$0] ?? StatusCounts())
+                }
+                .padding(16)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("最近完成")
+                        .font(.headline)
+                    if snapshot.recentHistory.isEmpty {
+                        Text("还没有完成或放弃的任务")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(snapshot.recentHistory.prefix(10), id: \.id) { task in
+                            HStack(spacing: 10) {
+                                Image(
+                                    systemName: task.status == .completed
+                                        ? "checkmark.circle.fill"
+                                        : "xmark.circle.fill"
+                                )
+                                .foregroundStyle(
+                                    task.status == .completed
+                                        ? WooTodoTheme.green
+                                        : WooTodoTheme.orange
+                                )
+                                Text(task.title)
+                                Spacer()
+                                if task.categoryID != TaskCategory.inboxID {
+                                    Text(
+                                        TaskCategory.resolveName(
+                                            id: task.categoryID,
+                                            categories: categories
+                                        )
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                }
+                                Text(historyDateText(task))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 3)
+                        }
                     }
-                )
+                }
+                .padding(16)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
             }
             .padding(22)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .textSelection(.enabled)
+    }
+
+    private func historyDateText(_ task: TodoTask) -> String {
+        guard let completedAt = task.completedAt else { return "" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "M月d日"
+        return formatter.string(from: completedAt)
     }
 }
 
-private struct RateCard: View {
+private struct StatCard: View {
     let title: String
-    let metric: AdherenceMetric
+    let value: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text(rateText)
-                .font(.system(size: 32, weight: .semibold, design: .rounded))
-            Text("完成 \(metric.completed) · Pass \(metric.pass)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 30, weight: .semibold, design: .rounded))
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var rateText: String {
-        guard let rate = metric.rate else { return "暂无数据" }
-        return rate.formatted(.percent.precision(.fractionLength(0)))
-    }
-}
-
-private enum TrendPeriodKind {
-    case day
-    case week
-    case month
-
-    var taskTypeText: String {
-        switch self {
-        case .day: "每日任务"
-        case .week: "每周任务"
-        case .month: "每月任务"
-        }
-    }
-
-    var dateFormat: String {
-        switch self {
-        case .day: "M月d日"
-        case .week: "M月d日当周"
-        case .month: "yyyy年M月"
-        }
-    }
-}
-
-private struct TrendTable: View {
-    let title: String
-    let periodKind: TrendPeriodKind
-    let buckets: [TrendBucket]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.headline)
-                Text(periodKind.taskTypeText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Grid(alignment: .leading, horizontalSpacing: 22, verticalSpacing: 8) {
-                GridRow {
-                    Text("周期").foregroundStyle(.secondary)
-                    Text("履约率").foregroundStyle(.secondary)
-                    Text("完成").foregroundStyle(.secondary)
-                    Text("Pass").foregroundStyle(.secondary)
-                    Text("样本").foregroundStyle(.secondary)
-                }
-                Divider().gridCellColumns(5)
-                ForEach(Array(buckets.enumerated()), id: \.offset) { _, bucket in
-                    GridRow {
-                        Text(periodText(bucket.start))
-                        Text(rateText(bucket))
-                            .foregroundStyle(bucket.isEnded ? Color.primary : Color.blue)
-                        Text(bucket.completed.formatted())
-                        Text(bucket.pass.formatted())
-                        Text(bucket.sampleCount.formatted())
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private func periodText(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
-        formatter.dateFormat = periodKind.dateFormat
-        return formatter.string(from: date)
-    }
-
-    private func rateText(_ bucket: TrendBucket) -> String {
-        guard bucket.isEnded else { return "进行中" }
-        guard let rate = bucket.rate else { return "暂无" }
-        return rate.formatted(.percent.precision(.fractionLength(0)))
-    }
-}
-
-private struct CountTable: View {
-    let title: String
-    let rows: [(String, StatusCounts)]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.headline)
-            Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 9) {
-                GridRow {
-                    Text("分类").foregroundStyle(.secondary)
-                    Text("全部").foregroundStyle(.secondary)
-                    Text("待完成").foregroundStyle(.secondary)
-                    Text("已完成").foregroundStyle(.secondary)
-                    Text("Pass").foregroundStyle(.secondary)
-                }
-                Divider().gridCellColumns(5)
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    GridRow {
-                        Text(row.0)
-                        Text(row.1.total.formatted())
-                        Text(row.1.pending.formatted())
-                        Text(row.1.completed.formatted())
-                        Text(row.1.pass.formatted())
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
     }
 }

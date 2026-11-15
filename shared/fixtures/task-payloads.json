@@ -9,7 +9,7 @@
     "periodStart": "2026-07-16",
     "deadlineDate": "2026-07-20",
     "timezone": "Asia/Shanghai",
-    "questLine": "main",
+    "questLine": "work",
     "state": "pending",
     "recurrence": "repeat",
     "sortOrder": 0,
@@ -49,6 +49,13 @@
     "headerTemplate": "{dateLong} {weekdayEn}",
     "subtitleTemplate": "已走过 {elapsedMonthsDays}，距截止 {deadlineMonthsDays}",
     "startDate": "2020-01-01",
-    "deadlineDate": "2026-12-31"
+    "deadlineDate": "2026-12-31",
+    "questLines": [
+      { "id": "inbox", "name": "未分类", "order": 0 },
+      { "id": "main", "name": "主线", "order": 1 },
+      { "id": "side", "name": "支线", "order": 2 },
+      { "id": "extra", "name": "外传", "order": 3 },
+      { "id": "work", "name": "工作", "order": 4 }
+    ]
   }
 ]

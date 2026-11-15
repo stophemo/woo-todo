@@ -190,6 +190,83 @@ class AppUpdateTest {
     }
 
     @Test
+    fun `更新提示按版本冷却并支持跳过`() {
+        val now = 200_000_000L
+        val cooldown = AppUpdatePromptPolicy.PROMPT_COOLDOWN_MILLIS
+
+        assertTrue(
+            AppUpdatePromptPolicy.shouldPrompt(
+                lastPromptedVersion = null,
+                lastPromptedAt = 0L,
+                skippedVersion = null,
+                version = "v1.0.0",
+                now = now,
+                manual = false,
+            ),
+        )
+        assertFalse(
+            AppUpdatePromptPolicy.shouldPrompt(
+                lastPromptedVersion = "v1.0.0",
+                lastPromptedAt = now - cooldown + 1,
+                skippedVersion = null,
+                version = "v1.0.0",
+                now = now,
+                manual = false,
+            ),
+        )
+        assertTrue(
+            AppUpdatePromptPolicy.shouldPrompt(
+                lastPromptedVersion = "v1.0.0",
+                lastPromptedAt = now - cooldown,
+                skippedVersion = null,
+                version = "v1.0.0",
+                now = now,
+                manual = false,
+            ),
+        )
+        assertTrue(
+            AppUpdatePromptPolicy.shouldPrompt(
+                lastPromptedVersion = "v1.0.0",
+                lastPromptedAt = now - 1,
+                skippedVersion = null,
+                version = "v1.1.0",
+                now = now,
+                manual = false,
+            ),
+        )
+        assertTrue(
+            AppUpdatePromptPolicy.shouldPrompt(
+                lastPromptedVersion = "v1.0.0",
+                lastPromptedAt = now - 1,
+                skippedVersion = "v1.0.0",
+                version = "v1.0.0",
+                now = now,
+                manual = true,
+            ),
+        )
+        assertFalse(
+            AppUpdatePromptPolicy.shouldPrompt(
+                lastPromptedVersion = "v1.0.0",
+                lastPromptedAt = now - 1,
+                skippedVersion = "v1.0.0",
+                version = "v1.0.0",
+                now = now,
+                manual = false,
+            ),
+        )
+        assertTrue(
+            AppUpdatePromptPolicy.shouldPrompt(
+                lastPromptedVersion = "v1.0.0",
+                lastPromptedAt = now + 1,
+                skippedVersion = null,
+                version = "v1.0.0",
+                now = now,
+                manual = false,
+            ),
+        )
+    }
+
+    @Test
     fun `运行中周期轮询会在自动检查到期后放行`() {
         val checkedAt = 200_000_000L
         var elapsed = AppUpdatePolicy.AUTOMATIC_CHECK_POLL_INTERVAL_MILLIS

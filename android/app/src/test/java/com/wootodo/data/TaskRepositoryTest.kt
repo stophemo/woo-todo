@@ -1,11 +1,10 @@
 package com.wootodo.data
 
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
+import com.wootodo.domain.Task
+import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskDraft
-import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import com.wootodo.ui.toRestoreDraft
 import java.time.Clock
 import java.time.Instant
@@ -13,19 +12,18 @@ import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TaskRepositoryTest {
     private val date = LocalDate.of(2026, 7, 15)
     private val store = FakeTaskStore()
-    private val ids = ArrayDeque((1..10).map { "task-$it" })
+    private val ids = ArrayDeque((1..20).map { "task-$it" })
     private val repository = TaskRepository(
         store = store,
         clock = Clock.fixed(Instant.parse("2026-07-15T04:00:00Z"), ZoneId.of("Asia/Shanghai")),
@@ -33,31 +31,40 @@ class TaskRepositoryTest {
     )
 
     @Test
-    fun `创建任务会清理标题并写入当前周期`() = runBlocking {
+    fun `创建无日期任务默认未分类并清理标题`() = runBlocking {
+        val id = repository.create(TaskDraft(title = "  写周报  "))
+
+        val task = repository.get(id)!!
+        assertEquals("写周报", task.title)
+        assertEquals(TaskCategories.INBOX_ID, task.categoryId)
+        assertNull(task.startDate)
+        assertNull(task.endDate)
+        assertEquals(0, task.sortOrder)
+    }
+
+    @Test
+    fun `创建日期范围任务并拒绝开始晚于结束`() = runBlocking {
         val id = repository.create(
             TaskDraft(
-                title = "  完成日报  ",
-                timeType = TaskTimeType.WEEK,
-                targetDate = date,
-                questLine = QuestLine.MAIN,
+                title = "整理方案",
+                categoryId = "main",
+                startDate = date,
+                endDate = date.plusDays(2),
             ),
         )
 
         val task = repository.get(id)!!
-        assertEquals("完成日报", task.title)
-        assertEquals(LocalDate.of(2026, 7, 13), task.targetDate)
-    }
-
-    @Test
-    fun `标题上限按Unicode code point计算`() = runBlocking {
-        val valid = "😀".repeat(61)
-        val id = repository.create(TaskDraft(title = valid, targetDate = date))
-        assertEquals(valid, repository.get(id)?.title)
+        assertEquals(date, task.startDate)
+        assertEquals(date.plusDays(2), task.endDate)
 
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking {
                 repository.create(
-                    TaskDraft(title = "👨‍👩‍👧‍👦".repeat(18), targetDate = date),
+                    TaskDraft(
+                        title = "错误范围",
+                        startDate = date.plusDays(1),
+                        endDate = date,
+                    ),
                 )
             }
         }
@@ -65,351 +72,152 @@ class TaskRepositoryTest {
     }
 
     @Test
-    fun `完成每日任务会保留已完成实例并生成下一实例`() = runBlocking {
-        val id = repository.create(
-            TaskDraft(
-                title = "周三复盘",
-                timeType = TaskTimeType.DAY,
-                targetDate = date,
-                recurrence = Recurrence.DAILY,
-            ),
-        )
+    fun `标题上限按Unicode code point计算`() = runBlocking {
+        val valid = "😀".repeat(120)
+        val id = repository.create(TaskDraft(title = valid))
+        assertEquals(valid, repository.get(id)?.title)
 
-        assertTrue(repository.settle(id, TaskStatus.COMPLETED))
-
-        val all = store.items.value.sortedBy { it.targetDate }
-        assertEquals(2, all.size)
-        assertEquals(TaskStatus.COMPLETED, all[0].status)
-        assertEquals(date.plusDays(1), all[1].targetDate)
-        assertEquals(TaskStatus.PENDING, all[1].status)
-        assertEquals(all[0].seriesId, all[1].seriesId)
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.create(TaskDraft(title = "😀".repeat(121)))
+            }
+        }
+        Unit
     }
 
     @Test
-    fun `当前周期已完成任务可以撤销且重复恢复保持幂等`() = runBlocking {
-        val id = repository.create(TaskDraft(title = "误点完成", targetDate = date))
-        assertTrue(repository.toggleCompletion(id, date))
+    fun `完成撤销和放弃的状态规则`() = runBlocking {
+        val id = repository.create(TaskDraft(title = "状态测试"))
+
+        assertTrue(repository.toggleCompletion(id))
         assertEquals(TaskStatus.COMPLETED, repository.get(id)?.status)
-
-        assertTrue(repository.toggleCompletion(id, date))
-        assertEquals(TaskStatus.PENDING, repository.get(id)?.status)
-        assertEquals(null, repository.get(id)?.settledAt)
-
-        assertFalse(store.reopenCompleted(id, 99_999))
-        assertEquals(TaskStatus.PENDING, repository.get(id)?.status)
-    }
-
-    @Test
-    fun `显式撤销完成只接受已完成任务且不能反向结算`() = runBlocking {
-        val id = repository.create(TaskDraft(title = "误点完成", targetDate = date))
-        assertFalse(repository.reopen(id, date))
-        assertEquals(TaskStatus.PENDING, repository.get(id)?.status)
-
-        assertTrue(repository.settle(id, TaskStatus.COMPLETED))
-        assertTrue(repository.reopen(id, date))
+        assertTrue(repository.toggleCompletion(id))
         assertEquals(TaskStatus.PENDING, repository.get(id)?.status)
 
         assertTrue(repository.settle(id, TaskStatus.PASS))
-        assertFalse(repository.reopen(id, date))
         assertEquals(TaskStatus.PASS, repository.get(id)?.status)
-    }
-
-    @Test
-    fun `撤销删除重建的任务沿用原排序位置`() = runBlocking {
-        val first = repository.create(TaskDraft(title = "第一条", targetDate = date))
-        val second = repository.create(TaskDraft(title = "第二条", targetDate = date))
-        val deleted = repository.get(second)!!
-        assertTrue(repository.delete(second))
-
-        val restored = repository.create(deleted.toRestoreDraft())
-        val tasks = store.items.value.sortedBy { it.sortOrder }
-        assertEquals(listOf("第一条", "第二条"), tasks.map { it.title })
-        assertEquals(deleted.sortOrder, repository.get(restored)?.sortOrder)
-        assertEquals(first, tasks.first().id)
-    }
-
-    @Test
-    fun `过期重复周期与Pass任务不能恢复为待办`() = runBlocking {
-        val expiredId = repository.create(
-            TaskDraft(
-                title = "昨日完成",
-                targetDate = date.minusDays(1),
-                recurrence = Recurrence.DAILY,
-            ),
-        )
-        assertTrue(repository.settle(expiredId, TaskStatus.COMPLETED))
-        assertFalse(repository.toggleCompletion(expiredId, date))
-        assertEquals(TaskStatus.COMPLETED, repository.get(expiredId)?.status)
-
-        val passedId = repository.create(TaskDraft(title = "已Pass", targetDate = date))
-        assertTrue(repository.settle(passedId, TaskStatus.PASS))
-        assertFalse(repository.toggleCompletion(passedId, date))
-        assertEquals(TaskStatus.PASS, repository.get(passedId)?.status)
-    }
-
-    @Test
-    fun `一次性任务 Pass 后不会产生新实例且不能重复结算`() = runBlocking {
-        val id = repository.create(TaskDraft(title = "可选整理", targetDate = date))
-
-        assertTrue(repository.settle(id, TaskStatus.PASS))
-        assertFalse(repository.settle(id, TaskStatus.COMPLETED))
-        assertEquals(1, store.items.value.size)
-        assertEquals(TaskStatus.PASS, store.items.value.single().status)
-    }
-
-    @Test
-    fun `今日查询返回待办和已完成但不返回 Pass`() = runBlocking {
-        repository.create(TaskDraft(title = "今天", targetDate = date))
-        repository.create(TaskDraft(title = "明天", targetDate = date.plusDays(1)))
-
-        val todayId = repository.tasksForToday(date).single().id
-        repository.settle(todayId, TaskStatus.COMPLETED)
-        assertEquals(listOf(TaskStatus.COMPLETED), repository.tasksForToday(date).map { it.status })
-        assertEquals(1, repository.observeForScope(TaskTimeType.DAY, date).first().size)
-    }
-
-    @Test
-    fun `过期一次性任务会保留到当前周期直至手动Pass`() = runBlocking {
-        val overdueId = repository.create(
-            TaskDraft(title = "昨日未完成", targetDate = date.minusDays(1)),
-        )
-
-        assertEquals(0, repository.autoPassExpired(date))
-        assertEquals(
-            listOf(overdueId),
-            repository.observeForScope(TaskTimeType.DAY, date).first().map { it.id },
-        )
-        assertEquals(listOf(overdueId), repository.tasksForToday(date).map { it.id })
-
-        assertTrue(repository.settle(overdueId, TaskStatus.PASS))
-        assertTrue(repository.tasksForToday(date).isEmpty())
-    }
-
-    @Test
-    fun `过期一次性任务完成当天仍可见且次日退出今日列表`() = runBlocking {
-        val overdueId = repository.create(
-            TaskDraft(title = "昨日待办", targetDate = date.minusDays(1)),
-        )
-
-        assertTrue(repository.toggleCompletion(overdueId, date))
-
-        assertEquals(
-            listOf(TaskStatus.COMPLETED),
-            repository.observeForScope(TaskTimeType.DAY, date).first().map { it.status },
-        )
-        assertEquals(listOf(overdueId), repository.tasksForToday(date).map { it.id })
-        assertTrue(repository.tasksForToday(date.plusDays(1)).isEmpty())
-    }
-
-    @Test
-    fun `一次性任务保留截止日期且重复任务会清除截止日期`() = runBlocking {
-        val deadline = date.plusDays(7)
-        val onceId = repository.create(
-            TaskDraft(title = "有截止日", targetDate = date, deadlineDate = deadline),
-        )
-        val repeatingId = repository.create(
-            TaskDraft(
-                title = "每日重复",
-                targetDate = date,
-                recurrence = Recurrence.DAILY,
-                deadlineDate = deadline,
-            ),
-        )
-
-        assertEquals(deadline, repository.get(onceId)?.deadlineDate)
-        assertEquals(null, repository.get(repeatingId)?.deadlineDate)
-    }
-
-    @Test
-    fun `自动 Pass 会追赶重复任务直到当前周期`() = runBlocking {
-        repository.create(
-            TaskDraft(
-                title = "每日回顾",
-                targetDate = date.minusDays(2),
-                recurrence = Recurrence.DAILY,
-            ),
-        )
-
-        assertEquals(2, repository.autoPassExpired(date))
-        val occurrences = store.items.value.sortedBy { it.targetDate }
-        assertEquals(
-            listOf(TaskStatus.PASS, TaskStatus.PASS, TaskStatus.PENDING),
-            occurrences.map { it.status },
-        )
-        assertEquals(date, occurrences.last().targetDate)
+        assertFalse(repository.reopen(id))
     }
 
     @Test
     fun `只有待办任务可以删除`() = runBlocking {
-        val pendingId = repository.create(TaskDraft(title = "待删除", targetDate = date))
+        val pending = repository.create(TaskDraft(title = "待删除"))
+        assertTrue(repository.delete(pending))
+        assertNull(repository.get(pending))
 
-        assertTrue(repository.delete(pendingId))
-        assertEquals(null, repository.get(pendingId))
-
-        val completedId = repository.create(TaskDraft(title = "已结束", targetDate = date))
-        repository.settle(completedId, TaskStatus.COMPLETED)
-        assertFalse(repository.delete(completedId))
+        val completed = repository.create(TaskDraft(title = "已完成"))
+        repository.settle(completed, TaskStatus.COMPLETED)
+        assertFalse(repository.delete(completed))
     }
 
     @Test
-    fun `历史记录可批量清除且重复操作保持幂等`() = runBlocking {
-        val pendingId = repository.create(TaskDraft(title = "保留待办", targetDate = date))
-        val completedId = repository.create(TaskDraft(title = "已完成", targetDate = date))
-        val passedId = repository.create(TaskDraft(title = "已 Pass", targetDate = date))
-        assertTrue(repository.settle(completedId, TaskStatus.COMPLETED))
-        assertTrue(repository.settle(passedId, TaskStatus.PASS))
-
-        assertEquals(1, repository.clearHistory(setOf(completedId, pendingId)))
-        assertEquals(0, repository.clearHistory(setOf(completedId)))
-        assertEquals(listOf(pendingId, passedId).sorted(), store.items.value.map { it.id }.sorted())
-
-        assertEquals(1, repository.clearHistory())
-        assertEquals(0, repository.clearHistory())
-        assertEquals(listOf(pendingId), store.items.value.map { it.id })
-    }
-
-    @Test
-    fun `重排会保存同组任务顺序`() = runBlocking {
-        val first = repository.create(TaskDraft(title = "一", targetDate = date))
-        val second = repository.create(TaskDraft(title = "二", targetDate = date))
-        val third = repository.create(TaskDraft(title = "三", targetDate = date))
-
-        repository.reorder(listOf(third, first, second))
-
-        assertEquals(
-            listOf(third, first, second),
-            repository.observeForScope(TaskTimeType.DAY, date).first().map { it.id },
+    fun `今日任务包含逾期覆盖今天无日期和今天结算`() = runBlocking {
+        val overdue = repository.create(
+            TaskDraft(title = "逾期", startDate = date.minusDays(2), endDate = date.minusDays(1)),
         )
+        val active = repository.create(
+            TaskDraft(title = "进行中", startDate = date.minusDays(1), endDate = date.plusDays(1)),
+        )
+        val undated = repository.create(TaskDraft(title = "无日期"))
+        val future = repository.create(
+            TaskDraft(title = "未来", startDate = date.plusDays(2), endDate = date.plusDays(3)),
+        )
+        val settledToday = repository.create(TaskDraft(title = "今天完成"))
+        repository.settle(settledToday, TaskStatus.COMPLETED)
+        val settledYesterday = repository.create(TaskDraft(title = "昨天完成"))
+        store.items.value = store.items.value.map { task ->
+            if (task.id == settledYesterday) {
+                task.copy(
+                    status = TaskStatus.COMPLETED,
+                    settledAt = date.minusDays(1).atTime(10, 0)
+                        .atZone(ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli(),
+                )
+            } else {
+                task
+            }
+        }
+
+        val ids = repository.tasksForToday(date).map(Task::id).toSet()
+        assertEquals(setOf(overdue, active, undated, settledToday), ids)
+        assertFalse(future in ids)
+        assertFalse(settledYesterday in ids)
     }
 
     @Test
-    fun `新任务追加到手动排序后的组末尾`() = runBlocking {
-        val first = repository.create(TaskDraft(title = "一", targetDate = date))
-        val second = repository.create(TaskDraft(title = "二", targetDate = date))
-        val third = repository.create(TaskDraft(title = "三", targetDate = date))
-        repository.reorder(listOf(third, first, second))
+    fun `统计某天任务数包含覆盖当天和当天开始`() = runBlocking {
+        repository.create(TaskDraft(title = "覆盖", startDate = date.minusDays(1), endDate = date))
+        repository.create(TaskDraft(title = "当天开始", startDate = date, endDate = date.plusDays(2)))
+        repository.create(TaskDraft(title = "未来", startDate = date.plusDays(1), endDate = date.plusDays(1)))
 
-        val fourth = repository.create(TaskDraft(title = "四", targetDate = date))
-
-        assertEquals(
-            listOf(third, first, second, fourth),
-            repository.observeForScope(TaskTimeType.DAY, date).first().map { it.id },
-        )
+        assertEquals(2, repository.countTasksForDay(date))
     }
 
     @Test
-    fun `追加顺序按周期和任务线分别计算`() = runBlocking {
-        val todayMain = repository.create(TaskDraft(title = "今日主线一", targetDate = date))
-        val tomorrowMain = repository.create(
-            TaskDraft(title = "明日主线", targetDate = date.plusDays(1)),
-        )
-        val todaySide = repository.create(
-            TaskDraft(title = "今日支线", targetDate = date, questLine = QuestLine.SIDE),
-        )
-        val todayMainSecond = repository.create(TaskDraft(title = "今日主线二", targetDate = date))
+    fun `分类新增改名删除与重分配`() = runBlocking {
+        val work = repository.addCategory("工作")!!
+        assertEquals("工作", work.name)
+        assertTrue(repository.renameCategory(work.id, "工作项目"))
+        assertEquals("工作项目", repository.allCategories().first { it.id == work.id }.name)
 
-        assertEquals(0, repository.get(todayMain)?.sortOrder)
-        assertEquals(0, repository.get(tomorrowMain)?.sortOrder)
-        assertEquals(0, repository.get(todaySide)?.sortOrder)
-        assertEquals(1, repository.get(todayMainSecond)?.sortOrder)
+        val taskId = repository.create(TaskDraft(title = "归入工作", categoryId = work.id))
+        assertTrue(repository.deleteCategory(work.id))
+        assertEquals(TaskCategories.INBOX_ID, repository.get(taskId)?.categoryId)
+        assertFalse(repository.deleteCategory(TaskCategories.INBOX_ID))
     }
 
     @Test
-    fun `编辑任务默认保留手动排序位置`() = runBlocking {
-        val first = repository.create(TaskDraft(title = "一", targetDate = date))
-        val second = repository.create(TaskDraft(title = "二", targetDate = date))
-        repository.reorder(listOf(second, first))
-
-        assertTrue(repository.update(second, TaskDraft(title = "二（已编辑）", targetDate = date)))
-
-        assertEquals(
-            listOf(second, first),
-            repository.observeForScope(TaskTimeType.DAY, date).first().map { it.id },
-        )
+    fun `分类最多八个且名称不能重复`() = runBlocking {
+        assertEquals(TaskCategories.defaults.size, repository.allCategories().size)
+        repeat(4) { index ->
+            assertTrue(repository.addCategory("自定义$index") != null)
+        }
+        assertEquals(8, repository.allCategories().size)
+        assertNull(repository.addCategory("第九个"))
+        assertNull(repository.addCategory("自定义0"))
     }
 
     @Test
-    fun `编辑任务移入其他组时追加到目标组末尾`() = runBlocking {
-        val source = repository.create(TaskDraft(title = "今日", targetDate = date))
-        val first = repository.create(TaskDraft(title = "明日一", targetDate = date.plusDays(1)))
-        val second = repository.create(TaskDraft(title = "明日二", targetDate = date.plusDays(1)))
-
-        assertTrue(
-            repository.update(
-                source,
-                TaskDraft(title = "移到明日", targetDate = date.plusDays(1)),
+    fun `撤销删除恢复原分类和日期`() = runBlocking {
+        val id = repository.create(
+            TaskDraft(
+                title = "恢复任务",
+                categoryId = "side",
+                startDate = date,
+                endDate = date.plusDays(2),
             ),
         )
+        val original = repository.get(id)!!
+        assertTrue(repository.delete(id))
 
-        assertEquals(2, repository.get(source)?.sortOrder)
-        assertEquals(
-            listOf(first, second, source),
-            repository.observeForScope(TaskTimeType.DAY, date.plusDays(1)).first().map { it.id },
-        )
+        val restored = repository.create(original.toRestoreDraft())
+        val task = repository.get(restored)!!
+        assertEquals("side", task.categoryId)
+        assertEquals(date, task.startDate)
+        assertEquals(date.plusDays(2), task.endDate)
+        assertEquals(original.sortOrder, task.sortOrder)
     }
 }
 
 private class FakeTaskStore : TaskStore {
     val items = MutableStateFlow<List<TaskEntity>>(emptyList())
+    val categories = MutableStateFlow(TaskCategories.defaults)
 
     override fun observeAll(): Flow<List<TaskEntity>> = items
 
-    override fun observeForPeriod(
-        timeType: TaskTimeType,
-        targetDate: LocalDate,
-        includeOverdueOnce: Boolean,
-    ): Flow<List<TaskEntity>> = items.map { tasks ->
-        tasks.filter { task ->
-            task.timeType == timeType &&
-                (task.targetDate == targetDate ||
-                    (includeOverdueOnce && task.targetDate?.isBefore(targetDate) == true &&
-                        task.recurrence == Recurrence.ONCE &&
-                        (task.status == TaskStatus.PENDING ||
-                            task.completedInPeriod(timeType, targetDate))))
-        }
+    override suspend fun getAll(): List<TaskEntity> = items.value
+
+    override fun observeCategories(): Flow<List<TaskCategory>> = categories
+
+    override suspend fun getCategories(): List<TaskCategory> = categories.value
+
+    override suspend fun replaceCategories(
+        categories: List<TaskCategory>,
+        updatedAt: Long,
+    ) {
+        this.categories.value = categories
     }
-
-    override fun observeLeisure(): Flow<List<TaskEntity>> = items.map { tasks ->
-        tasks.filter { it.timeType == TaskTimeType.LEISURE }
-    }
-
-    override suspend fun getForDay(date: LocalDate): List<TaskEntity> =
-        items.value.filter {
-            it.timeType == TaskTimeType.DAY &&
-                ((it.targetDate == date && it.status != TaskStatus.PASS) ||
-                    (it.targetDate?.isBefore(date) == true && it.recurrence == Recurrence.ONCE &&
-                        (it.status == TaskStatus.PENDING ||
-                            it.completedInPeriod(TaskTimeType.DAY, date))))
-        }
-
-    override suspend fun getExpiredPending(
-        dayCutoff: LocalDate,
-        weekCutoff: LocalDate,
-        monthCutoff: LocalDate,
-    ): List<TaskEntity> = items.value.filter { task ->
-        task.status == TaskStatus.PENDING && task.recurrence != Recurrence.ONCE &&
-            when (task.timeType) {
-            TaskTimeType.DAY -> task.targetDate?.isBefore(dayCutoff) == true
-            TaskTimeType.WEEK -> task.targetDate?.isBefore(weekCutoff) == true
-            TaskTimeType.MONTH -> task.targetDate?.isBefore(monthCutoff) == true
-            TaskTimeType.LEISURE -> false
-            }
-    }
-
-    override suspend fun countForDay(date: LocalDate): Int =
-        items.value.count { it.timeType == TaskTimeType.DAY && it.targetDate == date }
 
     override suspend fun getById(id: String): TaskEntity? = items.value.firstOrNull { it.id == id }
-
-    override suspend fun maximumSortOrder(
-        timeType: TaskTimeType,
-        targetDate: LocalDate?,
-        questLine: QuestLine,
-    ): Int? = items.value
-        .filter {
-            it.timeType == timeType && it.targetDate == targetDate && it.questLine == questLine
-        }
-        .maxOfOrNull(TaskEntity::sortOrder)
 
     override suspend fun insert(task: TaskEntity) {
         check(items.value.none { it.id == task.id })
@@ -438,19 +246,16 @@ private class FakeTaskStore : TaskStore {
         return before - items.value.size
     }
 
-    override suspend fun settleAndSchedule(
-        id: String,
-        status: TaskStatus,
-        settledAt: Long,
-        nextTask: (TaskEntity) -> TaskEntity?,
-    ): Boolean {
+    override suspend fun settle(id: String, status: TaskStatus, settledAt: Long): Boolean {
         val current = getById(id) ?: return false
         if (current.status != TaskStatus.PENDING) return false
-        val settled = current.copy(status = status, settledAt = settledAt, updatedAt = settledAt)
-        val next = nextTask(current)?.takeUnless { candidate ->
-            items.value.any { it.id == candidate.id }
+        items.value = items.value.map { task ->
+            if (task.id == id) {
+                task.copy(status = status, settledAt = settledAt, updatedAt = settledAt)
+            } else {
+                task
+            }
         }
-        items.value = items.value.map { if (it.id == id) settled else it } + listOfNotNull(next)
         return true
     }
 
@@ -459,11 +264,7 @@ private class FakeTaskStore : TaskStore {
         if (current.status != TaskStatus.COMPLETED) return false
         items.value = items.value.map { task ->
             if (task.id == id) {
-                task.copy(
-                    status = TaskStatus.PENDING,
-                    settledAt = null,
-                    updatedAt = updatedAt,
-                )
+                task.copy(status = TaskStatus.PENDING, settledAt = null, updatedAt = updatedAt)
             } else {
                 task
             }
@@ -471,30 +272,19 @@ private class FakeTaskStore : TaskStore {
         return true
     }
 
-    override suspend fun reorder(idsInOrder: List<String>, updatedAt: Long): Boolean {
-        val order = idsInOrder.withIndex().associate { (index, id) -> id to index }
+    override suspend fun reassignPendingCategory(
+        from: String,
+        to: String,
+        updatedAt: Long,
+    ): List<String> {
+        val changed = items.value.filter { it.status == TaskStatus.PENDING && it.categoryId == from }
         items.value = items.value.map { task ->
-            order[task.id]?.let { task.copy(sortOrder = it, updatedAt = updatedAt) } ?: task
+            if (task.status == TaskStatus.PENDING && task.categoryId == from) {
+                task.copy(categoryId = to, updatedAt = updatedAt)
+            } else {
+                task
+            }
         }
-        return idsInOrder.isNotEmpty()
-    }
-
-    private fun TaskEntity.completedInPeriod(
-        timeType: TaskTimeType,
-        periodStart: LocalDate,
-    ): Boolean {
-        if (status != TaskStatus.COMPLETED) return false
-        val settledDate = settledAt
-            ?.let(Instant::ofEpochMilli)
-            ?.atZone(TaskDateRules.zoneId)
-            ?.toLocalDate()
-            ?: return false
-        val periodEnd = when (timeType) {
-            TaskTimeType.DAY -> periodStart.plusDays(1)
-            TaskTimeType.WEEK -> periodStart.plusWeeks(1)
-            TaskTimeType.MONTH -> periodStart.plusMonths(1)
-            TaskTimeType.LEISURE -> return false
-        }
-        return settledDate >= periodStart && settledDate < periodEnd
+        return changed.map(TaskEntity::id)
     }
 }

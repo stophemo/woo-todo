@@ -5,7 +5,8 @@
   "$defs": {
     "TimeType": {
       "type": "string",
-      "enum": ["day", "week", "month", "someday"]
+      "enum": ["day", "week", "month", "someday"],
+      "description": "新客户端的有日期任务统一写 day，periodStart 为开始日、deadlineDate 为结束日；无日期任务写 someday。week/month 仅用于兼容读取旧正文。"
     },
     "QuestLine": {
       "type": "string",
@@ -60,13 +61,13 @@
           "type": ["string", "null"],
           "format": "date",
           "pattern": "^(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}$",
-          "description": "day 使用合法公历日期（自 0001-01-01 起，拒绝零年）；week 必须为周一；month 必须为每月 1 日。week 的星期语义由客户端与共享 fixture 校验。"
+          "description": "新客户端有日期任务写开始日期，并与 deadlineDate 组成闭区间；week 必须为周一、month 必须为每月 1 日，仅供旧正文兼容读取。"
         },
         "deadlineDate": {
           "type": ["string", "null"],
           "format": "date",
           "pattern": "^(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}$",
-          "description": "可选任务截止日，仅用于提示；到期不会自动完成或 Pass。旧正文缺少该字段时等同 null。"
+          "description": "新客户端有日期任务写结束日期，与 periodStart 组成闭区间；到期不会自动完成或 Pass。旧正文缺少该字段时等同 null。"
         },
         "timezone": { "const": "Asia/Shanghai" },
         "questLine": { "$ref": "#/$defs/QuestLine" },

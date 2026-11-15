@@ -10,10 +10,10 @@ import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
-import com.wootodo.domain.QuestLine
 import com.wootodo.domain.Task
+import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskStatus
-import com.wootodo.ui.labelRes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
@@ -30,15 +30,13 @@ private class TodayWidgetFactory(
     override fun onCreate() = Unit
 
     override fun onDataSetChanged() {
-        // Widget 工厂线程只做只读读取；结算过期任务（autoPassExpired）与触发同步
-        // 属于应用生命周期职责（应用启动、前台刷新、同步完成后），不得在 Launcher
-        // 刷新路径上做 DB 写或发起网络同步。
+        // Widget 工厂线程只做只读读取；结算过期任务与触发同步属于应用生命周期职责。
         items = try {
             runBlocking(Dispatchers.IO) {
                 val application = context.applicationContext as WooTodoApplication
-                TodayWidgetItems.from(
-                    application.taskRepository.tasksForToday().take(MAX_VISIBLE_TASKS),
-                )
+                val tasks = application.taskRepository.tasksForToday().take(MAX_VISIBLE_TASKS)
+                val categories = application.taskRepository.allCategories()
+                TodayWidgetItems.from(tasks, categories)
             }
         } catch (error: Exception) {
             Log.e(TAG, "读取今日任务失败", error)
@@ -53,7 +51,7 @@ private class TodayWidgetFactory(
     override fun getCount(): Int = items.size
 
     override fun getViewAt(position: Int): RemoteViews? = when (val item = items.getOrNull(position)) {
-        is TodayWidgetListItem.Header -> TodayWidgetHeaderViews.create(context, item.questLine)
+        is TodayWidgetListItem.Header -> TodayWidgetHeaderViews.create(context, item.category)
         is TodayWidgetListItem.Row -> TodayWidgetRowViews.create(context, item.task)
         null -> null
     }
@@ -80,8 +78,9 @@ internal sealed interface TodayWidgetListItem {
     val stableId: Long
     val viewType: Int
 
-    data class Header(val questLine: QuestLine) : TodayWidgetListItem {
-        override val stableId: Long = Long.MIN_VALUE + questLine.ordinal
+    data class Header(val category: TaskCategory) : TodayWidgetListItem {
+        override val stableId: Long =
+            Long.MIN_VALUE + (category.id.hashCode().toLong() and 0x7FFF_FFFFL)
         override val viewType: Int = TODAY_WIDGET_VIEW_TYPE_HEADER
     }
 
@@ -92,12 +91,25 @@ internal sealed interface TodayWidgetListItem {
 }
 
 internal object TodayWidgetItems {
-    fun from(tasks: List<Task>): List<TodayWidgetListItem> = buildList {
-        QuestLine.entries.forEach { questLine ->
-            val group = tasks.filter { it.questLine == questLine }
-            if (group.isNotEmpty()) {
-                add(TodayWidgetListItem.Header(questLine))
-                group.forEach { add(TodayWidgetListItem.Row(it)) }
+    fun from(
+        tasks: List<Task>,
+        categories: List<TaskCategory> = TaskCategories.defaults,
+    ): List<TodayWidgetListItem> {
+        val normalized = TaskCategories.normalizeList(
+            categories.ifEmpty { TaskCategories.defaults },
+        )
+        val knownIds = normalized.mapTo(HashSet()) { it.id }
+        return buildList {
+            normalized.forEach { category ->
+                val group = tasks.filter { task ->
+                    val categoryId = task.categoryId.takeIf { it in knownIds }
+                        ?: TaskCategories.INBOX_ID
+                    categoryId == category.id
+                }
+                if (group.isNotEmpty()) {
+                    add(TodayWidgetListItem.Header(category))
+                    group.forEach { add(TodayWidgetListItem.Row(it)) }
+                }
             }
         }
     }
@@ -113,16 +125,16 @@ private fun stableTaskId(taskId: String): Long {
 }
 
 internal object TodayWidgetHeaderViews {
-    fun create(context: Context, questLine: QuestLine): RemoteViews =
+    fun create(context: Context, category: TaskCategory): RemoteViews =
         RemoteViews(context.packageName, R.layout.item_widget_header).apply {
-            setTextViewText(R.id.widget_group_title, context.getString(questLine.labelRes()))
-            setImageViewResource(R.id.widget_group_marker, questLine.markerRes())
+            setTextViewText(R.id.widget_group_title, category.name)
+            setImageViewResource(R.id.widget_group_marker, category.markerRes())
         }
 
-    private fun QuestLine.markerRes(): Int = when (this) {
-        QuestLine.MAIN -> R.drawable.quest_marker
-        QuestLine.SIDE -> R.drawable.quest_marker_side
-        QuestLine.EXTRA -> R.drawable.quest_marker_extra
+    private fun TaskCategory.markerRes(): Int = when (order % 3) {
+        0 -> R.drawable.quest_marker
+        1 -> R.drawable.quest_marker_side
+        else -> R.drawable.quest_marker_extra
     }
 }
 

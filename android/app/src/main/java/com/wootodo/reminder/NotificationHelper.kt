@@ -49,7 +49,6 @@ object NotificationHelper {
             return
         }
         val planningIntent = Intent(context, MainActivity::class.java).apply {
-            putExtra(MainActivity.EXTRA_OPEN_TOMORROW, true)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         val contentIntent = PendingIntent.getActivity(

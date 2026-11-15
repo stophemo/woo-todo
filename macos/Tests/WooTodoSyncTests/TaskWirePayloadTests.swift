@@ -17,6 +17,7 @@ struct TaskWirePayloadTests {
         #expect(first.seriesId == "550e8400-e29b-41d4-a716-446655440000")
         #expect(first.periodStart == "2026-07-16")
         #expect(first.deadlineDate == "2026-07-20")
+        #expect(first.questLine == "work")
         #expect(first.recurrence == .repeatRule)
         #expect(first.reminderTime == "23:10")
         #expect(first.settledAt == nil)
@@ -36,6 +37,9 @@ struct TaskWirePayloadTests {
         #expect(displayConfiguration.subtitleTemplate.contains("{deadlineMonthsDays}"))
         #expect(displayConfiguration.startDate == "2020-01-01")
         #expect(displayConfiguration.deadlineDate == "2026-12-31")
+        #expect(displayConfiguration.questLines.map(\.id) == [
+            "inbox", "main", "side", "extra", "work",
+        ])
 
         for payload in payloads {
             #expect(try TaskPayloadCodec.decode(TaskPayloadCodec.encode(payload)) == payload)

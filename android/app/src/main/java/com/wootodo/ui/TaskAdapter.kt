@@ -10,34 +10,48 @@ import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.wootodo.R
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
 import com.wootodo.domain.Task
+import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskDateRules
+import com.wootodo.domain.TaskDateState
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 
 private sealed interface TaskListItem {
-    data class Header(val questLine: QuestLine) : TaskListItem
-    data class Row(val task: Task) : TaskListItem
+    data class Header(val kind: TaskSectionKind) : TaskListItem
+    data class Row(
+        val task: Task,
+        val meta: String,
+    ) : TaskListItem
 }
 
 internal class TaskAdapter(
+    private val context: android.content.Context,
     private val onCheck: (Task) -> Unit,
     private val onMenu: (Task, View) -> Unit,
     private val onEdit: (Task) -> Unit,
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private val items = mutableListOf<TaskListItem>()
 
-    fun submitTasks(tasks: List<Task>) {
+    fun submitSections(
+        sections: List<TaskListSection>,
+        categories: List<TaskCategory>,
+    ) {
+        val today = TaskDateRules.today()
         val updatedItems = buildList {
-            QuestLine.entries.forEach { line ->
-                val group = tasks.filter { it.questLine == line }
-                if (group.isNotEmpty()) {
-                    add(TaskListItem.Header(line))
-                    group.forEach { add(TaskListItem.Row(it)) }
+            sections.forEach { section ->
+                add(TaskListItem.Header(section.kind))
+                section.tasks.forEach { task ->
+                    add(
+                        TaskListItem.Row(
+                            task = task,
+                            meta = taskMeta(task, categories, today),
+                        ),
+                    )
                 }
             }
         }
@@ -52,7 +66,7 @@ internal class TaskAdapter(
                 val new = updatedItems[newItemPosition]
                 return when {
                     old is TaskListItem.Header && new is TaskListItem.Header ->
-                        old.questLine == new.questLine
+                        old.kind == new.kind
                     old is TaskListItem.Row && new is TaskListItem.Row ->
                         old.task.id == new.task.id
                     else -> false
@@ -67,28 +81,7 @@ internal class TaskAdapter(
         difference.dispatchUpdatesTo(this)
     }
 
-    fun questLineAt(position: Int): QuestLine? =
-        (items.getOrNull(position) as? TaskListItem.Row)?.task
-            ?.takeIf { it.status == TaskStatus.PENDING }
-            ?.questLine
-
     fun taskAt(position: Int): Task? = (items.getOrNull(position) as? TaskListItem.Row)?.task
-
-    fun moveItem(fromPosition: Int, toPosition: Int): Boolean {
-        val fromLine = questLineAt(fromPosition) ?: return false
-        val toLine = questLineAt(toPosition) ?: return false
-        if (fromLine != toLine) return false
-        val moved = items.removeAt(fromPosition)
-        items.add(toPosition, moved)
-        notifyItemMoved(fromPosition, toPosition)
-        return true
-    }
-
-    fun taskIdsForLine(line: QuestLine): List<String> = items.mapNotNull { item ->
-        (item as? TaskListItem.Row)?.task
-            ?.takeIf { it.questLine == line && it.status == TaskStatus.PENDING }
-            ?.id
-    }
 
     override fun getItemCount(): Int = items.size
 
@@ -110,8 +103,8 @@ internal class TaskAdapter(
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         when (val item = items[position]) {
-            is TaskListItem.Header -> (holder as HeaderViewHolder).bind(item.questLine)
-            is TaskListItem.Row -> (holder as TaskViewHolder).bind(item.task)
+            is TaskListItem.Header -> (holder as HeaderViewHolder).bind(item.kind)
+            is TaskListItem.Row -> (holder as TaskViewHolder).bind(item.task, item.meta)
         }
     }
 
@@ -119,14 +112,17 @@ internal class TaskAdapter(
         private val headerTitle: TextView = itemView.findViewById(R.id.header_title)
         private val headerMarker: View = itemView.findViewById(R.id.header_marker)
 
-        fun bind(line: QuestLine) {
-            headerTitle.setText(line.labelRes())
-            val color = when (line) {
-                QuestLine.MAIN -> R.color.primary
-                QuestLine.SIDE -> R.color.green
-                QuestLine.EXTRA -> R.color.orange
+        fun bind(kind: TaskSectionKind) {
+            headerTitle.setText(kind.titleRes)
+            val color = when (kind) {
+                TaskSectionKind.OVERDUE -> R.color.orange
+                TaskSectionKind.TODAY -> R.color.primary
+                TaskSectionKind.UPCOMING -> R.color.muted
+                TaskSectionKind.UNSCHEDULED -> R.color.muted
+                TaskSectionKind.SETTLED_TODAY -> R.color.green
             }
-            headerMarker.background.mutate().setTint(ContextCompat.getColor(itemView.context, color))
+            headerMarker.background.mutate()
+                .setTint(ContextCompat.getColor(itemView.context, color))
         }
     }
 
@@ -137,44 +133,23 @@ internal class TaskAdapter(
         private val taskStatus: TextView = itemView.findViewById(R.id.task_status)
         private val taskActions: View = itemView.findViewById(R.id.task_actions)
 
-        fun bind(task: Task) {
+        fun bind(task: Task, meta: String) {
             val pending = task.status == TaskStatus.PENDING
             taskTitle.text = task.title
-            val statusLabel = itemView.context.getString(task.status.labelRes())
-            val deadline = taskDeadlineIndicator(task.status, task.deadlineDate, TaskDateRules.today())
-            val deadlineLabel = when (deadline) {
-                is TaskDeadlineIndicator.DateOnly -> itemView.context.getString(
-                    R.string.task_deadline_date,
-                    deadline.date,
-                )
-                is TaskDeadlineIndicator.DueToday -> itemView.context.getString(
-                    R.string.task_deadline_due_today,
-                )
-                is TaskDeadlineIndicator.Overdue -> itemView.context.getString(
-                    R.string.task_deadline_overdue,
-                    deadline.days,
-                    deadline.date,
-                )
-                null -> null
-            }
-            // 状态行同时透露重复规则，手机上不必进编辑页就能判断会不会自动滚动。
-            taskStatus.text = buildList {
-                add(statusLabel)
-                if (task.recurrence != Recurrence.ONCE && task.timeType != TaskTimeType.LEISURE) {
-                    add(itemView.context.getString(task.recurrence.labelRes()))
-                }
-                deadlineLabel?.let(::add)
-            }.joinToString(" · ")
+            taskStatus.text = meta
             taskStatus.setTextColor(
                 ContextCompat.getColor(
                     itemView.context,
-                    if (deadline is TaskDeadlineIndicator.Overdue) R.color.orange else R.color.muted,
+                    if (TaskDateState.isOverdue(task, TaskDateRules.today())) {
+                        R.color.orange
+                    } else {
+                        R.color.muted
+                    },
                 ),
             )
             taskCheck.setOnCheckedChangeListener(null)
             taskCheck.isChecked = task.status == TaskStatus.COMPLETED
             taskCheck.isEnabled = task.status != TaskStatus.PASS
-            // Pass 不可逆，空复选框会让人误以为还能点，隐藏后整行交给详情页。
             taskCheck.visibility = if (task.status == TaskStatus.PASS) View.INVISIBLE else View.VISIBLE
             taskCheck.contentDescription = itemView.context.getString(
                 if (task.status == TaskStatus.COMPLETED) {
@@ -197,14 +172,53 @@ internal class TaskAdapter(
             } else {
                 taskTitle.paintFlags and Paint.STRIKE_THRU_TEXT_FLAG.inv()
             }
-            // 任何状态都能打开详情，避免已完成 / Pass 任务在手机上成为死路。
             taskRow.setOnClickListener { onEdit(task) }
         }
     }
 
+    private fun taskMeta(
+        task: Task,
+        categories: List<TaskCategory>,
+        today: LocalDate,
+    ): String = buildList {
+        when (task.status) {
+            TaskStatus.COMPLETED -> add(itemViewContextString(R.string.status_completed))
+            TaskStatus.PASS -> add(itemViewContextString(R.string.status_passed))
+            TaskStatus.PENDING -> Unit
+        }
+        if (task.categoryId != TaskCategories.INBOX_ID) {
+            add(TaskCategories.resolveName(task.categoryId, categories))
+        }
+        if (task.startDate == null || task.endDate == null) {
+            add(itemViewContextString(R.string.section_unscheduled))
+        } else if (task.startDate == task.endDate) {
+            add(task.startDate.format(dateFormatter))
+        } else {
+            add("${task.startDate.format(dateFormatter)}–${task.endDate.format(dateFormatter)}")
+        }
+        if (task.status == TaskStatus.PENDING &&
+            task.endDate != null &&
+            task.endDate.isBefore(today)
+        ) {
+            val days = ChronoUnit.DAYS.between(task.endDate, today)
+            add(itemViewContextString(R.string.task_overdue_days, days))
+        }
+        task.reminderTime?.let {
+            add(itemViewContextString(R.string.task_reminder_time_short, it.toString()))
+        }
+    }.joinToString(" · ")
+
+    private fun itemViewContextString(@androidx.annotation.StringRes id: Int): String =
+        context.getString(id)
+
+    private fun itemViewContextString(@androidx.annotation.StringRes id: Int, vararg args: Any): String =
+        context.getString(id, *args)
+
     private companion object {
         const val VIEW_TYPE_HEADER = 0
         const val VIEW_TYPE_TASK = 1
+        val dateFormatter: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("M月d日", Locale.SIMPLIFIED_CHINESE)
     }
 }
 

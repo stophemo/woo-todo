@@ -1,6 +1,7 @@
 package com.wootodo.display
 
 import android.content.Context
+import com.wootodo.domain.TaskDateRules
 import com.wootodo.sync.DisplayConfigurationPayload
 import com.wootodo.sync.SQLiteLocalMutationRecorder
 import com.wootodo.sync.readDisplayConfiguration
@@ -14,8 +15,8 @@ import java.util.concurrent.CopyOnWriteArraySet
 data class DayCounterSettings(
     val headerTemplate: String = DayCounterText.DEFAULT_HEADER_TEMPLATE,
     val subtitleTemplate: String = DayCounterText.DEFAULT_SUBTITLE_TEMPLATE,
-    val startDate: LocalDate = LocalDate.now(),
-    val deadlineDate: LocalDate = LocalDate.now(),
+    val startDate: LocalDate = TaskDateRules.today(),
+    val deadlineDate: LocalDate = TaskDateRules.today(),
 ) {
     constructor(enabled: Boolean, title: String, startDate: LocalDate) : this(
         subtitleTemplate = title.trim().takeIf { enabled && it.isNotEmpty() }
@@ -65,7 +66,7 @@ object DayCounterText {
 
     fun render(
         settings: DayCounterSettings,
-        today: LocalDate = LocalDate.now(),
+        today: LocalDate = TaskDateRules.today(),
     ): DayCounterRenderResult {
         val elapsedDays = (ChronoUnit.DAYS.between(settings.startDate, today) + 1)
             .coerceAtLeast(0)
@@ -124,7 +125,7 @@ object DayCounterText {
         )
     }
 
-    fun format(settings: DayCounterSettings, today: LocalDate = LocalDate.now()): String? =
+    fun format(settings: DayCounterSettings, today: LocalDate = TaskDateRules.today()): String? =
         render(settings, today).subtitle
 
     private val WEEKDAYS = listOf(
@@ -195,7 +196,7 @@ object DayCounterPreferences {
 
     fun load(context: Context): DayCounterSettings {
         val preferences = context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
-        val today = LocalDate.now()
+        val today = TaskDateRules.today()
         val headerTemplate = preferences.getString(KEY_HEADER_TEMPLATE, null)
         val subtitleTemplate = preferences.getString(KEY_SUBTITLE_TEMPLATE, null)
         val startDate = preferences.getString(KEY_START_DATE, null)?.let(::parseDateOrNull)
@@ -293,10 +294,10 @@ object DayCounterPreferences {
 
     fun render(
         context: Context,
-        today: LocalDate = LocalDate.now(),
+        today: LocalDate = TaskDateRules.today(),
     ): DayCounterRenderResult = DayCounterText.render(load(context), today)
 
-    fun displayText(context: Context, today: LocalDate = LocalDate.now()): String? =
+    fun displayText(context: Context, today: LocalDate = TaskDateRules.today()): String? =
         render(context, today).subtitle
 
     private fun normalize(value: String, limit: Int): String {

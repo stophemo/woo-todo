@@ -7,10 +7,14 @@ struct AppRuntimeConfiguration {
     static let uiTestBundleIdentifier = "io.github.stophemo.woo-todo.ui-test"
 
     let databaseURL: URL
+    let appDataURL: URL
+    let cachesURL: URL
+    let savedStateURL: URL
     let defaults: UserDefaults
     let syncCredentialsStore: any SyncCredentialsStoring
     let webDavCredentialsStore: any WebDavCredentialsStoring
     let allowsExternalServices: Bool
+    let allowsLocalDataRemoval: Bool
     let initialDashboardSection: DashboardSection?
     let shouldSeedUITestFixtures: Bool
     let uiTestArtifactDirectory: URL?
@@ -30,8 +34,26 @@ struct AppRuntimeConfiguration {
             )
             let applicationData = applicationSupport
                 .appendingPathComponent("WooTodo", isDirectory: true)
+            let resolvedBundleIdentifier =
+                bundleIdentifier ?? "io.github.stophemo.woo-todo"
+            let caches = try fileManager.url(
+                for: .cachesDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            ).appendingPathComponent(resolvedBundleIdentifier, isDirectory: true)
+            let savedState = fileManager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Saved Application State", isDirectory: true)
+                .appendingPathComponent(
+                    "\(resolvedBundleIdentifier).savedState",
+                    isDirectory: true
+                )
             return Self(
                 databaseURL: applicationData.appendingPathComponent("tasks.sqlite"),
+                appDataURL: applicationData,
+                cachesURL: caches,
+                savedStateURL: savedState,
                 defaults: .standard,
                 syncCredentialsStore: KeychainCredentialsStore(),
                 webDavCredentialsStore: EncryptedFileWebDavCredentialsStore(
@@ -41,6 +63,7 @@ struct AppRuntimeConfiguration {
                     )
                 ),
                 allowsExternalServices: true,
+                allowsLocalDataRemoval: true,
                 initialDashboardSection: nil,
                 shouldSeedUITestFixtures: false,
                 uiTestArtifactDirectory: nil,
@@ -105,10 +128,14 @@ struct AppRuntimeConfiguration {
         }
         return Self(
             databaseURL: root.appendingPathComponent("tasks.sqlite"),
+            appDataURL: root,
+            cachesURL: root.appendingPathComponent("caches", isDirectory: true),
+            savedStateURL: root.appendingPathComponent("saved-state", isDirectory: true),
             defaults: defaults,
             syncCredentialsStore: InMemorySyncCredentialsStore(),
             webDavCredentialsStore: webDavCredentialsStore,
             allowsExternalServices: false,
+            allowsLocalDataRemoval: false,
             initialDashboardSection: initialDashboardSection,
             shouldSeedUITestFixtures: true,
             uiTestArtifactDirectory: root,
@@ -133,43 +160,50 @@ enum UITestFixtureSeeder {
               let dayAfterTomorrow = calendar.date(byAdding: .day, value: 2, to: today) else {
             throw AppRuntimeConfigurationError.fixtureDateFailed
         }
-        let overduePeriod = TaskPeriod(start: yesterday, end: today)
-        let currentPeriod = TaskPeriod(start: today, end: tomorrow)
-
+        let work = try TaskCategory(id: "work", name: "工作", order: 4)
+        try repository.saveCategories(
+            TaskCategory.normalizeList(TaskCategory.defaults + [work])
+        )
         try repository.save([
             TodoTask(
                 title: "昨日遗留：提交本版本验收记录",
-                timeScope: .daily,
-                tier: .mainline,
-                period: overduePeriod,
+                categoryID: "main",
+                startDate: yesterday,
+                endDate: yesterday,
                 sortIndex: 0,
-                createdAt: yesterday,
-                deadlineDate: today
+                createdAt: yesterday
             ),
             TodoTask(
                 title: "完成 macOS 面板验收",
-                timeScope: .daily,
-                tier: .mainline,
-                period: currentPeriod,
+                categoryID: "main",
+                startDate: today,
+                endDate: dayAfterTomorrow,
                 sortIndex: 1,
-                createdAt: now.addingTimeInterval(-180),
-                deadlineDate: dayAfterTomorrow
+                createdAt: now.addingTimeInterval(-180)
             ),
             TodoTask(
                 title: "整理同步方式切换说明",
-                timeScope: .daily,
-                tier: .side,
-                period: currentPeriod,
+                categoryID: "work",
+                startDate: today,
+                endDate: tomorrow,
                 sortIndex: 0,
                 createdAt: now.addingTimeInterval(-120)
             ),
             TodoTask(
                 title: "记录后续优化想法",
-                timeScope: .daily,
-                tier: .extra,
-                period: currentPeriod,
+                categoryID: "extra",
                 sortIndex: 0,
                 createdAt: now.addingTimeInterval(-60)
+            ),
+            TodoTask(
+                title: "已完成示例",
+                categoryID: "side",
+                status: .completed,
+                startDate: yesterday,
+                endDate: yesterday,
+                sortIndex: 2,
+                createdAt: yesterday,
+                completedAt: now
             ),
         ])
         try repository.saveDisplayConfiguration(WireDisplayConfigurationPayload(

@@ -19,12 +19,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dashboardWindowController: DashboardWindowController?
     private var statusMenuController: StatusMenuController?
     private var appUpdateController: AppUpdateController?
+    private var localDataManager: LocalDataManager?
     private var wakeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
         do {
             let runtime = try AppRuntimeConfiguration.current()
+            let localDataManager = LocalDataManager(
+                bundleIdentifier: Bundle.main.bundleIdentifier
+                    ?? "io.github.stophemo.woo-todo",
+                bundleURL: Bundle.main.bundleURL,
+                appSupportURL: runtime.appDataURL,
+                cachesURL: runtime.cachesURL,
+                savedStateURL: runtime.savedStateURL,
+                defaults: runtime.defaults,
+                syncCredentialsStore: runtime.syncCredentialsStore,
+                webDavCredentialsStore: runtime.webDavCredentialsStore,
+                allowsAppRemoval: runtime.allowsLocalDataRemoval
+            )
+            self.localDataManager = localDataManager
             // 本地任务库是启动的唯一硬依赖；同步身份即使损坏或不匹配也不能阻塞本地使用。
             let repository = try SQLiteTaskRepository(databaseURL: runtime.databaseURL)
             if runtime.shouldSeedUITestFixtures {
@@ -374,7 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    private func showDashboard(section: DashboardSection = .today) {
+    private func showDashboard(section: DashboardSection = .tasks) {
         if let dashboardWindowController {
             dashboardWindowController.show(section: section)
             return
@@ -384,7 +398,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let syncSettingsStore,
               let webDavSettingsStore,
               let dayCounterStore,
-              let shortcutSettingsStore else { return }
+              let shortcutSettingsStore,
+              let localDataManager else { return }
 
         let dashboardStore = DashboardStore(repository: repository)
         dashboardStore.onTasksChanged = { [weak self, weak todayStore, weak syncSettingsStore] in
@@ -399,6 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
             shortcutSettingsStore: shortcutSettingsStore,
+            localDataManager: localDataManager,
             initialSection: section
         )
         controller.onClose = { [weak self] in
@@ -428,7 +444,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let screenName = runtime.uiTestScreenName else { return }
         let destination = directory.appendingPathComponent("\(screenName).png")
         Task { @MainActor [weak window] in
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(2))
             guard let view = window?.contentView else { return }
             view.layoutSubtreeIfNeeded()
             view.displayIfNeeded()

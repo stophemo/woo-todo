@@ -18,7 +18,6 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TimePicker
 import android.widget.Toast
@@ -48,8 +47,6 @@ import com.wootodo.display.DayCounterSettings
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
-import com.wootodo.domain.QuestLine
 import com.wootodo.reminder.ReminderPreferences
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.reminder.ReminderSettings
@@ -78,6 +75,7 @@ import com.wootodo.widget.TodayWidgetUpdater
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -90,7 +88,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var screenTitle: TextView
     private lateinit var dayCounterText: TextView
     private lateinit var titleEditHint: View
-    private lateinit var scopeGroup: RadioGroup
     private var pairingDialog: AlertDialog? = null
     private var pairingSwitchDialog: AlertDialog? = null
     private var pairingMessageView: TextView? = null
@@ -102,6 +99,7 @@ class MainActivity : AppCompatActivity() {
     private var syncTransportMode: SyncTransportMode? = null
     private var deepLinkIntentConsumed = false
     private var updateProgressDialog: AlertDialog? = null
+    private var updatePromptDialog: AlertDialog? = null
     private var updateDownloadJob: Job? = null
     private var pendingUpdatePermissionRelease: GitHubRelease? = null
     private var availableUpdateRelease: GitHubRelease? = null
@@ -172,14 +170,13 @@ class MainActivity : AppCompatActivity() {
         titleEditHint = findViewById(R.id.title_edit_hint)
         // 标题就长在主界面上，点它直接改，不再只能从“更多”菜单里找。
         findViewById<View>(R.id.title_area).setOnClickListener {
-            if (scopeGroup.checkedRadioButtonId == R.id.scope_today) {
-                showDayCounterSettings()
-            }
+            showDayCounterSettings()
         }
         syncStatus.enableReadOnlyTextSelection()
         dayCounterText.enableReadOnlyTextSelection()
 
         taskAdapter = TaskAdapter(
+            context = this,
             onCheck = { task ->
                 if (task.status == TaskStatus.COMPLETED) {
                     reopenTask(task)
@@ -196,34 +193,6 @@ class MainActivity : AppCompatActivity() {
         }
         attachRowGestures()
 
-        scopeGroup = findViewById(R.id.scope_group)
-        scopeGroup.setOnCheckedChangeListener { _, checkedId ->
-            when (checkedId) {
-                R.id.scope_tomorrow -> {
-                    viewModel.selectTomorrow()
-                }
-                R.id.scope_week -> {
-                    viewModel.selectScope(TaskTimeType.WEEK)
-                }
-                R.id.scope_month -> {
-                    viewModel.selectScope(TaskTimeType.MONTH)
-                }
-                R.id.scope_leisure -> {
-                    viewModel.selectScope(TaskTimeType.LEISURE)
-                }
-                else -> {
-                    viewModel.selectToday()
-                }
-            }
-            // 大字体或窄屏下标签会横向溢出，切换后把选中的标签滚进可视区。
-            findViewById<View>(checkedId)?.let { chip ->
-                chip.requestRectangleOnScreen(
-                    android.graphics.Rect(0, 0, chip.width, chip.height),
-                    false,
-                )
-            }
-            renderDayCounter()
-        }
         findViewById<FloatingActionButton>(R.id.add_task).setOnClickListener { openEditor() }
         findViewById<Button>(R.id.empty_add_task).setOnClickListener { openEditor() }
         findViewById<View>(R.id.insights_button).setOnClickListener {
@@ -241,9 +210,11 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    viewModel.tasks.collect { tasks ->
-                        taskAdapter.submitTasks(tasks)
-                        emptyState.isVisible = tasks.isEmpty()
+                    combine(viewModel.sections, viewModel.categories) { sections, categories ->
+                        sections to categories
+                    }.collect { (sections, categories) ->
+                        taskAdapter.submitSections(sections, categories)
+                        emptyState.isVisible = sections.isEmpty()
                     }
                 }
                 launch {
@@ -272,13 +243,7 @@ class MainActivity : AppCompatActivity() {
         }
         requestNotificationPermissionIfNeeded()
         renderDayCounter()
-        if (savedInstanceState == null) {
-            applyInitialView(intent)
-        } else {
-            scopeGroup.check(
-                savedInstanceState.getInt(STATE_SELECTED_SCOPE, R.id.scope_today),
-            )
-        }
+        availableUpdateRelease?.let { maybeShowUpdatePrompt(it, manual = false) }
         deepLinkIntentConsumed = savedInstanceState?.getBoolean(STATE_DEEP_LINK_INTENT_CONSUMED)
             ?: false
         val pairingWasActive = savedInstanceState?.getBoolean(STATE_PAIRING_ACTIVE) == true
@@ -300,7 +265,6 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         deepLinkIntentConsumed = false
-        applyInitialView(intent)
         handleDeepLinkIntent(intent)
     }
 
@@ -325,7 +289,6 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(STATE_PAIRING_ACTIVE, pairingViewModel.isPairingActive())
         outState.putBoolean(STATE_DEEP_LINK_INTENT_CONSUMED, deepLinkIntentConsumed)
-        outState.putInt(STATE_SELECTED_SCOPE, scopeGroup.checkedRadioButtonId)
         super.onSaveInstanceState(outState)
     }
 
@@ -335,6 +298,7 @@ class MainActivity : AppCompatActivity() {
         pairingDialog?.dismiss()
         pairingSwitchDialog?.dismiss()
         updateProgressDialog?.dismiss()
+        updatePromptDialog?.dismiss()
         super.onDestroy()
     }
 
@@ -342,24 +306,8 @@ class MainActivity : AppCompatActivity() {
         startActivity(
             Intent(this, EditTaskActivity::class.java).apply {
                 taskId?.let { putExtra(EditTaskActivity.EXTRA_TASK_ID, it) }
-                putExtra(
-                    EditTaskActivity.EXTRA_TIME_TYPE,
-                    viewModel.selectedScope.value.rawValue,
-                )
-                if (viewModel.selectedScope.value == TaskTimeType.DAY) {
-                    putExtra(
-                        EditTaskActivity.EXTRA_TARGET_DATE,
-                        viewModel.selectedReferenceDate.value.toString(),
-                    )
-                }
             },
         )
-    }
-
-    private fun applyInitialView(intent: Intent) {
-        if (intent.getBooleanExtra(EXTRA_OPEN_TOMORROW, false)) {
-            scopeGroup.check(R.id.scope_tomorrow)
-        }
     }
 
     private fun requestNotificationPermissionIfNeeded() {
@@ -383,9 +331,7 @@ class MainActivity : AppCompatActivity() {
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
         val callback = object : ItemTouchHelper.Callback() {
-            private var draggedLine: QuestLine? = null
-
-            override fun isLongPressDragEnabled(): Boolean = true
+            override fun isLongPressDragEnabled(): Boolean = false
 
             override fun getMovementFlags(
                 recyclerView: RecyclerView,
@@ -393,31 +339,19 @@ class MainActivity : AppCompatActivity() {
             ): Int {
                 val task = taskAdapter.taskAt(viewHolder.adapterPosition)
                     ?: return makeMovementFlags(0, 0)
-                val dragFlags = if (task.status == TaskStatus.PENDING) {
-                    ItemTouchHelper.UP or ItemTouchHelper.DOWN
-                } else {
-                    0
-                }
                 val swipeFlags = (if (swipeRightAction(task.status) != null) {
                     ItemTouchHelper.RIGHT
                 } else {
                     0
                 }) or (if (swipeLeftAction(task.status) != null) ItemTouchHelper.LEFT else 0)
-                return makeMovementFlags(dragFlags, swipeFlags)
+                return makeMovementFlags(0, swipeFlags)
             }
 
             override fun onMove(
                 recyclerView: RecyclerView,
                 viewHolder: RecyclerView.ViewHolder,
                 target: RecyclerView.ViewHolder,
-            ): Boolean {
-                val from = viewHolder.adapterPosition
-                val to = target.adapterPosition
-                val line = taskAdapter.questLineAt(from) ?: return false
-                if (taskAdapter.questLineAt(to) != line) return false
-                draggedLine = line
-                return taskAdapter.moveItem(from, to)
-            }
+            ): Boolean = false
 
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
                 val position = viewHolder.adapterPosition
@@ -499,10 +433,6 @@ class MainActivity : AppCompatActivity() {
             ) {
                 super.clearView(recyclerView, viewHolder)
                 viewHolder.itemView.translationX = 0f
-                draggedLine?.let { line ->
-                    viewModel.reorder(taskAdapter.taskIdsForLine(line))
-                }
-                draggedLine = null
             }
         }
         ItemTouchHelper(callback).attachToRecyclerView(taskList)
@@ -981,25 +911,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderDayCounter() {
-        val isToday = scopeGroup.checkedRadioButtonId == R.id.scope_today
-        titleEditHint.isVisible = isToday
-        if (!isToday) {
-            screenTitle.isVisible = true
-            dayCounterText.isVisible = false
-            screenTitle.setText(
-                when (scopeGroup.checkedRadioButtonId) {
-                    R.id.scope_tomorrow -> R.string.tomorrow_title
-                    R.id.scope_week -> R.string.week_title
-                    R.id.scope_month -> R.string.month_title
-                    R.id.scope_leisure -> R.string.leisure_title
-                    else -> R.string.today_title
-                },
-            )
-            return
-        }
+        titleEditHint.isVisible = true
         val rendered = DayCounterPreferences.render(this, TaskDateRules.today())
-        screenTitle.text = rendered.header.orEmpty()
-        screenTitle.isVisible = rendered.header != null
+        screenTitle.text = rendered.header ?: getString(R.string.task_screen_title)
+        screenTitle.isVisible = true
         dayCounterText.text = rendered.subtitle.orEmpty()
         dayCounterText.isVisible = rendered.subtitle != null
     }
@@ -1025,6 +940,8 @@ class MainActivity : AppCompatActivity() {
                 when (updateResult) {
                     AppUpdateCheckResult.Current -> {
                         availableUpdateRelease = null
+                        updatePromptDialog?.dismiss()
+                        updatePromptDialog = null
                         updatePreferences.clearAvailableRelease()
                         if (event.reportToUser) {
                             showTransientMessage(
@@ -1036,9 +953,7 @@ class MainActivity : AppCompatActivity() {
                         val release = updateResult.release
                         availableUpdateRelease = release
                         updatePreferences.cacheAvailableRelease(release)
-                        showTransientMessage(
-                            getString(R.string.update_available_hint, release.versionLabel),
-                        )
+                        maybeShowUpdatePrompt(release, manual = event.reportToUser)
                     }
                 }
             },
@@ -1048,6 +963,44 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    private fun maybeShowUpdatePrompt(release: GitHubRelease, manual: Boolean) {
+        if (isFinishing || isDestroyed) return
+        if (updatePromptDialog?.isShowing == true) return
+        if (pairingDialog?.isShowing == true ||
+            pairingSwitchDialog?.isShowing == true ||
+            updateProgressDialog?.isShowing == true
+        ) {
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (!updatePreferences.shouldPrompt(release, manual, now)) return
+        val hasApk = release.apkUrl != null
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(getString(R.string.update_available_title, release.versionLabel))
+            .setMessage(R.string.update_available_message)
+            .setPositiveButton(
+                if (hasApk) R.string.update_now else R.string.update_open_download,
+            ) { _, _ ->
+                updatePreferences.markPrompted(release.versionLabel, now)
+                beginUpdate(release)
+            }
+            .setNegativeButton(R.string.update_later) { _, _ ->
+                updatePreferences.markPrompted(release.versionLabel, now)
+            }
+            .setNeutralButton(R.string.update_skip_version) { _, _ ->
+                updatePreferences.skipVersion(release.versionLabel)
+            }
+            .setOnCancelListener {
+                updatePreferences.markPrompted(release.versionLabel, now)
+            }
+            .create()
+        updatePromptDialog = dialog
+        dialog.setOnDismissListener {
+            if (updatePromptDialog === dialog) updatePromptDialog = null
+        }
+        dialog.show()
     }
 
     private fun showTransientMessage(
@@ -1424,17 +1377,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        const val EXTRA_OPEN_TOMORROW = "open_tomorrow"
         private const val MENU_REMINDER = 1
-        private const val MENU_DAY_COUNTER = 4
-        private const val MENU_SYNC_METHOD = 5
-        private const val MENU_PAIR_DEVICE = 6
-        private const val MENU_SYNC_NOW = 7
+        private const val MENU_DAY_COUNTER = 2
+        private const val MENU_SYNC_METHOD = 3
+        private const val MENU_PAIR_DEVICE = 4
+        private const val MENU_SYNC_NOW = 5
         private const val MENU_CHECK_UPDATE = 6
-        private const val MENU_AVAILABLE_UPDATE = 8
+        private const val MENU_AVAILABLE_UPDATE = 7
         private const val STATE_PAIRING_ACTIVE = "pairing_active"
         private const val STATE_DEEP_LINK_INTENT_CONSUMED = "deep_link_intent_consumed"
-        private const val STATE_SELECTED_SCOPE = "selected_scope"
         private const val NOTIFICATION_PERMISSION_STATE = "notification_permission_state"
         private const val KEY_NOTIFICATION_PERMISSION_REQUESTED = "requested"
     }

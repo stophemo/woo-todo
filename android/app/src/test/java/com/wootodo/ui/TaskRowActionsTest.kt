@@ -1,11 +1,8 @@
 package com.wootodo.ui
 
 import com.wootodo.R
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
 import java.time.LocalTime
 import org.junit.Assert.assertEquals
@@ -73,28 +70,24 @@ class TaskRowActionsTest {
             id = "task-1",
             seriesId = "series-1",
             title = "写周报",
-            timeType = TaskTimeType.WEEK,
-            targetDate = LocalDate.of(2026, 7, 13),
-            questLine = QuestLine.SIDE,
+            categoryId = "side",
+            startDate = LocalDate.of(2026, 7, 13),
+            endDate = LocalDate.of(2026, 7, 19),
             status = TaskStatus.PENDING,
-            recurrence = Recurrence.WEEKLY,
             sortOrder = 4,
             createdAt = 1_000,
             updatedAt = 2_000,
             settledAt = null,
             reminderTime = LocalTime.of(9, 30),
-            deadlineDate = LocalDate.of(2026, 7, 19),
         )
 
         val draft = task.toRestoreDraft()
 
         assertEquals(task.title, draft.title)
-        assertEquals(task.timeType, draft.timeType)
-        assertEquals(task.targetDate, draft.targetDate)
-        assertEquals(task.questLine, draft.questLine)
-        assertEquals(task.recurrence, draft.recurrence)
+        assertEquals(task.categoryId, draft.categoryId)
+        assertEquals(task.startDate, draft.startDate)
+        assertEquals(task.endDate, draft.endDate)
         assertEquals(task.sortOrder, draft.sortOrder)
         assertEquals(task.reminderTime, draft.reminderTime)
-        assertEquals(task.deadlineDate, draft.deadlineDate)
     }
 }

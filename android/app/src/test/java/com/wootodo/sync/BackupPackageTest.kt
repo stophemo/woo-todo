@@ -130,6 +130,28 @@ class BackupPackageTest {
     }
 
     @Test
+    fun `备份往返保留自定义分类`() {
+        val vector = fixture()
+        val snapshot = BackupSnapshot(
+            exportedAt = 1_784_259_000_000,
+            tasks = listOf(fixtureTask()),
+            syncCredentials = null,
+        )
+        val sealed = BackupPackageCodec.seal(
+            snapshot = snapshot,
+            passphrase = vector.getString("password"),
+            iterations = vector.getJSONObject("kdf").getInt("iterations"),
+            salt = Base64Url.decode(vector.getJSONObject("kdf").getString("salt")),
+            nonce = Base64Url.decode(vector.getJSONObject("cipher").getString("nonce")),
+        )
+
+        assertEquals(
+            "work",
+            BackupPackageCodec.open(sealed, vector.getString("password")).tasks.single().questLine,
+        )
+    }
+
+    @Test
     fun `备份往返保留任务截止日且含截止日的备份可正常解码`() {
         val vector = fixture()
         val snapshot = BackupSnapshot(
@@ -298,7 +320,7 @@ class BackupPackageTest {
         timeType = WireTimeType.DAY,
         periodStart = "2026-07-16",
         timezone = "Asia/Shanghai",
-        questLine = WireQuestLine.MAIN,
+        questLine = "work",
         state = WireTaskState.COMPLETED,
         recurrence = WireRecurrence.ONCE,
         sortOrder = 0,

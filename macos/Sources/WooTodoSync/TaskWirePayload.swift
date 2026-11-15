@@ -7,10 +7,46 @@ public enum WireTaskTimeType: String, Codable, Sendable {
     case someday
 }
 
-public enum WireQuestLine: String, Codable, Sendable {
-    case main
-    case side
-    case extra
+public struct WireQuestLineDefinition: Codable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let order: Int
+
+    public init(id: String, name: String, order: Int) throws {
+        guard Self.isValidID(id),
+              (1...12).contains(name.unicodeScalars.count),
+              !name.contains(where: { $0.isNewline }),
+              (0...63).contains(order) else {
+            throw TaskPayloadValidationError.invalidField("questLines")
+        }
+        self.id = id
+        self.name = name
+        self.order = order
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireTaskPayloadKeys(
+            decoder,
+            required: ["id", "name", "order"],
+            optional: []
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.order = try container.decode(Int.self, forKey: .order)
+        try validate()
+    }
+
+    public func validate() throws {
+        _ = try Self(id: id, name: name, order: order)
+    }
+
+    static func isValidID(_ value: String) -> Bool {
+        value.range(
+            of: #"^[a-z0-9][a-z0-9_-]{0,31}$"#,
+            options: .regularExpression
+        ) != nil
+    }
 }
 
 public enum WireTaskState: String, Codable, Sendable {
@@ -74,7 +110,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
     public let periodStart: String?
     public let deadlineDate: String?
     public let timezone: String
-    public let questLine: WireQuestLine
+    public let questLine: String
     public let state: WireTaskState
     public let recurrence: WireRecurrence
     public let sortOrder: Int64
@@ -91,7 +127,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         periodStart: String?,
         deadlineDate: String? = nil,
         timezone: String,
-        questLine: WireQuestLine,
+        questLine: String,
         state: WireTaskState,
         recurrence: WireRecurrence,
         sortOrder: Int64,
@@ -150,7 +186,7 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         self.periodStart = try container.decodeIfPresent(String.self, forKey: .periodStart)
         self.deadlineDate = try container.decodeIfPresent(String.self, forKey: .deadlineDate)
         self.timezone = try container.decode(String.self, forKey: .timezone)
-        self.questLine = try container.decode(WireQuestLine.self, forKey: .questLine)
+        self.questLine = try container.decode(String.self, forKey: .questLine)
         self.state = try container.decode(WireTaskState.self, forKey: .state)
         self.recurrence = try container.decode(WireRecurrence.self, forKey: .recurrence)
         self.sortOrder = try container.decode(Int64.self, forKey: .sortOrder)
@@ -209,6 +245,9 @@ public struct WireTaskPayload: Codable, Equatable, Sendable {
         }
         guard (1...120).contains(title.unicodeScalars.count) else {
             throw TaskPayloadValidationError.invalidField("title")
+        }
+        guard WireQuestLineDefinition.isValidID(questLine) else {
+            throw TaskPayloadValidationError.invalidField("questLine")
         }
         guard timezone == Self.fixedTimeZone,
               (0...Self.maximumSortOrder).contains(sortOrder),
@@ -336,6 +375,17 @@ public struct WireTombstonePayload: Codable, Equatable, Sendable {
 public struct WireDisplayConfigurationPayload: Codable, Equatable, Sendable {
     public static let fixedID = "display.today.configuration"
 
+    private enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case entityType
+        case id
+        case headerTemplate
+        case subtitleTemplate
+        case startDate
+        case deadlineDate
+        case questLines
+    }
+
     public let protocolVersion: Int
     public let entityType: String
     public let id: String
@@ -343,12 +393,14 @@ public struct WireDisplayConfigurationPayload: Codable, Equatable, Sendable {
     public let subtitleTemplate: String
     public let startDate: String
     public let deadlineDate: String
+    public let questLines: [WireQuestLineDefinition]
 
     public init(
         headerTemplate: String,
         subtitleTemplate: String,
         startDate: String,
-        deadlineDate: String
+        deadlineDate: String,
+        questLines: [WireQuestLineDefinition] = []
     ) throws {
         self.protocolVersion = 1
         self.entityType = "displayConfiguration"
@@ -357,16 +409,18 @@ public struct WireDisplayConfigurationPayload: Codable, Equatable, Sendable {
         self.subtitleTemplate = subtitleTemplate
         self.startDate = startDate
         self.deadlineDate = deadlineDate
+        self.questLines = questLines
         try validate()
     }
 
     public init(from decoder: Decoder) throws {
-        try requireExactTaskPayloadKeys(
+        try requireTaskPayloadKeys(
             decoder,
-            expected: [
+            required: [
                 "protocolVersion", "entityType", "id", "headerTemplate",
                 "subtitleTemplate", "startDate", "deadlineDate",
-            ]
+            ],
+            optional: ["questLines"]
         )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
@@ -376,7 +430,25 @@ public struct WireDisplayConfigurationPayload: Codable, Equatable, Sendable {
         subtitleTemplate = try container.decode(String.self, forKey: .subtitleTemplate)
         startDate = try container.decode(String.self, forKey: .startDate)
         deadlineDate = try container.decode(String.self, forKey: .deadlineDate)
+        questLines = try container.decodeIfPresent(
+            [WireQuestLineDefinition].self,
+            forKey: .questLines
+        ) ?? []
         try validate()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(protocolVersion, forKey: .protocolVersion)
+        try container.encode(entityType, forKey: .entityType)
+        try container.encode(id, forKey: .id)
+        try container.encode(headerTemplate, forKey: .headerTemplate)
+        try container.encode(subtitleTemplate, forKey: .subtitleTemplate)
+        try container.encode(startDate, forKey: .startDate)
+        try container.encode(deadlineDate, forKey: .deadlineDate)
+        if !questLines.isEmpty {
+            try container.encode(questLines, forKey: .questLines)
+        }
     }
 
     public func validate() throws {
@@ -394,6 +466,19 @@ public struct WireDisplayConfigurationPayload: Codable, Equatable, Sendable {
               Self.isValidISODate(startDate),
               Self.isValidISODate(deadlineDate) else {
             throw TaskPayloadValidationError.invalidField("displayConfiguration")
+        }
+        if !questLines.isEmpty {
+            guard questLines.count <= 8 else {
+                throw TaskPayloadValidationError.invalidField("questLines")
+            }
+            var ids = Set<String>()
+            var orders = Set<Int>()
+            for line in questLines {
+                try line.validate()
+                guard ids.insert(line.id).inserted, orders.insert(line.order).inserted else {
+                    throw TaskPayloadValidationError.invalidField("questLines")
+                }
+            }
         }
     }
 

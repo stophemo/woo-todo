@@ -5,12 +5,10 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskEntity
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.YearMonth
 
 class SQLiteBackupDatabase(private val database: TaskDatabase) : BackupDatabase {
     @Synchronized
@@ -212,43 +210,68 @@ private fun readState(sqlite: SQLiteDatabase): BackupDatabaseState = sqlite.rawQ
     )
 }
 
-private fun TaskEntity.toContentValues(): ContentValues = ContentValues(13).apply {
+private fun TaskEntity.toContentValues(): ContentValues = ContentValues(14).apply {
     put("id", id)
     put("series_id", seriesId)
     put("title", title)
-    put("time_type", timeType.rawValue)
-    if (targetDate == null) putNull("target_date") else put("target_date", targetDate.toString())
-    put("quest_line", questLine.rawValue)
+    put("time_type", if (startDate == null && endDate == null) "someday" else "day")
+    if (startDate == null) putNull("target_date") else put("target_date", startDate.toString())
+    put("quest_line", categoryId)
     put("status", status.rawValue)
-    put("recurrence", recurrence.rawValue)
+    put("recurrence", "once")
     put("sort_order", sortOrder)
     put("created_at", createdAt)
     put("updated_at", updatedAt)
     if (settledAt == null) putNull("settled_at") else put("settled_at", settledAt)
-    if (reminderTime == null) putNull("reminder_time") else put("reminder_time", reminderTime.toString())
+    if (reminderTime == null || startDate == null) {
+        putNull("reminder_time")
+    } else {
+        put("reminder_time", reminderTime.toString())
+    }
+    if (endDate == null) putNull("deadline_date") else put("deadline_date", endDate.toString())
 }
 
-private fun Cursor.toTaskEntity(): TaskEntity = TaskEntity(
-    id = getString(getColumnIndexOrThrow("id")),
-    seriesId = getString(getColumnIndexOrThrow("series_id")),
-    title = getString(getColumnIndexOrThrow("title")),
-    timeType = TaskTimeType.fromRaw(getString(getColumnIndexOrThrow("time_type"))),
-    targetDate = getColumnIndexOrThrow("target_date").let { index ->
+private fun Cursor.toTaskEntity(): TaskEntity {
+    val start = getColumnIndexOrThrow("target_date").let { index ->
         if (isNull(index)) null else LocalDate.parse(getString(index))
-    },
-    questLine = QuestLine.fromRaw(getString(getColumnIndexOrThrow("quest_line"))),
-    status = TaskStatus.fromRaw(getString(getColumnIndexOrThrow("status"))),
-    recurrence = Recurrence.fromRaw(getString(getColumnIndexOrThrow("recurrence"))),
-    sortOrder = getInt(getColumnIndexOrThrow("sort_order")),
-    createdAt = getLong(getColumnIndexOrThrow("created_at")),
-    updatedAt = getLong(getColumnIndexOrThrow("updated_at")),
-    settledAt = getColumnIndexOrThrow("settled_at").let { index ->
-        if (isNull(index)) null else getLong(index)
-    },
-    reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
-        if (isNull(index)) null else LocalTime.parse(getString(index))
-    },
-)
+    }
+    val deadline = getColumnIndexOrThrow("deadline_date").let { index ->
+        if (isNull(index)) null else LocalDate.parse(getString(index))
+    }
+    val timeType = getString(getColumnIndexOrThrow("time_type")).lowercase()
+    val defaultEnd = when (timeType) {
+        "day" -> start
+        "week" -> start?.plusDays(6)
+        "month" -> start?.let { YearMonth.from(it).atEndOfMonth() }
+        else -> null
+    }
+    val end = when {
+        start == null && deadline == null -> null
+        start == null -> deadline
+        deadline == null -> defaultEnd ?: start
+        defaultEnd == null -> maxOf(start, deadline)
+        else -> maxOf(defaultEnd, deadline)
+    }
+    val effectiveStart = if (start == null && end != null) end else start
+    return TaskEntity(
+        id = getString(getColumnIndexOrThrow("id")),
+        seriesId = getString(getColumnIndexOrThrow("series_id")),
+        title = getString(getColumnIndexOrThrow("title")),
+        categoryId = getString(getColumnIndexOrThrow("quest_line")),
+        startDate = effectiveStart,
+        endDate = end,
+        status = TaskStatus.fromRaw(getString(getColumnIndexOrThrow("status"))),
+        sortOrder = getInt(getColumnIndexOrThrow("sort_order")),
+        createdAt = getLong(getColumnIndexOrThrow("created_at")),
+        updatedAt = getLong(getColumnIndexOrThrow("updated_at")),
+        settledAt = getColumnIndexOrThrow("settled_at").let { index ->
+            if (isNull(index)) null else getLong(index)
+        },
+        reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
+            if (isNull(index) || effectiveStart == null) null else LocalTime.parse(getString(index))
+        },
+    )
+}
 
 private const val TABLE_TASKS = "tasks"
 private const val TABLE_SYNC_STATE = "sync_state"

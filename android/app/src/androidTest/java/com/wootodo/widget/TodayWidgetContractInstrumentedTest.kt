@@ -17,12 +17,9 @@ import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wootodo.R
-import com.wootodo.domain.QuestLine
-import com.wootodo.domain.Recurrence
 import com.wootodo.domain.Task
+import com.wootodo.domain.TaskCategories
 import com.wootodo.domain.TaskStatus
-import com.wootodo.domain.TaskTimeType
-import com.wootodo.ui.labelRes
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -86,13 +83,13 @@ class TodayWidgetContractInstrumentedTest {
     }
 
     @Test
-    fun `三种任务线标题可由RemoteViews安全应用`() {
-        QuestLine.entries.forEach { questLine ->
-            val view = TodayWidgetHeaderViews.create(context, questLine)
+    fun `分类标题可由RemoteViews安全应用`() {
+        TaskCategories.defaults.forEach { category ->
+            val view = TodayWidgetHeaderViews.create(context, category)
                 .apply(context, FrameLayout(context))
 
             assertEquals(
-                context.getString(questLine.labelRes()),
+                category.name,
                 view.findViewById<TextView>(R.id.widget_group_title).text.toString(),
             )
         }
@@ -129,11 +126,10 @@ class TodayWidgetContractInstrumentedTest {
         id = id,
         seriesId = "series-$id",
         title = id,
-        timeType = TaskTimeType.DAY,
-        targetDate = LocalDate.of(2026, 7, 22),
-        questLine = QuestLine.MAIN,
+        categoryId = "main",
+        startDate = LocalDate.of(2026, 7, 22),
+        endDate = LocalDate.of(2026, 7, 22),
         status = status,
-        recurrence = Recurrence.ONCE,
         sortOrder = 0,
         createdAt = 1_000,
         updatedAt = 1_000,

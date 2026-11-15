@@ -1,162 +1,176 @@
 package com.wootodo.domain
 
 import java.time.LocalDate
+import java.time.ZoneId
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StatisticsEngineTest {
     private val referenceDate = LocalDate.of(2026, 7, 15)
+    private val zone = ZoneId.of("Asia/Shanghai")
 
     @Test
-    fun `履约率只统计已经结束的日周月周期`() {
+    fun `本周完成只统计本周一之后的任务`() {
         val tasks = listOf(
-            task("day-done", TaskTimeType.DAY, referenceDate.minusDays(1), QuestLine.MAIN, TaskStatus.COMPLETED, 10),
-            task("day-pass", TaskTimeType.DAY, referenceDate.minusDays(1), QuestLine.SIDE, TaskStatus.PASS, 20),
-            task("week-done", TaskTimeType.WEEK, LocalDate.of(2026, 7, 6), QuestLine.MAIN, TaskStatus.COMPLETED, 30),
-            task("month-pass", TaskTimeType.MONTH, LocalDate.of(2026, 6, 1), QuestLine.MAIN, TaskStatus.PASS, 40),
-            task("current-week", TaskTimeType.WEEK, LocalDate.of(2026, 7, 13), QuestLine.MAIN, TaskStatus.PENDING, null),
-            task("current-month", TaskTimeType.MONTH, LocalDate.of(2026, 7, 1), QuestLine.SIDE, TaskStatus.COMPLETED, 50),
-            task("someday", TaskTimeType.LEISURE, null, QuestLine.MAIN, TaskStatus.COMPLETED, 60),
-            task("expired-pending", TaskTimeType.DAY, referenceDate.minusDays(2), QuestLine.SIDE, TaskStatus.PENDING, null),
+            completed("last-week", referenceDate.minusDays(7)),
+            completed("monday", LocalDate.of(2026, 7, 13)),
+            completed("today", referenceDate),
+            passed("ignored", referenceDate),
         )
 
-        val snapshot = StatisticsEngine.calculate(tasks, referenceDate)
+        val snapshot = StatisticsEngine.calculate(tasks, referenceDate, zone)
 
-        assertEquals(0.5, snapshot.endedPeriodFulfillmentRate!!, 0.0001)
-        assertEquals(2.0 / 3.0, snapshot.mainQuestFulfillmentRate!!, 0.0001)
-        assertEquals(
-            StatusCounts(completed = 1, pass = 1, pending = 1),
-            snapshot.byTimeType[TaskTimeType.DAY],
-        )
-        assertEquals(StatusCounts(completed = 3, pass = 1, pending = 1), snapshot.byQuestLine[QuestLine.MAIN])
+        assertEquals(2, snapshot.completedThisWeek)
     }
 
     @Test
-    fun `最近历史按结算时间倒序并排除待办`() {
+    fun `连续天数从今天或昨天开始回溯`() {
+        val withToday = listOf(
+            completed("today", referenceDate),
+            completed("yesterday", referenceDate.minusDays(1)),
+            completed("two-days", referenceDate.minusDays(2)),
+            completed("gap", referenceDate.minusDays(4)),
+        )
+        assertEquals(3, StatisticsEngine.calculate(withToday, referenceDate, zone).currentStreakDays)
+
+        val withoutToday = listOf(
+            completed("yesterday", referenceDate.minusDays(1)),
+            completed("two-days", referenceDate.minusDays(2)),
+        )
+        assertEquals(2, StatisticsEngine.calculate(withoutToday, referenceDate, zone).currentStreakDays)
+
+        val none = listOf(completed("older", referenceDate.minusDays(3)))
+        assertEquals(0, StatisticsEngine.calculate(none, referenceDate, zone).currentStreakDays)
+    }
+
+    @Test
+    fun `按时率只统计有截止日期的已完成任务`() {
         val tasks = listOf(
-            task("old", TaskTimeType.DAY, referenceDate.minusDays(2), QuestLine.MAIN, TaskStatus.COMPLETED, 10),
-            task("new", TaskTimeType.DAY, referenceDate.minusDays(1), QuestLine.SIDE, TaskStatus.PASS, 30),
-            task("pending", TaskTimeType.DAY, referenceDate, QuestLine.EXTRA, TaskStatus.PENDING, null),
+            task("on-time", TaskStatus.COMPLETED, start = "2026-07-10", end = "2026-07-15", completed = "2026-07-14"),
+            task("same-day", TaskStatus.COMPLETED, start = "2026-07-15", end = "2026-07-15", completed = "2026-07-15"),
+            task("late", TaskStatus.COMPLETED, start = "2026-07-01", end = "2026-07-10", completed = "2026-07-12"),
+            task("no-end", TaskStatus.COMPLETED, start = null, end = null, completed = "2026-07-11"),
+            task("pass", TaskStatus.PASS, start = "2026-07-01", end = "2026-07-31", completed = "2026-07-11"),
         )
 
-        assertEquals(
-            listOf("new", "old"),
-            StatisticsEngine.calculate(tasks, referenceDate, recentHistoryLimit = 2)
-                .recentHistory.map { it.id },
-        )
+        val snapshot = StatisticsEngine.calculate(tasks, referenceDate, zone)
+        assertEquals(2.0 / 3.0, snapshot.onTimeRate!!, 0.0001)
+
+        val noSamples = listOf(task("pending", TaskStatus.PENDING, null, null, null))
+        assertNull(StatisticsEngine.calculate(noSamples, referenceDate, zone).onTimeRate)
     }
 
     @Test
-    fun `没有已结束周期时履约率为空`() {
-        val current = task(
-            "current",
-            TaskTimeType.DAY,
-            referenceDate,
-            QuestLine.MAIN,
-            TaskStatus.PENDING,
-            null,
-        )
-
-        val snapshot = StatisticsEngine.calculate(listOf(current), referenceDate)
-
-        assertNull(snapshot.endedPeriodFulfillmentRate)
-        assertNull(snapshot.mainQuestFulfillmentRate)
-    }
-
-    @Test
-    fun `趋势按固定日周月窗口分桶并排除窗口外样本`() {
+    fun `十四天趋势包含今天和窗口外排除`() {
         val tasks = listOf(
-            task("day-outside", TaskTimeType.DAY, LocalDate.of(2026, 7, 8), QuestLine.MAIN, TaskStatus.COMPLETED, 10),
-            task("day-oldest", TaskTimeType.DAY, LocalDate.of(2026, 7, 9), QuestLine.MAIN, TaskStatus.COMPLETED, 20),
-            task("day-yesterday", TaskTimeType.DAY, LocalDate.of(2026, 7, 14), QuestLine.SIDE, TaskStatus.PASS, 30),
-            task("day-current", TaskTimeType.DAY, LocalDate.of(2026, 7, 15), QuestLine.SIDE, TaskStatus.COMPLETED, 40),
-            task("week-outside", TaskTimeType.WEEK, LocalDate.of(2026, 5, 18), QuestLine.MAIN, TaskStatus.COMPLETED, 50),
-            task("week-oldest", TaskTimeType.WEEK, LocalDate.of(2026, 5, 27), QuestLine.MAIN, TaskStatus.COMPLETED, 60),
-            task("week-current", TaskTimeType.WEEK, LocalDate.of(2026, 7, 15), QuestLine.MAIN, TaskStatus.COMPLETED, 70),
-            task("month-outside", TaskTimeType.MONTH, LocalDate.of(2026, 1, 1), QuestLine.MAIN, TaskStatus.COMPLETED, 80),
-            task("month-oldest", TaskTimeType.MONTH, LocalDate.of(2026, 2, 20), QuestLine.MAIN, TaskStatus.COMPLETED, 90),
-            task("month-previous", TaskTimeType.MONTH, LocalDate.of(2026, 6, 30), QuestLine.SIDE, TaskStatus.PASS, 100),
-            task("month-current", TaskTimeType.MONTH, LocalDate.of(2026, 7, 15), QuestLine.SIDE, TaskStatus.COMPLETED, 110),
+            completed("outside", referenceDate.minusDays(14)),
+            completed("first", referenceDate.minusDays(13)),
+            completed("today", referenceDate),
         )
 
-        val snapshot = StatisticsEngine.calculate(tasks, referenceDate)
+        val activity = StatisticsEngine.calculate(tasks, referenceDate, zone).dailyActivity
 
-        assertEquals(7, snapshot.dailyTrend.size)
-        assertEquals(LocalDate.of(2026, 7, 9), snapshot.dailyTrend.first().startDate)
-        assertEquals(LocalDate.of(2026, 7, 15), snapshot.dailyTrend.last().startDate)
-        assertEquals(3, snapshot.dailyTrend.sumOf { it.sampleCount })
-        val yesterday = snapshot.dailyTrend.first { it.startDate == LocalDate.of(2026, 7, 14) }
-        assertEquals(0, yesterday.completed)
-        assertEquals(1, yesterday.pass)
-        assertEquals(1, yesterday.sampleCount)
-        assertEquals(0.0, yesterday.fulfillmentRate!!, 0.0001)
-        val today = snapshot.dailyTrend.last()
-        assertEquals(1, today.completed)
-        assertEquals(1, today.sampleCount)
-        assertFalse(today.isEnded)
-        assertNull(today.fulfillmentRate)
-
-        assertEquals(8, snapshot.weeklyTrend.size)
-        assertEquals(LocalDate.of(2026, 5, 25), snapshot.weeklyTrend.first().startDate)
-        assertEquals(LocalDate.of(2026, 7, 13), snapshot.weeklyTrend.last().startDate)
-        assertEquals(2, snapshot.weeklyTrend.sumOf { it.sampleCount })
-        assertNull(snapshot.weeklyTrend.last().fulfillmentRate)
-
-        assertEquals(6, snapshot.monthlyTrend.size)
-        assertEquals(LocalDate.of(2026, 2, 1), snapshot.monthlyTrend.first().startDate)
-        assertEquals(LocalDate.of(2026, 7, 1), snapshot.monthlyTrend.last().startDate)
-        assertEquals(3, snapshot.monthlyTrend.sumOf { it.sampleCount })
-        assertNull(snapshot.monthlyTrend.last().fulfillmentRate)
+        assertEquals(14, activity.size)
+        assertEquals(referenceDate.minusDays(13), activity.first().date)
+        assertEquals(referenceDate, activity.last().date)
+        assertEquals(1, activity.first().completed)
+        assertEquals(1, activity.last().completed)
+        assertEquals(2, activity.sumOf { it.completed })
     }
 
     @Test
-    fun `周一边界会结束上周桶并开启无履约率的新桶`() {
-        val monday = LocalDate.of(2026, 7, 20)
-        val previousWeek = task(
-            "previous-week",
-            TaskTimeType.WEEK,
-            LocalDate.of(2026, 7, 13),
-            QuestLine.MAIN,
+    fun `近三十天分类分布按完成数排序`() {
+        val tasks = listOf(
+            completed("work-1", referenceDate.minusDays(1), categoryId = "work"),
+            completed("work-2", referenceDate, categoryId = "work"),
+            completed("life", referenceDate.minusDays(2), categoryId = "life"),
+            completed("outside", referenceDate.minusDays(30), categoryId = "life"),
+        )
+
+        val categories = StatisticsEngine.calculate(tasks, referenceDate, zone).categoryActivity
+
+        assertEquals(listOf("work", "life"), categories.map { it.categoryId })
+        assertEquals(2, categories.first().completed)
+        assertEquals(2.0 / 3.0, categories.first().ratio, 0.0001)
+    }
+
+    @Test
+    fun `历史按结算时间倒序且包含放弃`() {
+        val tasks = listOf(
+            completed("old", referenceDate.minusDays(2)),
+            passed("new", referenceDate),
+            task("pending", TaskStatus.PENDING, null, null, null),
+        )
+
+        val history = StatisticsEngine.calculate(tasks, referenceDate, zone).recentHistory
+        assertEquals(listOf("new", "old"), history.map(Task::id))
+    }
+
+    @Test
+    fun `上海零点边界按本地日期计算`() {
+        val boundary = "2026-07-15T16:00:00Z"
+        val task = task(
+            "boundary",
             TaskStatus.COMPLETED,
-            10,
+            start = "2026-07-16",
+            end = "2026-07-16",
+            completed = boundary,
         )
 
-        val trend = StatisticsEngine.calculate(listOf(previousWeek), monday).weeklyTrend
-        val endedPreviousWeek = trend.first {
-            it.startDate == LocalDate.of(2026, 7, 13)
-        }
-        val currentWeek = trend.last()
-
-        assertTrue(endedPreviousWeek.isEnded)
-        assertEquals(1.0, endedPreviousWeek.fulfillmentRate!!, 0.0001)
-        assertEquals(LocalDate.of(2026, 7, 20), currentWeek.startDate)
-        assertFalse(currentWeek.isEnded)
-        assertEquals(0, currentWeek.sampleCount)
-        assertNull(currentWeek.fulfillmentRate)
+        val snapshot = StatisticsEngine.calculate(listOf(task), LocalDate.of(2026, 7, 16), zone)
+        assertEquals(1, snapshot.dailyActivity.last().completed)
+        assertEquals(1, snapshot.currentStreakDays)
     }
+
+    private fun completed(
+        id: String,
+        date: LocalDate,
+        categoryId: String = TaskCategories.INBOX_ID,
+    ): Task = task(
+        id,
+        TaskStatus.COMPLETED,
+        start = null,
+        end = null,
+        completed = date.atTime(12, 0).atZone(zone).toInstant().toString(),
+        categoryId = categoryId,
+    )
+
+    private fun passed(id: String, date: LocalDate): Task = task(
+        id,
+        TaskStatus.PASS,
+        start = null,
+        end = null,
+        completed = date.atTime(12, 0).atZone(zone).toInstant().toString(),
+    )
 
     private fun task(
         id: String,
-        timeType: TaskTimeType,
-        targetDate: LocalDate?,
-        line: QuestLine,
         status: TaskStatus,
-        settledAt: Long?,
+        start: String?,
+        end: String?,
+        completed: String?,
+        categoryId: String = TaskCategories.INBOX_ID,
     ): Task = Task(
         id = id,
-        seriesId = id,
+        seriesId = "series-$id",
         title = id,
-        timeType = timeType,
-        targetDate = targetDate,
-        questLine = line,
+        categoryId = categoryId,
+        startDate = start?.let(LocalDate::parse),
+        endDate = end?.let(LocalDate::parse),
         status = status,
-        recurrence = Recurrence.ONCE,
         sortOrder = 0,
         createdAt = 0,
-        updatedAt = settledAt ?: 0,
-        settledAt = settledAt,
+        updatedAt = 0,
+        settledAt = completed?.let { value ->
+            runCatching { java.time.Instant.parse(value) }
+                .getOrElse {
+                    LocalDate.parse(value).atTime(12, 0)
+                        .atZone(TaskDateRules.zoneId)
+                        .toInstant()
+                }
+                .toEpochMilli()
+        },
     )
 }

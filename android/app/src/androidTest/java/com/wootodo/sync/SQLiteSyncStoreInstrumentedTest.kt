@@ -648,7 +648,13 @@ class SQLiteSyncStoreInstrumentedTest {
     @Test
     fun `固定显示配置实体拒绝tombstone且整页回滚`() {
         val store = SQLiteSyncStore(database, credentials)
-        val display = displayConfiguration("保留配置")
+        val local = displayConfiguration("本机保留配置")
+        writeDisplayConfiguration(
+            database.writableDatabase,
+            local,
+            isLocalOverride = true,
+        )
+        val display = displayConfiguration("远端配置")
         store.applyRemoteOperations(
             listOf(
                 operation(
@@ -678,7 +684,7 @@ class SQLiteSyncStoreInstrumentedTest {
             )
         }
 
-        assertEquals(display, readDisplayConfiguration(database.readableDatabase))
+        assertEquals(local, readDisplayConfiguration(database.readableDatabase))
         assertEquals(1L, store.currentCursor())
         assertEquals(1, rowCount("sync_applied_operations"))
         assertEquals(0, rowCount("sync_tombstones"))

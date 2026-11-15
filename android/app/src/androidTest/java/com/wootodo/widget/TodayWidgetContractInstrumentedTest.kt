@@ -43,8 +43,8 @@ class TodayWidgetContractInstrumentedTest {
             }
         }
         // 桌面用「70 × 格数 − 30」反推占位：4 列 = 250dp，2 行 = 110dp。
-        assertEquals("250dp", values["minWidth"])
-        assertEquals("110dp", values["minHeight"])
+        assertEquals(250f, values["minWidth"].dimensionValue(), 0.01f)
+        assertEquals(110f, values["minHeight"].dimensionValue(), 0.01f)
         assertEquals("4", values["targetCellWidth"])
         assertEquals("2", values["targetCellHeight"])
     }
@@ -136,3 +136,9 @@ class TodayWidgetContractInstrumentedTest {
         settledAt = if (status == TaskStatus.PENDING) null else 1_000,
     )
 }
+
+private fun String?.dimensionValue(): Float =
+    requireNotNull(this) { "缺少尺寸属性" }
+        .removeSuffix("dip")
+        .removeSuffix("dp")
+        .toFloat()

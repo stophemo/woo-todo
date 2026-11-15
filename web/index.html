@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>无我待办 | 本地优先的跨设备待办</title>
-  <meta name="description" content="无我待办是一款本地优先的跨设备待办应用。手机规划，电脑执行；macOS、Android 与 Windows 均可在本地使用，并通过加密同步保持一致。">
+  <meta name="description" content="无我待办是一款本地优先的待办应用。手机规划，电脑执行；macOS 与 Android 各自本地运行，并通过端到端加密同步保持一致。">
   <meta name="author" content="Woo Todo">
   <meta name="theme-color" content="#191c1a">
   <meta name="color-scheme" content="light">
@@ -13,7 +13,7 @@
   <meta property="og:locale" content="zh_CN">
   <meta property="og:url" content="https://woo-todo.vercel.app/">
   <meta property="og:title" content="无我待办 | 本地优先的跨设备待办">
-  <meta property="og:description" content="手机规划，电脑执行。macOS、Android 与 Windows 均可本地使用，同一网络即可加密同步。">
+  <meta property="og:description" content="手机规划，电脑执行。macOS 与 Android 均可本地使用，同一网络即可加密同步。">
   <meta property="og:image" content="https://woo-todo.vercel.app/assets/og-cover.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -147,10 +147,6 @@
             <span>Android</span>
             <strong>v0.2.2 正式版</strong>
           </div>
-          <div class="availability-item availability-windows">
-            <span>Windows</span>
-            <strong>本版暂缓</strong>
-          </div>
         </div>
       </div>
     </section>
@@ -172,7 +168,7 @@
           <article class="feature-row">
             <span class="feature-index">02</span>
             <h3>手机安排，电脑执行</h3>
-            <p>Android 提供今日与明日规划、提醒和桌面 Widget；Mac 与 Windows 通过菜单栏、快捷键与悬浮任务板承接执行。</p>
+            <p>Android 提供今日与明日规划、提醒和桌面 Widget；Mac 通过菜单栏、快捷键与桌面任务板承接执行。</p>
           </article>
           <article class="feature-row">
             <span class="feature-index">03</span>
@@ -190,13 +186,13 @@
             <p class="section-kicker">同一网络同步</p>
             <h2 id="sync-title">三端按自己的信任边界同步</h2>
           </div>
-          <p>不需要互联网、Woo Todo 账号或固定服务器地址。在 Mac 或 Windows 开启同步主机，Android 扫描二维码或粘贴配对链接即可加入。</p>
+          <p>不需要互联网、Woo Todo 账号或固定服务器地址。在 Mac 开启同步主机，Android 扫描二维码或粘贴配对链接即可加入。</p>
         </header>
 
-        <div class="sync-topology" aria-label="Mac、Windows 与 Android 同一网络加密同步">
+        <div class="sync-topology" aria-label="Mac 与 Android 同一网络加密同步">
           <div class="device device-desktop">
             <div class="desktop-shape" aria-hidden="true"><span></span></div>
-            <strong>Mac / Windows</strong>
+            <strong>Mac</strong>
             <small>本地同步主机</small>
           </div>
           <div class="connection">
@@ -250,7 +246,7 @@
             <p class="section-kicker">v0.2.2</p>
             <h2 id="download-title">下载正式版</h2>
           </div>
-          <p>macOS 与 Android 提供 v0.2.2 正式版，两者都支持应用内更新。Windows 版本次暂缓，可继续使用 v0.2.1 的免安装 ZIP。</p>
+          <p>macOS 与 Android 提供 v0.2.2 正式版，两者都支持应用内更新。只做 Android 与 macOS 两个版本。</p>
         </header>
 
         <div class="download-list">
@@ -270,24 +266,7 @@
             <p>今日与明日规划、定时提醒和桌面 Widget。</p>
             <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.2/Woo-Todo-v0.2.2-android.apk">下载 APK</a>
           </article>
-          <article class="download-item">
-            <div class="platform-name">
-              <span class="platform-mark platform-windows">W</span>
-              <div><strong>Windows</strong><small>Windows 10 2004+ · x64</small></div>
-            </div>
-            <p>版本暂缓发布，可继续使用 v0.2.1。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.1/Woo-Todo-v0.2.1-windows-x64.zip">下载 v0.2.1</a>
-          </article>
         </div>
-
-        <aside class="windows-roadmap" aria-label="Windows 正式版状态">
-          <div class="roadmap-status"><i></i><span>本版暂缓</span></div>
-          <div>
-            <p>Windows v0.2.1</p>
-            <h3>Windows 版本暂缓随 v0.2.2 发布</h3>
-          </div>
-          <p>功能与 v0.2.2 一致，v0.2.1 的免安装 ZIP 仍可正常下载使用。</p>
-        </aside>
 
         <div class="release-links">
           <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.2">查看发布说明</a>

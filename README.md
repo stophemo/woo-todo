@@ -32,7 +32,7 @@
 
 ### 第二天 · 打开电脑直接开始
 
-macOS 的原生任务小组件停留在桌面层，也可切换为普通或置顶任务板，并支持毛玻璃、鼠标穿透和拖动调整宽高；Android Widget 留在手机桌面；Windows 则通过 Tauri 2 提供可置顶、可穿透的悬浮任务板。
+macOS 的原生任务小组件停留在桌面层，也可切换为普通或置顶任务板，并支持毛玻璃、鼠标穿透和拖动调整宽高；Android Widget 留在手机桌面，睡前规划和任务提醒都在手机上完成。
 
 ### 周期结束 · 完成，或者诚实 Pass
 
@@ -41,24 +41,21 @@ macOS 的原生任务小组件停留在桌面层，也可切换为普通或置�
 ## 它刻意做少，但把这些做好
 
 - **本地优先**：新增、编辑、完成、排序都只依赖本机数据库，断网照常使用。
-- **轻量且贴近平台**：macOS 使用 AppKit/SwiftUI，Android 使用 Kotlin/RemoteViews，Windows 使用 Tauri 2、WebView2 与 Rust；领域规则继续由 Rust 共享，不引入 Electron、Flutter 或 .NET 桌面运行时。
+- **轻量且贴近平台**：macOS 使用 AppKit/SwiftUI，Android 使用 Kotlin/RemoteViews；领域规则由 Rust 共享，不引入 Electron、Flutter 或浏览器运行时。
 - **适合真实生活的周期**：支持日、周、月、闲时，一次性或重复任务，以及主线、支线、外传。
 - **看见真实结果，也允许纠错**：完成、`Pass`、历史与履约统计都会保留；当前周期内误点完成时，再点一次即可撤销。
-- **设置跟着设备走**：三端的今日标题、副标题和计时模板可随任务一起加密同步，更新应用后不用重设。
-- **升级路径清楚**：Android 从 `v0.1.14` 起、macOS 从 `v0.1.15` 起可在应用内完成后续正式版更新；Android 仍保留系统安装确认。Windows 使用免安装 ZIP，当前通过正式 Release 手动下载替换，不改动本地任务和设置。
+- **显示设置留在本机**：今日标题、副标题和计时模板属于个人偏好，只保存在当前设备，不进入同步空间，换设备或别人使用都看不到你的写法。
+- **升级路径清楚**：Android 从 `v0.1.14` 起、macOS 从 `v0.1.15` 起可在应用内完成后续正式版更新；Android 仍保留系统安装确认。
 - **数据边界清楚**：默认只保存在设备上；启用同步时，任务正文以 AES-256-GCM 密文离开设备。
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.2.2`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.2)，正式提供 macOS ZIP 与 Android APK。Windows 版本次暂缓发布，可继续使用 `v0.2.1` 的免安装 ZIP，功能与 v0.2.2 一致。
+当前稳定版是 [`v0.2.2`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.2)，只提供 macOS 与 Android 两个正式版本。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
 | macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、完整任务管理与统计 | `v0.2.2` 正式版 |
 | Android 13+ | 睡前规划、任务提醒、今日 Widget 与移动查看 | `v0.2.2` 正式版 |
-| Windows 10 build 19041+ / Windows 11（仅 x64） | Tauri 悬浮任务板、任务管理、统计与加密同步 | `v0.2.1` 正式版，本版暂缓 |
-
-Windows 已支持自建服务、同一网络与第三方 WebDAV 三种互斥同步方式，以及设备配对和撤销。同步凭据保存在 Windows Credential Manager，不写入 `settings.json`。Windows 正式包为免安装 ZIP，当前未签名，升级时重新下载并替换 `WooTodo.exe` 即可。
 
 ## 下载 v0.2.2
 
@@ -68,7 +65,7 @@ Windows 已支持自建服务、同一网络与第三方 WebDAV 三种互斥同�
 | Android | [Woo-Todo-v0.2.2-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.2/Woo-Todo-v0.2.2-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
 | 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.2/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
 
-`v0.2.2` 集中在 Android 的移动端可用性：任务行不再常驻 `Pass` 按钮，改用行内操作菜单，任意状态的任务都能打开详情，已完成与 `Pass` 的任务进入只读页；新增右滑完成或撤销、左滑删除，配合提示条直接撤销；编辑页补上返回与未保存提醒；统计页折叠没有记录的周期。macOS 本次没有功能变更，与 `v0.2.1` 行为一致。Windows 版本暂缓发布，仍可从 `v0.2.1` 下载免安装 ZIP。
+`v0.2.2` 集中在 Android 的移动端可用性：任务行不再常驻 `Pass` 按钮，改用行内操作菜单，任意状态的任务都能打开详情，已完成与 `Pass` 的任务进入只读页；新增右滑完成或撤销、左滑删除，配合提示条直接撤销；编辑页补上返回与未保存提醒；统计页折叠没有记录的周期。macOS 本次没有功能变更，与 `v0.2.1` 行为一致。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名，自建服务或同一网络身份在更新后仍可能再次请求 Keychain 授权；第三方 WebDAV 配置会在首次迁移后改由本机加密文件自动回填。Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -86,21 +83,15 @@ Windows 已支持自建服务、同一网络与第三方 WebDAV 三种互斥同�
 2. 点击右下角 `+` 新建任务，也可以设置重复规则和指定时间提醒；误点完成时再次勾选即可撤销。
 3. 可在 Android 桌面的“微件”或“组件”入口添加 Woo Todo 今日 Widget；入口名称因系统桌面而异。
 
-### Windows
-
-1. 下载并解压 `Woo-Todo-v0.2.1-windows-x64.zip`，运行 `WooTodo.exe`。如果 SmartScreen 拦截，请确认文件来自项目正式 Release 并核对 `SHA256SUMS.txt`。
-2. 主窗口支持今日、明日、本周、本月、闲时、历史和统计；可新增、编辑、完成、撤销、`Pass`、删除及同级排序任务。
-3. 工具栏可显示独立悬浮任务板；“显示”页面可调整任务板不透明度、置顶、鼠标穿透和桌面小组件模式。同步运行时和任务提醒继续由 Rust 与 Windows 系统组件负责。
-
 ## 同步，按自己的信任边界选
 
 Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；任务始终留在本地。
 
-- **同一网络，最快开始**：由 Mac 或 Windows PC 开启局域网同步服务，Android 扫码连接，适合设备经常处于同一网络的场景。
+- **同一网络，最快开始**：由 Mac 开启局域网同步服务，Android 扫码连接，适合设备经常处于同一网络的场景。
 - **第三方 WebDAV，跨网络使用**：填写服务商提供的 HTTPS WebDAV 根目录。Woo Todo 只上传端到端加密的增量对象，服务商无法读取任务正文。
 - **Cloudflare Worker + D1，自己托管**：适合希望掌控在线服务端与设备授权的人；服务端仍接触不到任务明文。
 
-三种同步方式互斥，但都不会成为本地操作的前置条件。macOS 与 Windows 会分别保留已配置的局域网/自建服务和 WebDAV 身份，切回时无需重填；macOS 的 WebDAV 完整配置使用本机 AES-256-GCM 加密文件保存并自动回填。切换同时保留本地任务和显示配置，并从远端 Lamport 水位之后建立加密基线。同一网络同步会在三端绕过系统 HTTP 代理，避免 `.local` 或私有地址被错误转发；全局 TUN/VPN 模式仍需把局域网配置为直连。配置二维码和配对链接可能含有完整凭据或一次性 secret，只应在自己的设备旁展示，用完立即隐藏或清理剪贴板。
+三种同步方式互斥，但都不会成为本地操作的前置条件。macOS 与 Android 都会保留已配置的局域网/自建服务和 WebDAV 身份，切回时无需重填；macOS 的 WebDAV 完整配置使用本机 AES-256-GCM 加密文件保存并自动回填。切换同时保留本地任务和显示配置，并从远端 Lamport 水位之后建立加密基线。同一网络同步会在两端绕过系统 HTTP 代理，避免 `.local` 或私有地址被错误转发；全局 TUN/VPN 模式仍需把局域网配置为直连。配置二维码和配对链接可能含有完整凭据或一次性 secret，只应在自己的设备旁展示，用完立即隐藏或清理剪贴板。
 
 ## 数据归你，不是口号
 
@@ -111,7 +102,7 @@ Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；�
 
 ## 开发
 
-三端 UI 彼此不直接依赖；macOS 与 Android 保持原生实现，Windows 使用 Tauri 2。领域、SQLite 语义与通知计划逐步收敛到 `shared/core-rust/`，同步协议继续通过 `shared/schema/` 与 `shared/fixtures/` 对齐。常用检查命令：
+两端 UI 彼此不直接依赖；macOS 与 Android 均保持原生实现。领域、SQLite 语义与通知计划逐步收敛到 `shared/core-rust/`，同步协议继续通过 `shared/schema/` 与 `shared/fixtures/` 对齐。常用检查命令：
 
 ```bash
 npm install
@@ -121,7 +112,6 @@ npm run test:backend
 cargo test --manifest-path shared/core-rust/Cargo.toml --locked --all-targets
 ./android/gradlew -p android testDebugUnitTest
 swift test --package-path macos
-cargo test --manifest-path windows/Cargo.toml --locked --all-targets
 ```
 
 修改共享协议时，需要同时更新 JSON Schema、fixture、Swift/Kotlin 模型和后端校验。

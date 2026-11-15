@@ -36,6 +36,23 @@ class TodayWidgetContractInstrumentedTest {
         get() = ApplicationProvider.getApplicationContext()
 
     @Test
+    fun `小组件按标准格数公式声明占位避免图标落进组件区域`() {
+        val parser = context.resources.getXml(R.xml.today_widget_info)
+        val values = mutableMapOf<String, String>()
+        while (parser.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+            if (parser.eventType != org.xmlpull.v1.XmlPullParser.START_TAG) continue
+            repeat(parser.attributeCount) { index ->
+                values[parser.getAttributeName(index)] = parser.getAttributeValue(index)
+            }
+        }
+        // 桌面用「70 × 格数 − 30」反推占位：4 列 = 250dp，2 行 = 110dp。
+        assertEquals("250dp", values["minWidth"])
+        assertEquals("110dp", values["minHeight"])
+        assertEquals("4", values["targetCellWidth"])
+        assertEquals("2", values["targetCellHeight"])
+    }
+
+    @Test
     fun `小组件集合服务允许桌面宿主通过系统权限绑定`() {
         val serviceInfo = context.packageManager.getServiceInfo(
             ComponentName(context, TodayWidgetService::class.java),

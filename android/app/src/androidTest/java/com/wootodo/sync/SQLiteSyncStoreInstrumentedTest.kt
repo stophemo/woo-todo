@@ -611,13 +611,12 @@ class SQLiteSyncStoreInstrumentedTest {
     }
 
     @Test
-    fun `未绑定显示配置会在首次绑定后只补录一次`() {
+    fun `显示配置只留在本机，绑定后也不会补录进同步队列`() {
         val payload = displayConfiguration("首次配置")
         val sqlite = database.writableDatabase
         sqlite.beginTransaction()
         try {
             writeDisplayConfiguration(sqlite, payload)
-            assertEquals(false, SQLiteLocalMutationRecorder.recordDisplayConfiguration(sqlite, payload))
             sqlite.setTransactionSuccessful()
         } finally {
             sqlite.endTransaction()
@@ -625,15 +624,11 @@ class SQLiteSyncStoreInstrumentedTest {
         assertEquals(0, rowCount("sync_outbox"))
 
         val store = SQLiteSyncStore(database, credentials)
-        val operation = store.pendingOperations(50).single()
 
-        assertEquals(DISPLAY_CONFIGURATION_ENTITY_ID, operation.entityId)
-        assertEquals(SyncOperationKind.UPSERT, operation.kind)
-        assertEquals(payload, decrypt(operation))
+        // 标题、副标题与计时模板属于个人偏好，不进同步空间。
+        assertTrue(store.pendingOperations(50).isEmpty())
         assertEquals(payload, readDisplayConfiguration(database.readableDatabase))
-
-        SQLiteSyncStore(database, credentials)
-        assertEquals(1, rowCount("sync_outbox"))
+        assertEquals(0, rowCount("sync_outbox"))
     }
 
     @Test
@@ -652,65 +647,35 @@ class SQLiteSyncStoreInstrumentedTest {
     }
 
     @Test
-    fun `显示配置按版本合并且重复远端操作不重复刷新`() {
+    fun `远端显示配置不会覆盖本机标题副标题`() {
         val refreshed = mutableListOf<DisplayConfigurationPayload>()
+        val local = displayConfiguration("本机标题")
+        writeDisplayConfiguration(
+            database.writableDatabase,
+            local,
+            isLocalOverride = true,
+        )
         val store = SQLiteSyncStore(
             database = database,
             credentials = credentials,
             onDisplayConfigurationChanged = refreshed::add,
         )
-        val first = displayConfiguration("远端版本一")
-        val second = displayConfiguration("远端版本二")
-        val firstOperation = operation(
-            serverSeq = 1,
-            opId = "operation-display-first",
-            lamport = 10,
-            payload = first,
-        )
-
-        store.applyRemoteOperations(listOf(firstOperation), advancingCursorTo = 1)
-        store.applyRemoteOperations(
-            listOf(
-                operation(
-                    serverSeq = 2,
-                    opId = "operation-display-older",
-                    lamport = 9,
-                    payload = second,
-                ),
-            ),
-            advancingCursorTo = 2,
-        )
-        store.applyRemoteOperations(
-            listOf(
-                corruptedOperation(
-                    serverSeq = 3,
-                    opId = firstOperation.opId,
-                    entityId = DISPLAY_CONFIGURATION_ENTITY_ID,
-                    kind = SyncOperationKind.UPSERT,
-                    lamport = 99,
-                ),
-            ),
-            advancingCursorTo = 3,
-        )
-
-        assertEquals(first, readDisplayConfiguration(database.readableDatabase))
-        assertEquals(listOf(first), refreshed)
 
         store.applyRemoteOperations(
             listOf(
                 operation(
-                    serverSeq = 4,
-                    opId = "operation-display-newer",
-                    lamport = 11,
-                    payload = second,
+                    serverSeq = 1,
+                    opId = "operation-display-remote",
+                    lamport = 10,
+                    payload = displayConfiguration("别人的标题"),
                 ),
             ),
-            advancingCursorTo = 4,
+            advancingCursorTo = 1,
         )
 
-        assertEquals(second, readDisplayConfiguration(database.readableDatabase))
-        assertEquals(listOf(first, second), refreshed)
-        assertEquals(3, rowCount("sync_applied_operations"))
+        assertEquals(local, readDisplayConfiguration(database.readableDatabase))
+        assertTrue(refreshed.isEmpty())
+        assertEquals(1, rowCount("sync_applied_operations"))
     }
 
     @Test

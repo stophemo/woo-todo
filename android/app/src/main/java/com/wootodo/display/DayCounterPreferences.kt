@@ -13,7 +13,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 
 data class DayCounterSettings(
     val headerTemplate: String = DayCounterText.DEFAULT_HEADER_TEMPLATE,
-    val subtitleTemplate: String = "",
+    val subtitleTemplate: String = DayCounterText.DEFAULT_SUBTITLE_TEMPLATE,
     val startDate: LocalDate = LocalDate.now(),
     val deadlineDate: LocalDate = LocalDate.now(),
 ) {
@@ -39,6 +39,9 @@ object DayCounterText {
     }
 
     const val DEFAULT_HEADER_TEMPLATE = "今日任务"
+
+    /** 默认副标题示例，让用户一上手就能看出模板变量怎么用。 */
+    const val DEFAULT_SUBTITLE_TEMPLATE = "{month}月{day}日 · {weekday}"
     const val WEEKDAY_TOKEN = "{weekday}"
     const val WEEKDAY_SHORT_TOKEN = "{weekdayShort}"
     const val WEEKDAY_EN_TOKEN = "{weekdayEn}"
@@ -233,7 +236,6 @@ object DayCounterPreferences {
         val normalized = settings.normalized()
         val appContext = context.applicationContext
         val application = appContext as? com.wootodo.WooTodoApplication
-        var recordedForSync = false
         if (application != null) {
             val sqlite = application.database.writableDatabase
             sqlite.beginTransaction()
@@ -243,10 +245,7 @@ object DayCounterPreferences {
                     !readDisplayConfigurationLocalOverride(sqlite)
                 ) {
                     writeDisplayConfiguration(sqlite, payload, isLocalOverride = true)
-                    recordedForSync = SQLiteLocalMutationRecorder.recordDisplayConfiguration(
-                        sqlite,
-                        payload,
-                    )
+                    // 标题、副标题与计时模板属于个人偏好：只写本机库，不进同步队列。
                 }
                 sqlite.setTransactionSuccessful()
             } finally {
@@ -254,7 +253,7 @@ object DayCounterPreferences {
             }
         }
         persistPreferences(appContext, normalized)
-        return recordedForSync
+        return false
     }
 
     fun applyRemote(context: Context, payload: DisplayConfigurationPayload) {

@@ -35,19 +35,6 @@ data class DisplayConfigurationMergeDecision(
     val resolvedVersion: EntityVersion,
 )
 
-object DisplayConfigurationMergePolicy {
-    fun resolve(
-        currentConfiguration: DisplayConfigurationPayload?,
-        currentVersion: EntityVersion?,
-        incomingConfiguration: DisplayConfigurationPayload,
-        incomingVersion: EntityVersion,
-    ): DisplayConfigurationMergeDecision {
-        if (currentVersion == null || incomingVersion > currentVersion) {
-            return DisplayConfigurationMergeDecision(incomingConfiguration, incomingVersion)
-        }
-        return DisplayConfigurationMergeDecision(currentConfiguration, currentVersion)
-    }
-}
 
 /** tombstone 之外先合并终态语义，其余字段使用 (lamport, deviceId) 的确定性 LWW。 */
 object TaskMergePolicy {
@@ -244,24 +231,6 @@ object SQLiteLocalMutationRecorder {
             "entity_id = ? COLLATE NOCASE",
             arrayOf(normalizedId),
         )
-    }
-
-    fun recordDisplayConfiguration(
-        database: SQLiteDatabase,
-        payload: DisplayConfigurationPayload,
-        createdAt: Long = System.currentTimeMillis(),
-    ): Boolean {
-        val version = nextLocalVersion(database) ?: return false
-        enqueue(
-            database = database,
-            entityId = payload.id,
-            kind = SyncOperationKind.UPSERT,
-            version = version,
-            payloadJson = SyncJsonCodec.encodeTaskPayload(payload),
-            createdAt = createdAt,
-        )
-        writeVersion(database, payload.id, version, isTombstone = false)
-        return true
     }
 
     fun recordDeferredDeletion(database: SQLiteDatabase, entityId: String, deletedAt: Long) {
@@ -679,11 +648,7 @@ class SQLiteSyncStore(
         deferredDeletions.forEach { (entityId, deletedAt) ->
             SQLiteLocalMutationRecorder.recordDeletion(sqlite, entityId, deletedAt)
         }
-        displayConfiguration
-            ?.takeIf { readDisplayConfigurationLocalOverride(sqlite) }
-            ?.let { payload ->
-                SQLiteLocalMutationRecorder.recordDisplayConfiguration(sqlite, payload)
-            }
+        // 显示配置不再作为同步基线：标题、副标题与计时模板只留在本机。
     }
 
     private fun materializeOperation(
@@ -746,20 +711,11 @@ class SQLiteSyncStore(
         val incomingVersion = EntityVersion(operation.lamport, operation.deviceId)
         val currentVersion = readVersion(sqlite, payload.id)
         require(currentVersion?.isTombstone != true) { "显示配置不能处于删除状态" }
-        val currentConfiguration = readDisplayConfiguration(sqlite)
-        val decision = DisplayConfigurationMergePolicy.resolve(
-            currentConfiguration = currentConfiguration,
-            currentVersion = currentVersion?.version,
-            incomingConfiguration = payload,
-            incomingVersion = incomingVersion,
-        )
-        if (currentVersion == null || decision.resolvedVersion != currentVersion.version) {
-            writeVersion(sqlite, payload.id, decision.resolvedVersion, isTombstone = false)
+        // 显示配置已改为设备本地设置：只推进版本水位，绝不覆盖本机偏好。
+        if (currentVersion == null || incomingVersion > currentVersion.version) {
+            writeVersion(sqlite, payload.id, incomingVersion, isTombstone = false)
         }
-        val resolved = decision.resolvedConfiguration
-        if (resolved == null || resolved == currentConfiguration) return null
-        writeDisplayConfiguration(sqlite, resolved, isLocalOverride = false)
-        return resolved
+        return null
     }
 
     private fun applyTask(

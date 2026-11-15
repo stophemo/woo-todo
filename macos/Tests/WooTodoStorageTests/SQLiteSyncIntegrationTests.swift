@@ -178,8 +178,8 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.pendingOperations(limit: 50) == baseline)
     }
 
-    @Test("首次绑定会把已有显示配置作为加密基线且不会重复入队")
-    func firstBindingCreatesDisplayConfigurationBaseline() async throws {
+    @Test("显示配置只留在本机，绑定同步身份后也不会入队")
+    func displayConfigurationStaysLocal() async throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")
         let display = try displayConfiguration(
             header: "{weekdayEn} · 今日任务",
@@ -192,21 +192,14 @@ struct SQLiteSyncIntegrationTests {
 
         let configuration = syncConfiguration()
         try repository.configureSync(configuration)
-        let baseline = try await repository.pendingOperations(limit: 50)
-        #expect(baseline.count == 1)
-        #expect(baseline.first?.entityId == SQLiteTaskRepository.displayConfigurationEntityID)
-        guard let operation = baseline.first,
-              case .displayConfiguration(let payload) = try open(
-                  operation,
-                  configuration: configuration
-              ) else {
-            Issue.record("首次绑定应生成显示配置正文")
-            return
-        }
-        #expect(payload == display)
+        // 标题、副标题与计时模板属于个人偏好，不能出现在同步队列里。
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+        #expect(try repository.displayConfiguration() == display)
 
+        try repository.saveDisplayConfiguration(display)
         try repository.configureSync(configuration)
-        #expect(try await repository.pendingOperations(limit: 50) == baseline)
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+        #expect(try repository.displayConfiguration() == display)
     }
 
     @Test("重置同步绑定保留任务与显示配置并为新空间重新生成快照")
@@ -237,10 +230,8 @@ struct SQLiteSyncIntegrationTests {
         )
         try repository.configureSync(replacement)
         let replacementOperations = try await repository.pendingOperations(limit: 50)
-        #expect(Set(replacementOperations.map(\.entityId)) == Set([
-            task.id.uuidString.lowercased(),
-            SQLiteTaskRepository.displayConfigurationEntityID,
-        ]))
+        // 换绑只为任务重建快照，显示配置仍然只留在本机。
+        #expect(Set(replacementOperations.map(\.entityId)) == Set([task.id.uuidString.lowercased()]))
     }
 
     @Test("原子替换同步绑定会直接重绑并保留本地任务")
@@ -473,20 +464,11 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await localOnly.pendingOperations(limit: 50).isEmpty)
 
         try localOnly.configureSync(configuration)
-        let recovered = try await localOnly.pendingOperations(limit: 50)
-        #expect(recovered.count == 1)
-        guard let operation = recovered.first,
-              case .displayConfiguration(let payload) = try open(
-                  operation,
-                  configuration: configuration
-              ) else {
-            Issue.record("恢复同步密钥后应补录显示配置正文")
-            return
-        }
-        #expect(payload == latest)
-
+        // 恢复同步身份后也不会补录显示配置，本机偏好始终不离开设备。
+        #expect(try await localOnly.pendingOperations(limit: 50).isEmpty)
+        #expect(try localOnly.displayConfiguration() == latest)
         try localOnly.configureSync(configuration)
-        #expect(try await localOnly.pendingOperations(limit: 50) == recovered)
+        #expect(try await localOnly.pendingOperations(limit: 50).isEmpty)
     }
 
     @Test("同步身份不匹配后本地仓储仍可编辑并等待正确身份恢复")
@@ -786,44 +768,31 @@ struct SQLiteSyncIntegrationTests {
         #expect(localOperation.lamport == 3)
     }
 
-    @Test("显示配置使用 Lamport 与设备 ID 做 LWW 且远端应用不回写 outbox")
-    func displayConfigurationUsesLWW() async throws {
+    @Test("远端显示配置不会覆盖本机标题副标题，也不回写 outbox")
+    func remoteDisplayConfigurationIsIgnored() async throws {
         let configuration = syncConfiguration()
+        let local = try displayConfiguration(header: "本机标题", subtitle: "本机副标题")
         let repository = try SQLiteTaskRepository(
             path: ":memory:",
             syncConfiguration: configuration
         )
-        let newest = try displayConfiguration(header: "远端新标题")
-        let stale = try displayConfiguration(header: "远端旧标题")
+        try repository.saveDisplayConfiguration(local)
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
 
         try await repository.applyRemoteOperations([
             try remoteDisplayConfigurationOperation(
-                newest,
+                try displayConfiguration(header: "别人的标题", subtitle: "别人的副标题"),
                 lamport: 2,
                 serverSequence: 1,
                 deviceID: "device-z",
                 configuration: configuration
             ),
         ], advancingCursorTo: 1)
-        try await repository.applyRemoteOperations([
-            try remoteDisplayConfigurationOperation(
-                stale,
-                lamport: 1,
-                serverSequence: 2,
-                deviceID: "device-a",
-                configuration: configuration
-            ),
-        ], advancingCursorTo: 2)
 
-        #expect(try repository.displayConfiguration() == newest)
-        #expect(try await repository.currentCursor() == 2)
+        // 游标照常推进，但本机偏好保持不变。
+        #expect(try await repository.currentCursor() == 1)
+        #expect(try repository.displayConfiguration() == local)
         #expect(try await repository.pendingOperations(limit: 50).isEmpty)
-
-        let local = try displayConfiguration(header: "本地继续修改")
-        try repository.saveDisplayConfiguration(local)
-        let operation = try #require(try await repository.pendingOperations(limit: 1).first)
-        #expect(operation.lamport == 3)
-        #expect(operation.entityId == SQLiteTaskRepository.displayConfigurationEntityID)
     }
 
     @Test("固定显示配置实体拒绝 tombstone 且整页回滚")
@@ -940,8 +909,8 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.pendingOperations(limit: 50).isEmpty)
     }
 
-    @Test("WebDAV 会跨设备同步标题和副标题并跳过已应用对象")
-    func webDavSynchronizesDisplayConfigurationAcrossDevices() async throws {
+    @Test("WebDAV 不会把标题副标题带到另一台设备")
+    func webDavKeepsDisplayConfigurationLocal() async throws {
         let senderConfiguration = syncConfiguration()
         let receiverConfiguration = SQLiteSyncConfiguration(
             vaultId: senderConfiguration.vaultId,
@@ -953,31 +922,22 @@ struct SQLiteSyncIntegrationTests {
             syncConfiguration: senderConfiguration
         )
         let receiver = try SQLiteTaskRepository(path: ":memory:")
-        try receiver.seedDisplayConfiguration(try displayConfiguration(header: "新设备默认标题"))
+        let receiverOwn = try displayConfiguration(header: "新设备默认标题")
+        try receiver.seedDisplayConfiguration(receiverOwn)
         try receiver.configureSync(receiverConfiguration)
         #expect(try await receiver.pendingOperations(limit: 50).isEmpty)
 
-        let expected = try displayConfiguration(
-            header: "西安 · {elapsedMonthsDays:2026-03-03}",
-            subtitle: "DDL · {deadlineMonthsDays:2026-11-17}",
-            startDate: "2026-03-03",
-            deadlineDate: "2026-11-17"
+        try sender.saveDisplayConfiguration(
+            try displayConfiguration(
+                header: "西安 · {elapsedMonthsDays:2026-03-03}",
+                subtitle: "DDL · {deadlineMonthsDays:2026-11-17}",
+                startDate: "2026-03-03",
+                deadlineDate: "2026-11-17"
+            )
         )
-        try sender.saveDisplayConfiguration(expected)
-        let push = try #require(try await sender.pendingOperations(limit: 1).first)
-        let operation = try WebDavOperation(
-            vaultId: senderConfiguration.vaultId,
-            deviceId: senderConfiguration.deviceId,
-            operation: push
-        )
-
-        #expect(try await receiver.pendingWebDavOperationIDs([push.opId]) == [push.opId])
-        try await receiver.applyWebDavOperations([operation])
-        #expect(try receiver.displayConfiguration() == expected)
-        #expect(try await receiver.pendingWebDavOperationIDs([push.opId]).isEmpty)
-
-        try await receiver.applyWebDavOperations([operation])
-        #expect(try receiver.displayConfiguration() == expected)
+        // 显示配置不进同步队列，因此对端永远拿不到发送方的标题写法。
+        #expect(try await sender.pendingOperations(limit: 50).isEmpty)
+        #expect(try receiver.displayConfiguration() == receiverOwn)
         #expect(try await receiver.currentCursor() == 0)
     }
 

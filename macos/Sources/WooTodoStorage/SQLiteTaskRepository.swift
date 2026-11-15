@@ -620,11 +620,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             try execute("BEGIN IMMEDIATE TRANSACTION")
             do {
                 try upsertDisplayConfiguration(payload, isLocalOverride: true)
-                if let configuration = syncConfiguration {
-                    try enqueueLocalDisplayConfiguration(payload, configuration: configuration)
-                } else if hasPersistedSyncIdentity {
-                    try recordDeferredDisplayConfiguration()
-                }
+                // 今日标题、副标题与计时模板属于个人偏好：只留在本机，
+                // 既不进 outbox，也不会被别人加入同一同步空间后看到。
                 try execute("COMMIT")
             } catch {
                 try? execute("ROLLBACK")
@@ -836,13 +833,6 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             """
         ) {
             try enqueueLocalTask(task, kind: .upsert, configuration: configuration)
-        }
-        if let displayConfiguration = try displayConfiguration(),
-           try displayConfigurationIsLocalOverride() {
-            try enqueueLocalDisplayConfiguration(
-                displayConfiguration,
-                configuration: configuration
-            )
         }
         for deletion in try deferredDeletions() {
             try deleteTaskRow(entityID: deletion.entityID)
@@ -1825,12 +1815,12 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                     "显示配置正文与外层元数据不一致"
                 )
             }
+            // 显示配置已改为设备本地设置：远端内容只推进版本水位，不覆盖本机偏好。
             guard remoteVersionWins(
                 lamport: operation.lamport,
                 deviceID: operation.deviceId,
                 over: currentVersion
             ) else { return }
-            try upsertDisplayConfiguration(payload, isLocalOverride: false)
             try upsertEntityVersion(EntityVersion(
                 entityID: entityID,
                 lamport: operation.lamport,

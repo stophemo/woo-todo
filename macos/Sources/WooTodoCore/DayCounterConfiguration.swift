@@ -10,6 +10,8 @@ public struct DayCounterConfiguration: Equatable, Sendable {
     }
 
     public static let defaultHeaderTemplate = "今日任务"
+    /// 默认副标题示例，让用户一上手就能看出模板变量怎么用。
+    public static let defaultSubtitleTemplate = "{month}月{day}日 · {weekday}"
     public static let weekdayToken = "{weekday}"
     public static let weekdayShortToken = "{weekdayShort}"
     public static let weekdayEnToken = "{weekdayEn}"
@@ -43,7 +45,7 @@ public struct DayCounterConfiguration: Equatable, Sendable {
 
     public init(
         headerTemplate: String = Self.defaultHeaderTemplate,
-        subtitleTemplate: String = "",
+        subtitleTemplate: String = Self.defaultSubtitleTemplate,
         startDate: Date = Date(),
         deadlineDate: Date = Date()
     ) {

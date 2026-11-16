@@ -233,7 +233,7 @@ class TaskRepositoryTest {
     }
 
     @Test
-    fun `标签可以上下移动并持久化优先级`() = runBlocking {
+    fun `标签可以整体重排并持久化优先级`() = runBlocking {
         val work = repository.addCategory("工作")!!
         val life = repository.addCategory("生活")!!
         assertEquals(
@@ -241,23 +241,39 @@ class TaskRepositoryTest {
             repository.allCategories().map(TaskCategory::id),
         )
 
-        assertTrue(repository.moveCategory(life.id, -1))
+        assertTrue(repository.reorderCategories(listOf(life.id, work.id, TaskCategories.INBOX_ID)))
         assertEquals(
-            listOf(TaskCategories.INBOX_ID, life.id, work.id),
+            listOf(life.id, work.id, TaskCategories.INBOX_ID),
             repository.allCategories().map(TaskCategory::id),
         )
+    }
 
-        assertTrue(repository.moveCategory(life.id, -1))
+    @Test
+    fun `标签重排拒绝缺失或多余的 ID`() = runBlocking {
+        val work = repository.addCategory("工作")!!
+        val life = repository.addCategory("生活")!!
+
+        assertFalse(repository.reorderCategories(listOf(work.id, life.id)))
+        assertFalse(
+            repository.reorderCategories(
+                listOf(TaskCategories.INBOX_ID, work.id, life.id, "missing"),
+            ),
+        )
         assertEquals(
-            listOf(life.id, TaskCategories.INBOX_ID, work.id),
+            listOf(TaskCategories.INBOX_ID, work.id, life.id),
             repository.allCategories().map(TaskCategory::id),
         )
-        assertFalse(repository.moveCategory(life.id, -1))
+    }
 
-        assertTrue(repository.moveCategory(life.id, 1))
-        assertEquals(
-            listOf(TaskCategories.INBOX_ID, life.id, work.id),
-            repository.allCategories().map(TaskCategory::id),
+    @Test
+    fun `标签重排顺序未变化时不写入`() = runBlocking {
+        val work = repository.addCategory("工作")!!
+        val life = repository.addCategory("生活")!!
+
+        assertFalse(
+            repository.reorderCategories(
+                listOf(TaskCategories.INBOX_ID, work.id, life.id),
+            ),
         )
     }
 

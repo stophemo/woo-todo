@@ -8,6 +8,7 @@ enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
     case history
     case statistics
     case sync
+    case mcp
     case display
     case shortcuts
     case localData
@@ -19,7 +20,7 @@ enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
     }
 
     static var settingSections: [Self] {
-        [.display, .shortcuts, .sync, .localData]
+        [.display, .shortcuts, .sync, .mcp, .localData]
     }
 
     var title: String {
@@ -28,6 +29,7 @@ enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
         case .history: "历史"
         case .statistics: "统计"
         case .sync: "同步"
+        case .mcp: "MCP 接入"
         case .display: "显示"
         case .shortcuts: "快捷键"
         case .localData: "本机数据"
@@ -40,6 +42,7 @@ enum DashboardSection: String, CaseIterable, Identifiable, Hashable {
         case .history: "clock.arrow.circlepath"
         case .statistics: "chart.bar"
         case .sync: "arrow.triangle.2.circlepath"
+        case .mcp: "link"
         case .display: "textformat"
         case .shortcuts: "command"
         case .localData: "externaldrive"
@@ -67,6 +70,7 @@ struct DashboardView: View {
     @ObservedObject var webDavSettingsStore: WebDavSettingsStore
     @ObservedObject var dayCounterStore: DayCounterStore
     @ObservedObject var shortcutSettingsStore: ShortcutSettingsStore
+    @ObservedObject var mcpSettingsStore: MCPSettingsStore
     let localDataManager: LocalDataManager
     @ObservedObject var navigation: DashboardNavigation
     @State private var editorRequest: TaskEditorRequest?
@@ -109,7 +113,9 @@ struct DashboardView: View {
                         syncSettingsStore.requestSync(.manual)
                         webDavSettingsStore.requestSync(.manual)
                         Task { await syncSettingsStore.refreshDevices() }
-                    } else if navigation.selection != .display && navigation.selection != .shortcuts {
+                    } else if navigation.selection != .display &&
+                        navigation.selection != .shortcuts &&
+                        navigation.selection != .mcp {
                         store.reload()
                     }
                 } label: {
@@ -123,6 +129,7 @@ struct DashboardView: View {
                     }
                 }
                 if navigation.selection != .sync &&
+                    navigation.selection != .mcp &&
                     navigation.selection != .display &&
                     navigation.selection != .shortcuts &&
                     navigation.selection != .localData {
@@ -187,6 +194,8 @@ struct DashboardView: View {
             )
         case .sync:
             SyncSettingsView(store: syncSettingsStore, webDavStore: webDavSettingsStore)
+        case .mcp:
+            MCPSettingsView(store: mcpSettingsStore)
         case .display:
             DayCounterSettingsView(store: dayCounterStore)
         case .shortcuts:

@@ -43,6 +43,14 @@ enum PanelInteractionPolicy {
     }
 }
 
+/// 桌面小组件默认藏在 Finder 图标下方；指针进入时临时抬到图标上方，保留点击操作。
+enum PanelDesktopLevelPolicy {
+    static func level(pointerInside: Bool) -> NSWindow.Level {
+        let base = Int(CGWindowLevelForKey(.desktopIconWindow))
+        return NSWindow.Level(rawValue: base + (pointerInside ? 1 : -1))
+    }
+}
+
 enum PanelFramePolicy {
     static let autosaveName = "WooTodoFloatingPanel"
     static let currentLayoutVersion = 2
@@ -104,6 +112,7 @@ final class FloatingPanelController: NSWindowController {
     private let effectView = NSVisualEffectView()
     private let blurTintView = NSView()
     private let resizeHandle = WidgetResizeHandleView()
+    private var pointerTrackingTask: Task<Void, Never>?
     var onStateChange: (() -> Void)?
 
     private(set) var isBlurEnabled: Bool
@@ -165,10 +174,12 @@ final class FloatingPanelController: NSWindowController {
             )
         }
         window.orderFrontRegardless()
+        if isDesktopWidget { startPointerTracking() }
         onStateChange?()
     }
 
     func hide() {
+        stopPointerTracking()
         window?.orderOut(nil)
         onStateChange?()
     }
@@ -337,14 +348,15 @@ final class FloatingPanelController: NSWindowController {
             isAlwaysOnTop: isAlwaysOnTop
         ) {
         case .desktopWidget:
-            panel.level = NSWindow.Level(
-                rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1
-            )
+            panel.level = PanelDesktopLevelPolicy.level(pointerInside: false)
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            startPointerTracking()
         case .normal:
+            stopPointerTracking()
             panel.level = .normal
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         case .alwaysOnTop:
+            stopPointerTracking()
             panel.level = .floating
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         }
@@ -357,6 +369,34 @@ final class FloatingPanelController: NSWindowController {
         resizeHandle.isHidden = !isDesktopWidget
         solidBackgroundView.refreshColor()
         onStateChange?()
+    }
+
+    /// 图标层会吞掉桌面窗口的点击；指针进入面板时把窗口临时抬到图标上方。
+    private func startPointerTracking() {
+        guard window?.isVisible == true else { return }
+        updateDesktopWidgetLevel()
+        guard pointerTrackingTask == nil else { return }
+        pointerTrackingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.updateDesktopWidgetLevel()
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+    }
+
+    private func stopPointerTracking() {
+        pointerTrackingTask?.cancel()
+        pointerTrackingTask = nil
+    }
+
+    private func updateDesktopWidgetLevel() {
+        guard isDesktopWidget, let panel = window else { return }
+        let pointerInside = panel.isVisible
+            && panel.frame.contains(NSEvent.mouseLocation)
+        let target = PanelDesktopLevelPolicy.level(pointerInside: pointerInside)
+        guard panel.level != target else { return }
+        panel.level = target
     }
 
     private func positionForFirstPresentation(_ panel: NSWindow) {

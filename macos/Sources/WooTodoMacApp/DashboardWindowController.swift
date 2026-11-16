@@ -14,6 +14,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         webDavSettingsStore: WebDavSettingsStore,
         dayCounterStore: DayCounterStore,
         shortcutSettingsStore: ShortcutSettingsStore,
+        mcpSettingsStore: MCPSettingsStore,
         localDataManager: LocalDataManager,
         initialSection: DashboardSection = .tasks
     ) {
@@ -37,6 +38,7 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
             webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
             shortcutSettingsStore: shortcutSettingsStore,
+            mcpSettingsStore: mcpSettingsStore,
             localDataManager: localDataManager,
             navigation: navigation
         ))

@@ -39,6 +39,25 @@ public final class TodayStore: ObservableObject {
         endDate: Date? = nil,
         reminderTime: TaskReminderTime? = nil
     ) -> Bool {
+        addTask(
+            title: title,
+            categoryID: categoryID,
+            startDate: startDate,
+            endDate: endDate,
+            reminderTime: reminderTime
+        ) != nil
+    }
+
+    /// 与 add 相同，但把写入的任务返回给调用方，便于本机 MCP 接入回传任务标识。
+    @discardableResult
+    public func addTask(
+        title: String,
+        categoryID: String = TaskCategory.inboxID,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
+        reminderTime: TaskReminderTime? = nil
+    ) -> TodoTask? {
+        var created: TodoTask?
         let didAdd = perform {
             let date = now()
             let task = try TodoTask(
@@ -51,12 +70,13 @@ public final class TodayStore: ObservableObject {
                 reminderTime: reminderTime
             )
             try repository.save(task)
+            created = task
         }
         if didAdd {
             reload()
             onTasksChanged?()
         }
-        return didAdd
+        return didAdd ? created : nil
     }
 
     public func edit(

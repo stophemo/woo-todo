@@ -55,6 +55,12 @@ struct FloatingPanelOpacityTests {
         ))
     }
 
+    @Test func desktopWidgetStaysBelowIconsUntilPointerEnters() {
+        let iconLevel = Int(CGWindowLevelForKey(.desktopIconWindow))
+        #expect(PanelDesktopLevelPolicy.level(pointerInside: false).rawValue < iconLevel)
+        #expect(PanelDesktopLevelPolicy.level(pointerInside: true).rawValue > iconLevel)
+    }
+
     @MainActor @Test func desktopWidgetContentAcceptsTheFirstMouseClick() {
         let hostingView = InteractiveHostingView(rootView: Text("任务"))
 

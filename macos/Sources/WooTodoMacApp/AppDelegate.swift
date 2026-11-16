@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var webDavSettingsStore: WebDavSettingsStore?
     private var dayCounterStore: DayCounterStore?
     private var shortcutSettingsStore: ShortcutSettingsStore?
+    private var mcpSettingsStore: MCPSettingsStore?
     private var taskNotificationScheduler: TaskNotificationScheduler?
     private var panelController: FloatingPanelController?
     private var quickAddPanelController: QuickAddPanelController?
@@ -113,6 +114,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 initialCredentials: webDavCredentialsResult
             )
             let store = TodayStore(repository: repository)
+            let mcpSettingsStore = MCPSettingsStore(
+                store: store,
+                repository: repository,
+                defaults: runtime.defaults,
+                allowsExternalServices: runtime.allowsExternalServices
+            )
             let dayCounterStore = DayCounterStore(
                 defaults: runtime.defaults,
                 repository: repository
@@ -138,7 +145,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 dayCounterStore: dayCounterStore,
                 defaults: runtime.defaults
             )
-            let quickAddPanelController = QuickAddPanelController(store: store)
+            let quickAddPanelController = QuickAddPanelController(
+                store: store,
+                dismissesOnResignKey: !runtime.initialQuickAdd
+            )
             let appUpdateController: AppUpdateController? = runtime.allowsExternalServices
                 ? AppUpdateController(defaults: runtime.defaults)
                 : nil
@@ -196,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.webDavSettingsStore = webDavSettingsStore
             self.dayCounterStore = dayCounterStore
             self.shortcutSettingsStore = shortcutSettingsStore
+            self.mcpSettingsStore = mcpSettingsStore
             self.taskNotificationScheduler = taskNotificationScheduler
             self.panelController = panelController
             self.quickAddPanelController = quickAddPanelController
@@ -271,6 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             webDavSettingsStore.onReplaceWorkerSyncFailed = { [weak syncSettingsStore] in
                 syncSettingsStore?.resumeAfterFailedReplacement()
             }
+            mcpSettingsStore.startIfNeeded()
             if runtime.allowsExternalServices {
                 syncSettingsStore.start()
                 webDavSettingsStore.start()
@@ -282,6 +294,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     window: dashboardWindowController?.window,
                     runtime: runtime
                 )
+            } else if runtime.initialQuickAdd {
+                quickAddPanelController.show()
+                scheduleUITestSnapshot(window: quickAddPanelController.window, runtime: runtime)
             } else {
                 panelController.show()
                 scheduleUITestSnapshot(window: panelController.window, runtime: runtime)
@@ -313,6 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appUpdateController?.stop()
         syncSettingsStore?.stop()
         webDavSettingsStore?.stop()
+        mcpSettingsStore?.stop()
     }
 
     private func configureMainMenu() {
@@ -369,6 +385,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
+        let windowMenuItem = NSMenuItem(title: "窗口", action: nil, keyEquivalent: "")
+        let windowMenu = NSMenu(title: "窗口")
+        windowMenu.addItem(editCommand(
+            "关闭",
+            action: #selector(NSWindow.performClose(_:)),
+            key: "w"
+        ))
+        windowMenu.addItem(editCommand(
+            "最小化",
+            action: #selector(NSWindow.performMiniaturize(_:)),
+            key: "m"
+        ))
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+        NSApp.windowsMenu = windowMenu
+
         NSApp.mainMenu = mainMenu
     }
 
@@ -399,6 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let webDavSettingsStore,
               let dayCounterStore,
               let shortcutSettingsStore,
+              let mcpSettingsStore,
               let localDataManager else { return }
 
         let dashboardStore = DashboardStore(repository: repository)
@@ -414,6 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
             shortcutSettingsStore: shortcutSettingsStore,
+            mcpSettingsStore: mcpSettingsStore,
             localDataManager: localDataManager,
             initialSection: section
         )

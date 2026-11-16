@@ -16,6 +16,7 @@ struct AppRuntimeConfiguration {
     let allowsExternalServices: Bool
     let allowsLocalDataRemoval: Bool
     let initialDashboardSection: DashboardSection?
+    let initialQuickAdd: Bool
     let shouldSeedUITestFixtures: Bool
     let uiTestArtifactDirectory: URL?
     let uiTestScreenName: String?
@@ -55,7 +56,13 @@ struct AppRuntimeConfiguration {
                 cachesURL: caches,
                 savedStateURL: savedState,
                 defaults: .standard,
-                syncCredentialsStore: KeychainCredentialsStore(),
+                syncCredentialsStore: EncryptedFileSyncCredentialsStore(
+                    directoryURL: applicationData.appendingPathComponent(
+                        "Secure",
+                        isDirectory: true
+                    ),
+                    legacyStore: KeychainCredentialsStore()
+                ),
                 webDavCredentialsStore: EncryptedFileWebDavCredentialsStore(
                     directoryURL: applicationData.appendingPathComponent(
                         "Secure",
@@ -65,6 +72,7 @@ struct AppRuntimeConfiguration {
                 allowsExternalServices: true,
                 allowsLocalDataRemoval: true,
                 initialDashboardSection: nil,
+                initialQuickAdd: false,
                 shouldSeedUITestFixtures: false,
                 uiTestArtifactDirectory: nil,
                 uiTestScreenName: nil
@@ -103,10 +111,16 @@ struct AppRuntimeConfiguration {
 
         let screen = environment["WOO_TODO_UI_TEST_SCREEN"] ?? "panel"
         let initialDashboardSection: DashboardSection?
+        let initialQuickAdd: Bool
         if screen == "panel" {
             initialDashboardSection = nil
+            initialQuickAdd = false
+        } else if screen == "quick-add" {
+            initialDashboardSection = nil
+            initialQuickAdd = true
         } else if let section = DashboardSection(rawValue: screen) {
             initialDashboardSection = section
+            initialQuickAdd = false
         } else {
             throw AppRuntimeConfigurationError.invalidUITestScreen(screen)
         }
@@ -137,6 +151,7 @@ struct AppRuntimeConfiguration {
             allowsExternalServices: false,
             allowsLocalDataRemoval: false,
             initialDashboardSection: initialDashboardSection,
+            initialQuickAdd: initialQuickAdd,
             shouldSeedUITestFixtures: true,
             uiTestArtifactDirectory: root,
             uiTestScreenName: screen

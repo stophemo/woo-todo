@@ -4,13 +4,15 @@ import WooTodoCore
 
 @MainActor
 final class QuickAddPanelController: NSWindowController, NSWindowDelegate {
-    private let model: QuickAddModel
+    let model: QuickAddModel
+    private let dismissesOnResignKey: Bool
     private var previousApplication: NSRunningApplication?
     private var isDismissing = false
 
-    init(store: TodayStore) {
+    init(store: TodayStore, dismissesOnResignKey: Bool = true) {
+        self.dismissesOnResignKey = dismissesOnResignKey
         let panel = QuickAddPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 176)
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 148)
         )
         model = QuickAddModel(store: store)
         super.init(window: panel)
@@ -18,6 +20,9 @@ final class QuickAddPanelController: NSWindowController, NSWindowDelegate {
         configurePanel(panel)
         configureContent(panel)
         panel.delegate = self
+        panel.onPerformClose = { [weak self] in
+            self?.dismiss(restorePreviousApplication: true)
+        }
         model.onDismiss = { [weak self] in
             self?.dismiss(restorePreviousApplication: true)
         }
@@ -44,7 +49,9 @@ final class QuickAddPanelController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        guard let panel = window, panel.isVisible else { return }
+        guard dismissesOnResignKey,
+              let panel = window,
+              panel.isVisible else { return }
         dismiss(restorePreviousApplication: false)
     }
 
@@ -68,17 +75,34 @@ final class QuickAddPanelController: NSWindowController, NSWindowDelegate {
         effectView.wantsLayer = true
         effectView.layer?.cornerRadius = 8
         effectView.layer?.masksToBounds = true
+        effectView.autoresizingMask = [.width, .height]
 
-        let hostingView = NSHostingView(rootView: QuickAddView(model: model))
+        let hostingView = QuickAddHostingView(rootView: QuickAddView(model: model))
         hostingView.translatesAutoresizingMaskIntoConstraints = false
+        hostingView.onHeightChange = { [weak self] height in
+            Task { @MainActor [weak self] in
+                self?.resizePanel(toContentHeight: height)
+            }
+        }
         effectView.addSubview(hostingView)
         NSLayoutConstraint.activate([
             hostingView.leadingAnchor.constraint(equalTo: effectView.leadingAnchor),
             hostingView.trailingAnchor.constraint(equalTo: effectView.trailingAnchor),
             hostingView.topAnchor.constraint(equalTo: effectView.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: effectView.bottomAnchor),
         ])
         panel.contentView = effectView
+    }
+
+    /// 内容折叠或展开时保持面板顶部位置不变，避免输入框在屏幕上跳动。
+    private func resizePanel(toContentHeight height: CGFloat) {
+        guard let panel = window else { return }
+        let targetHeight = ceil(height)
+        guard targetHeight > 0,
+              abs(panel.frame.height - targetHeight) > 0.5 else { return }
+        var frame = panel.frame
+        frame.origin.y = frame.maxY - targetHeight
+        frame.size.height = targetHeight
+        panel.setFrame(frame, display: true)
     }
 
     private func position(_ panel: NSWindow) {
@@ -126,14 +150,32 @@ final class QuickAddPanelController: NSWindowController, NSWindowDelegate {
 }
 
 @MainActor
-private final class QuickAddModel: ObservableObject {
+final class QuickAddModel: ObservableObject {
     @Published var title = ""
     @Published var categoryName = ""
+    @Published var isSchedulingExpanded = false {
+        didSet { onLayoutChange?() }
+    }
+    @Published var dateRangeEnabled = false {
+        didSet {
+            if !dateRangeEnabled { reminderEnabled = false }
+            onLayoutChange?()
+        }
+    }
+    @Published var startDate = Calendar.current.startOfDay(for: Date())
+    @Published var endDate = Calendar.current.startOfDay(for: Date())
+    @Published var reminderEnabled = false {
+        didSet { onLayoutChange?() }
+    }
+    @Published var reminderDate = QuickAddModel.defaultReminderDate
     @Published private(set) var categories: [TaskCategory] = TaskCategory.defaults
-    @Published private(set) var errorMessage: String?
+    @Published private(set) var errorMessage: String? {
+        didSet { onLayoutChange?() }
+    }
     @Published private(set) var focusRequest = 0
 
     var onDismiss: (() -> Void)?
+    var onLayoutChange: (() -> Void)?
 
     private let store: TodayStore
 
@@ -146,6 +188,13 @@ private final class QuickAddModel: ObservableObject {
         categoryName = ""
         categories = store.categories
         errorMessage = nil
+        isSchedulingExpanded = false
+        dateRangeEnabled = false
+        reminderEnabled = false
+        let today = Calendar.current.startOfDay(for: Date())
+        startDate = today
+        endDate = today
+        reminderDate = Self.defaultReminderDate
     }
 
     func requestFocus() {
@@ -158,8 +207,24 @@ private final class QuickAddModel: ObservableObject {
             requestFocus()
             return
         }
+        let start = dateRangeEnabled
+            ? Calendar.current.startOfDay(for: startDate)
+            : nil
+        let end = dateRangeEnabled
+            ? Calendar.current.startOfDay(for: endDate)
+            : nil
+        if let start, let end, start > end {
+            errorMessage = "开始日期不能晚于结束日期"
+            return
+        }
         guard let categoryID = resolveCategoryID() else { return }
-        guard store.add(title: title, categoryID: categoryID) else {
+        guard store.add(
+            title: title,
+            categoryID: categoryID,
+            startDate: start,
+            endDate: end,
+            reminderTime: resolvedReminderTime()
+        ) else {
             errorMessage = store.errorMessage ?? "无法新增任务"
             requestFocus()
             return
@@ -177,18 +242,27 @@ private final class QuickAddModel: ObservableObject {
         onDismiss?()
     }
 
-    var selectionSummary: String {
-        let name = categoryName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return "无标签 · 完成即止" }
-        if let matched = categories.first(where: {
-            $0.name.compare(
-                name,
-                options: [.caseInsensitive, .diacriticInsensitive]
-            ) == .orderedSame
-        }) {
-            return "\(matched.name) · 完成即止"
+    var schedulingSummary: String {
+        guard dateRangeEnabled else { return "时间与提醒" }
+        let start = startDate.formatted(.dateTime.month().day())
+        let end = endDate.formatted(.dateTime.month().day())
+        var summary = start == end ? start : "\(start) – \(end)"
+        if reminderEnabled {
+            summary += " · \(reminderDate.formatted(.dateTime.hour().minute()))"
         }
-        return "\(name) · 完成即止"
+        return summary
+    }
+
+    private func resolvedReminderTime() -> TaskReminderTime? {
+        guard dateRangeEnabled, reminderEnabled else { return nil }
+        let components = Calendar.current.dateComponents(
+            [.hour, .minute],
+            from: reminderDate
+        )
+        guard let hour = components.hour, let minute = components.minute else {
+            return nil
+        }
+        return try? TaskReminderTime(hour: hour, minute: minute)
     }
 
     private func resolveCategoryID() -> String? {
@@ -202,9 +276,14 @@ private final class QuickAddModel: ObservableObject {
         categories = store.categories
         return category.id
     }
+
+    private static var defaultReminderDate: Date {
+        Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date())
+            ?? Date()
+    }
 }
 
-private struct QuickAddView: View {
+struct QuickAddView: View {
     @ObservedObject var model: QuickAddModel
     @FocusState private var isTitleFocused: Bool
 
@@ -236,6 +315,7 @@ private struct QuickAddView: View {
                 Image(systemName: "tag")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .frame(width: 20)
                     .accessibilityHidden(true)
 
                 TextField("标签（可留空，输入新名称会自动创建）", text: $model.categoryName)
@@ -245,19 +325,42 @@ private struct QuickAddView: View {
                     .accessibilityLabel("标签")
             }
 
-            Group {
-                if let errorMessage = model.errorMessage {
-                    Text(errorMessage)
-                        .foregroundStyle(.red)
-                        .accessibilityLabel("新增失败：\(errorMessage)")
-                } else {
-                    Text(model.selectionSummary)
-                        .foregroundStyle(.secondary)
-                }
+            if let errorMessage = model.errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+                    .accessibilityLabel("新增失败：\(errorMessage)")
             }
-            .font(.caption)
-            .lineLimit(1)
-            .frame(height: 16)
+
+            Button {
+                model.isSchedulingExpanded.toggle()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "calendar")
+                        .font(.callout)
+                        .frame(width: 20)
+                        .accessibilityHidden(true)
+                    Text(model.schedulingSummary)
+                        .font(.callout)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(model.isSchedulingExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help(model.isSchedulingExpanded ? "收起时间与提醒" : "展开时间与提醒")
+            .accessibilityLabel(model.isSchedulingExpanded ? "收起时间与提醒" : "展开时间与提醒")
+
+            if model.isSchedulingExpanded {
+                scheduleFields
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
@@ -268,10 +371,52 @@ private struct QuickAddView: View {
             isTitleFocused = true
         }
         .onExitCommand(perform: model.cancel)
+        .animation(.easeInOut(duration: 0.16), value: model.isSchedulingExpanded)
+    }
+
+    private var scheduleFields: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("设置起止时间", isOn: $model.dateRangeEnabled)
+            if model.dateRangeEnabled {
+                DatePicker("开始日期", selection: $model.startDate, displayedComponents: .date)
+                DatePicker("结束日期", selection: $model.endDate, displayedComponents: .date)
+                if model.startDate > model.endDate {
+                    Text("开始日期不能晚于结束日期")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                Toggle("在指定时间提醒", isOn: $model.reminderEnabled)
+                if model.reminderEnabled {
+                    DatePicker(
+                        "提醒时间",
+                        selection: $model.reminderDate,
+                        displayedComponents: .hourAndMinute
+                    )
+                }
+            }
+        }
+        .font(.callout)
+        .padding(12)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+private final class QuickAddHostingView: NSHostingView<QuickAddView> {
+    var onHeightChange: ((CGFloat) -> Void)?
+    private var reportedHeight: CGFloat = 0
+
+    override func layout() {
+        super.layout()
+        let height = bounds.height
+        guard height > 0, abs(height - reportedHeight) > 0.5 else { return }
+        reportedHeight = height
+        onHeightChange?(height)
     }
 }
 
 private final class QuickAddPanel: NSPanel {
+    var onPerformClose: (() -> Void)?
+
     init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
@@ -285,4 +430,12 @@ private final class QuickAddPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func performClose(_ sender: Any?) {
+        if let onPerformClose {
+            onPerformClose()
+        } else {
+            super.performClose(sender)
+        }
+    }
 }

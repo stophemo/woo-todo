@@ -2,15 +2,16 @@ package com.wootodo.ui
 
 import android.app.AlertDialog
 import android.text.InputType
+import android.view.LayoutInflater
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.ItemTouchHelper
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.wootodo.R
 import com.wootodo.data.TaskRepository
 import com.wootodo.domain.TaskCategories
@@ -18,115 +19,97 @@ import com.wootodo.domain.TaskCategory
 import kotlinx.coroutines.launch
 
 object CategoryManagerDialog {
+    private const val MAXIMUM_VISIBLE_ROWS = 6
+    private const val ROW_HEIGHT_DP = 58
+
     fun show(
         activity: AppCompatActivity,
         repository: TaskRepository,
         onChanged: (List<TaskCategory>) -> Unit,
     ) {
-        val container = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            val padding = dp(activity, 20)
-            setPadding(padding, padding / 2, padding, padding / 2)
-        }
+        val content = LayoutInflater.from(activity)
+            .inflate(R.layout.dialog_category_manager, null)
+        val list = content.findViewById<RecyclerView>(R.id.category_list)
+        val addButton = content.findViewById<Button>(R.id.category_add)
         val dialog = AlertDialog.Builder(activity)
             .setTitle(R.string.category_manage)
-            .setView(ScrollView(activity).apply { addView(container) })
-            .setNegativeButton(R.string.cancel, null)
+            .setView(content)
+            .setNegativeButton(R.string.done, null)
             .create()
         var categories = emptyList<TaskCategory>()
-
+        lateinit var adapter: CategoryOrderAdapter
+        lateinit var dragHelper: ItemTouchHelper
         lateinit var render: () -> Unit
         lateinit var reload: () -> Unit
         lateinit var failureMessage: (String, String?) -> String
         lateinit var promptName: (TaskCategory?) -> Unit
         lateinit var confirmDelete: (TaskCategory) -> Unit
 
-        render = {
-            container.removeAllViews()
-            container.addView(
-                TextView(activity).apply {
-                    text = activity.getString(R.string.category_priority_hint)
-                    textSize = 12f
-                    setTextColor(ContextCompat.getColor(activity, R.color.muted))
-                    setPadding(0, 0, 0, dp(activity, 8))
-                },
-            )
-            categories.forEachIndexed { index, category ->
-                val row = LinearLayout(activity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = android.view.Gravity.CENTER_VERTICAL
-                    setPadding(0, dp(activity, 4), 0, dp(activity, 4))
+        adapter = CategoryOrderAdapter(
+            rename = { promptName(it) },
+            delete = { confirmDelete(it) },
+            startDrag = { holder -> dragHelper.startDrag(holder) },
+        )
+        list.layoutManager = LinearLayoutManager(activity)
+        list.adapter = adapter
+
+        dragHelper = ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(
+            ItemTouchHelper.UP or ItemTouchHelper.DOWN,
+            0,
+        ) {
+            private var orderChanged = false
+
+            override fun onMove(
+                recyclerView: RecyclerView,
+                viewHolder: RecyclerView.ViewHolder,
+                target: RecyclerView.ViewHolder,
+            ): Boolean {
+                val from = viewHolder.adapterPosition
+                val to = target.adapterPosition
+                if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) {
+                    return false
                 }
-                row.addView(
-                    TextView(activity).apply {
-                        text = category.name
-                        textSize = 16f
-                        layoutParams = LinearLayout.LayoutParams(
-                            0,
-                            LinearLayout.LayoutParams.WRAP_CONTENT,
-                            1f,
-                        )
-                    },
-                )
-                row.addView(
-                    moveButton(
-                        activity = activity,
-                        label = "↑",
-                        description = activity.getString(R.string.category_move_up),
-                        enabled = index > 0,
-                    ) {
-                        activity.lifecycleScope.launch {
-                            if (repository.moveCategory(category.id, -1)) reload()
-                        }
-                    },
-                )
-                row.addView(
-                    moveButton(
-                        activity = activity,
-                        label = "↓",
-                        description = activity.getString(R.string.category_move_down),
-                        enabled = index < categories.lastIndex,
-                    ) {
-                        activity.lifecycleScope.launch {
-                            if (repository.moveCategory(category.id, 1)) reload()
-                        }
-                    },
-                )
-                row.addView(
-                    Button(activity).apply {
-                        text = activity.getString(R.string.category_rename)
-                        textSize = 13f
-                        minWidth = 0
-                        minimumWidth = 0
-                        minHeight = 0
-                        minimumHeight = 0
-                        setPadding(dp(activity, 6), 0, dp(activity, 6), 0)
-                        setOnClickListener { promptName(category) }
-                    },
-                )
-                if (category.id != TaskCategories.INBOX_ID) {
-                    row.addView(
-                        Button(activity).apply {
-                            text = activity.getString(R.string.delete)
-                            textSize = 13f
-                            minWidth = 0
-                            minimumWidth = 0
-                            minHeight = 0
-                            minimumHeight = 0
-                            setPadding(dp(activity, 6), 0, dp(activity, 6), 0)
-                            setOnClickListener { confirmDelete(category) }
-                        },
-                    )
-                }
-                container.addView(row)
+                val moved = adapter.moveItem(from, to)
+                if (moved) orderChanged = true
+                return moved
             }
-            container.addView(
-                Button(activity).apply {
-                    text = activity.getString(R.string.category_add)
-                    isEnabled = categories.size < TaskCategories.MAXIMUM_COUNT
-                    setOnClickListener { promptName(null) }
-                },
-            )
+
+            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) = Unit
+
+            override fun isLongPressDragEnabled(): Boolean = true
+
+            override fun onSelectedChanged(
+                viewHolder: RecyclerView.ViewHolder?,
+                actionState: Int,
+            ) {
+                super.onSelectedChanged(viewHolder, actionState)
+                if (actionState == ItemTouchHelper.ACTION_STATE_DRAG) {
+                    viewHolder?.itemView?.alpha = 0.85f
+                }
+            }
+
+            override fun clearView(
+                recyclerView: RecyclerView,
+                viewHolder: RecyclerView.ViewHolder,
+            ) {
+                super.clearView(recyclerView, viewHolder)
+                viewHolder.itemView.alpha = 1f
+                if (!orderChanged) return
+                orderChanged = false
+                val ids = adapter.currentIds()
+                activity.lifecycleScope.launch {
+                    repository.reorderCategories(ids)
+                    reload()
+                }
+            }
+        })
+        dragHelper.attachToRecyclerView(list)
+        addButton.setOnClickListener { promptName(null) }
+
+        render = {
+            adapter.submit(categories)
+            addButton.isEnabled = categories.size < TaskCategories.MAXIMUM_COUNT
+            updateListHeight(activity, list, categories.size)
         }
 
         reload = {
@@ -140,11 +123,11 @@ object CategoryManagerDialog {
         failureMessage = { name, currentId ->
             val normalized = TaskCategories.normalizeName(name)
             when {
-                categories.size >= TaskCategories.MAXIMUM_COUNT ->
-                    activity.getString(R.string.category_limit_reached)
                 normalized == null -> activity.getString(R.string.category_name_invalid)
                 categories.any { it.id != currentId && it.name == normalized } ->
                     activity.getString(R.string.category_duplicate_name)
+                currentId == null && categories.size >= TaskCategories.MAXIMUM_COUNT ->
+                    activity.getString(R.string.category_limit_reached)
                 else -> activity.getString(R.string.save_failed)
             }
         }
@@ -205,27 +188,18 @@ object CategoryManagerDialog {
         reload()
     }
 
-    private fun moveButton(
+    private fun updateListHeight(
         activity: AppCompatActivity,
-        label: String,
-        description: String,
-        enabled: Boolean,
-        onClick: () -> Unit,
-    ): Button {
-        return Button(activity).apply {
-            text = label
-            contentDescription = description
-            isEnabled = enabled
-            textSize = 16f
-            gravity = android.view.Gravity.CENTER
-            minWidth = 0
-            minimumWidth = 0
-            minHeight = 0
-            minimumHeight = 0
-            setPadding(0, 0, 0, 0)
-            layoutParams = LinearLayout.LayoutParams(dp(activity, 36), dp(activity, 36))
-            setOnClickListener { onClick() }
+        list: RecyclerView,
+        count: Int,
+    ) {
+        val height = if (count <= MAXIMUM_VISIBLE_ROWS) {
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        } else {
+            dp(activity, MAXIMUM_VISIBLE_ROWS * ROW_HEIGHT_DP)
         }
+        if (list.layoutParams.height == height) return
+        list.layoutParams = list.layoutParams.apply { this.height = height }
     }
 
     private fun dp(activity: AppCompatActivity, value: Int): Int =

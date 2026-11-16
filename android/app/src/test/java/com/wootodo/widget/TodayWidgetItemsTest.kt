@@ -2,6 +2,7 @@ package com.wootodo.widget
 
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskStatus
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
@@ -17,7 +18,7 @@ class TodayWidgetItemsTest {
                 task("main-1", "main"),
                 task("main-2", "main"),
             ),
-            TaskCategories.defaults,
+            categories,
         )
 
         assertEquals(
@@ -41,7 +42,7 @@ class TodayWidgetItemsTest {
     fun `未知分类归入未分类`() {
         val items = TodayWidgetItems.from(
             listOf(task("unknown", "removed")),
-            TaskCategories.defaults,
+            categories,
         )
 
         assertEquals(
@@ -58,19 +59,19 @@ class TodayWidgetItemsTest {
     @Test
     fun `标题和任务使用不同视图类型及稳定ID命名空间`() {
         val items = TodayWidgetItems.from(
-            TaskCategories.defaults.map { category -> task(category.id, category.id) },
-            TaskCategories.defaults,
+            categories.map { category -> task(category.id, category.id) },
+            categories,
         )
 
         val headers = items.filterIsInstance<TodayWidgetListItem.Header>()
         val rows = items.filterIsInstance<TodayWidgetListItem.Row>()
 
         assertEquals(
-            List(TaskCategories.defaults.size) { TODAY_WIDGET_VIEW_TYPE_HEADER },
+            List(categories.size) { TODAY_WIDGET_VIEW_TYPE_HEADER },
             headers.map { it.viewType },
         )
         assertEquals(
-            List(TaskCategories.defaults.size) { TODAY_WIDGET_VIEW_TYPE_TASK },
+            List(categories.size) { TODAY_WIDGET_VIEW_TYPE_TASK },
             rows.map { it.viewType },
         )
         assertEquals(items.size, items.map { it.stableId }.distinct().size)
@@ -78,6 +79,12 @@ class TodayWidgetItemsTest {
             rows.forEach { row -> assertNotEquals(header.stableId, row.stableId) }
         }
     }
+
+    private val categories = listOf(
+        TaskCategory(TaskCategories.INBOX_ID, "未分类", 0),
+        TaskCategory("main", "主线", 1),
+        TaskCategory("extra", "外传", 2),
+    )
 
     private fun task(id: String, categoryId: String) = Task(
         id = id,

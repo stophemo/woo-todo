@@ -50,6 +50,9 @@ class TaskDatabase(context: Context) :
         // 兼容曾经中断或裁剪过的旧升级：同步表均使用 IF NOT EXISTS，可安全幂等补齐。
         createSyncSchema(database)
         createCategorySchema(database)
+        if (oldVersion < 11) {
+            removeUnusedLegacyCategories(database)
+        }
     }
 
     override fun onDowngrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -326,6 +329,65 @@ class TaskDatabase(context: Context) :
         }
         database.execSQL("DROP TABLE tasks_v9")
         createCategorySchema(database)
+        insertLegacyTaskCategories(database)
+    }
+
+    /** 旧库没有分类表时，按任务实际使用的 quest_line 恢复类型名称。 */
+    private fun insertLegacyTaskCategories(database: SQLiteDatabase) {
+        val existing = mutableSetOf<String>()
+        database.rawQuery("SELECT id FROM task_categories", null).use { cursor ->
+            while (cursor.moveToNext()) existing.add(cursor.getString(0))
+        }
+        var nextOrder = database.rawQuery(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM task_categories",
+            null,
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+        database.rawQuery("SELECT DISTINCT quest_line FROM tasks", null).use { cursor ->
+            while (cursor.moveToNext()) {
+                val id = cursor.getString(0)
+                if (!existing.add(id)) continue
+                val name = when (id) {
+                    "main" -> "主线"
+                    "side" -> "支线"
+                    "extra" -> "外传"
+                    else -> id
+                }
+                database.execSQL(
+                    "INSERT INTO task_categories(id, name, sort_order, updated_at) VALUES (?, ?, ?, ?)",
+                    arrayOf(id, name, nextOrder++, System.currentTimeMillis()),
+                )
+            }
+        }
+    }
+
+    /** v0.2.4 曾把主线/支线/外传写入所有新库；升级时只清理未被任务使用的默认项。 */
+    private fun removeUnusedLegacyCategories(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            DELETE FROM task_categories
+            WHERE id IN ('main', 'side', 'extra')
+              AND name IN ('主线', '支线', '外传')
+              AND NOT EXISTS (
+                  SELECT 1 FROM tasks WHERE tasks.quest_line = task_categories.id
+              )
+            """.trimIndent(),
+        )
+        database.rawQuery(
+            "SELECT id FROM task_categories ORDER BY sort_order ASC, id ASC",
+            null,
+        ).use { cursor ->
+            val ids = buildList {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+            ids.forEachIndexed { index, id ->
+                database.execSQL(
+                    "UPDATE task_categories SET sort_order = ? WHERE id = ?",
+                    arrayOf(index, id),
+                )
+            }
+        }
     }
 
     private fun Cursor.toLegacyTask(): LegacyTask {
@@ -409,6 +471,6 @@ class TaskDatabase(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 10
+        const val DATABASE_VERSION = 11
     }
 }

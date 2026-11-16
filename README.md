@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://woo-todo.vercel.app/">产品主页</a> ·
-  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.4">下载 v0.2.4</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.5">下载 v0.2.5</a> ·
   <a href="#装好以后从这里开始">安装指南</a> ·
   <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
 </p>
@@ -32,7 +32,7 @@
 
 ### 类型
 
-默认“未分类”，也可以自定义工作、学习、生活等类型。编辑器和快速新增都用标签胶囊选择；类型最多 8 个，名称和顺序会随同步空间保持一致。
+默认只有“未分类”。在 Android 任务编辑器点“＋ 新建类型”，或从主界面“更多 → 管理类型”进入；macOS 在任务页右上角或任务编辑器点“＋ 新建类型 / 管理类型”。也可以改名、删除已有类型。编辑器和快速新增都用标签胶囊选择；类型最多 8 个，名称和顺序会随同步空间保持一致。
 
 ### 起止日期
 
@@ -53,7 +53,7 @@
 
 - **本地优先**：新增、编辑、完成、删除都只依赖本机数据库，断网照常使用。
 - **轻量且贴近平台**：macOS 使用 AppKit/SwiftUI，Android 使用 Kotlin/RemoteViews；不引入 Electron、Flutter 或浏览器运行时。
-- **自定义类型**：类型是标签式单选，默认未分类，可以新建、改名、删除；删除类型时该类型下的待办会归入未分类，历史记录保留原类型。
+- **自定义类型**：类型是标签式单选，默认只有“未分类”，新建入口在任务编辑器和任务页显眼位置；可以新建、改名、删除；删除类型时该类型下的待办会归入未分类，历史记录保留原类型。
 - **清晰的更新入口**：Android 检测到新版本会直接弹出“立即更新 / 稍后 / 跳过此版本”；“更多”菜单仍可随时检查。
 - **显示设置留在本机**：今日标题、副标题和计时模板属于个人偏好，只保存在当前设备，不进入同步空间。
 - **本机数据可彻底清理**：macOS 设置里提供“清除全部本机数据”和“卸载并清除”，会删除任务库、同步凭据、偏好、缓存与窗口恢复状态。
@@ -61,22 +61,22 @@
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.2.4`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.4)，只提供 macOS 与 Android 两个正式版本。
+当前稳定版是 [`v0.2.5`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.5)，只提供 macOS 与 Android 两个正式版本。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、完整任务管理、统计与本机数据清理 | `v0.2.4` 正式版 |
-| Android 13+ | 统一任务列表、任务提醒、今日 Widget、统计与应用内更新 | `v0.2.4` 正式版 |
+| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、完整任务管理、统计与本机数据清理 | `v0.2.5` 正式版 |
+| Android 13+ | 统一任务列表、任务提醒、今日 Widget、统计与应用内更新 | `v0.2.5` 正式版 |
 
-## 下载 v0.2.4
+## 下载 v0.2.5
 
 | 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.2.4-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.2.4/Woo-Todo-v0.2.4-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
-| Android | [Woo-Todo-v0.2.4-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.4/Woo-Todo-v0.2.4-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.4/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
+| macOS | [Woo-Todo-v0.2.5-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.2.5/Woo-Todo-v0.2.5-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.2.5-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.5/Woo-Todo-v0.2.5-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.5/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
 
-`v0.2.4` 是一次任务模型与体验重构：两端去掉今日/明日/本周/本月切换和自动重复，改为“标题 + 可选类型 + 可选起止日期”；统计改为完成节奏与类型分布；Android 检测到新版本直接弹更新框；macOS 增加彻底清除本机数据与卸载入口。升级前请先把所有设备更新到 `v0.2.4`，本次不支持新旧版本混合同步。
+`v0.2.5` 修正任务类型的默认值与入口：新安装只保留“未分类”，不再预置主线/支线/外传；Android 编辑器、Android“更多”菜单、macOS 任务页右上角和任务编辑器都提供显眼的“新建类型 / 管理类型”；升级时会清理没有被任务使用的旧默认类型。任务正文与 `v0.2.4` 相同，可与 `v0.2.4` 同步，但建议同时升级。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名，自建服务或同一网络身份在更新后仍可能再次请求 Keychain 授权；第三方 WebDAV 配置会在首次迁移后改由本机加密文件自动回填。Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -106,7 +106,7 @@ Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；�
 
 三种同步方式互斥，但都不会成为本地操作的前置条件。macOS 与 Android 都会保留已配置的局域网/自建服务和 WebDAV 身份，切回时无需重填；macOS 的 WebDAV 完整配置使用本机 AES-256-GCM 加密文件保存并自动回填。切换同时保留本地任务和类型定义，并从远端 Lamport 水位之后建立加密基线。同一网络同步会在两端绕过系统 HTTP 代理，避免 `.local` 或私有地址被错误转发；全局 TUN/VPN 模式仍需把局域网配置为直连。配置二维码和配对链接可能含有完整凭据或一次性 secret，只应在自己的设备旁展示，用完立即隐藏或清理剪贴板。
 
-> **版本要求**：`v0.2.4` 的任务正文使用新的类型和日期语义，旧客户端无法正确理解。请把所有设备同时升级后再继续同步。
+> **版本要求**：`v0.2.4` 起任务正文使用新的类型和日期语义，v0.2.3 及更早客户端无法正确理解。混用 `v0.2.4` 与 `v0.2.5` 可以同步，但请尽快同时升级。
 
 ## 数据归你，不是口号
 

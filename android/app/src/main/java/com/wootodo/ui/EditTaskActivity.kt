@@ -40,6 +40,7 @@ class EditTaskActivity : AppCompatActivity() {
     private lateinit var settledNotice: TextView
     private lateinit var titleInput: EditText
     private lateinit var categoryGroup: RadioGroup
+    private lateinit var newCategoryButton: Button
     private lateinit var manageCategoriesButton: Button
     private lateinit var dateRangeSwitch: SwitchCompat
     private lateinit var dateRangeContainer: LinearLayout
@@ -68,6 +69,7 @@ class EditTaskActivity : AppCompatActivity() {
         titleInput = findViewById(R.id.title_input)
         titleInput.enableEditableTextActions()
         categoryGroup = findViewById(R.id.category_group)
+        newCategoryButton = findViewById(R.id.new_category_button)
         manageCategoriesButton = findViewById(R.id.manage_categories_button)
         dateRangeSwitch = findViewById(R.id.date_range_switch)
         dateRangeContainer = findViewById(R.id.date_range_container)
@@ -92,6 +94,7 @@ class EditTaskActivity : AppCompatActivity() {
                 ?.tag as? String
                 ?: TaskCategories.INBOX_ID
         }
+        newCategoryButton.setOnClickListener { createCategory() }
         manageCategoriesButton.setOnClickListener { manageCategories() }
         dateRangeSwitch.setOnCheckedChangeListener { _, enabled ->
             dateRangeEnabled = enabled
@@ -218,6 +221,7 @@ class EditTaskActivity : AppCompatActivity() {
         settledNotice.isVisible = !editable
         listOf(
             titleInput,
+            newCategoryButton,
             manageCategoriesButton,
             dateRangeSwitch,
             startDateButton,
@@ -327,6 +331,16 @@ class EditTaskActivity : AppCompatActivity() {
                 saveButton.isEnabled = true
                 Toast.makeText(this@EditTaskActivity, R.string.save_failed, Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun createCategory() {
+        CategoryManagerDialog.showCreate(this, repository) { created, updated ->
+            categories = updated
+            selectedCategoryId = created.id
+            setupCategoryChips()
+            (application as WooTodoApplication).notifyLocalMutation()
+            TodayWidgetUpdater.updateAllAsync(applicationContext)
         }
     }
 

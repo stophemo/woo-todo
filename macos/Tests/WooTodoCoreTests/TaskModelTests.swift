@@ -71,7 +71,7 @@ struct TaskModelTests {
 
     @Test("分类定义校验并补齐未分类")
     func categoryValidationAndNormalization() throws {
-        #expect(TaskCategory.defaults.map(\.id) == ["inbox", "main", "side", "extra"])
+        #expect(TaskCategory.defaults.map(\.id) == ["inbox"])
         #expect(throws: TaskValidationError.invalidCategory) {
             try TaskCategory(id: "Work", name: "工作", order: 0)
         }

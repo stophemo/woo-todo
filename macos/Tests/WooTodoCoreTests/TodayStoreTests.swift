@@ -26,6 +26,35 @@ struct TodayStoreTests {
         #expect(changeCount == 1)
     }
 
+    @Test("面板内删除类型会把待办归入未分类")
+    func updateCategoriesReassignsRemovedCategory() throws {
+        let now = date("2026-07-17T22:30:00+08:00")
+        let work = try TaskCategory(id: "work", name: "工作", order: 1)
+        let repository = TodayMemoryRepository()
+        repository.categories = TaskCategory.normalizeList(
+            TaskCategory.defaults + [work]
+        )
+        repository.tasks = [
+            try TodoTask(
+                title: "工作待办",
+                categoryID: work.id,
+                createdAt: now
+            ),
+        ]
+        let store = TodayStore(repository: repository, now: { now })
+        var changeCount = 0
+        store.onTasksChanged = { changeCount += 1 }
+        store.reload()
+
+        let updated = store.updateCategories(TaskCategory.defaults)
+
+        #expect(updated.map(\.id) == [TaskCategory.inboxID])
+        #expect(store.categories.map(\.id) == [TaskCategory.inboxID])
+        #expect(repository.tasks.first?.categoryID == TaskCategory.inboxID)
+        #expect(repository.categories.map(\.id) == [TaskCategory.inboxID])
+        #expect(changeCount == 1)
+    }
+
     @Test("快速新增空白任务时不写入也不发送变更回调")
     func quickAddRejectsBlankTitle() throws {
         let now = date("2026-07-17T22:30:00+08:00")
@@ -201,7 +230,13 @@ private extension Array {
 
 private final class TodayMemoryRepository: TaskRepository {
     var tasks: [TodoTask]
-    var categories: [TaskCategory] = TaskCategory.defaults
+    var categories: [TaskCategory] = TaskCategory.normalizeList(
+        TaskCategory.defaults + [
+            try! TaskCategory(id: "main", name: "主线", order: 1),
+            try! TaskCategory(id: "side", name: "支线", order: 2),
+            try! TaskCategory(id: "extra", name: "外传", order: 3),
+        ]
+    )
 
     init(tasks: [TodoTask] = []) {
         self.tasks = tasks

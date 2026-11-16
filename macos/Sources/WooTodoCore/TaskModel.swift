@@ -15,9 +15,6 @@ public struct TaskCategory: Identifiable, Codable, Equatable, Hashable, Sendable
 
     public static let defaults: [TaskCategory] = [
         try! TaskCategory(id: inboxID, name: "未分类", order: 0),
-        try! TaskCategory(id: "main", name: "主线", order: 1),
-        try! TaskCategory(id: "side", name: "支线", order: 2),
-        try! TaskCategory(id: "extra", name: "外传", order: 3),
     ]
 
     public init(id: String, name: String, order: Int) throws {

@@ -10,6 +10,7 @@ struct DashboardStoreTests {
         let repository = DashboardMemoryRepository()
         let now = date("2026-07-15T12:00:00+08:00")
         let store = DashboardStore(repository: repository, now: { now })
+        store.reload()
 
         store.add(
             title: "完成周目标",
@@ -117,7 +118,13 @@ struct DashboardStoreTests {
 
 private final class DashboardMemoryRepository: TaskRepository {
     var tasks: [TodoTask]
-    var categories: [TaskCategory] = TaskCategory.defaults
+    var categories: [TaskCategory] = TaskCategory.normalizeList(
+        TaskCategory.defaults + [
+            try! TaskCategory(id: "main", name: "主线", order: 1),
+            try! TaskCategory(id: "side", name: "支线", order: 2),
+            try! TaskCategory(id: "extra", name: "外传", order: 3),
+        ]
+    )
 
     init(tasks: [TodoTask] = []) {
         self.tasks = tasks

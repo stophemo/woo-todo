@@ -603,6 +603,7 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             menu.add(0, MENU_DAY_COUNTER, order++, R.string.day_counter_settings_title)
+            menu.add(0, MENU_CATEGORIES, order++, R.string.category_manage)
             menu.add(0, MENU_REMINDER, order++, R.string.reminder_settings_title)
             if ((application as WooTodoApplication).syncRuntime.state.value == SyncRuntimeState.Unpaired) {
                 menu.add(0, MENU_PAIR_DEVICE, order++, R.string.pair_device_menu)
@@ -617,6 +618,7 @@ class MainActivity : AppCompatActivity() {
                         release?.let(::beginUpdate)
                     }
                     MENU_DAY_COUNTER -> showDayCounterSettings()
+                    MENU_CATEGORIES -> manageCategories()
                     MENU_REMINDER -> showReminderSettings()
                     MENU_PAIR_DEVICE -> showPairingMethodMenu(anchor)
                     MENU_SYNC_NOW -> synchronizeNow()
@@ -627,6 +629,14 @@ class MainActivity : AppCompatActivity() {
                 true
             }
             show()
+        }
+    }
+
+    private fun manageCategories() {
+        val app = application as WooTodoApplication
+        CategoryManagerDialog.show(this, app.taskRepository) {
+            app.notifyLocalMutation()
+            TodayWidgetUpdater.updateAllAsync(applicationContext)
         }
     }
 
@@ -1384,6 +1394,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_SYNC_NOW = 5
         private const val MENU_CHECK_UPDATE = 6
         private const val MENU_AVAILABLE_UPDATE = 7
+        private const val MENU_CATEGORIES = 8
         private const val STATE_PAIRING_ACTIVE = "pairing_active"
         private const val STATE_DEEP_LINK_INTENT_CONSUMED = "deep_link_intent_consumed"
         private const val NOTIFICATION_PERMISSION_STATE = "notification_permission_state"

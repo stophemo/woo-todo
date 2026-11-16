@@ -160,14 +160,16 @@ enum UITestFixtureSeeder {
               let dayAfterTomorrow = calendar.date(byAdding: .day, value: 2, to: today) else {
             throw AppRuntimeConfigurationError.fixtureDateFailed
         }
-        let work = try TaskCategory(id: "work", name: "工作", order: 4)
+        let work = try TaskCategory(id: "work", name: "工作", order: 1)
+        let study = try TaskCategory(id: "study", name: "学习", order: 2)
+        let life = try TaskCategory(id: "life", name: "生活", order: 3)
         try repository.saveCategories(
-            TaskCategory.normalizeList(TaskCategory.defaults + [work])
+            TaskCategory.normalizeList(TaskCategory.defaults + [work, study, life])
         )
         try repository.save([
             TodoTask(
                 title: "昨日遗留：提交本版本验收记录",
-                categoryID: "main",
+                categoryID: "work",
                 startDate: yesterday,
                 endDate: yesterday,
                 sortIndex: 0,
@@ -175,7 +177,7 @@ enum UITestFixtureSeeder {
             ),
             TodoTask(
                 title: "完成 macOS 面板验收",
-                categoryID: "main",
+                categoryID: "work",
                 startDate: today,
                 endDate: dayAfterTomorrow,
                 sortIndex: 1,
@@ -183,7 +185,7 @@ enum UITestFixtureSeeder {
             ),
             TodoTask(
                 title: "整理同步方式切换说明",
-                categoryID: "work",
+                categoryID: "study",
                 startDate: today,
                 endDate: tomorrow,
                 sortIndex: 0,
@@ -191,13 +193,13 @@ enum UITestFixtureSeeder {
             ),
             TodoTask(
                 title: "记录后续优化想法",
-                categoryID: "extra",
+                categoryID: "life",
                 sortIndex: 0,
                 createdAt: now.addingTimeInterval(-60)
             ),
             TodoTask(
                 title: "已完成示例",
-                categoryID: "side",
+                categoryID: "study",
                 status: .completed,
                 startDate: yesterday,
                 endDate: yesterday,

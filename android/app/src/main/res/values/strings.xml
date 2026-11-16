@@ -20,6 +20,7 @@
     <string name="category_manage">管理类型</string>
     <string name="category_rename">改名</string>
     <string name="category_add">新建类型</string>
+    <string name="category_add_action">＋ 新建类型</string>
     <string name="category_name_hint">类型名称</string>
     <string name="category_delete_title">删除类型？</string>
     <string name="category_delete_message">该类型下的待办会归入未分类，历史记录不受影响。</string>
@@ -37,7 +38,7 @@
     <string name="add_task">新增任务</string>
     <string name="edit_task">编辑任务</string>
     <string name="task_title_hint">要完成什么？</string>
-    <string name="quest_line">任务线</string>
+    <string name="quest_line">类型</string>
     <string name="time_type">时间类型</string>
     <string name="recurrence">重复方式</string>
     <string name="select_date">选择日期</string>

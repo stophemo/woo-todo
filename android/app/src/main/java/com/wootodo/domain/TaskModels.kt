@@ -19,9 +19,6 @@ object TaskCategories {
 
     val defaults: List<TaskCategory> = listOf(
         TaskCategory(INBOX_ID, "未分类", 0),
-        TaskCategory("main", "主线", 1),
-        TaskCategory("side", "支线", 2),
-        TaskCategory("extra", "外传", 3),
     )
 
     fun isValidId(id: String): Boolean = ID_PATTERN.matches(id)

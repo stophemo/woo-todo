@@ -23,21 +23,29 @@ struct FullTaskEditorView: View {
     @State private var endDate: Date
     @State private var reminderEnabled: Bool
     @State private var reminderDate: Date
+    @State private var localCategories: [TaskCategory]
+    @State private var showingCategories = false
+    @State private var focusNewCategory = false
 
     let mode: FullTaskEditorMode
-    let categories: [TaskCategory]
+    let persistCategories: (([TaskCategory]) -> [TaskCategory])?
     let save: (FullTaskInput) -> Void
 
     init(
         mode: FullTaskEditorMode,
         categories: [TaskCategory],
+        persistCategories: (([TaskCategory]) -> [TaskCategory])? = nil,
         save: @escaping (FullTaskInput) -> Void
     ) {
         self.mode = mode
-        self.categories = categories.isEmpty ? TaskCategory.defaults : categories
+        self.persistCategories = persistCategories
         self.save = save
-        let fallbackCategory = self.categories.first(where: { $0.id == TaskCategory.inboxID })?.id
-            ?? self.categories.first?.id
+        let resolvedCategories = categories.isEmpty ? TaskCategory.defaults : categories
+        _localCategories = State(initialValue: resolvedCategories)
+        let fallbackCategory = resolvedCategories.first(where: {
+            $0.id == TaskCategory.inboxID
+        })?.id
+            ?? resolvedCategories.first?.id
             ?? TaskCategory.inboxID
         switch mode {
         case .create:
@@ -50,7 +58,7 @@ struct FullTaskEditorView: View {
             _reminderDate = State(initialValue: Self.defaultReminderDate)
         case let .edit(task):
             _title = State(initialValue: task.title)
-            _categoryID = State(initialValue: self.categories.contains(where: {
+            _categoryID = State(initialValue: resolvedCategories.contains(where: {
                 $0.id == task.categoryID
             }) ? task.categoryID : fallbackCategory)
             _dateRangeEnabled = State(initialValue: task.startDate != nil && task.endDate != nil)
@@ -76,7 +84,7 @@ struct FullTaskEditorView: View {
                     .foregroundStyle(.secondary)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(categories) { category in
+                        ForEach(localCategories) { category in
                             Button {
                                 categoryID = category.id
                             } label: {
@@ -96,6 +104,20 @@ struct FullTaskEditorView: View {
                             }
                             .buttonStyle(.plain)
                         }
+                    }
+                }
+                if persistCategories != nil {
+                    HStack(spacing: 12) {
+                        Button("＋ 新建类型") {
+                            focusNewCategory = true
+                            showingCategories = true
+                        }
+                        .font(.caption)
+                        Button("管理类型") {
+                            focusNewCategory = false
+                            showingCategories = true
+                        }
+                        .font(.caption)
                     }
                 }
             }
@@ -131,6 +153,20 @@ struct FullTaskEditorView: View {
         }
         .padding(22)
         .frame(width: 430)
+        .sheet(isPresented: $showingCategories) {
+            TaskCategorySettingsView(
+                categories: localCategories,
+                focusNewName: focusNewCategory
+            ) { updated in
+                let result = persistCategories?(updated) ?? updated
+                localCategories = result
+                if !result.contains(where: { $0.id == categoryID }) {
+                    categoryID = result.first(where: {
+                        $0.id == TaskCategory.inboxID
+                    })?.id ?? result.first?.id ?? TaskCategory.inboxID
+                }
+            }
+        }
         .onChange(of: dateRangeEnabled) { _, enabled in
             if !enabled {
                 reminderEnabled = false

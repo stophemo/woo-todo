@@ -6,10 +6,17 @@ struct TaskCategorySettingsView: View {
     @State private var categories: [TaskCategory]
     @State private var newName = ""
     @State private var errorMessage: String?
+    @FocusState private var newNameFocused: Bool
+    let focusNewName: Bool
     let save: ([TaskCategory]) -> Void
 
-    init(categories: [TaskCategory], save: @escaping ([TaskCategory]) -> Void) {
+    init(
+        categories: [TaskCategory],
+        focusNewName: Bool = false,
+        save: @escaping ([TaskCategory]) -> Void
+    ) {
         _categories = State(initialValue: categories)
+        self.focusNewName = focusNewName
         self.save = save
     }
 
@@ -47,6 +54,7 @@ struct TaskCategorySettingsView: View {
             HStack(spacing: 10) {
                 TextField("新类型名称", text: $newName)
                     .textFieldStyle(.roundedBorder)
+                    .focused($newNameFocused)
                 Button("添加") {
                     addCategory()
                 }
@@ -72,6 +80,11 @@ struct TaskCategorySettingsView: View {
         }
         .padding(22)
         .frame(width: 460)
+        .onAppear {
+            if focusNewName {
+                DispatchQueue.main.async { newNameFocused = true }
+            }
+        }
     }
 
     private func addCategory() {

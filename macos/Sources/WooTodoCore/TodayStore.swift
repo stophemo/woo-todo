@@ -131,6 +131,28 @@ public final class TodayStore: ObservableObject {
         }
     }
 
+    /// 仅供面板内编辑器管理类型；删除类型时待办归入未分类，历史保留原类型。
+    @discardableResult
+    public func updateCategories(_ categories: [TaskCategory]) -> [TaskCategory] {
+        let normalized = TaskCategory.normalizeList(categories)
+        if perform({
+            let date = now()
+            let known = Set(normalized.map(\.id))
+            for category in self.categories where !known.contains(category.id) {
+                _ = try repository.reassignPendingCategory(
+                    from: category.id,
+                    to: TaskCategory.inboxID,
+                    at: date
+                )
+            }
+            try repository.saveCategories(normalized)
+            reload()
+        }) {
+            onTasksChanged?()
+        }
+        return normalized
+    }
+
     public func delete(id: UUID) {
         guard tasks.first(where: { $0.id == id })?.status == .pending else { return }
         if perform({

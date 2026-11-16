@@ -148,7 +148,11 @@ struct DashboardView: View {
         .sheet(item: $editorRequest) { request in
             FullTaskEditorView(
                 mode: request.mode,
-                categories: store.categories
+                categories: store.categories,
+                persistCategories: { categories in
+                    store.updateCategories(categories)
+                    return store.categories
+                }
             ) { input in
                 save(input, request: request)
             }
@@ -222,32 +226,60 @@ struct DashboardView: View {
 private struct TaskSectionsView: View {
     @ObservedObject var store: DashboardStore
     let edit: (TodoTask) -> Void
+    @State private var showingCategories = false
+    @State private var focusNewCategory = false
 
     var body: some View {
-        if store.sections.isEmpty {
-            ContentUnavailableView(
-                "暂无任务",
-                systemImage: "checklist",
-                description: Text("点击工具栏的加号创建任务。")
-            )
-        } else {
-            List {
-                ForEach(store.sections) { section in
-                    Section(section.kind.title) {
-                        ForEach(section.tasks) { task in
-                            DashboardTaskRow(
-                                task: task,
-                                categoryName: store.categoryName(for: task.categoryID),
-                                toggle: { store.toggleCompletion(id: task.id) },
-                                pass: { store.pass(id: task.id) },
-                                edit: { edit(task) },
-                                delete: { store.delete(id: task.id) }
-                            )
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text("任务")
+                    .font(.headline)
+                Spacer()
+                Button("＋ 新建类型") {
+                    focusNewCategory = true
+                    showingCategories = true
+                }
+                Button("管理类型") {
+                    focusNewCategory = false
+                    showingCategories = true
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            Divider()
+            if store.sections.isEmpty {
+                ContentUnavailableView(
+                    "暂无任务",
+                    systemImage: "checklist",
+                    description: Text("点击工具栏的加号创建任务，或先在右上角新建类型。")
+                )
+            } else {
+                List {
+                    ForEach(store.sections) { section in
+                        Section(section.kind.title) {
+                            ForEach(section.tasks) { task in
+                                DashboardTaskRow(
+                                    task: task,
+                                    categoryName: store.categoryName(for: task.categoryID),
+                                    toggle: { store.toggleCompletion(id: task.id) },
+                                    pass: { store.pass(id: task.id) },
+                                    edit: { edit(task) },
+                                    delete: { store.delete(id: task.id) }
+                                )
+                            }
                         }
                     }
                 }
+                .listStyle(.inset)
             }
-            .listStyle(.inset)
+        }
+        .sheet(isPresented: $showingCategories) {
+            TaskCategorySettingsView(
+                categories: store.categories,
+                focusNewName: focusNewCategory
+            ) { categories in
+                store.updateCategories(categories)
+            }
         }
     }
 }

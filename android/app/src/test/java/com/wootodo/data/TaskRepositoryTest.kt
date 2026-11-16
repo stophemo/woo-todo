@@ -43,17 +43,27 @@ class TaskRepositoryTest {
     }
 
     @Test
+    fun `默认只有未分类类型`() = runBlocking {
+        assertEquals(
+            listOf(TaskCategories.INBOX_ID),
+            repository.allCategories().map(TaskCategory::id),
+        )
+    }
+
+    @Test
     fun `创建日期范围任务并拒绝开始晚于结束`() = runBlocking {
+        val work = repository.addCategory("整理")!!
         val id = repository.create(
             TaskDraft(
                 title = "整理方案",
-                categoryId = "main",
+                categoryId = work.id,
                 startDate = date,
                 endDate = date.plusDays(2),
             ),
         )
 
         val task = repository.get(id)!!
+        assertEquals(work.id, task.categoryId)
         assertEquals(date, task.startDate)
         assertEquals(date.plusDays(2), task.endDate)
 
@@ -167,8 +177,8 @@ class TaskRepositoryTest {
 
     @Test
     fun `分类最多八个且名称不能重复`() = runBlocking {
-        assertEquals(TaskCategories.defaults.size, repository.allCategories().size)
-        repeat(4) { index ->
+        assertEquals(1, repository.allCategories().size)
+        repeat(7) { index ->
             assertTrue(repository.addCategory("自定义$index") != null)
         }
         assertEquals(8, repository.allCategories().size)
@@ -178,10 +188,11 @@ class TaskRepositoryTest {
 
     @Test
     fun `撤销删除恢复原分类和日期`() = runBlocking {
+        val side = repository.addCategory("支线")!!
         val id = repository.create(
             TaskDraft(
                 title = "恢复任务",
-                categoryId = "side",
+                categoryId = side.id,
                 startDate = date,
                 endDate = date.plusDays(2),
             ),
@@ -191,7 +202,7 @@ class TaskRepositoryTest {
 
         val restored = repository.create(original.toRestoreDraft())
         val task = repository.get(restored)!!
-        assertEquals("side", task.categoryId)
+        assertEquals(side.id, task.categoryId)
         assertEquals(date, task.startDate)
         assertEquals(date.plusDays(2), task.endDate)
         assertEquals(original.sortOrder, task.sortOrder)

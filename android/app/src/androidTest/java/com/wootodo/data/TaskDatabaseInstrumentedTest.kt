@@ -194,11 +194,139 @@ class TaskDatabaseInstrumentedTest {
             check(cursor.moveToFirst())
             assertEquals(0, cursor.getInt(0))
         }
+        val categories = store.getCategories()
         assertEquals(
-            TaskCategories.defaults.size,
-            store.getCategories().size,
+            setOf(TaskCategories.INBOX_ID, "main", "side", "extra"),
+            categories.map { it.id }.toSet(),
         )
-        assertTrue(store.getCategories().any { it.id == TaskCategories.INBOX_ID })
+        assertEquals("主线", categories.first { it.id == "main" }.name)
+    }
+
+    @Test
+    fun `版本十升级会清理未使用的默认类型并保留正在使用的类型`() = runBlocking {
+        database.close()
+        context.deleteDatabase(DATABASE_NAME)
+        context.openOrCreateDatabase(DATABASE_NAME, Context.MODE_PRIVATE, null).use { legacy ->
+            legacy.execSQL(
+                """
+                CREATE TABLE tasks (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    series_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    time_type TEXT NOT NULL,
+                    target_date TEXT,
+                    quest_line TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending', 'completed', 'pass')),
+                    recurrence TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    settled_at INTEGER,
+                    reminder_time TEXT,
+                    deadline_date TEXT
+                )
+                """.trimIndent(),
+            )
+            legacy.execSQL(
+                """
+                CREATE TABLE task_categories (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            legacy.execSQL(
+                """
+                INSERT INTO tasks (
+                    id, series_id, title, time_type, target_date, quest_line,
+                    status, recurrence, sort_order, created_at, updated_at,
+                    settled_at, reminder_time, deadline_date
+                ) VALUES (
+                    'task-kept-main', 'task-kept-main', '保留主线', 'day',
+                    '2026-07-15', 'main', 'pending', 'once', 0, 1000, 1000, NULL, NULL, NULL
+                )
+                """.trimIndent(),
+            )
+            listOf(
+                arrayOf("inbox", "未分类", 0),
+                arrayOf("main", "主线", 1),
+                arrayOf("side", "支线", 2),
+                arrayOf("extra", "外传", 3),
+            ).forEach { values ->
+                legacy.execSQL(
+                    "INSERT INTO task_categories(id, name, sort_order, updated_at) VALUES (?, ?, ?, ?)",
+                    values + arrayOf(1000),
+                )
+            }
+            legacy.version = 10
+        }
+
+        database = TaskDatabase(context)
+        database.writableDatabase
+        val categories = SQLiteTaskStore(database).getCategories()
+
+        assertEquals(listOf(TaskCategories.INBOX_ID, "main"), categories.map { it.id })
+        assertEquals(listOf(0, 1), categories.map { it.order })
+        assertEquals("主线", categories.first { it.id == "main" }.name)
+    }
+
+    @Test
+    fun `版本十升级会移除全部未使用的默认类型`() = runBlocking {
+        database.close()
+        context.deleteDatabase(DATABASE_NAME)
+        context.openOrCreateDatabase(DATABASE_NAME, Context.MODE_PRIVATE, null).use { legacy ->
+            legacy.execSQL(
+                """
+                CREATE TABLE tasks (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    series_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    time_type TEXT NOT NULL,
+                    target_date TEXT,
+                    quest_line TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending', 'completed', 'pass')),
+                    recurrence TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    settled_at INTEGER,
+                    reminder_time TEXT,
+                    deadline_date TEXT
+                )
+                """.trimIndent(),
+            )
+            legacy.execSQL(
+                """
+                CREATE TABLE task_categories (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            listOf(
+                arrayOf("inbox", "未分类", 0),
+                arrayOf("main", "主线", 1),
+                arrayOf("side", "支线", 2),
+                arrayOf("extra", "外传", 3),
+            ).forEach { values ->
+                legacy.execSQL(
+                    "INSERT INTO task_categories(id, name, sort_order, updated_at) VALUES (?, ?, ?, ?)",
+                    values + arrayOf(1000),
+                )
+            }
+            legacy.version = 10
+        }
+
+        database = TaskDatabase(context)
+        database.writableDatabase
+        val categories = SQLiteTaskStore(database).getCategories()
+
+        assertEquals(listOf(TaskCategories.INBOX_ID), categories.map { it.id })
+        assertEquals(0, categories.single().order)
     }
 
     private companion object {

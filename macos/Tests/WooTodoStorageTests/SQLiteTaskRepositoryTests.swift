@@ -178,6 +178,43 @@ struct SQLiteTaskRepositoryTests {
         #expect(stored.first { $0.id == completed.id }?.categoryID == "work")
     }
 
+    @Test("升级会移除未使用的旧默认类型")
+    func unusedLegacyDefaultCategoriesAreRemovedOnReopen() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("tasks.sqlite")
+
+        do {
+            let repository = try SQLiteTaskRepository(databaseURL: databaseURL)
+            try repository.saveCategories(legacyDefaultCategories())
+        }
+
+        let reopened = try SQLiteTaskRepository(databaseURL: databaseURL)
+        #expect(try reopened.fetchCategories().map(\.id) == [TaskCategory.inboxID])
+    }
+
+    @Test("升级会保留任务正在使用的旧默认类型")
+    func usedLegacyDefaultCategoryIsPreservedOnReopen() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("tasks.sqlite")
+
+        do {
+            let repository = try SQLiteTaskRepository(databaseURL: databaseURL)
+            try repository.saveCategories(legacyDefaultCategories())
+            try repository.save(try TodoTask(title: "保留主线", categoryID: "main"))
+        }
+
+        let reopened = try SQLiteTaskRepository(databaseURL: databaseURL)
+        #expect(try reopened.fetchCategories().map(\.id) == [
+            TaskCategory.inboxID, "main",
+        ])
+    }
+
     @Test("显示配置在仓储关闭并重新打开后仍保留")
     func displayConfigurationSurvivesRepositoryReopen() throws {
         let directory = FileManager.default.temporaryDirectory
@@ -200,6 +237,14 @@ struct SQLiteTaskRepositoryTests {
 
         let reopened = try SQLiteTaskRepository(databaseURL: databaseURL)
         #expect(try reopened.displayConfiguration() == payload)
+    }
+
+    private func legacyDefaultCategories() -> [TaskCategory] {
+        TaskCategory.normalizeList(TaskCategory.defaults + [
+            try! TaskCategory(id: "main", name: "主线", order: 1),
+            try! TaskCategory(id: "side", name: "支线", order: 2),
+            try! TaskCategory(id: "extra", name: "外传", order: 3),
+        ])
     }
 
     private func date(_ value: String) -> Date {

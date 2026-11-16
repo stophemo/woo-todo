@@ -33,7 +33,8 @@ struct TodayView: View {
         .sheet(isPresented: $showingNewTask) {
             FullTaskEditorView(
                 mode: .create,
-                categories: store.categories
+                categories: store.categories,
+                persistCategories: { store.updateCategories($0) }
             ) { input in
                 store.add(
                     title: input.title,
@@ -47,7 +48,8 @@ struct TodayView: View {
         .sheet(item: $editingTask) { task in
             FullTaskEditorView(
                 mode: .edit(task),
-                categories: store.categories
+                categories: store.categories,
+                persistCategories: { store.updateCategories($0) }
             ) { input in
                 store.edit(
                     id: task.id,

@@ -459,6 +459,34 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         return values
     }
 
+    /// v0.2.4 曾把所有新库写成未分类 + 主线 + 支线 + 外传。
+    /// 升级时只移除没有被任务使用的默认类型，保留用户自定义或已使用的类型。
+    private func removeUnusedLegacyCategories() throws {
+        try execute(
+            """
+            DELETE FROM task_categories
+            WHERE id IN ('main', 'side', 'extra')
+              AND name IN ('主线', '支线', '外传')
+              AND NOT EXISTS (
+                  SELECT 1 FROM tasks WHERE tasks.tier = task_categories.id
+              )
+            """
+        )
+        let categories = try queryCategories()
+        let statement = try prepare(
+            "UPDATE task_categories SET sort_order = ? WHERE id = ?"
+        )
+        defer { sqlite3_finalize(statement) }
+        for (index, category) in categories.enumerated() {
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
+            try bind([.integer(Int64(index)), .text(category.id)], to: statement)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw statementError()
+            }
+        }
+    }
+
     private func migrate() throws {
         try execute(
             """
@@ -654,6 +682,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 """
             )
         }
+        try removeUnusedLegacyCategories()
         try execute("PRAGMA user_version = 7")
     }
 

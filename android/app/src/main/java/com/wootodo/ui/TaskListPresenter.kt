@@ -47,8 +47,8 @@ object TaskListPresenter {
                 TaskDateState.isSettledOn(task, today, zoneId)
         }
         fun order(values: List<Task>): List<Task> = values.sortedWith(
-            compareBy<Task> { it.endDate ?: LocalDate.MAX }
-                .thenBy { categoryOrder[it.categoryId] ?: Int.MAX_VALUE }
+            compareBy<Task> { categoryOrder[it.categoryId] ?: Int.MAX_VALUE }
+                .thenBy { it.endDate ?: LocalDate.MAX }
                 .thenBy { it.sortOrder }
                 .thenBy { it.createdAt }
                 .thenBy { it.id },

@@ -55,6 +55,29 @@ struct TodayStoreTests {
         #expect(changeCount == 1)
     }
 
+    @Test("今日任务按标签优先级排列")
+    func tasksFollowCategoryPriority() throws {
+        let now = date("2026-07-17T10:00:00+08:00")
+        let life = try TaskCategory(id: "life", name: "生活", order: 0)
+        let work = try TaskCategory(id: "work", name: "工作", order: 1)
+        let inbox = try TaskCategory(
+            id: TaskCategory.inboxID,
+            name: "未分类",
+            order: 2
+        )
+        let repository = TodayMemoryRepository(tasks: [
+            try TodoTask(title: "低优先级", categoryID: work.id, createdAt: now),
+            try TodoTask(title: "高优先级", categoryID: life.id, createdAt: now),
+        ])
+        repository.categories = [life, work, inbox]
+        let store = TodayStore(repository: repository, now: { now })
+
+        store.reload()
+
+        #expect(store.categories.map(\.id) == ["life", "work", "inbox"])
+        #expect(store.tasks.map(\.title) == ["高优先级", "低优先级"])
+    }
+
     @Test("按名称添加标签会复用已有名称或创建新标签")
     func addCategoryByNameMatchesOrCreates() throws {
         let now = date("2026-07-17T22:30:00+08:00")

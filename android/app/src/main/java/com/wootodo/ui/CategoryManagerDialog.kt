@@ -9,6 +9,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.wootodo.R
 import com.wootodo.data.TaskRepository
@@ -42,11 +43,19 @@ object CategoryManagerDialog {
 
         render = {
             container.removeAllViews()
-            categories.forEach { category ->
+            container.addView(
+                TextView(activity).apply {
+                    text = activity.getString(R.string.category_priority_hint)
+                    textSize = 12f
+                    setTextColor(ContextCompat.getColor(activity, R.color.muted))
+                    setPadding(0, 0, 0, dp(activity, 8))
+                },
+            )
+            categories.forEachIndexed { index, category ->
                 val row = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = android.view.Gravity.CENTER_VERTICAL
-                    setPadding(0, dp(activity, 6), 0, dp(activity, 6))
+                    setPadding(0, dp(activity, 4), 0, dp(activity, 4))
                 }
                 row.addView(
                     TextView(activity).apply {
@@ -60,9 +69,38 @@ object CategoryManagerDialog {
                     },
                 )
                 row.addView(
+                    moveButton(
+                        activity = activity,
+                        label = "↑",
+                        description = activity.getString(R.string.category_move_up),
+                        enabled = index > 0,
+                    ) {
+                        activity.lifecycleScope.launch {
+                            if (repository.moveCategory(category.id, -1)) reload()
+                        }
+                    },
+                )
+                row.addView(
+                    moveButton(
+                        activity = activity,
+                        label = "↓",
+                        description = activity.getString(R.string.category_move_down),
+                        enabled = index < categories.lastIndex,
+                    ) {
+                        activity.lifecycleScope.launch {
+                            if (repository.moveCategory(category.id, 1)) reload()
+                        }
+                    },
+                )
+                row.addView(
                     Button(activity).apply {
                         text = activity.getString(R.string.category_rename)
+                        textSize = 13f
                         minWidth = 0
+                        minimumWidth = 0
+                        minHeight = 0
+                        minimumHeight = 0
+                        setPadding(dp(activity, 6), 0, dp(activity, 6), 0)
                         setOnClickListener { promptName(category) }
                     },
                 )
@@ -70,7 +108,12 @@ object CategoryManagerDialog {
                     row.addView(
                         Button(activity).apply {
                             text = activity.getString(R.string.delete)
+                            textSize = 13f
                             minWidth = 0
+                            minimumWidth = 0
+                            minHeight = 0
+                            minimumHeight = 0
+                            setPadding(dp(activity, 6), 0, dp(activity, 6), 0)
                             setOnClickListener { confirmDelete(category) }
                         },
                     )
@@ -160,6 +203,29 @@ object CategoryManagerDialog {
 
         dialog.show()
         reload()
+    }
+
+    private fun moveButton(
+        activity: AppCompatActivity,
+        label: String,
+        description: String,
+        enabled: Boolean,
+        onClick: () -> Unit,
+    ): Button {
+        return Button(activity).apply {
+            text = label
+            contentDescription = description
+            isEnabled = enabled
+            textSize = 16f
+            gravity = android.view.Gravity.CENTER
+            minWidth = 0
+            minimumWidth = 0
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(0, 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(dp(activity, 36), dp(activity, 36))
+            setOnClickListener { onClick() }
+        }
     }
 
     private fun dp(activity: AppCompatActivity, value: Int): Int =

@@ -47,9 +47,9 @@ public struct TaskCategory: Identifiable, Codable, Equatable, Hashable, Sendable
         return normalized
     }
 
-    /// 补齐 inbox、去重、按当前顺序重排 order，并限制最多 8 个。
+    /// 去重、保留当前优先级顺序并重排 order；缺少 inbox 时补在最前。
     public static func normalizeList(_ input: [TaskCategory]) -> [TaskCategory] {
-        var inbox: TaskCategory?
+        var hasInbox = false
         var seenIds = Set<String>()
         var seenNames = Set<String>()
         var values: [TaskCategory] = []
@@ -62,15 +62,24 @@ public struct TaskCategory: Identifiable, Codable, Equatable, Hashable, Sendable
             }
             let normalized = try? TaskCategory(id: category.id, name: name, order: 0)
             guard let normalized else { continue }
-            if category.id == inboxID {
-                inbox = normalized
-            } else {
-                values.append(normalized)
-            }
+            if category.id == inboxID { hasInbox = true }
+            values.append(normalized)
         }
-        let inboxValue = inbox ?? (try! TaskCategory(id: inboxID, name: "未分类", order: 0))
-        values.insert(inboxValue, at: 0)
-        return values.prefix(maximumCount).enumerated().map { index, category in
+        if !hasInbox {
+            values.insert(
+                try! TaskCategory(id: inboxID, name: "未分类", order: 0),
+                at: 0
+            )
+        }
+        var limited = Array(values.prefix(maximumCount))
+        if !limited.contains(where: { $0.id == inboxID }) {
+            limited[limited.count - 1] = try! TaskCategory(
+                id: inboxID,
+                name: "未分类",
+                order: 0
+            )
+        }
+        return limited.enumerated().map { index, category in
             try! TaskCategory(id: category.id, name: category.name, order: index)
         }
     }

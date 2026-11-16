@@ -36,29 +36,28 @@ object TaskCategories {
         return normalized
     }
 
-    /** 补齐 inbox、去重、按当前顺序重排 order，并限制最多 8 个。 */
+    /** 去重、保留当前优先级顺序并重排 order；缺少 inbox 时补在最前。 */
     fun normalizeList(input: List<TaskCategory>): List<TaskCategory> {
         val seenIds = HashSet<String>()
         val seenNames = HashSet<String>()
+        var hasInbox = false
         val values = buildList {
-            var inbox: TaskCategory? = null
             input.forEach { category ->
                 val name = normalizeName(category.name) ?: return@forEach
                 if (!isValidId(category.id) || !seenIds.add(category.id)) return@forEach
                 if (!seenNames.add(name)) return@forEach
-                if (category.id == INBOX_ID) {
-                    inbox = category.copy(name = name)
-                } else {
-                    add(category.copy(name = name))
-                }
+                if (category.id == INBOX_ID) hasInbox = true
+                add(category.copy(name = name))
             }
-            if (inbox == null) {
+            if (!hasInbox) {
                 add(0, TaskCategory(INBOX_ID, "未分类", 0))
-            } else {
-                add(0, requireNotNull(inbox))
             }
         }
-        return values.take(MAXIMUM_COUNT).mapIndexed { index, category ->
+        val limited = values.take(MAXIMUM_COUNT).toMutableList()
+        if (limited.none { it.id == INBOX_ID }) {
+            limited[limited.lastIndex] = TaskCategory(INBOX_ID, "未分类", 0)
+        }
+        return limited.mapIndexed { index, category ->
             category.copy(order = index)
         }
     }

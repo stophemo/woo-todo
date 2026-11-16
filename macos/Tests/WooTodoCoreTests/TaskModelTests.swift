@@ -148,6 +148,43 @@ struct TaskModelTests {
         }
     }
 
+    @Test("分类规范化保留未分类的当前排序位置")
+    func categoryNormalizationPreservesInboxOrder() throws {
+        let work = try TaskCategory(id: "work", name: "工作", order: 0)
+        let inbox = try TaskCategory(
+            id: TaskCategory.inboxID,
+            name: "未分类",
+            order: 1
+        )
+        let life = try TaskCategory(id: "life", name: "生活", order: 2)
+
+        let normalized = TaskCategory.normalizeList([work, inbox, life])
+
+        #expect(normalized.map(\.id) == ["work", "inbox", "life"])
+        #expect(normalized.map(\.order) == [0, 1, 2])
+    }
+
+    @Test("分类超过上限时仍保留未分类兜底")
+    func categoryNormalizationKeepsInboxOverLimit() throws {
+        let customs = try (1...8).map { index in
+            try TaskCategory(
+                id: "c\(index)",
+                name: "标签\(index)",
+                order: index - 1
+            )
+        }
+        let inbox = try TaskCategory(
+            id: TaskCategory.inboxID,
+            name: "未分类",
+            order: 8
+        )
+
+        let normalized = TaskCategory.normalizeList(customs + [inbox])
+
+        #expect(normalized.count == TaskCategory.maximumCount)
+        #expect(normalized.contains(where: { $0.id == TaskCategory.inboxID }))
+    }
+
     @Test("待办任务排在已结算任务前")
     func displayOrderPutsPendingFirst() throws {
         let pending = try TodoTask(title: "待办", categoryID: "main")

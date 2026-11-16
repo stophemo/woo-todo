@@ -161,6 +161,20 @@ class TaskRepository(
         return CategoryInputResult.Selected(created)
     }
 
+    suspend fun moveCategory(id: String, offset: Int): Boolean {
+        if (offset == 0) return false
+        val current = allCategories()
+        val index = current.indexOfFirst { it.id == id }
+        if (index < 0) return false
+        val target = (index + offset).coerceIn(0, current.lastIndex)
+        if (target == index) return false
+        val reordered = current.toMutableList().apply {
+            add(target, removeAt(index))
+        }
+        store.replaceCategories(TaskCategories.normalizeList(reordered), clock.millis())
+        return true
+    }
+
     suspend fun renameCategory(id: String, name: String): Boolean {
         val normalized = TaskCategories.normalizeName(name) ?: return false
         val current = allCategories()

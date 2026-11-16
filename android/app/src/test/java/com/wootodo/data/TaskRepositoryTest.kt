@@ -233,6 +233,35 @@ class TaskRepositoryTest {
     }
 
     @Test
+    fun `标签可以上下移动并持久化优先级`() = runBlocking {
+        val work = repository.addCategory("工作")!!
+        val life = repository.addCategory("生活")!!
+        assertEquals(
+            listOf(TaskCategories.INBOX_ID, work.id, life.id),
+            repository.allCategories().map(TaskCategory::id),
+        )
+
+        assertTrue(repository.moveCategory(life.id, -1))
+        assertEquals(
+            listOf(TaskCategories.INBOX_ID, life.id, work.id),
+            repository.allCategories().map(TaskCategory::id),
+        )
+
+        assertTrue(repository.moveCategory(life.id, -1))
+        assertEquals(
+            listOf(life.id, TaskCategories.INBOX_ID, work.id),
+            repository.allCategories().map(TaskCategory::id),
+        )
+        assertFalse(repository.moveCategory(life.id, -1))
+
+        assertTrue(repository.moveCategory(life.id, 1))
+        assertEquals(
+            listOf(TaskCategories.INBOX_ID, life.id, work.id),
+            repository.allCategories().map(TaskCategory::id),
+        )
+    }
+
+    @Test
     fun `撤销删除恢复原分类和日期`() = runBlocking {
         val side = repository.addCategory("支线")!!
         val id = repository.create(

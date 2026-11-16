@@ -26,6 +26,9 @@
     <string name="category_limit_reached">最多只能有 8 个标签</string>
     <string name="category_duplicate_name">已经有同名标签</string>
     <string name="category_name_invalid">标签名称需要 1–12 个字符</string>
+    <string name="category_priority_hint">从上到下优先级由高到低；优先级高的标签会排在任务列表更前面。</string>
+    <string name="category_move_up">上移</string>
+    <string name="category_move_down">下移</string>
     <string name="set_date_range">设置时间范围</string>
     <string name="start_date_label">开始日期</string>
     <string name="end_date_label">结束日期</string>

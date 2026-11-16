@@ -24,13 +24,36 @@ struct TaskCategorySettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("管理标签")
                 .font(.title2.weight(.semibold))
-            Text("最多 8 个标签；删除标签时，该标签下的待办会归入未分类，历史记录保留原标签。")
+            Text("最多 8 个标签；从上到下优先级由高到低，优先级高的标签会排在任务列表更前面。删除标签时，该标签下的待办会归入未分类，历史记录保留原标签。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             List {
                 ForEach($categories) { $category in
                     HStack(spacing: 10) {
+                        VStack(spacing: 2) {
+                            Button {
+                                move(category.id, by: -1)
+                            } label: {
+                                Image(systemName: "chevron.up")
+                                    .frame(width: 16, height: 13)
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(index(of: category.id) == 0)
+                            .help("上移（提高优先级）")
+                            .accessibilityLabel("上移（提高优先级）")
+
+                            Button {
+                                move(category.id, by: 1)
+                            } label: {
+                                Image(systemName: "chevron.down")
+                                    .frame(width: 16, height: 13)
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(index(of: category.id) == categories.count - 1)
+                            .help("下移（降低优先级）")
+                            .accessibilityLabel("下移（降低优先级）")
+                        }
                         TextField("标签名称", text: $category.name)
                             .textFieldStyle(.roundedBorder)
                         if category.id == TaskCategory.inboxID {
@@ -85,6 +108,17 @@ struct TaskCategorySettingsView: View {
                 DispatchQueue.main.async { newNameFocused = true }
             }
         }
+    }
+
+    private func index(of id: String) -> Int? {
+        categories.firstIndex(where: { $0.id == id })
+    }
+
+    private func move(_ id: String, by offset: Int) {
+        guard let index = index(of: id) else { return }
+        let target = index + offset
+        guard categories.indices.contains(target) else { return }
+        categories.swapAt(index, target)
     }
 
     private func addCategory() {

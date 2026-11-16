@@ -11,7 +11,7 @@
     "QuestLine": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$",
-      "description": "任务分类标识。inbox 为兜底分类，其余由用户在设备上自定义；main / side / extra 仅用于兼容旧数据。分类名称与顺序随显示配置同步。"
+      "description": "任务标签标识。inbox 表示无标签兜底，其余由用户在设备上自定义；main / side / extra 仅用于兼容旧数据。标签名称与顺序随显示配置同步。"
     },
     "QuestLineDefinition": {
       "type": "object",
@@ -167,7 +167,7 @@
           "type": "array",
           "minItems": 1,
           "maxItems": 8,
-          "description": "任务分类定义；顺序即优先级。缺省时表示沿用本机现有分类（兼容旧正文）。",
+          "description": "任务标签定义；顺序即优先级。缺省时表示沿用本机现有标签（兼容旧正文）。",
           "items": { "$ref": "#/$defs/QuestLineDefinition" }
         }
       }

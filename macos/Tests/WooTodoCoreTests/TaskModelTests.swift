@@ -87,6 +87,67 @@ struct TaskModelTests {
         #expect(TaskCategory.newID(existing: ["cabcdefg"]) != "cabcdefg")
     }
 
+    @Test("标签输入留空表示不设置标签")
+    func categoryInputEmptyMeansNone() throws {
+        #expect(
+            try TaskCategory.resolveInput(
+                "  \n",
+                categories: TaskCategory.defaults
+            ) == .none
+        )
+    }
+
+    @Test("标签输入优先匹配已有标签并忽略大小写")
+    func categoryInputMatchesExisting() throws {
+        let work = try TaskCategory(id: "work", name: "Work", order: 1)
+        let categories = TaskCategory.normalizeList([work])
+
+        #expect(
+            try TaskCategory.resolveInput("  work ", categories: categories)
+                == .existing(try #require(categories.first { $0.id == "work" }))
+        )
+        #expect(
+            try TaskCategory.resolveInput("未分类", categories: categories)
+                == .existing(try #require(categories.first { $0.id == "inbox" }))
+        )
+    }
+
+    @Test("标签输入不匹配时生成新标签")
+    func categoryInputCreatesNewCategory() throws {
+        let result = try TaskCategory.resolveInput(
+            "  学习 ",
+            categories: TaskCategory.defaults
+        )
+
+        guard case let .create(category) = result else {
+            Issue.record("应生成新标签")
+            return
+        }
+        #expect(category.name == "学习")
+        #expect(category.order == 1)
+        #expect(TaskCategory.isValidID(category.id))
+    }
+
+    @Test("标签输入校验名称与数量上限")
+    func categoryInputValidation() throws {
+        #expect(throws: TaskValidationError.invalidCategory) {
+            try TaskCategory.resolveInput(
+                String(repeating: "字", count: 13),
+                categories: TaskCategory.defaults
+            )
+        }
+
+        let full = TaskCategory.normalizeList(
+            (1...7).map { index in
+                try! TaskCategory(id: "c\(index)", name: "标签\(index)", order: index)
+            }
+        )
+        #expect(full.count == 8)
+        #expect(throws: TaskValidationError.categoryLimitReached) {
+            try TaskCategory.resolveInput("新标签", categories: full)
+        }
+    }
+
     @Test("待办任务排在已结算任务前")
     func displayOrderPutsPendingFirst() throws {
         let pending = try TodoTask(title: "待办", categoryID: "main")

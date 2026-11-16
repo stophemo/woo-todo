@@ -67,6 +67,15 @@ final class DashboardWindowController: NSWindowController, NSWindowDelegate {
         store.reload()
     }
 
+    func windowDidResignKey(_ notification: Notification) {
+        guard DashboardSection.settingSections.contains(navigation.selection),
+              let window,
+              window.isVisible,
+              window.attachedSheet == nil,
+              NSApp.modalWindow == nil else { return }
+        window.close()
+    }
+
     func windowWillClose(_ notification: Notification) {
         let callback = onClose
         onClose = nil

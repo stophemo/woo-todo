@@ -55,6 +55,64 @@ struct TodayStoreTests {
         #expect(changeCount == 1)
     }
 
+    @Test("按名称添加标签会复用已有名称或创建新标签")
+    func addCategoryByNameMatchesOrCreates() throws {
+        let now = date("2026-07-17T22:30:00+08:00")
+        let work = try TaskCategory(id: "work", name: "工作", order: 1)
+        let repository = TodayMemoryRepository()
+        repository.categories = TaskCategory.normalizeList(
+            TaskCategory.defaults + [work]
+        )
+        let store = TodayStore(repository: repository, now: { now })
+        store.reload()
+
+        let existing = store.addCategory(named: " 工作 ")
+        #expect(existing?.id == work.id)
+
+        let created = try #require(store.addCategory(named: "学习"))
+        #expect(created.name == "学习")
+        #expect(store.categories.contains(where: { $0.id == created.id }))
+        #expect(repository.categories.contains(where: { $0.id == created.id }))
+    }
+
+    @Test("按名称添加标签在达到上限时失败")
+    func addCategoryByNameRejectsLimit() throws {
+        let now = date("2026-07-17T22:30:00+08:00")
+        let repository = TodayMemoryRepository()
+        repository.categories = TaskCategory.normalizeList(
+            (1...7).map { index in
+                try! TaskCategory(id: "c\(index)", name: "标签\(index)", order: index)
+            }
+        )
+        let store = TodayStore(repository: repository, now: { now })
+        store.reload()
+
+        #expect(store.addCategory(named: "新标签") == nil)
+        #expect(store.errorMessage == TaskValidationError.categoryLimitReached.localizedDescription)
+        #expect(repository.categories.count == 8)
+    }
+
+    @Test("按名称添加标签不会改动既有待办的标签")
+    func addCategoryByNameKeepsPendingAssignments() throws {
+        let now = date("2026-07-17T22:30:00+08:00")
+        let work = try TaskCategory(id: "work", name: "工作", order: 1)
+        let repository = TodayMemoryRepository(tasks: [
+            try TodoTask(title: "工作待办", categoryID: work.id, createdAt: now),
+        ])
+        repository.categories = TaskCategory.normalizeList(
+            TaskCategory.defaults + [work]
+        )
+        let store = TodayStore(repository: repository, now: { now })
+        store.reload()
+
+        _ = try #require(store.addCategory(named: "学习"))
+
+        #expect(repository.tasks.first?.categoryID == work.id)
+        #expect(repository.categories.count == 3)
+        #expect(repository.categories.contains(where: { $0.id == "inbox" }))
+        #expect(repository.categories.contains(where: { $0.id == "work" }))
+    }
+
     @Test("快速新增空白任务时不写入也不发送变更回调")
     func quickAddRejectsBlankTitle() throws {
         let now = date("2026-07-17T22:30:00+08:00")

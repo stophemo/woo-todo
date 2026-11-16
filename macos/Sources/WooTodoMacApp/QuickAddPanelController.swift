@@ -3,21 +3,23 @@ import SwiftUI
 import WooTodoCore
 
 @MainActor
-final class QuickAddPanelController: NSWindowController {
+final class QuickAddPanelController: NSWindowController, NSWindowDelegate {
     private let model: QuickAddModel
     private var previousApplication: NSRunningApplication?
+    private var isDismissing = false
 
     init(store: TodayStore) {
         let panel = QuickAddPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 132)
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 176)
         )
         model = QuickAddModel(store: store)
         super.init(window: panel)
 
         configurePanel(panel)
         configureContent(panel)
+        panel.delegate = self
         model.onDismiss = { [weak self] in
-            self?.dismissAndRestorePreviousApplication()
+            self?.dismiss(restorePreviousApplication: true)
         }
     }
 
@@ -41,13 +43,18 @@ final class QuickAddPanelController: NSWindowController {
         model.requestFocus()
     }
 
+    func windowDidResignKey(_ notification: Notification) {
+        guard let panel = window, panel.isVisible else { return }
+        dismiss(restorePreviousApplication: false)
+    }
+
     private func configurePanel(_ panel: NSPanel) {
         panel.title = "快速新增任务"
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.hidesOnDeactivate = true
+        panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .utilityWindow
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
@@ -104,17 +111,24 @@ final class QuickAddPanelController: NSWindowController {
         previousApplication = application
     }
 
-    private func dismissAndRestorePreviousApplication() {
+    private func dismiss(restorePreviousApplication: Bool) {
+        guard !isDismissing else { return }
+        isDismissing = true
+        defer { isDismissing = false }
+
         window?.orderOut(nil)
-        previousApplication?.activate(options: [.activateIgnoringOtherApps])
+        let previous = previousApplication
         previousApplication = nil
+        if restorePreviousApplication {
+            previous?.activate(options: [.activateIgnoringOtherApps])
+        }
     }
 }
 
 @MainActor
 private final class QuickAddModel: ObservableObject {
     @Published var title = ""
-    @Published var categoryID = TaskCategory.inboxID
+    @Published var categoryName = ""
     @Published private(set) var categories: [TaskCategory] = TaskCategory.defaults
     @Published private(set) var errorMessage: String?
     @Published private(set) var focusRequest = 0
@@ -129,10 +143,8 @@ private final class QuickAddModel: ObservableObject {
 
     func prepareForPresentation() {
         title = ""
+        categoryName = ""
         categories = store.categories
-        categoryID = categories.first(where: { $0.id == TaskCategory.inboxID })?.id
-            ?? categories.first?.id
-            ?? TaskCategory.inboxID
         errorMessage = nil
     }
 
@@ -141,25 +153,54 @@ private final class QuickAddModel: ObservableObject {
     }
 
     func submit() {
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "任务内容不能为空"
+            requestFocus()
+            return
+        }
+        guard let categoryID = resolveCategoryID() else { return }
         guard store.add(title: title, categoryID: categoryID) else {
             errorMessage = store.errorMessage ?? "无法新增任务"
             requestFocus()
             return
         }
         title = ""
+        categoryName = ""
         errorMessage = nil
         onDismiss?()
     }
 
     func cancel() {
         title = ""
+        categoryName = ""
         errorMessage = nil
         onDismiss?()
     }
 
     var selectionSummary: String {
-        let name = TaskCategory.resolveName(id: categoryID, categories: categories)
+        let name = categoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return "无标签 · 完成即止" }
+        if let matched = categories.first(where: {
+            $0.name.compare(
+                name,
+                options: [.caseInsensitive, .diacriticInsensitive]
+            ) == .orderedSame
+        }) {
+            return "\(matched.name) · 完成即止"
+        }
         return "\(name) · 完成即止"
+    }
+
+    private func resolveCategoryID() -> String? {
+        guard !categoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return TaskCategory.inboxID
+        }
+        guard let category = store.addCategory(named: categoryName) else {
+            errorMessage = store.errorMessage ?? "无法创建标签"
+            return nil
+        }
+        categories = store.categories
+        return category.id
     }
 }
 
@@ -191,15 +232,17 @@ private struct QuickAddView: View {
                 .accessibilityLabel("添加任务")
             }
 
-            HStack(spacing: 14) {
-                Picker("类型", selection: $model.categoryID) {
-                    ForEach(model.categories) { category in
-                        Text(category.name).tag(category.id)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 170)
+            HStack(spacing: 12) {
+                Image(systemName: "tag")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+
+                TextField("标签（可留空，输入新名称会自动创建）", text: $model.categoryName)
+                    .textFieldStyle(.plain)
+                    .font(.callout)
+                    .onSubmit(model.submit)
+                    .accessibilityLabel("标签")
             }
 
             Group {

@@ -119,7 +119,7 @@ struct DashboardView: View {
                     Button {
                         showingCategories = true
                     } label: {
-                        Label("管理类型", systemImage: "tag")
+                        Label("管理标签", systemImage: "tag")
                     }
                 }
                 if navigation.selection != .sync &&
@@ -235,11 +235,11 @@ private struct TaskSectionsView: View {
                 Text("任务")
                     .font(.headline)
                 Spacer()
-                Button("＋ 新建类型") {
+                Button("＋ 新建标签") {
                     focusNewCategory = true
                     showingCategories = true
                 }
-                Button("管理类型") {
+                Button("管理标签") {
                     focusNewCategory = false
                     showingCategories = true
                 }
@@ -251,7 +251,7 @@ private struct TaskSectionsView: View {
                 ContentUnavailableView(
                     "暂无任务",
                     systemImage: "checklist",
-                    description: Text("点击工具栏的加号创建任务，或先在右上角新建类型。")
+                    description: Text("点击工具栏的加号创建任务；标签可直接输入新名称。")
                 )
             } else {
                 List {
@@ -555,7 +555,7 @@ private struct StatisticsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("按完成记录统计；放弃不进入完成率、趋势和类型分布。")
+                Text("按完成记录统计；放弃不进入完成率、趋势和标签分布。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -611,7 +611,7 @@ private struct StatisticsView: View {
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("类型分布 · 近 30 天")
+                    Text("标签分布 · 近 30 天")
                         .font(.headline)
                     if snapshot.categoryActivity.isEmpty {
                         Text("近 30 天还没有完成记录")

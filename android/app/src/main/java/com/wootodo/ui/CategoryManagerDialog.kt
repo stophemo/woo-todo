@@ -17,47 +17,6 @@ import com.wootodo.domain.TaskCategory
 import kotlinx.coroutines.launch
 
 object CategoryManagerDialog {
-    fun showCreate(
-        activity: AppCompatActivity,
-        repository: TaskRepository,
-        onCreated: (TaskCategory, List<TaskCategory>) -> Unit,
-    ) {
-        val input = EditText(activity).apply {
-            inputType = InputType.TYPE_CLASS_TEXT
-            hint = activity.getString(R.string.category_name_hint)
-        }
-        AlertDialog.Builder(activity)
-            .setTitle(R.string.category_add)
-            .setView(input)
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                val name = input.text.toString()
-                activity.lifecycleScope.launch {
-                    val current = repository.allCategories()
-                    val normalized = TaskCategories.normalizeName(name)
-                    val error = when {
-                        current.size >= TaskCategories.MAXIMUM_COUNT ->
-                            activity.getString(R.string.category_limit_reached)
-                        normalized == null -> activity.getString(R.string.category_name_invalid)
-                        current.any { it.name == normalized } ->
-                            activity.getString(R.string.category_duplicate_name)
-                        else -> null
-                    }
-                    if (error != null) {
-                        Toast.makeText(activity, error, Toast.LENGTH_SHORT).show()
-                        return@launch
-                    }
-                    val created = repository.addCategory(name)
-                    if (created == null) {
-                        Toast.makeText(activity, R.string.save_failed, Toast.LENGTH_SHORT).show()
-                    } else {
-                        onCreated(created, repository.allCategories())
-                    }
-                }
-            }
-            .show()
-    }
-
     fun show(
         activity: AppCompatActivity,
         repository: TaskRepository,

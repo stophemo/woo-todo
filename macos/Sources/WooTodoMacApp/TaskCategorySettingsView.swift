@@ -22,19 +22,19 @@ struct TaskCategorySettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("管理类型")
+            Text("管理标签")
                 .font(.title2.weight(.semibold))
-            Text("最多 8 个类型；删除类型时，该类型下的待办会归入未分类，历史记录保留原类型。")
+            Text("最多 8 个标签；删除标签时，该标签下的待办会归入未分类，历史记录保留原标签。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             List {
                 ForEach($categories) { $category in
                     HStack(spacing: 10) {
-                        TextField("类型名称", text: $category.name)
+                        TextField("标签名称", text: $category.name)
                             .textFieldStyle(.roundedBorder)
                         if category.id == TaskCategory.inboxID {
-                            Text("兜底")
+                            Text("无标签兜底")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
@@ -52,7 +52,7 @@ struct TaskCategorySettingsView: View {
             .frame(minHeight: 220)
 
             HStack(spacing: 10) {
-                TextField("新类型名称", text: $newName)
+                TextField("新标签名称", text: $newName)
                     .textFieldStyle(.roundedBorder)
                     .focused($newNameFocused)
                 Button("添加") {
@@ -91,11 +91,11 @@ struct TaskCategorySettingsView: View {
         let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         guard categories.count < TaskCategory.maximumCount else {
-            errorMessage = "最多只能有 8 个类型"
+            errorMessage = "最多只能有 8 个标签"
             return
         }
         guard !categories.contains(where: { $0.name == name }) else {
-            errorMessage = "已经有同名类型"
+            errorMessage = "已经有同名标签"
             return
         }
         let id = TaskCategory.newID(existing: Set(categories.map(\.id)))
@@ -104,7 +104,7 @@ struct TaskCategorySettingsView: View {
             name: name,
             order: categories.count
         ) else {
-            errorMessage = "类型名称需要 1–12 个字符"
+            errorMessage = "标签名称需要 1–12 个字符"
             return
         }
         categories.append(category)
@@ -115,7 +115,7 @@ struct TaskCategorySettingsView: View {
     private func commit() {
         let normalized = TaskCategory.normalizeList(categories)
         guard normalized.count == categories.count else {
-            errorMessage = "类型名称需要 1–12 个字符，且不能重复"
+            errorMessage = "标签名称需要 1–12 个字符，且不能重复"
             return
         }
         save(normalized)

@@ -3,7 +3,7 @@ package com.wootodo.domain
 import java.time.LocalDate
 import java.time.LocalTime
 
-/** 任务类型（分类）。order 越小越靠前。 */
+/** 任务标签（分类）。order 越小越靠前。 */
 data class TaskCategory(
     val id: String,
     val name: String,
@@ -78,6 +78,17 @@ object TaskCategories {
         categories.firstOrNull { it.id == id }?.name
             ?: defaults.firstOrNull { it.id == id }?.name
             ?: "未分类"
+}
+
+/** 标签输入解析结果；留空会落到 inbox，由界面显示为“无标签”。 */
+sealed interface CategoryInputResult {
+    data class Selected(val category: TaskCategory) : CategoryInputResult
+
+    data object InvalidName : CategoryInputResult
+
+    data object LimitReached : CategoryInputResult
+
+    data object SaveFailed : CategoryInputResult
 }
 
 enum class TaskStatus(val rawValue: String) {

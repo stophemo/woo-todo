@@ -5,21 +5,24 @@ import android.app.AlertDialog
 import android.app.TimePickerDialog
 import android.os.Bundle
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.view.isVisible
+import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
+import com.google.android.material.textfield.TextInputLayout
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.data.TaskRepository
+import com.wootodo.domain.CategoryInputResult
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskCategories
 import com.wootodo.domain.TaskCategory
@@ -39,8 +42,8 @@ class EditTaskActivity : AppCompatActivity() {
     private lateinit var pageTitle: TextView
     private lateinit var settledNotice: TextView
     private lateinit var titleInput: EditText
-    private lateinit var categoryGroup: RadioGroup
-    private lateinit var newCategoryButton: Button
+    private lateinit var categoryInputLayout: TextInputLayout
+    private lateinit var categoryInput: MaterialAutoCompleteTextView
     private lateinit var manageCategoriesButton: Button
     private lateinit var dateRangeSwitch: SwitchCompat
     private lateinit var dateRangeContainer: LinearLayout
@@ -51,7 +54,6 @@ class EditTaskActivity : AppCompatActivity() {
     private lateinit var saveButton: Button
     private lateinit var deleteButton: Button
     private var categories: List<TaskCategory> = TaskCategories.defaults
-    private var selectedCategoryId: String = TaskCategories.INBOX_ID
     private var dateRangeEnabled = false
     private var startDate: LocalDate = TaskDateRules.today()
     private var endDate: LocalDate = TaskDateRules.today()
@@ -68,8 +70,8 @@ class EditTaskActivity : AppCompatActivity() {
         settledNotice = findViewById(R.id.settled_notice)
         titleInput = findViewById(R.id.title_input)
         titleInput.enableEditableTextActions()
-        categoryGroup = findViewById(R.id.category_group)
-        newCategoryButton = findViewById(R.id.new_category_button)
+        categoryInputLayout = findViewById(R.id.category_input_layout)
+        categoryInput = findViewById(R.id.category_input)
         manageCategoriesButton = findViewById(R.id.manage_categories_button)
         dateRangeSwitch = findViewById(R.id.date_range_switch)
         dateRangeContainer = findViewById(R.id.date_range_container)
@@ -89,12 +91,7 @@ class EditTaskActivity : AppCompatActivity() {
             },
         )
 
-        categoryGroup.setOnCheckedChangeListener { _, checkedId ->
-            selectedCategoryId = categoryGroup.findViewById<RadioButton>(checkedId)
-                ?.tag as? String
-                ?: TaskCategories.INBOX_ID
-        }
-        newCategoryButton.setOnClickListener { createCategory() }
+        categoryInput.doAfterTextChanged { categoryInputLayout.error = null }
         manageCategoriesButton.setOnClickListener { manageCategories() }
         dateRangeSwitch.setOnCheckedChangeListener { _, enabled ->
             dateRangeEnabled = enabled
@@ -112,7 +109,7 @@ class EditTaskActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             categories = repository.allCategories()
-            setupCategoryChips()
+            setupCategoryInput()
             val taskId = intent.getStringExtra(EXTRA_TASK_ID)
             if (taskId == null) {
                 applyDraftDefaults(savedInstanceState)
@@ -132,44 +129,21 @@ class EditTaskActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupCategoryChips() {
-        categoryGroup.removeAllViews()
-        categories.forEach { category ->
-            val chip = com.google.android.material.radiobutton.MaterialRadioButton(this).apply {
-                id = View.generateViewId()
-                tag = category.id
-                text = category.name
-                maxLines = 1
-                buttonDrawable = null
-                setBackgroundResource(R.drawable.scope_button_background)
-                setTextColor(
-                    androidx.core.content.ContextCompat.getColorStateList(
-                        this@EditTaskActivity,
-                        R.color.scope_button_text,
-                    ),
-                )
-                gravity = android.view.Gravity.CENTER
-                minHeight = dp(38)
-                minWidth = 0
-                setPadding(dp(8), 0, dp(8), 0)
-                layoutParams = RadioGroup.LayoutParams(
-                    RadioGroup.LayoutParams.WRAP_CONTENT,
-                    dp(38),
-                ).apply { marginEnd = dp(4) }
-            }
-            categoryGroup.addView(chip)
-            if (category.id == selectedCategoryId) chip.isChecked = true
-        }
-        if (categoryGroup.checkedRadioButtonId == View.NO_ID) {
-            categoryGroup.check(categoryGroup.getChildAt(0)?.id ?: View.NO_ID)
-        }
+    private fun setupCategoryInput() {
+        categoryInput.setAdapter(
+            ArrayAdapter(
+                this,
+                android.R.layout.simple_dropdown_item_1line,
+                categories.map(TaskCategory::name),
+            ),
+        )
     }
 
     private fun applyDraftDefaults(state: Bundle?) {
         val today = TaskDateRules.today()
         startDate = today
         endDate = today
-        selectedCategoryId = state?.getString(STATE_CATEGORY_ID) ?: TaskCategories.INBOX_ID
+        categoryInput.setText(state?.getString(STATE_CATEGORY_INPUT).orEmpty())
         titleInput.setText(state?.getString(STATE_TITLE).orEmpty())
         dateRangeEnabled = state?.getBoolean(STATE_DATE_RANGE_ENABLED) ?: false
         state?.getString(STATE_START_DATE)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
@@ -180,7 +154,6 @@ class EditTaskActivity : AppCompatActivity() {
             ?.let { runCatching { LocalTime.parse(it) }.getOrNull() }
             ?: reminderTime
         reminderSwitch.isChecked = state?.getBoolean(STATE_REMINDER_ENABLED) ?: false
-        setupCategoryChips()
         dateRangeSwitch.isChecked = dateRangeEnabled
         dateRangeContainer.isVisible = dateRangeEnabled
         updateDateButtons()
@@ -191,7 +164,13 @@ class EditTaskActivity : AppCompatActivity() {
         pageTitle.setText(
             if (task.status == TaskStatus.PENDING) R.string.edit_task else R.string.view_task_title,
         )
-        selectedCategoryId = state?.getString(STATE_CATEGORY_ID) ?: task.categoryId
+        categoryInput.setText(
+            state?.getString(STATE_CATEGORY_INPUT)
+                ?: categories.firstOrNull { it.id == task.categoryId }
+                    ?.takeIf { it.id != TaskCategories.INBOX_ID }
+                    ?.name
+                    .orEmpty(),
+        )
         titleInput.setText(state?.getString(STATE_TITLE) ?: task.title)
         startDate = state?.getString(STATE_START_DATE)
             ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
@@ -209,7 +188,6 @@ class EditTaskActivity : AppCompatActivity() {
             ?: reminderTime
         reminderSwitch.isChecked = state?.getBoolean(STATE_REMINDER_ENABLED)
             ?: (task.reminderTime != null)
-        setupCategoryChips()
         dateRangeSwitch.isChecked = dateRangeEnabled
         dateRangeContainer.isVisible = dateRangeEnabled
         updateDateButtons()
@@ -221,7 +199,7 @@ class EditTaskActivity : AppCompatActivity() {
         settledNotice.isVisible = !editable
         listOf(
             titleInput,
-            newCategoryButton,
+            categoryInput,
             manageCategoriesButton,
             dateRangeSwitch,
             startDateButton,
@@ -229,7 +207,6 @@ class EditTaskActivity : AppCompatActivity() {
             reminderSwitch,
             reminderTimeButton,
         ).forEach { it.isEnabled = editable }
-        categoryGroup.children().forEach { it.isEnabled = editable }
         saveButton.isVisible = editable
         deleteButton.isVisible = editable &&
             editingTask != null &&
@@ -307,15 +284,41 @@ class EditTaskActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.date_range_invalid, Toast.LENGTH_SHORT).show()
             return
         }
-        val draft = TaskDraft(
-            title = title,
-            categoryId = selectedCategoryId,
-            startDate = startDate.takeIf { dateRangeEnabled },
-            endDate = endDate.takeIf { dateRangeEnabled },
-            reminderTime = reminderTime.takeIf { dateRangeEnabled && reminderSwitch.isChecked },
-        )
         saveButton.isEnabled = false
         lifecycleScope.launch {
+            val category = when (val result = repository.resolveCategoryInput(
+                categoryInput.text.toString(),
+            )) {
+                is CategoryInputResult.Selected -> result.category
+                CategoryInputResult.InvalidName -> {
+                    showCategoryError(getString(R.string.category_name_invalid))
+                    return@launch
+                }
+                CategoryInputResult.LimitReached -> {
+                    showCategoryError(getString(R.string.category_limit_reached))
+                    return@launch
+                }
+                CategoryInputResult.SaveFailed -> {
+                    saveButton.isEnabled = true
+                    Toast.makeText(
+                        this@EditTaskActivity,
+                        R.string.save_failed,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    return@launch
+                }
+            }
+            categories = repository.allCategories()
+            setupCategoryInput()
+            val draft = TaskDraft(
+                title = title,
+                categoryId = category.id,
+                startDate = startDate.takeIf { dateRangeEnabled },
+                endDate = endDate.takeIf { dateRangeEnabled },
+                reminderTime = reminderTime.takeIf {
+                    dateRangeEnabled && reminderSwitch.isChecked
+                },
+            )
             val saved = runCatching {
                 editingTask?.let { repository.update(it.id, draft) } ?: run {
                     repository.create(draft)
@@ -334,23 +337,25 @@ class EditTaskActivity : AppCompatActivity() {
         }
     }
 
-    private fun createCategory() {
-        CategoryManagerDialog.showCreate(this, repository) { created, updated ->
-            categories = updated
-            selectedCategoryId = created.id
-            setupCategoryChips()
-            (application as WooTodoApplication).notifyLocalMutation()
-            TodayWidgetUpdater.updateAllAsync(applicationContext)
-        }
+    private fun showCategoryError(message: String) {
+        saveButton.isEnabled = true
+        categoryInputLayout.error = message
+        categoryInput.requestFocus()
     }
 
     private fun manageCategories() {
         CategoryManagerDialog.show(this, repository) { updated ->
-            categories = updated
-            if (categories.none { it.id == selectedCategoryId }) {
-                selectedCategoryId = TaskCategories.INBOX_ID
+            val typedName = categoryInput.text.toString().trim()
+            val previous = categories.firstOrNull {
+                it.name.equals(typedName, ignoreCase = true)
             }
-            setupCategoryChips()
+            categories = updated
+            if (previous != null) {
+                categoryInput.setText(
+                    updated.firstOrNull { it.id == previous.id }?.name.orEmpty(),
+                )
+            }
+            setupCategoryInput()
             (application as WooTodoApplication).notifyLocalMutation()
             TodayWidgetUpdater.updateAllAsync(applicationContext)
         }
@@ -401,7 +406,7 @@ class EditTaskActivity : AppCompatActivity() {
 
     private fun currentSnapshot(): String = listOf(
         titleInput.text.toString(),
-        selectedCategoryId,
+        categoryInput.text.toString().trim(),
         dateRangeEnabled,
         startDate,
         endDate,
@@ -411,7 +416,7 @@ class EditTaskActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_TITLE, titleInput.text.toString())
-        outState.putString(STATE_CATEGORY_ID, selectedCategoryId)
+        outState.putString(STATE_CATEGORY_INPUT, categoryInput.text.toString())
         outState.putBoolean(STATE_DATE_RANGE_ENABLED, dateRangeEnabled)
         outState.putString(STATE_START_DATE, startDate.toString())
         outState.putString(STATE_END_DATE, endDate.toString())
@@ -420,16 +425,10 @@ class EditTaskActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
-
-    private fun RadioGroup.children(): Sequence<RadioButton> =
-        (0 until childCount).mapNotNull { getChildAt(it) as? RadioButton }.asSequence()
-
     companion object {
         const val EXTRA_TASK_ID = "task_id"
         const val STATE_TITLE = "editor_title"
-        const val STATE_CATEGORY_ID = "editor_category_id"
+        const val STATE_CATEGORY_INPUT = "editor_category_input"
         const val STATE_DATE_RANGE_ENABLED = "editor_date_range_enabled"
         const val STATE_START_DATE = "editor_start_date"
         const val STATE_END_DATE = "editor_end_date"

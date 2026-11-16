@@ -1,6 +1,13 @@
 import Foundation
 
-/// 任务类型（分类）。order 越小越靠前。
+/// 标签输入解析结果。none 表示留空、不设置标签。
+public enum TaskCategoryInput: Equatable, Sendable {
+    case none
+    case existing(TaskCategory)
+    case create(TaskCategory)
+}
+
+/// 任务标签（分类）。order 越小越靠前。
 public struct TaskCategory: Identifiable, Codable, Equatable, Hashable, Sendable {
     public static let inboxID = "inbox"
     public static let maximumCount = 8
@@ -68,6 +75,30 @@ public struct TaskCategory: Identifiable, Codable, Equatable, Hashable, Sendable
         }
     }
 
+    /// 解析标签输入：留空表示无标签；优先匹配已有名称，否则生成待持久化的新标签。
+    public static func resolveInput(
+        _ input: String,
+        categories: [TaskCategory]
+    ) throws -> TaskCategoryInput {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return .none }
+
+        let current = normalizeList(categories)
+        if let matched = current.first(where: { $0.name.matchesInput(text) }) {
+            return .existing(matched)
+        }
+
+        let name = try normalizeName(text)
+        guard current.count < maximumCount else {
+            throw TaskValidationError.categoryLimitReached
+        }
+        return .create(try TaskCategory(
+            id: newID(existing: Set(current.map(\.id))),
+            name: name,
+            order: current.count
+        ))
+    }
+
     public static func newID(existing: Set<String>) -> String {
         for _ in 0..<64 {
             let suffix = String((0..<7).map { _ in customIDCharacters.randomElement()! })
@@ -81,6 +112,12 @@ public struct TaskCategory: Identifiable, Codable, Equatable, Hashable, Sendable
         categories.first(where: { $0.id == id })?.name
             ?? defaults.first(where: { $0.id == id })?.name
             ?? "未分类"
+    }
+}
+
+private extension String {
+    func matchesInput(_ input: String) -> Bool {
+        compare(input, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
     }
 }
 
@@ -104,6 +141,7 @@ public enum TaskValidationError: LocalizedError, Equatable {
     case titleTooLong
     case invalidDates
     case invalidCategory
+    case categoryLimitReached
     case invalidReminderTime
     case invalidState
 
@@ -112,7 +150,8 @@ public enum TaskValidationError: LocalizedError, Equatable {
         case .emptyTitle: "任务内容不能为空"
         case .titleTooLong: "任务内容不能超过 120 个 Unicode 字符"
         case .invalidDates: "开始日期和结束日期必须同时设置或同时为空，且开始不能晚于结束"
-        case .invalidCategory: "任务类型无效：名称需为 1–12 个字符，标识需为 1–32 位小写字母、数字、下划线或连字符"
+        case .invalidCategory: "标签无效：名称需为 1–12 个字符，标识需为 1–32 位小写字母、数字、下划线或连字符"
+        case .categoryLimitReached: "最多只能有 8 个标签，请先删除一个已有标签"
         case .invalidReminderTime: "提醒时间必须是 00:00 到 23:59，且任务需要有日期"
         case .invalidState: "任务状态与结算时间组合无效"
         }

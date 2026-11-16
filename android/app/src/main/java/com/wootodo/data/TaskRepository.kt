@@ -1,5 +1,6 @@
 package com.wootodo.data
 
+import com.wootodo.domain.CategoryInputResult
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskCategories
 import com.wootodo.domain.TaskCategory
@@ -137,6 +138,27 @@ class TaskRepository(
         val updated = TaskCategories.normalizeList(current + category)
         store.replaceCategories(updated, clock.millis())
         return updated.firstOrNull { it.id == category.id }
+    }
+
+    suspend fun resolveCategoryInput(input: String): CategoryInputResult {
+        val text = input.trim()
+        val current = allCategories()
+        if (text.isEmpty()) {
+            val inbox = current.firstOrNull { it.id == TaskCategories.INBOX_ID }
+                ?: TaskCategories.defaults.first()
+            return CategoryInputResult.Selected(inbox)
+        }
+        current.firstOrNull { it.name.equals(text, ignoreCase = true) }?.let {
+            return CategoryInputResult.Selected(it)
+        }
+        if (TaskCategories.normalizeName(text) == null) {
+            return CategoryInputResult.InvalidName
+        }
+        if (current.size >= TaskCategories.MAXIMUM_COUNT) {
+            return CategoryInputResult.LimitReached
+        }
+        val created = addCategory(text) ?: return CategoryInputResult.SaveFailed
+        return CategoryInputResult.Selected(created)
     }
 
     suspend fun renameCategory(id: String, name: String): Boolean {

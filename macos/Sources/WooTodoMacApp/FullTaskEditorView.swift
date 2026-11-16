@@ -17,7 +17,8 @@ enum FullTaskEditorMode {
 struct FullTaskEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var title: String
-    @State private var categoryID: String
+    @State private var categoryName: String
+    @State private var categoryError: String?
     @State private var dateRangeEnabled: Bool
     @State private var startDate: Date
     @State private var endDate: Date
@@ -25,7 +26,6 @@ struct FullTaskEditorView: View {
     @State private var reminderDate: Date
     @State private var localCategories: [TaskCategory]
     @State private var showingCategories = false
-    @State private var focusNewCategory = false
 
     let mode: FullTaskEditorMode
     let persistCategories: (([TaskCategory]) -> [TaskCategory])?
@@ -42,15 +42,10 @@ struct FullTaskEditorView: View {
         self.save = save
         let resolvedCategories = categories.isEmpty ? TaskCategory.defaults : categories
         _localCategories = State(initialValue: resolvedCategories)
-        let fallbackCategory = resolvedCategories.first(where: {
-            $0.id == TaskCategory.inboxID
-        })?.id
-            ?? resolvedCategories.first?.id
-            ?? TaskCategory.inboxID
         switch mode {
         case .create:
             _title = State(initialValue: "")
-            _categoryID = State(initialValue: fallbackCategory)
+            _categoryName = State(initialValue: "")
             _dateRangeEnabled = State(initialValue: false)
             _startDate = State(initialValue: Calendar.current.startOfDay(for: Date()))
             _endDate = State(initialValue: Calendar.current.startOfDay(for: Date()))
@@ -58,9 +53,9 @@ struct FullTaskEditorView: View {
             _reminderDate = State(initialValue: Self.defaultReminderDate)
         case let .edit(task):
             _title = State(initialValue: task.title)
-            _categoryID = State(initialValue: resolvedCategories.contains(where: {
-                $0.id == task.categoryID
-            }) ? task.categoryID : fallbackCategory)
+            _categoryName = State(initialValue: resolvedCategories.first(where: {
+                $0.id == task.categoryID && $0.id != TaskCategory.inboxID
+            })?.name ?? "")
             _dateRangeEnabled = State(initialValue: task.startDate != nil && task.endDate != nil)
             _startDate = State(initialValue: task.startDate ?? Date())
             _endDate = State(initialValue: task.endDate ?? task.startDate ?? Date())
@@ -79,46 +74,27 @@ struct FullTaskEditorView: View {
                 .onSubmit(commit)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("类型")
+                Text("标签")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(localCategories) { category in
-                            Button {
-                                categoryID = category.id
-                            } label: {
-                                Text(category.name)
-                                    .font(.callout)
-                                    .foregroundStyle(
-                                        categoryID == category.id ? Color.white : Color.primary
-                                    )
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(
-                                        categoryID == category.id
-                                            ? WooTodoTheme.purple
-                                            : Color.secondary.opacity(0.12),
-                                        in: Capsule()
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
+                TextField(
+                    "可留空，输入新名称会自动创建",
+                    text: $categoryName
+                )
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: categoryName) { _, _ in
+                    categoryError = nil
+                }
+                if let categoryError {
+                    Text(categoryError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
                 if persistCategories != nil {
-                    HStack(spacing: 12) {
-                        Button("＋ 新建类型") {
-                            focusNewCategory = true
-                            showingCategories = true
-                        }
-                        .font(.caption)
-                        Button("管理类型") {
-                            focusNewCategory = false
-                            showingCategories = true
-                        }
-                        .font(.caption)
+                    Button("管理标签") {
+                        showingCategories = true
                     }
+                    .font(.caption)
                 }
             }
 
@@ -154,16 +130,18 @@ struct FullTaskEditorView: View {
         .padding(22)
         .frame(width: 430)
         .sheet(isPresented: $showingCategories) {
-            TaskCategorySettingsView(
-                categories: localCategories,
-                focusNewName: focusNewCategory
-            ) { updated in
+            TaskCategorySettingsView(categories: localCategories) { updated in
+                let typedName = categoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let previous = localCategories.first(where: {
+                    $0.name.compare(
+                        typedName,
+                        options: [.caseInsensitive, .diacriticInsensitive]
+                    ) == .orderedSame
+                })
                 let result = persistCategories?(updated) ?? updated
                 localCategories = result
-                if !result.contains(where: { $0.id == categoryID }) {
-                    categoryID = result.first(where: {
-                        $0.id == TaskCategory.inboxID
-                    })?.id ?? result.first?.id ?? TaskCategory.inboxID
+                if let previous {
+                    categoryName = result.first(where: { $0.id == previous.id })?.name ?? ""
                 }
             }
         }
@@ -191,6 +169,7 @@ struct FullTaskEditorView: View {
     private func commit() {
         guard !normalizedTitle.isEmpty else { return }
         if dateRangeEnabled && startDate > endDate { return }
+        guard let categoryID = resolvedCategoryID() else { return }
         save(FullTaskInput(
             title: normalizedTitle,
             categoryID: categoryID,
@@ -199,6 +178,29 @@ struct FullTaskEditorView: View {
             reminderTime: dateRangeEnabled && reminderEnabled ? selectedReminderTime : nil
         ))
         dismiss()
+    }
+
+    private func resolvedCategoryID() -> String? {
+        do {
+            switch try TaskCategory.resolveInput(categoryName, categories: localCategories) {
+            case .none:
+                return TaskCategory.inboxID
+            case let .existing(category):
+                return category.id
+            case let .create(category):
+                let updated = persistCategories?(localCategories + [category])
+                    ?? TaskCategory.normalizeList(localCategories + [category])
+                localCategories = updated
+                guard updated.contains(where: { $0.id == category.id }) else {
+                    categoryError = "无法创建标签"
+                    return nil
+                }
+                return category.id
+            }
+        } catch {
+            categoryError = error.localizedDescription
+            return nil
+        }
     }
 
     private var selectedReminderTime: TaskReminderTime? {

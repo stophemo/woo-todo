@@ -1,5 +1,6 @@
 package com.wootodo.data
 
+import com.wootodo.domain.CategoryInputResult
 import com.wootodo.domain.Task
 import com.wootodo.domain.TaskCategories
 import com.wootodo.domain.TaskCategory
@@ -184,6 +185,51 @@ class TaskRepositoryTest {
         assertEquals(8, repository.allCategories().size)
         assertNull(repository.addCategory("第九个"))
         assertNull(repository.addCategory("自定义0"))
+    }
+
+    @Test
+    fun `标签输入留空匹配已有或自动新建`() = runBlocking {
+        val work = repository.addCategory("工作")!!
+
+        val matched = repository.resolveCategoryInput("  工作 ")
+        assertEquals(work.id, (matched as CategoryInputResult.Selected).category.id)
+
+        val none = repository.resolveCategoryInput("   ")
+        assertEquals(
+            TaskCategories.INBOX_ID,
+            (none as CategoryInputResult.Selected).category.id,
+        )
+
+        val created = repository.resolveCategoryInput("学习")
+        val category = (created as CategoryInputResult.Selected).category
+        assertEquals("学习", category.name)
+        assertTrue(repository.allCategories().any { it.id == category.id })
+    }
+
+    @Test
+    fun `标签输入匹配忽略大小写`() = runBlocking {
+        val work = repository.addCategory("Work")!!
+
+        val matched = repository.resolveCategoryInput("work")
+
+        assertEquals(work.id, (matched as CategoryInputResult.Selected).category.id)
+        assertEquals(2, repository.allCategories().size)
+    }
+
+    @Test
+    fun `标签输入校验名称和数量上限`() = runBlocking {
+        assertEquals(
+            CategoryInputResult.InvalidName,
+            repository.resolveCategoryInput("字".repeat(13)),
+        )
+
+        repeat(7) { index ->
+            assertTrue(repository.addCategory("标签$index") != null)
+        }
+        assertEquals(
+            CategoryInputResult.LimitReached,
+            repository.resolveCategoryInput("新标签"),
+        )
     }
 
     @Test

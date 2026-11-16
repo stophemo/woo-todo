@@ -131,7 +131,43 @@ public final class TodayStore: ObservableObject {
         }
     }
 
-    /// 仅供面板内编辑器管理类型；删除类型时待办归入未分类，历史保留原类型。
+    /// 按输入名称查找或创建标签，不改动已有待办的标签归属。
+    @discardableResult
+    public func addCategory(named name: String) -> TaskCategory? {
+        var result: TaskCategory?
+        var didCreate = false
+        if perform({
+            let normalized = try TaskCategory.normalizeName(name)
+            if let existing = categories.first(where: {
+                $0.name.compare(
+                    normalized,
+                    options: [.caseInsensitive, .diacriticInsensitive]
+                ) == .orderedSame
+            }) {
+                result = existing
+                return
+            }
+            guard categories.count < TaskCategory.maximumCount else {
+                throw TaskValidationError.categoryLimitReached
+            }
+            let category = try TaskCategory(
+                id: TaskCategory.newID(existing: Set(categories.map(\.id))),
+                name: normalized,
+                order: categories.count
+            )
+            try repository.saveCategories(
+                TaskCategory.normalizeList(categories + [category])
+            )
+            result = category
+            didCreate = true
+        }), didCreate {
+            reload()
+            onTasksChanged?()
+        }
+        return result
+    }
+
+    /// 仅供面板内编辑器管理标签；删除标签时待办归入未分类，历史保留原标签。
     @discardableResult
     public func updateCategories(_ categories: [TaskCategory]) -> [TaskCategory] {
         let normalized = TaskCategory.normalizeList(categories)

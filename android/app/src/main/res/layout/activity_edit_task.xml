@@ -64,45 +64,37 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="@string/quest_line"
+            android:text="@string/tag_label"
             android:textStyle="bold" />
 
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fillViewport="true"
-            android:scrollbars="none">
-
-            <RadioGroup
-                android:id="@+id/category_group"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal" />
-        </HorizontalScrollView>
-
-        <LinearLayout
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/category_input_layout"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:orientation="horizontal">
+            android:hint="@string/tag_input_hint"
+            app:endIconMode="dropdown_menu"
+            app:helperText="@string/tag_input_helper">
 
-            <Button
-                android:id="@+id/new_category_button"
-                style="?attr/materialButtonOutlinedStyle"
-                android:layout_width="wrap_content"
+            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                android:id="@+id/category_input"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:minWidth="0dp"
-                android:text="@string/category_add_action" />
+                android:completionThreshold="1"
+                android:imeOptions="actionDone"
+                android:inputType="textCapSentences"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
 
-            <Button
-                android:id="@+id/manage_categories_button"
-                style="?attr/materialButtonOutlinedStyle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:minWidth="0dp"
-                android:text="@string/category_manage" />
-        </LinearLayout>
+        <Button
+            android:id="@+id/manage_categories_button"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:minWidth="0dp"
+            android:text="@string/category_manage" />
 
         <androidx.appcompat.widget.SwitchCompat
             android:id="@+id/date_range_switch"

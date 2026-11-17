@@ -570,7 +570,6 @@ struct SidebarNavigationRow: View {
     }
 }
 
-@MainActor
 final class QuickAddDraft: ObservableObject {
     @Published var title = ""
 }

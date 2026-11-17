@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import WooTodoCore
 
+@MainActor
 enum WindowFramePolicy {
     /// 恢复上次位置；屏幕拔插后把窗口约束回可见区域，首次打开则居中。
     static func restore(_ window: NSWindow, name: String) {

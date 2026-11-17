@@ -11,6 +11,7 @@ import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -60,6 +61,42 @@ class TaskDatabaseInstrumentedTest {
         }
 
         assertEquals(task, store.getById(task.id))
+    }
+
+    @Test
+    fun `删除待办会保留本机恢复快照并可恢复`() = runBlocking {
+        val store = SQLiteTaskStore(database)
+        val task = TaskEntity(
+            id = "task-trash-roundtrip",
+            seriesId = "task-trash-roundtrip",
+            title = "误删任务",
+            categoryId = "main",
+            startDate = LocalDate.of(2026, 7, 16),
+            endDate = LocalDate.of(2026, 7, 17),
+            status = TaskStatus.PENDING,
+            sortOrder = 2,
+            createdAt = 1_000,
+            updatedAt = 1_000,
+            settledAt = null,
+        )
+        store.insert(task)
+
+        assertTrue(store.deletePending(task.id, 2_000))
+        assertNull(store.getById(task.id))
+        val trashed = store.getTrash().single()
+        assertEquals(task.title, trashed.task.title)
+        assertEquals(2_000, trashed.deletedAt)
+
+        val restoredId = requireNotNull(
+            store.restoreTrash(task.id, 3_000) { "task-restored-copy" },
+        )
+        assertEquals("task-restored-copy", restoredId)
+        val restored = requireNotNull(store.getById(restoredId))
+        assertEquals(task.title, restored.title)
+        assertEquals(task.seriesId, restored.seriesId)
+        assertEquals(TaskStatus.PENDING, restored.status)
+        assertEquals(3_000, restored.updatedAt)
+        assertTrue(store.getTrash().isEmpty())
     }
 
     @Test

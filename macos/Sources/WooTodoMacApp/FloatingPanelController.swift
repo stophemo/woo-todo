@@ -112,7 +112,8 @@ final class FloatingPanelController: NSWindowController {
     private let effectView = NSVisualEffectView()
     private let blurTintView = NSView()
     private let resizeHandle = WidgetResizeHandleView()
-    private var pointerTrackingTask: Task<Void, Never>?
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
     var onStateChange: (() -> Void)?
 
     private(set) var isBlurEnabled: Bool
@@ -372,22 +373,37 @@ final class FloatingPanelController: NSWindowController {
     }
 
     /// 图标层会吞掉桌面窗口的点击；指针进入面板时把窗口临时抬到图标上方。
+    /// 使用鼠标事件监听而不是 50ms 轮询，面板隐藏时不保留任何后台唤醒。
     private func startPointerTracking() {
         guard window?.isVisible == true else { return }
         updateDesktopWidgetLevel()
-        guard pointerTrackingTask == nil else { return }
-        pointerTrackingTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                self.updateDesktopWidgetLevel()
-                try? await Task.sleep(for: .milliseconds(50))
+        guard globalMouseMonitor == nil, localMouseMonitor == nil else { return }
+
+        let events: NSEvent.EventTypeMask = [
+            .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+        ]
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) {
+            [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.updateDesktopWidgetLevel()
             }
+        }
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: events) {
+            [weak self] event in
+            self?.updateDesktopWidgetLevel()
+            return event
         }
     }
 
     private func stopPointerTracking() {
-        pointerTrackingTask?.cancel()
-        pointerTrackingTask = nil
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+            self.globalMouseMonitor = nil
+        }
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
+        }
     }
 
     private func updateDesktopWidgetLevel() {

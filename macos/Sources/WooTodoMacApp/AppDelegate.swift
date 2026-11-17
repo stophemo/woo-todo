@@ -4,6 +4,16 @@ import WooTodoCore
 import WooTodoStorage
 import WooTodoSync
 
+/// 普通窗口打开时临时显示 Dock 图标，全部收起后回到纯菜单栏应用。
+enum WindowActivationPolicy {
+    static func resolve(
+        mainVisible: Bool,
+        settingsVisible: Bool
+    ) -> NSApplication.ActivationPolicy {
+        mainVisible || settingsVisible ? .regular : .accessory
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logger = Logger(subsystem: "io.github.stophemo.woo-todo", category: "应用")
@@ -17,7 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var taskNotificationScheduler: TaskNotificationScheduler?
     private var panelController: FloatingPanelController?
     private var quickAddPanelController: QuickAddPanelController?
-    private var dashboardWindowController: DashboardWindowController?
+    private var mainWindowController: MainWindowController?
+    private var settingsWindowController: SettingsWindowController?
     private var statusMenuController: StatusMenuController?
     private var appUpdateController: AppUpdateController?
     private var localDataManager: LocalDataManager?
@@ -133,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor [weak self] in
                     await Task.yield()
                     guard let self else { return }
-                    self.dashboardWindowController?.reload()
+                    self.mainWindowController?.reloadIfVisible()
                     self.syncSettingsStore?.requestSync(.localChange)
                     self.webDavSettingsStore?.requestSync(.localChange)
                     self.refreshTaskNotifications()
@@ -147,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             let quickAddPanelController = QuickAddPanelController(
                 store: store,
-                dismissesOnResignKey: !runtime.initialQuickAdd
+                dismissesOnResignKey: runtime.initialScreen != .quickAdd
             )
             let appUpdateController: AppUpdateController? = runtime.allowsExternalServices
                 ? AppUpdateController(defaults: runtime.defaults)
@@ -186,11 +197,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     quickAdd: { [weak quickAddPanelController] in
                         quickAddPanelController?.show()
                     },
-                    openDashboard: { [weak self] in
-                        self?.showDashboard()
+                    mainWindowVisible: { [weak self] in
+                        guard let self else { return false }
+                        return self.mainWindowController?.isVisible == true && !NSApp.isHidden
+                    },
+                    toggleMainWindow: { [weak self] in
+                        self?.toggleMainWindow()
                     },
                     openSettings: { [weak self] in
-                        self?.showDashboard(section: .display)
+                        self?.showSettings(section: .display)
                     },
                     checkForUpdates: { [weak appUpdateController] in
                         appUpdateController?.performMenuAction()
@@ -250,18 +265,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             syncSettingsStore.onRemoteChanges = { [weak self] in
                 self?.todayStore?.reload()
                 self?.dayCounterStore?.reloadFromRepository()
-                self?.dashboardWindowController?.reload()
+                self?.mainWindowController?.reloadIfVisible()
                 self?.refreshTaskNotifications()
             }
             syncSettingsStore.onLifecycleRefresh = { [weak self] in
                 self?.todayStore?.reload()
-                self?.dashboardWindowController?.reload()
+                self?.mainWindowController?.reloadIfVisible()
                 self?.refreshTaskNotifications()
             }
             webDavSettingsStore.onRemoteChanges = { [weak self] in
                 self?.todayStore?.reload()
                 self?.dayCounterStore?.reloadFromRepository()
-                self?.dashboardWindowController?.reload()
+                self?.mainWindowController?.reloadIfVisible()
                 self?.refreshTaskNotifications()
             }
             syncSettingsStore.onWillSwitchFromWebDav = { [weak webDavSettingsStore] in
@@ -288,16 +303,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 webDavSettingsStore.start()
                 refreshTaskNotifications()
             }
-            if let section = runtime.initialDashboardSection {
-                showDashboard(section: section)
+            switch runtime.initialScreen {
+            case let .main(section):
+                showMainWindow(section: section)
                 scheduleUITestSnapshot(
-                    window: dashboardWindowController?.window,
+                    window: mainWindowController?.window,
                     runtime: runtime
                 )
-            } else if runtime.initialQuickAdd {
+            case let .settings(section):
+                showSettings(section: section)
+                scheduleUITestSnapshot(
+                    window: settingsWindowController?.window,
+                    runtime: runtime
+                )
+            case .quickAdd:
                 quickAddPanelController.show()
                 scheduleUITestSnapshot(window: quickAddPanelController.window, runtime: runtime)
-            } else {
+            case .panel:
                 panelController.show()
                 scheduleUITestSnapshot(window: panelController.window, runtime: runtime)
             }
@@ -318,6 +340,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         appUpdateController?.checkAutomatically()
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        if mainWindowController?.isVisible == true, !NSApp.isHidden {
+            return false
+        }
+        showMainWindow()
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -387,6 +420,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let windowMenuItem = NSMenuItem(title: "窗口", action: nil, keyEquivalent: "")
         let windowMenu = NSMenu(title: "窗口")
+        let mainWindowItem = NSMenuItem(
+            title: "显示 Woo Todo 主窗口",
+            action: #selector(showMainWindowFromMenu),
+            keyEquivalent: "0"
+        )
+        mainWindowItem.keyEquivalentModifierMask = .command
+        mainWindowItem.target = self
+        windowMenu.addItem(mainWindowItem)
+        windowMenu.addItem(.separator())
         windowMenu.addItem(editCommand(
             "关闭",
             action: #selector(NSWindow.performClose(_:)),
@@ -405,7 +447,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
-        showDashboard(section: .display)
+        showSettings(section: .display)
+    }
+
+    @objc private func showMainWindowFromMenu() {
+        showMainWindow()
     }
 
     private func editCommand(
@@ -420,29 +466,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    private func showDashboard(section: DashboardSection = .tasks) {
-        if let dashboardWindowController {
-            dashboardWindowController.show(section: section)
+    private func showMainWindow(section: MainWindowSection? = nil) {
+        let targetSection = section ?? mainWindowController?.currentSection ?? .today
+        if let mainWindowController {
+            mainWindowController.show(section: targetSection)
             return
         }
-        guard let repository,
-              let todayStore,
-              let syncSettingsStore,
+        guard let repository, let dayCounterStore else { return }
+
+        let store = DashboardStore(repository: repository)
+        store.onTasksChanged = { [weak self] in
+            self?.todayStore?.reload()
+            self?.syncSettingsStore?.requestSync(.localChange)
+            self?.webDavSettingsStore?.requestSync(.localChange)
+            self?.refreshTaskNotifications()
+        }
+        let controller = MainWindowController(
+            store: store,
+            dayCounterStore: dayCounterStore,
+            initialSection: targetSection
+        ) { [weak self] in
+            self?.showSettings(section: .display)
+        }
+        controller.onClose = { [weak self] in
+            self?.mainWindowController = nil
+        }
+        controller.onVisibilityChange = { [weak self] in
+            self?.updateActivationPolicy()
+        }
+        mainWindowController = controller
+        controller.show(section: targetSection)
+    }
+
+    private func showSettings(section: SettingsSection = .display) {
+        if let settingsWindowController {
+            settingsWindowController.show(section: section)
+            return
+        }
+        guard let syncSettingsStore,
               let webDavSettingsStore,
               let dayCounterStore,
               let shortcutSettingsStore,
               let mcpSettingsStore,
               let localDataManager else { return }
 
-        let dashboardStore = DashboardStore(repository: repository)
-        dashboardStore.onTasksChanged = { [weak self, weak todayStore, weak syncSettingsStore] in
-            todayStore?.reload()
-            syncSettingsStore?.requestSync(.localChange)
-            self?.webDavSettingsStore?.requestSync(.localChange)
-            self?.refreshTaskNotifications()
-        }
-        let controller = DashboardWindowController(
-            store: dashboardStore,
+        let controller = SettingsWindowController(
             syncSettingsStore: syncSettingsStore,
             webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
@@ -452,10 +520,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             initialSection: section
         )
         controller.onClose = { [weak self] in
-            self?.dashboardWindowController = nil
+            self?.settingsWindowController = nil
         }
-        dashboardWindowController = controller
+        controller.onVisibilityChange = { [weak self] in
+            self?.updateActivationPolicy()
+        }
+        settingsWindowController = controller
         controller.show(section: section)
+    }
+
+    /// 打开普通窗口时临时显示 Dock 图标，主窗口和设置窗口都收起后回到纯菜单栏应用。
+    private func updateActivationPolicy() {
+        let policy = WindowActivationPolicy.resolve(
+            mainVisible: mainWindowController?.isVisibleOrMiniaturized == true,
+            settingsVisible: settingsWindowController?.isVisibleOrMiniaturized == true
+        )
+        if NSApp.activationPolicy() != policy {
+            NSApp.setActivationPolicy(policy)
+        }
+        statusMenuController?.refreshState()
+    }
+
+    private func toggleMainWindow() {
+        if let mainWindowController, mainWindowController.isVisible, !NSApp.isHidden {
+            mainWindowController.hide()
+        } else {
+            showMainWindow()
+        }
     }
 
     private func refreshTaskNotifications() {

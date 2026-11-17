@@ -288,8 +288,11 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
 
             try execute("BEGIN IMMEDIATE TRANSACTION")
             do {
-                try deleteTaskRow(entityID: entityID)
                 let deletedAt = Date()
+                if let existing {
+                    try insertTrashRow(existing, deletedAt: deletedAt)
+                }
+                try deleteTaskRow(entityID: entityID)
                 if let configuration = syncConfiguration {
                     try enqueueLocalTombstone(
                         entityID: entityID,
@@ -301,6 +304,118 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                     try recordDeferredDeletion(entityID: entityID, deletedAt: deletedAt)
                 }
                 try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    public func fetchTrash() throws -> [TrashedTask] {
+        try withLock {
+            let statement = try prepare(
+                """
+                SELECT id, series_id, title, time_scope, tier, status,
+                       recurrence_json, period_start, period_end, sort_index,
+                       created_at, updated_at, completed_at, reminder_time,
+                       deadline_date, deleted_at
+                FROM trash_tasks
+                ORDER BY deleted_at DESC, id ASC
+                """
+            )
+            defer { sqlite3_finalize(statement) }
+            var values: [TrashedTask] = []
+            var result = sqlite3_step(statement)
+            while result == SQLITE_ROW {
+                values.append(try decodeTrashedTask(from: statement))
+                result = sqlite3_step(statement)
+            }
+            guard result == SQLITE_DONE else { throw statementError() }
+            return values
+        }
+    }
+
+    public func trashCount() throws -> Int {
+        try withLock {
+            let statement = try prepare("SELECT COUNT(*) FROM trash_tasks")
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_step(statement) == SQLITE_ROW else {
+                throw statementError()
+            }
+            return Int(sqlite3_column_int64(statement, 0))
+        }
+    }
+
+    @discardableResult
+    public func restoreTrash(id: UUID, at date: Date) throws -> UUID? {
+        try withLock {
+            guard let trashed = try storedTrashTask(id: id) else { return nil }
+            let categoryID = try queryCategories().contains(where: { $0.id == trashed.task.categoryID })
+                ? trashed.task.categoryID
+                : TaskCategory.inboxID
+            let newID = UUID()
+            // 保留 seriesID，便于其他设备按“seriesID + 内容”识别这是同一条任务的恢复。
+            let restoredSeriesID = trashed.task.seriesID
+            let restored = try TodoTask(
+                id: newID,
+                seriesID: restoredSeriesID,
+                title: trashed.task.title,
+                categoryID: categoryID,
+                status: .pending,
+                startDate: trashed.task.startDate,
+                endDate: trashed.task.endDate,
+                sortIndex: trashed.task.sortIndex,
+                createdAt: trashed.task.createdAt,
+                updatedAt: date,
+                reminderTime: trashed.task.reminderTime,
+                completedAt: nil
+            )
+
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try upsertTaskRow(restored)
+                let entityID = canonicalEntityID(restored.id.uuidString)
+                if let configuration = syncConfiguration {
+                    try enqueueLocalTask(restored, kind: .upsert, configuration: configuration)
+                } else if hasPersistedSyncIdentity {
+                    try recordDeferredUpsert(entityID: entityID, kind: .upsert)
+                }
+                try deleteTrashRow(entityID: canonicalEntityID(id.uuidString))
+                try execute("COMMIT")
+                return restored.id
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
+    @discardableResult
+    public func removeTrash(ids: Set<UUID>?) throws -> Int {
+        if ids?.isEmpty == true { return 0 }
+        return try withLock {
+            let statement = try prepare("SELECT id FROM trash_tasks")
+            defer { sqlite3_finalize(statement) }
+            var targets: [String] = []
+            var result = sqlite3_step(statement)
+            while result == SQLITE_ROW {
+                let value = text(at: 0, from: statement)
+                if let id = UUID(uuidString: value),
+                   ids == nil || ids?.contains(id) == true {
+                    targets.append(canonicalEntityID(value))
+                }
+                result = sqlite3_step(statement)
+            }
+            guard result == SQLITE_DONE else { throw statementError() }
+            guard !targets.isEmpty else { return 0 }
+
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                for entityID in targets {
+                    try deleteTrashRow(entityID: entityID)
+                }
+                try execute("COMMIT")
+                return targets.count
             } catch {
                 try? execute("ROLLBACK")
                 throw error
@@ -518,6 +633,35 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         try execute(
             "CREATE INDEX IF NOT EXISTS idx_tasks_period ON tasks(time_scope, period_start, period_end)"
         )
+        // 本机恢复快照：删除任务时保留一份完整副本，恢复时以新任务 ID 重新入队。
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS trash_tasks (
+                id TEXT PRIMARY KEY NOT NULL,
+                series_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                time_scope TEXT NOT NULL,
+                tier TEXT NOT NULL,
+                status TEXT NOT NULL,
+                recurrence_json TEXT NOT NULL,
+                period_start REAL,
+                period_end REAL,
+                sort_index INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                completed_at REAL,
+                reminder_time TEXT,
+                deadline_date REAL,
+                deleted_at REAL NOT NULL
+            )
+            """
+        )
+        try execute(
+            "CREATE INDEX IF NOT EXISTS idx_trash_tasks_deleted_at ON trash_tasks(deleted_at)"
+        )
+        try execute(
+            "CREATE INDEX IF NOT EXISTS idx_trash_tasks_series_id ON trash_tasks(series_id)"
+        )
         // 兼容原型阶段曾写入的旧枚举值，迁移后与共享 Wire 协议一致。
         try execute(
             """
@@ -550,9 +694,11 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             )
             """
         )
+        // 恢复快照会复用原 seriesID；允许多台设备各自恢复同一条任务，
+        // 避免旧周期唯一索引让第二台设备的恢复任务无法落地、阻塞整页同步。
         try execute("DROP INDEX IF EXISTS idx_tasks_occurrence")
         try execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_occurrence ON tasks(series_id, time_scope, period_start) WHERE period_start IS NOT NULL"
+            "CREATE INDEX IF NOT EXISTS idx_tasks_occurrence ON tasks(series_id, time_scope, period_start) WHERE period_start IS NOT NULL"
         )
         try execute(
             """
@@ -683,7 +829,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             )
         }
         try removeUnusedLegacyCategories()
-        try execute("PRAGMA user_version = 7")
+        try execute("PRAGMA user_version = 8")
     }
 
     public func displayConfiguration() throws -> WireDisplayConfigurationPayload? {
@@ -1815,6 +1961,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 }
                 guard incomingWins else { return }
                 try upsertTaskRow(incomingTask)
+                try removeMatchingTrashRows(for: incomingTask)
                 try upsertEntityVersion(EntityVersion(
                     entityID: entityID,
                     lamport: operation.lamport,
@@ -1832,6 +1979,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                    incomingWinsLWW: incomingWins
                ) {
                 try upsertTaskRow(merged)
+                try removeMatchingTrashRows(for: merged)
                 let winningVersion = maximumVersion(
                     currentVersion,
                     incomingLamport: operation.lamport,
@@ -1847,6 +1995,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                    current: currentTask
                ) {
                 try upsertTaskRow(settled)
+                try removeMatchingTrashRows(for: settled)
                 let winningVersion = maximumVersion(
                     currentVersion,
                     incomingLamport: operation.lamport,
@@ -1859,6 +2008,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             guard incomingWins else { return }
 
             try upsertTaskRow(incomingTask)
+            try removeMatchingTrashRows(for: incomingTask)
             try upsertEntityVersion(EntityVersion(
                 entityID: entityID,
                 lamport: operation.lamport,
@@ -1880,6 +2030,22 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                    over: currentVersion
                ) {
                 return
+            }
+
+            // 删除前保留本机恢复快照。若同一 seriesID 已有恢复后的新任务，
+            // 说明这是一条已被其他设备恢复的旧任务，不再重复放入最近删除。
+            if let taskID = UUID(uuidString: entityID),
+               let currentTask = try storedTask(id: taskID),
+               currentTask.status == .pending,
+               !(try liveTaskMatches(
+                   seriesID: currentTask.seriesID,
+                   content: currentTask,
+                   excludingID: currentTask.id
+               )) {
+                try insertTrashRow(
+                    currentTask,
+                    deletedAt: date(fromMilliseconds: payload.deletedAt)
+                )
             }
 
             // 删除由本次 tombstone 触发：版本标识（lamport/deviceID）与删除时间必须同源，
@@ -2237,6 +2403,147 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         defer { sqlite3_finalize(statement) }
         try bind([.text(entityID.lowercased())], to: statement)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    private func insertTrashRow(_ task: TodoTask, deletedAt: Date) throws {
+        let statement = try prepare(
+            """
+            INSERT OR IGNORE INTO trash_tasks (
+                id, series_id, title, time_scope, tier, status, recurrence_json,
+                period_start, period_end, sort_index, created_at, updated_at,
+                completed_at, reminder_time, deadline_date, deleted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        let calendar = TodoTask.protocolCalendar
+        let periodEnd = task.endDate.flatMap {
+            calendar.date(byAdding: .day, value: 1, to: $0)
+        }
+        try bind([
+            .text(task.id.uuidString),
+            .text(task.seriesID.uuidString),
+            .text(task.title),
+            .text(task.startDate == nil ? "someday" : "day"),
+            .text(task.categoryID),
+            .text(task.status.rawValue),
+            .text("{\"once\":{}}"),
+            task.startDate.map { .double($0.timeIntervalSince1970) } ?? .null,
+            periodEnd.map { .double($0.timeIntervalSince1970) } ?? .null,
+            .integer(Int64(task.sortIndex)),
+            .double(task.createdAt.timeIntervalSince1970),
+            .double(task.updatedAt.timeIntervalSince1970),
+            task.completedAt.map { .double($0.timeIntervalSince1970) } ?? .null,
+            task.reminderTime.map { .text($0.wireValue) } ?? .null,
+            task.endDate.map { .double($0.timeIntervalSince1970) } ?? .null,
+            .double(deletedAt.timeIntervalSince1970),
+        ], to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    private func decodeTrashedTask(from statement: OpaquePointer) throws -> TrashedTask {
+        let task = try decodeTask(from: statement)
+        guard sqlite3_column_type(statement, 15) != SQLITE_NULL else {
+            throw SQLiteRepositoryError.invalidRecord("恢复快照缺少删除时间")
+        }
+        return TrashedTask(
+            task: task,
+            deletedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 15))
+        )
+    }
+
+    private func storedTrashTask(id: UUID) throws -> TrashedTask? {
+        let statement = try prepare(
+            """
+            SELECT id, series_id, title, time_scope, tier, status,
+                   recurrence_json, period_start, period_end, sort_index,
+                   created_at, updated_at, completed_at, reminder_time,
+                   deadline_date, deleted_at
+            FROM trash_tasks WHERE lower(id) = ? LIMIT 1
+            """
+        )
+        defer { sqlite3_finalize(statement) }
+        try bind([.text(canonicalEntityID(id.uuidString))], to: statement)
+        switch sqlite3_step(statement) {
+        case SQLITE_DONE:
+            return nil
+        case SQLITE_ROW:
+            return try decodeTrashedTask(from: statement)
+        default:
+            throw statementError()
+        }
+    }
+
+    private func deleteTrashRow(entityID: String) throws {
+        let statement = try prepare("DELETE FROM trash_tasks WHERE lower(id) = ?")
+        defer { sqlite3_finalize(statement) }
+        try bind([.text(entityID.lowercased())], to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
+    }
+
+    /// 收到恢复后的新任务时，只清理内容相同的旧快照。
+    /// 同一 seriesID 下可能保留着另一台设备编辑过的不同内容，不能仅凭 seriesID 删除。
+    private func removeMatchingTrashRows(for task: TodoTask) throws {
+        let statement = try prepare(
+            """
+            SELECT id, series_id, title, time_scope, tier, status,
+                   recurrence_json, period_start, period_end, sort_index,
+                   created_at, updated_at, completed_at, reminder_time,
+                   deadline_date, deleted_at
+            FROM trash_tasks WHERE lower(series_id) = ?
+            """
+        )
+        try bind([
+            .text(canonicalEntityID(task.seriesID.uuidString)),
+        ], to: statement)
+        var matched: [String] = []
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            let trashed = try decodeTrashedTask(from: statement)
+            if restoredContentMatches(trashed.task, task) {
+                matched.append(canonicalEntityID(trashed.task.id.uuidString))
+            }
+            result = sqlite3_step(statement)
+        }
+        sqlite3_finalize(statement)
+        guard result == SQLITE_DONE else { throw statementError() }
+        for entityID in matched {
+            try deleteTrashRow(entityID: entityID)
+        }
+    }
+
+    /// 同一 seriesID 且内容相同，才视为“这条任务已经被恢复”。
+    private func liveTaskMatches(
+        seriesID: UUID,
+        content task: TodoTask,
+        excludingID: UUID
+    ) throws -> Bool {
+        let candidates = try query(
+            """
+            SELECT id, series_id, title, time_scope, tier, status,
+                   recurrence_json, period_start, period_end, sort_index,
+                   created_at, updated_at, completed_at, reminder_time,
+                   deadline_date
+            FROM tasks
+            WHERE lower(series_id) = ? AND lower(id) != ?
+            """,
+            bindings: [
+                .text(canonicalEntityID(seriesID.uuidString)),
+                .text(canonicalEntityID(excludingID.uuidString)),
+            ]
+        )
+        return candidates.contains { restoredContentMatches($0, task) }
+    }
+
+    private func restoredContentMatches(_ lhs: TodoTask, _ rhs: TodoTask) -> Bool {
+        lhs.title == rhs.title &&
+            lhs.categoryID == rhs.categoryID &&
+            lhs.status == rhs.status &&
+            lhs.startDate == rhs.startDate &&
+            lhs.endDate == rhs.endDate &&
+            lhs.sortIndex == rhs.sortIndex &&
+            lhs.reminderTime == rhs.reminderTime &&
+            abs(lhs.createdAt.timeIntervalSince(rhs.createdAt)) < 1
     }
 
     private func storedTask(id: UUID) throws -> TodoTask? {

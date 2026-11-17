@@ -77,6 +77,215 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.pendingOperations(limit: 50) == Array(operations.dropFirst(3)))
     }
 
+    @Test("删除后恢复会以新任务正文进入 outbox")
+    func restoreAfterDeleteEntersOutboxAsNewTask() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let start = date("2026-07-15T08:00:00+08:00")
+        let task = try makeTask(title: "误删任务", createdAt: start)
+        try repository.save(task)
+        try await repository.acknowledgeOperations(
+            opIds: try await repository.pendingOperations(limit: 50).map(\.opId)
+        )
+
+        try repository.delete(id: task.id)
+        let deleted = try await repository.pendingOperations(limit: 50)
+        #expect(deleted.map(\.kind) == [.delete])
+        try await repository.acknowledgeOperations(opIds: deleted.map(\.opId))
+
+        let restoredID = try #require(
+            try repository.restoreTrash(
+                id: task.id,
+                at: start.addingTimeInterval(60)
+            )
+        )
+        #expect(restoredID != task.id)
+        let operations = try await repository.pendingOperations(limit: 50)
+        #expect(operations.map(\.kind) == [.upsert])
+        guard case .task(let payload) = try open(
+            try #require(operations.first),
+            configuration: configuration
+        ) else {
+            Issue.record("恢复应写入新任务正文")
+            return
+        }
+        #expect(payload.id == restoredID.uuidString.lowercased())
+        #expect(payload.seriesId == task.seriesID.uuidString.lowercased())
+        #expect(payload.state == .pending)
+    }
+
+    @Test("远端删除会保留本机恢复快照")
+    func remoteTombstoneKeepsTrashSnapshot() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let start = date("2026-07-15T08:00:00+08:00")
+        let task = try makeTask(title: "远端删除", createdAt: start)
+        try repository.save(task)
+        try await repository.acknowledgeOperations(
+            opIds: try await repository.pendingOperations(limit: 50).map(\.opId)
+        )
+
+        let deletedAt = milliseconds(start.addingTimeInterval(30))
+        try await repository.applyRemoteOperations([
+            try remoteTombstoneOperation(
+                entityID: task.id.uuidString.lowercased(),
+                lamport: 10,
+                serverSequence: 1,
+                deviceID: "device-other",
+                configuration: configuration,
+                deletedAt: deletedAt
+            ),
+        ], advancingCursorTo: 1)
+
+        #expect(try repository.fetchAll().isEmpty)
+        let trash = try repository.fetchTrash()
+        #expect(trash.map(\.task.id) == [task.id])
+        #expect(trash.first?.deletedAt == Date(timeIntervalSince1970: Double(deletedAt) / 1_000))
+    }
+
+    @Test("收到恢复后的新任务会清除旧恢复快照")
+    func remoteRestoredTaskClearsTrashSnapshot() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let start = date("2026-07-15T08:00:00+08:00")
+        let task = try makeTask(title: "跨设备恢复", createdAt: start)
+        try repository.save(task)
+        try await repository.acknowledgeOperations(
+            opIds: try await repository.pendingOperations(limit: 50).map(\.opId)
+        )
+        try repository.delete(id: task.id)
+        #expect(try repository.fetchTrash().count == 1)
+
+        let restored = try TodoTask(
+            id: UUID(),
+            seriesID: task.seriesID,
+            title: task.title,
+            categoryID: task.categoryID,
+            startDate: task.startDate,
+            endDate: task.endDate,
+            sortIndex: task.sortIndex,
+            createdAt: task.createdAt,
+            updatedAt: start.addingTimeInterval(60)
+        )
+        try await repository.applyRemoteOperations([
+            try remoteTaskOperation(
+                restored,
+                kind: .upsert,
+                lamport: 11,
+                serverSequence: 1,
+                deviceID: "device-other",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+
+        #expect(try repository.fetchTrash().isEmpty)
+        #expect(try repository.fetchAll().map(\.id) == [restored.id])
+    }
+
+    @Test("同 seriesID 的不同内容快照不会被恢复任务误删")
+    func restoredTaskDoesNotRemoveDifferentSnapshot() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let seriesID = UUID()
+        let day = date("2026-07-16T00:00:00+08:00")
+        let createdAt = date("2026-07-15T08:00:00+08:00")
+        let edited = try TodoTask(
+            id: UUID(),
+            seriesID: seriesID,
+            title: "新内容",
+            categoryID: "main",
+            startDate: day,
+            endDate: day,
+            sortIndex: 0,
+            createdAt: createdAt
+        )
+        try repository.save(edited)
+        try repository.delete(id: edited.id)
+        #expect(try repository.trashCount() == 1)
+
+        let restoredOld = try TodoTask(
+            id: UUID(),
+            seriesID: seriesID,
+            title: "旧内容",
+            categoryID: "main",
+            startDate: day,
+            endDate: day,
+            sortIndex: 0,
+            createdAt: createdAt
+        )
+        try await repository.applyRemoteOperations([
+            try remoteTaskOperation(
+                restoredOld,
+                kind: .upsert,
+                lamport: 20,
+                serverSequence: 1,
+                deviceID: "device-other",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+
+        #expect(try repository.fetchTrash().map(\.task.title) == ["新内容"])
+        #expect(try repository.fetchAll().map(\.title) == ["旧内容"])
+    }
+
+    @Test("同 seriesID 的其他 live 任务内容不同时仍保留删除快照")
+    func tombstoneKeepsSnapshotWhenSiblingContentDiffers() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let seriesID = UUID()
+        let day = date("2026-07-16T00:00:00+08:00")
+        let createdAt = date("2026-07-15T08:00:00+08:00")
+        let newer = try TodoTask(
+            id: UUID(),
+            seriesID: seriesID,
+            title: "新内容",
+            categoryID: "main",
+            startDate: day,
+            endDate: day,
+            sortIndex: 0,
+            createdAt: createdAt
+        )
+        let sibling = try TodoTask(
+            id: UUID(),
+            seriesID: seriesID,
+            title: "旧内容",
+            categoryID: "main",
+            startDate: day,
+            endDate: day,
+            sortIndex: 0,
+            createdAt: createdAt
+        )
+        try repository.save([newer, sibling])
+
+        try await repository.applyRemoteOperations([
+            try remoteTombstoneOperation(
+                entityID: newer.id.uuidString.lowercased(),
+                lamport: 20,
+                serverSequence: 1,
+                deviceID: "device-other",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+
+        #expect(try repository.fetchTrash().map(\.task.title) == ["新内容"])
+        #expect(try repository.fetchAll().map(\.title) == ["旧内容"])
+    }
+
     @Test("撤销完成写入明确的 reopen 操作")
     func reopenEntersOutbox() async throws {
         let configuration = syncConfiguration()

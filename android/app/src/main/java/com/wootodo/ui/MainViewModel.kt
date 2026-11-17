@@ -71,12 +71,12 @@ class MainViewModel(
         }
     }
 
-    /** 撤销删除：用删除前的字段重建一条任务，避免同步删除墓碑冲突。 */
-    fun restore(task: Task, onResult: (Boolean) -> Unit = {}) {
+    /** 撤销删除：从本机恢复快照重新创建任务，并以普通 upsert 同步到其他设备。 */
+    fun restoreTrash(id: String, onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             val restored = runCatching {
-                repository.create(task.toRestoreDraft())
-            }.isSuccess
+                repository.restoreTrash(id)
+            }.getOrDefault(false)
             if (restored) onTasksChanged()
             onResult(restored)
         }

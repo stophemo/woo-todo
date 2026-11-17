@@ -39,6 +39,16 @@ interface TaskStore {
 
     suspend fun deletePending(id: String, deletedAt: Long): Boolean
 
+    suspend fun getTrash(): List<TrashedTaskEntity> = emptyList()
+
+    suspend fun restoreTrash(
+        id: String,
+        restoredAt: Long,
+        idFactory: () -> String,
+    ): String? = null
+
+    suspend fun removeTrash(ids: Set<String>?): Int = 0
+
     suspend fun deleteSettled(ids: Set<String>?, deletedAt: Long): Int
 
     suspend fun settle(id: String, status: TaskStatus, settledAt: Long): Boolean
@@ -147,6 +157,7 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
             var changed = false
             sqlite.beginTransaction()
             try {
+                SQLiteTrashTable.insertFromTask(sqlite, id, deletedAt)
                 changed = sqlite.delete(
                     TABLE_TASKS,
                     "id = ? AND status = ?",
@@ -160,6 +171,70 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
             if (changed) invalidate()
             changed
         }
+
+    override suspend fun getTrash(): List<TrashedTaskEntity> = withContext(Dispatchers.IO) {
+        queryTrash()
+    }
+
+    override suspend fun restoreTrash(
+        id: String,
+        restoredAt: Long,
+        idFactory: () -> String,
+    ): String? = withContext(Dispatchers.IO) {
+        val sqlite = database.writableDatabase
+        var restoredId: String? = null
+        sqlite.beginTransaction()
+        try {
+            val trashed = getTrashById(sqlite, id)
+            if (trashed != null) {
+                val newId = idFactory()
+                val restored = TaskEntity(
+                    id = newId,
+                    // 保留 seriesId，便于其他设备按“seriesId + 内容”识别同一条任务的恢复。
+                    seriesId = trashed.task.seriesId,
+                    title = trashed.task.title,
+                    categoryId = resolveCategoryId(sqlite, trashed.task.categoryId),
+                    startDate = trashed.task.startDate,
+                    endDate = trashed.task.endDate,
+                    status = TaskStatus.PENDING,
+                    sortOrder = trashed.task.sortOrder,
+                    createdAt = trashed.task.createdAt,
+                    updatedAt = restoredAt,
+                    settledAt = null,
+                    reminderTime = trashed.task.reminderTime,
+                )
+                sqlite.insertOrThrow(TABLE_TASKS, null, restored.toContentValues())
+                SQLiteLocalMutationRecorder.recordTask(sqlite, restored, SyncOperationKind.UPSERT)
+                sqlite.delete(
+                    SQLiteTrashTable.TABLE,
+                    "id = ? COLLATE NOCASE",
+                    arrayOf(id),
+                )
+                restoredId = newId
+            }
+            sqlite.setTransactionSuccessful()
+        } finally {
+            sqlite.endTransaction()
+        }
+        if (restoredId != null) invalidate()
+        restoredId
+    }
+
+    override suspend fun removeTrash(ids: Set<String>?): Int = withContext(Dispatchers.IO) {
+        if (ids?.isEmpty() == true) return@withContext 0
+        val sqlite = database.writableDatabase
+        if (ids == null) {
+            sqlite.delete(SQLiteTrashTable.TABLE, null, null)
+        } else {
+            ids.sumOf { id ->
+                sqlite.delete(
+                    SQLiteTrashTable.TABLE,
+                    "id = ? COLLATE NOCASE",
+                    arrayOf(id),
+                )
+            }
+        }
+    }
 
     override suspend fun deleteSettled(ids: Set<String>?, deletedAt: Long): Int =
         withContext(Dispatchers.IO) {
@@ -377,6 +452,59 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
     internal fun invalidateFromSync() = invalidate()
 
     internal fun invalidateCategoriesFromSync() = invalidateCategories()
+
+    private fun queryTrash(): List<TrashedTaskEntity> =
+        database.readableDatabase.query(
+            SQLiteTrashTable.TABLE,
+            null,
+            null,
+            null,
+            null,
+            null,
+            "deleted_at DESC, id ASC",
+        ).use { cursor ->
+            buildList {
+                val deletedAtIndex = cursor.getColumnIndexOrThrow("deleted_at")
+                while (cursor.moveToNext()) {
+                    add(TrashedTaskEntity(cursor.toTaskEntity(), cursor.getLong(deletedAtIndex)))
+                }
+            }
+        }
+
+    private fun getTrashById(sqlite: SQLiteDatabase, id: String): TrashedTaskEntity? =
+        sqlite.query(
+            SQLiteTrashTable.TABLE,
+            null,
+            "id = ? COLLATE NOCASE",
+            arrayOf(id),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) {
+                null
+            } else {
+                TrashedTaskEntity(
+                    cursor.toTaskEntity(),
+                    cursor.getLong(cursor.getColumnIndexOrThrow("deleted_at")),
+                )
+            }
+        }
+
+    private fun resolveCategoryId(sqlite: SQLiteDatabase, categoryId: String): String =
+        sqlite.query(
+            TABLE_CATEGORIES,
+            arrayOf("id"),
+            "id = ?",
+            arrayOf(categoryId),
+            null,
+            null,
+            null,
+            "1",
+        ).use { cursor ->
+            if (cursor.moveToFirst()) categoryId else com.wootodo.domain.TaskCategories.INBOX_ID
+        }
 
     private fun TaskEntity.toContentValues(): ContentValues = ContentValues(14).apply {
         put("id", id)

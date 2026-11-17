@@ -6,8 +6,13 @@ public final class DashboardStore: ObservableObject {
     @Published public private(set) var allTasks: [TodoTask] = []
     @Published public private(set) var categories: [TaskCategory] = TaskCategory.defaults
     @Published public private(set) var statistics: StatisticsSnapshot = .empty
+    @Published public private(set) var trashedTasks: [TrashedTask] = []
+    @Published public private(set) var trashedCount = 0
     @Published public private(set) var referenceDate = Date()
     @Published public private(set) var errorMessage: String?
+
+    private var hasLoadedTrash = false
+    private var statisticsDirty = true
 
     public var onTasksChanged: (() -> Void)?
 
@@ -54,12 +59,69 @@ public final class DashboardStore: ObservableObject {
     public func reload() {
         do {
             errorMessage = nil
+            let hasLoadedStatistics = !statisticsDirty
             let date = now()
             let loaded = try repository.fetchAll()
             allTasks = loaded
             categories = TaskCategory.normalizeList(try repository.fetchCategories())
             referenceDate = date
-            statistics = statisticsEngine.calculate(tasks: loaded, at: date)
+            trashedCount = (try? repository.trashCount()) ?? trashedCount
+            // 统计只在用户打开过统计页后才计算；第一次打开前不产生趋势与分布开销。
+            statisticsDirty = true
+            if hasLoadedStatistics {
+                reloadStatisticsIfNeeded()
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    public func reloadStatisticsIfNeeded() {
+        guard statisticsDirty else { return }
+        statistics = statisticsEngine.calculate(tasks: allTasks, at: referenceDate)
+        statisticsDirty = false
+    }
+
+    public func reloadTrash() {
+        do {
+            errorMessage = nil
+            hasLoadedTrash = true
+            trashedTasks = try repository.fetchTrash()
+            trashedCount = trashedTasks.count
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    public func restoreTrash(id: UUID) {
+        do {
+            errorMessage = nil
+            let restoredID = try repository.restoreTrash(id: id, at: now())
+            reload()
+            if restoredID != nil {
+                onTasksChanged?()
+            }
+            if hasLoadedTrash {
+                trashedTasks = try repository.fetchTrash()
+                trashedCount = trashedTasks.count
+            } else {
+                trashedCount = (try? repository.trashCount()) ?? trashedCount
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    public func removeTrash(ids: Set<UUID>? = nil) {
+        do {
+            errorMessage = nil
+            _ = try repository.removeTrash(ids: ids)
+            if hasLoadedTrash {
+                trashedTasks = try repository.fetchTrash()
+                trashedCount = trashedTasks.count
+            } else {
+                trashedCount = (try? repository.trashCount()) ?? trashedCount
+            }
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -88,6 +88,112 @@ struct SQLiteTaskRepositoryTests {
         #expect(try repository.deletedTaskIDs() == [completed.id, passed.id])
     }
 
+    @Test("删除会保留本机恢复快照，恢复后生成新任务")
+    func deleteKeepsRecoverableTrash() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let createdAt = date("2026-07-15T12:00:00+08:00")
+        let task = try TodoTask(
+            title: "误删任务",
+            categoryID: TaskCategory.inboxID,
+            startDate: date("2026-07-15"),
+            endDate: date("2026-07-20"),
+            sortIndex: 4,
+            createdAt: createdAt,
+            reminderTime: try TaskReminderTime(hour: 9, minute: 30)
+        )
+        try repository.save(task)
+
+        try repository.delete(id: task.id)
+        #expect(try repository.fetchAll().isEmpty)
+        let trash = try repository.fetchTrash()
+        #expect(trash.count == 1)
+        #expect(trash.first?.task.id == task.id)
+        #expect(trash.first?.task.title == task.title)
+        #expect(trash.first?.task.startDate == task.startDate)
+        #expect(trash.first?.task.endDate == task.endDate)
+        #expect(trash.first?.task.reminderTime == task.reminderTime)
+        #expect(trash.first?.deletedAt != nil)
+        #expect(try repository.trashCount() == 1)
+        #expect(try repository.deletedTaskIDs() == [task.id])
+
+        let restoredID = try #require(
+            try repository.restoreTrash(id: task.id, at: date("2026-07-16T09:00:00+08:00"))
+        )
+        #expect(restoredID != task.id)
+        #expect(try repository.fetchTrash().isEmpty)
+        #expect(try repository.trashCount() == 0)
+        let restored = try #require(try repository.fetchAll().first)
+        #expect(restored.id == restoredID)
+        #expect(restored.seriesID == task.seriesID)
+        #expect(restored.title == task.title)
+        #expect(restored.startDate == task.startDate)
+        #expect(restored.endDate == task.endDate)
+        #expect(restored.reminderTime == task.reminderTime)
+        #expect(restored.status == .pending)
+        // 原任务 ID 仍保持墓碑终态，恢复使用的是新 ID。
+        #expect(try repository.deletedTaskIDs() == [task.id])
+    }
+
+    @Test("删除与恢复都是幂等的")
+    func trashOperationsAreIdempotent() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let task = try TodoTask(title: "幂等", categoryID: TaskCategory.inboxID)
+        try repository.save(task)
+
+        try repository.delete(id: task.id)
+        try repository.delete(id: task.id)
+        #expect(try repository.fetchTrash().count == 1)
+        #expect(try repository.fetchAll().isEmpty)
+
+        #expect(try repository.restoreTrash(id: task.id, at: Date()) != nil)
+        #expect(try repository.restoreTrash(id: task.id, at: Date()) == nil)
+        #expect(try repository.fetchTrash().isEmpty)
+        #expect(try repository.fetchAll().count == 1)
+
+        #expect(try repository.removeTrash(ids: nil) == 0)
+        #expect(try repository.restoreTrash(id: task.id, at: Date()) == nil)
+    }
+
+    @Test("移除本机恢复快照不会产生新的删除记录")
+    func removingTrashKeepsDeletionHistory() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let task = try TodoTask(title: "清除副本", categoryID: TaskCategory.inboxID)
+        try repository.save(task)
+        try repository.delete(id: task.id)
+
+        #expect(try repository.removeTrash(ids: [task.id]) == 1)
+        #expect(try repository.removeTrash(ids: [task.id]) == 0)
+        #expect(try repository.removeTrash(ids: nil) == 0)
+        #expect(try repository.fetchTrash().isEmpty)
+        #expect(try repository.deletedTaskIDs() == [task.id])
+    }
+
+    @Test("同一 seriesID 的两条恢复任务可以同时存在")
+    func restoredTasksMayShareSeries() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let seriesID = UUID()
+        let day = date("2026-07-15")
+        let first = try TodoTask(
+            id: UUID(),
+            seriesID: seriesID,
+            title: "设备一恢复",
+            categoryID: TaskCategory.inboxID,
+            startDate: day,
+            endDate: day
+        )
+        let second = try TodoTask(
+            id: UUID(),
+            seriesID: seriesID,
+            title: "设备二恢复",
+            categoryID: TaskCategory.inboxID,
+            startDate: day,
+            endDate: day
+        )
+
+        try repository.save([first, second])
+        #expect(Set(try repository.fetchAll().map(\.id)) == [first.id, second.id])
+    }
+
     @Test("无日期任务可以保存并读取")
     func anytimeTaskRoundTrip() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -108,6 +109,46 @@ class TaskRepositoryTest {
         assertTrue(repository.settle(id, TaskStatus.PASS))
         assertEquals(TaskStatus.PASS, repository.get(id)?.status)
         assertFalse(repository.reopen(id))
+    }
+
+    @Test
+    fun `删除后可恢复为新任务并保留原字段`() = runBlocking {
+        val id = repository.create(
+            TaskDraft(
+                title = "误删任务",
+                startDate = date,
+                endDate = date.plusDays(1),
+            ),
+        )
+        val original = repository.get(id)!!
+
+        assertTrue(repository.delete(id))
+        assertNull(repository.get(id))
+        val trash = repository.trashTasks()
+        assertEquals(1, trash.size)
+        assertEquals("误删任务", trash.first().task.title)
+        assertEquals(date, trash.first().task.startDate)
+
+        assertTrue(repository.restoreTrash(id))
+        assertFalse(repository.restoreTrash(id))
+        assertTrue(repository.trashTasks().isEmpty())
+        val restored = repository.allTasks().single()
+        assertNotEquals(id, restored.id)
+        assertEquals(original.seriesId, restored.seriesId)
+        assertEquals(original.title, restored.title)
+        assertEquals(original.startDate, restored.startDate)
+        assertEquals(original.endDate, restored.endDate)
+        assertEquals(TaskStatus.PENDING, restored.status)
+        assertNull(repository.get(id))
+    }
+
+    @Test
+    fun `清空最近删除不会影响已删除任务`() = runBlocking {
+        val id = repository.create(TaskDraft(title = "只清副本"))
+        assertTrue(repository.delete(id))
+        assertEquals(1, repository.removeTrash())
+        assertTrue(repository.trashTasks().isEmpty())
+        assertFalse(repository.restoreTrash(id))
     }
 
     @Test
@@ -302,6 +343,7 @@ class TaskRepositoryTest {
 
 private class FakeTaskStore : TaskStore {
     val items = MutableStateFlow<List<TaskEntity>>(emptyList())
+    val trash = MutableStateFlow<List<TrashedTaskEntity>>(emptyList())
     val categories = MutableStateFlow(TaskCategories.defaults)
 
     override fun observeAll(): Flow<List<TaskEntity>> = items
@@ -335,8 +377,36 @@ private class FakeTaskStore : TaskStore {
     override suspend fun deletePending(id: String, deletedAt: Long): Boolean {
         val task = getById(id) ?: return false
         if (task.status != TaskStatus.PENDING) return false
+        trash.value = trash.value + TrashedTaskEntity(task, deletedAt)
         items.value = items.value.filterNot { it.id == id }
         return true
+    }
+
+    override suspend fun getTrash(): List<TrashedTaskEntity> = trash.value
+
+    override suspend fun restoreTrash(
+        id: String,
+        restoredAt: Long,
+        idFactory: () -> String,
+    ): String? {
+        val trashed = trash.value.firstOrNull { it.task.id == id } ?: return null
+        val newId = idFactory()
+        val restored = trashed.task.copy(
+            id = newId,
+            status = TaskStatus.PENDING,
+            settledAt = null,
+            updatedAt = restoredAt,
+        )
+        trash.value = trash.value.filterNot { it.task.id == id }
+        items.value = items.value + restored
+        return newId
+    }
+
+    override suspend fun removeTrash(ids: Set<String>?): Int {
+        if (ids?.isEmpty() == true) return 0
+        val before = trash.value.size
+        trash.value = trash.value.filterNot { ids == null || it.task.id in ids }
+        return before - trash.value.size
     }
 
     override suspend fun deleteSettled(ids: Set<String>?, deletedAt: Long): Int {

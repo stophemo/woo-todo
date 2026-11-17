@@ -20,6 +20,11 @@ data class TaskEntity(
     val reminderTime: LocalTime? = null,
 )
 
+data class TrashedTaskEntity(
+    val task: TaskEntity,
+    val deletedAt: Long,
+)
+
 fun TaskEntity.toDomain(): Task =
     Task(
         id = id,

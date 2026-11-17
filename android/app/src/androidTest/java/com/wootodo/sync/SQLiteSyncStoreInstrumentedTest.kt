@@ -267,6 +267,113 @@ class SQLiteSyncStoreInstrumentedTest {
     }
 
     @Test
+    fun `远端删除会保留本机恢复快照`() = runBlocking {
+        val taskStore = SQLiteTaskStore(database)
+        val store = SQLiteSyncStore(database, credentials)
+        val entityId = "task-remote-trash"
+        taskStore.insert(localTask(entityId, "远端删除"))
+        store.acknowledgeOperations(store.pendingOperations(50).map { it.opId })
+
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 1,
+                    opId = "op-remote-trash",
+                    lamport = 10,
+                    payload = TombstonePayload(id = entityId, deletedAt = 2_000),
+                ),
+            ),
+            advancingCursorTo = 1,
+        )
+
+        assertNull(taskStore.getById(entityId))
+        val trashed = taskStore.getTrash().single()
+        assertEquals("远端删除", trashed.task.title)
+        assertEquals(2_000, trashed.deletedAt)
+    }
+
+    @Test
+    fun `收到恢复后的新任务会清除旧恢复快照`() = runBlocking {
+        val taskStore = SQLiteTaskStore(database)
+        val store = SQLiteSyncStore(database, credentials)
+        val original = localTask("task-restore-original", "跨设备恢复")
+        taskStore.insert(original)
+        store.acknowledgeOperations(store.pendingOperations(50).map { it.opId })
+        assertTrue(taskStore.deletePending(original.id, 2_000))
+        assertEquals(1, taskStore.getTrash().size)
+
+        val restored = remoteTask("task-restore-copy", "跨设备恢复").copy(
+            seriesId = original.seriesId,
+            updatedAt = 2_100,
+        )
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    serverSeq = 1,
+                    opId = "op-restore-copy",
+                    lamport = 20,
+                    payload = restored,
+                ),
+            ),
+            advancingCursorTo = 1,
+        )
+
+        assertTrue(taskStore.getTrash().isEmpty())
+        assertEquals("跨设备恢复", taskStore.getById("task-restore-copy")?.title)
+    }
+
+    @Test
+    fun `同 seriesId 的不同内容快照不会被恢复任务误删`() = runBlocking {
+        val taskStore = SQLiteTaskStore(database)
+        val store = SQLiteSyncStore(database, credentials)
+        val seriesId = "series-shared"
+        val edited = localTask("task-edited", "新内容").copy(seriesId = seriesId)
+        taskStore.insert(edited)
+        store.acknowledgeOperations(store.pendingOperations(50).map { it.opId })
+        assertTrue(taskStore.deletePending(edited.id, 2_000))
+        assertEquals(1, taskStore.getTrash().size)
+
+        val restoredOld = remoteTask("task-restored-old", "旧内容").copy(
+            seriesId = seriesId,
+            updatedAt = 2_100,
+        )
+        store.applyRemoteOperations(
+            listOf(operation(1, "op-restored-old", 20, restoredOld)),
+            advancingCursorTo = 1,
+        )
+
+        assertEquals(listOf("新内容"), taskStore.getTrash().map { it.task.title })
+        assertEquals(listOf("旧内容"), taskStore.getAll().map { it.title })
+    }
+
+    @Test
+    fun `同 seriesId 的其他 live 任务内容不同时仍保留删除快照`() = runBlocking {
+        val taskStore = SQLiteTaskStore(database)
+        val store = SQLiteSyncStore(database, credentials)
+        val seriesId = "series-sibling"
+        val newer = localTask("task-newer", "新内容").copy(seriesId = seriesId)
+        val sibling = localTask("task-sibling", "旧内容").copy(seriesId = seriesId)
+        taskStore.insert(newer)
+        taskStore.insert(sibling)
+        store.acknowledgeOperations(store.pendingOperations(50).map { it.opId })
+
+        store.applyRemoteOperations(
+            listOf(
+                operation(
+                    1,
+                    "op-delete-newer",
+                    20,
+                    TombstonePayload(id = newer.id, deletedAt = 2_000),
+                ),
+            ),
+            advancingCursorTo = 1,
+        )
+
+        assertEquals(listOf("新内容"), taskStore.getTrash().map { it.task.title })
+        assertEquals(listOf("旧内容"), taskStore.getAll().map { it.title })
+    }
+
+    @Test
     fun `任务先到时后续 tombstone 会永久压制同 ID 高版本任务`() {
         var taskChangeCount = 0
         val store = SQLiteSyncStore(database, credentials) { taskChangeCount += 1 }

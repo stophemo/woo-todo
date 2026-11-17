@@ -117,6 +117,12 @@ data class Task(
     val reminderTime: LocalTime? = null,
 )
 
+/** 本机恢复快照；任务已通过同步删除记录从其他设备移除。 */
+data class TrashedTask(
+    val task: Task,
+    val deletedAt: Long,
+)
+
 data class TaskDraft(
     val title: String,
     val categoryId: String = TaskCategories.INBOX_ID,

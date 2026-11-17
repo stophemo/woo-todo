@@ -86,6 +86,58 @@ struct DashboardStoreTests {
         #expect(store.sections[3].tasks.map(\.id) == [completedToday.id])
     }
 
+    @Test("统计只在需要时计算")
+    func statisticsLoadLazily() throws {
+        let now = date("2026-07-18T10:00:00+08:00")
+        let task = try TodoTask(title: "待办", categoryID: "main", createdAt: now)
+        let repository = DashboardMemoryRepository(tasks: [task])
+        let store = DashboardStore(repository: repository, now: { now })
+
+        store.reload()
+        #expect(store.statistics == .empty)
+        store.reloadStatisticsIfNeeded()
+        #expect(store.statistics.pendingCount == 1)
+    }
+
+    @Test("移除最近删除副本不会广播任务变更")
+    func removingTrashDoesNotBroadcastTasksChanged() throws {
+        let task = try TodoTask(title: "副本", categoryID: "main")
+        let repository = DashboardMemoryRepository(tasks: [task])
+        let store = DashboardStore(repository: repository)
+        store.reload()
+        store.delete(id: task.id)
+        store.reloadTrash()
+
+        var changes = 0
+        store.onTasksChanged = { changes += 1 }
+        store.removeTrash(ids: [task.id])
+        #expect(store.trashedTasks.isEmpty)
+        #expect(changes == 0)
+    }
+
+    @Test("删除待办会进入最近删除并可恢复为新任务")
+    func deleteAndRestoreTrash() throws {
+        let now = date("2026-07-18T10:00:00+08:00")
+        let task = try TodoTask(title: "误删", categoryID: "main", createdAt: now)
+        let repository = DashboardMemoryRepository(tasks: [task])
+        let store = DashboardStore(repository: repository, now: { now })
+        store.reload()
+
+        store.delete(id: task.id)
+        #expect(store.allTasks.isEmpty)
+        #expect(store.trashedCount == 1)
+        store.reloadTrash()
+        #expect(store.trashedTasks.map(\.task.id) == [task.id])
+        #expect(store.trashedCount == 1)
+
+        store.restoreTrash(id: task.id)
+        let restored = try #require(store.allTasks.first)
+        #expect(restored.id != task.id)
+        #expect(restored.title == task.title)
+        #expect(store.trashedTasks.isEmpty)
+        #expect(store.trashedCount == 0)
+    }
+
     @Test("可以多选清除历史且保留待办")
     func clearSelectedHistory() throws {
         let now = date("2026-07-18T10:00:00+08:00")
@@ -118,6 +170,7 @@ struct DashboardStoreTests {
 
 private final class DashboardMemoryRepository: TaskRepository {
     var tasks: [TodoTask]
+    var trash: [TrashedTask] = []
     var categories: [TaskCategory] = TaskCategory.normalizeList(
         TaskCategory.defaults + [
             try! TaskCategory(id: "main", name: "主线", order: 1),
@@ -152,7 +205,40 @@ private final class DashboardMemoryRepository: TaskRepository {
     }
 
     func delete(id: UUID) throws {
+        guard let task = tasks.first(where: { $0.id == id }) else { return }
         tasks.removeAll { $0.id == id }
+        trash.append(TrashedTask(task: task, deletedAt: Date()))
+    }
+
+    func fetchTrash() throws -> [TrashedTask] { trash }
+
+    func trashCount() throws -> Int { trash.count }
+
+    @discardableResult
+    func restoreTrash(id: UUID, at date: Date) throws -> UUID? {
+        guard let index = trash.firstIndex(where: { $0.task.id == id }) else { return nil }
+        let snapshot = trash.remove(at: index)
+        let restored = try TodoTask(
+            id: UUID(),
+            seriesID: snapshot.task.seriesID,
+            title: snapshot.task.title,
+            categoryID: snapshot.task.categoryID,
+            startDate: snapshot.task.startDate,
+            endDate: snapshot.task.endDate,
+            sortIndex: snapshot.task.sortIndex,
+            createdAt: snapshot.task.createdAt,
+            updatedAt: date,
+            reminderTime: snapshot.task.reminderTime
+        )
+        tasks.append(restored)
+        return restored.id
+    }
+
+    @discardableResult
+    func removeTrash(ids: Set<UUID>?) throws -> Int {
+        let before = trash.count
+        trash.removeAll { ids == nil || ids?.contains($0.task.id) == true }
+        return before - trash.count
     }
 
     func clearHistory(ids: Set<UUID>?) throws -> Int {

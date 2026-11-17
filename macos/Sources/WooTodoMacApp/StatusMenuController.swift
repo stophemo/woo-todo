@@ -34,10 +34,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let panelController: FloatingPanelController
     private let shortcutSettingsStore: ShortcutSettingsStore
     private let quickAddAction: () -> Void
-    private let openDashboardAction: () -> Void
+    private let mainWindowVisible: () -> Bool
+    private let toggleMainWindowAction: () -> Void
     private let openSettingsAction: () -> Void
     private let checkForUpdatesAction: () -> Void
     private let statusItem: NSStatusItem
+    private let mainWindowItem: NSMenuItem
     private let quickAddItem: NSMenuItem
     private let taskPanelItem: NSMenuItem
     private let desktopWidgetItem: NSMenuItem
@@ -55,17 +57,20 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         panelController: FloatingPanelController,
         shortcutSettingsStore: ShortcutSettingsStore,
         quickAdd: @escaping () -> Void,
-        openDashboard: @escaping () -> Void,
+        mainWindowVisible: @escaping () -> Bool,
+        toggleMainWindow: @escaping () -> Void,
         openSettings: @escaping () -> Void,
         checkForUpdates: @escaping () -> Void
     ) {
         self.panelController = panelController
         self.shortcutSettingsStore = shortcutSettingsStore
         quickAddAction = quickAdd
-        openDashboardAction = openDashboard
+        self.mainWindowVisible = mainWindowVisible
+        toggleMainWindowAction = toggleMainWindow
         openSettingsAction = openSettings
         checkForUpdatesAction = checkForUpdates
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        mainWindowItem = NSMenuItem(title: "打开 Woo Todo", action: nil, keyEquivalent: "")
         quickAddItem = NSMenuItem(title: "快速新增任务", action: nil, keyEquivalent: "")
         taskPanelItem = NSMenuItem(title: "显示任务板", action: nil, keyEquivalent: "")
         desktopWidgetItem = NSMenuItem(title: "桌面小组件模式", action: nil, keyEquivalent: "")
@@ -91,6 +96,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         alwaysOnTopItem.state = panelController.isAlwaysOnTop ? .on : .off
         let percentage = Int((panelController.panelOpacity * 100).rounded())
         opacityItem.title = "不透明度（\(percentage)%）"
+        mainWindowItem.title = mainWindowVisible()
+            ? "隐藏 Woo Todo"
+            : "打开 Woo Todo"
         quickAddItem.title = "快速新增任务"
         taskPanelItem.title = panelController.isVisible
             ? "隐藏任务板"
@@ -191,13 +199,15 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu(title: "Woo Todo")
         menu.delegate = self
+        mainWindowItem.target = self
+        mainWindowItem.action = #selector(toggleMainWindow)
+        menu.addItem(mainWindowItem)
         quickAddItem.target = self
         quickAddItem.action = #selector(quickAdd)
         menu.addItem(quickAddItem)
         taskPanelItem.target = self
         taskPanelItem.action = #selector(toggleTaskPanel)
         menu.addItem(taskPanelItem)
-        menu.addItem(item("任务详情与统计…", action: #selector(openDashboard)))
         menu.addItem(item("设置…", action: #selector(openSettingsFromStatusMenu)))
         menu.addItem(.separator())
 
@@ -305,8 +315,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         quickAddAction()
     }
 
-    @objc private func openDashboard() {
-        openDashboardAction()
+    @objc private func toggleMainWindow() {
+        toggleMainWindowAction()
     }
 
     @objc private func openSettingsFromStatusMenu() {

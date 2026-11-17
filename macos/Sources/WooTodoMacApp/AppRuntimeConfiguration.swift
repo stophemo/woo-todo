@@ -3,6 +3,13 @@ import WooTodoCore
 import WooTodoStorage
 import WooTodoSync
 
+enum InitialScreen: Equatable {
+    case panel
+    case quickAdd
+    case main(MainWindowSection)
+    case settings(SettingsSection)
+}
+
 struct AppRuntimeConfiguration {
     static let uiTestBundleIdentifier = "io.github.stophemo.woo-todo.ui-test"
 
@@ -15,11 +22,39 @@ struct AppRuntimeConfiguration {
     let webDavCredentialsStore: any WebDavCredentialsStoring
     let allowsExternalServices: Bool
     let allowsLocalDataRemoval: Bool
-    let initialDashboardSection: DashboardSection?
-    let initialQuickAdd: Bool
+    let initialScreen: InitialScreen
     let shouldSeedUITestFixtures: Bool
     let uiTestArtifactDirectory: URL?
     let uiTestScreenName: String?
+
+    static func initialScreen(for screen: String) throws -> InitialScreen {
+        switch screen {
+        case "panel":
+            return .panel
+        case "quick-add":
+            return .quickAdd
+        case "main", "today":
+            return .main(.today)
+        case "tasks":
+            // 旧截图脚本使用 tasks 表示完整任务列表。
+            return .main(.all)
+        case "all":
+            return .main(.all)
+        case "history":
+            return .main(.history)
+        case "statistics":
+            return .main(.statistics)
+        case "trash":
+            return .main(.trash)
+        case "display", "shortcuts", "sync", "mcp", "localData":
+            guard let section = SettingsSection(rawValue: screen) else {
+                throw AppRuntimeConfigurationError.invalidUITestScreen(screen)
+            }
+            return .settings(section)
+        default:
+            throw AppRuntimeConfigurationError.invalidUITestScreen(screen)
+        }
+    }
 
     static func current(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -71,8 +106,7 @@ struct AppRuntimeConfiguration {
                 ),
                 allowsExternalServices: true,
                 allowsLocalDataRemoval: true,
-                initialDashboardSection: nil,
-                initialQuickAdd: false,
+                initialScreen: .panel,
                 shouldSeedUITestFixtures: false,
                 uiTestArtifactDirectory: nil,
                 uiTestScreenName: nil
@@ -110,27 +144,14 @@ struct AppRuntimeConfiguration {
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
 
         let screen = environment["WOO_TODO_UI_TEST_SCREEN"] ?? "panel"
-        let initialDashboardSection: DashboardSection?
-        let initialQuickAdd: Bool
-        if screen == "panel" {
-            initialDashboardSection = nil
-            initialQuickAdd = false
-        } else if screen == "quick-add" {
-            initialDashboardSection = nil
-            initialQuickAdd = true
-        } else if let section = DashboardSection(rawValue: screen) {
-            initialDashboardSection = section
-            initialQuickAdd = false
-        } else {
-            throw AppRuntimeConfigurationError.invalidUITestScreen(screen)
-        }
+        let initialScreen = try Self.initialScreen(for: screen)
 
         let defaultsSuite = "\(uiTestBundleIdentifier).\(root.lastPathComponent)"
         guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
             throw AppRuntimeConfigurationError.defaultsUnavailable
         }
         let webDavCredentialsStore = InMemoryWebDavCredentialsStore()
-        if initialDashboardSection == .sync {
+        if initialScreen == .settings(.sync) {
             try webDavCredentialsStore.save(WebDavCredentials(
                 endpoint: URL(string: "https://dav.example.invalid/woo-todo/")!,
                 username: "ui-test@example.invalid",
@@ -150,8 +171,7 @@ struct AppRuntimeConfiguration {
             webDavCredentialsStore: webDavCredentialsStore,
             allowsExternalServices: false,
             allowsLocalDataRemoval: false,
-            initialDashboardSection: initialDashboardSection,
-            initialQuickAdd: initialQuickAdd,
+            initialScreen: initialScreen,
             shouldSeedUITestFixtures: true,
             uiTestArtifactDirectory: root,
             uiTestScreenName: screen
@@ -229,6 +249,15 @@ enum UITestFixtureSeeder {
             startDate: "2026-01-01",
             deadlineDate: "2026-12-31"
         ))
+        // 最近删除页面需要一条可见的恢复副本。
+        let trashed = try TodoTask(
+            title: "误删示例：整理桌面收纳盒",
+            categoryID: "life",
+            sortIndex: 1,
+            createdAt: now.addingTimeInterval(-30)
+        )
+        try repository.save(trashed)
+        try repository.delete(id: trashed.id)
     }
 }
 

@@ -286,7 +286,7 @@ private struct TaskRow: View {
             if task.status == .pending {
                 Button("编辑", action: edit)
                 Button("放弃", action: pass)
-                Button("删除", role: .destructive, action: delete)
+                Button("移到最近删除", role: .destructive, action: delete)
             }
         }
         .frame(minHeight: 39)

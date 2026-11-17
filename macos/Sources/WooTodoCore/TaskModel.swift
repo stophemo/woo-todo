@@ -197,6 +197,19 @@ public struct TaskReminderTime: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+/// 已删除任务的本机恢复快照。任务本身已通过同步删除记录从其他设备移除。
+public struct TrashedTask: Identifiable, Equatable, Sendable {
+    public let task: TodoTask
+    public let deletedAt: Date
+
+    public var id: UUID { task.id }
+
+    public init(task: TodoTask, deletedAt: Date) {
+        self.task = task
+        self.deletedAt = deletedAt
+    }
+}
+
 /// 一条任务。日期范围同时为空表示“未安排”，否则必须同时有开始和结束日期。
 public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID

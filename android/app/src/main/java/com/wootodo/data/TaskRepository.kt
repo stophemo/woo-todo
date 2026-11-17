@@ -8,6 +8,7 @@ import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskDateState
 import com.wootodo.domain.TaskDraft
 import com.wootodo.domain.TaskStatus
+import com.wootodo.domain.TrashedTask
 import java.time.Clock
 import java.time.LocalDate
 import java.util.UUID
@@ -83,6 +84,17 @@ class TaskRepository(
     }
 
     suspend fun delete(id: String): Boolean = store.deletePending(id, clock.millis())
+
+    suspend fun trashTasks(): List<TrashedTask> = store.getTrash().map { trashed ->
+        TrashedTask(trashed.task.toDomain(), trashed.deletedAt)
+    }
+
+    /** 从本机恢复快照重新创建任务；恢复出的任务会以普通 upsert 同步到其他设备。 */
+    suspend fun restoreTrash(id: String): Boolean =
+        store.restoreTrash(id, clock.millis(), idFactory) != null
+
+    /** 只移除本机恢复副本，不会产生新的同步删除记录。 */
+    suspend fun removeTrash(ids: Set<String>? = null): Int = store.removeTrash(ids)
 
     suspend fun clearHistory(ids: Set<String>? = null): Int {
         if (ids?.isEmpty() == true) return 0

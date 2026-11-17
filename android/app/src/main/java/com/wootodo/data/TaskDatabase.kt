@@ -14,6 +14,7 @@ class TaskDatabase(context: Context) :
 
     override fun onCreate(database: SQLiteDatabase) {
         createSchema(database)
+        createTrashSchema(database)
     }
 
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -50,6 +51,7 @@ class TaskDatabase(context: Context) :
         // 兼容曾经中断或裁剪过的旧升级：同步表均使用 IF NOT EXISTS，可安全幂等补齐。
         createSyncSchema(database)
         createCategorySchema(database)
+        createTrashSchema(database)
         if (oldVersion < 11) {
             removeUnusedLegacyCategories(database)
         }
@@ -146,6 +148,38 @@ class TaskDatabase(context: Context) :
         )
         createCategorySchema(database)
         createSyncSchema(database)
+    }
+
+    private fun createTrashSchema(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS ${SQLiteTrashTable.TABLE} (
+                id TEXT NOT NULL PRIMARY KEY,
+                series_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                time_type TEXT NOT NULL,
+                target_date TEXT,
+                quest_line TEXT NOT NULL,
+                status TEXT NOT NULL,
+                recurrence TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                settled_at INTEGER,
+                reminder_time TEXT,
+                deadline_date TEXT,
+                deleted_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_trash_tasks_deleted_at " +
+                "ON ${SQLiteTrashTable.TABLE}(deleted_at)",
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_trash_tasks_series_id " +
+                "ON ${SQLiteTrashTable.TABLE}(series_id)",
+        )
     }
 
     private fun createCategorySchema(database: SQLiteDatabase) {
@@ -471,6 +505,6 @@ class TaskDatabase(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 11
+        const val DATABASE_VERSION = 12
     }
 }

@@ -3,6 +3,7 @@ package com.wootodo.sync
 import android.content.ContentValues
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import com.wootodo.data.SQLiteTrashTable
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskEntity
 import com.wootodo.domain.TaskCategories
@@ -847,6 +848,8 @@ class SQLiteSyncStore(
                 arrayOf(normalizedPayload.id),
             )
             sqlite.insertWithOnConflict("tasks", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            // 只清理内容相同的旧恢复快照；同 seriesId 下可能有其他设备编辑过的不同内容。
+            removeMatchingTrashRows(sqlite, resolvedTask)
         }
         if (currentVersion == null || decision.resolvedVersion != currentVersion.version) {
             writeVersion(
@@ -877,6 +880,18 @@ class SQLiteSyncStore(
             return false
         }
         val horizon = currentVersion?.version?.let { maxOf(it, incomingVersion) } ?: incomingVersion
+        // 删除前保留本机恢复快照；同一 seriesId 已有恢复后的新任务时不再重复快照。
+        val currentTask = readTask(sqlite, normalizedPayload.id)
+        if (currentTask != null &&
+            currentTask.status == TaskStatus.PENDING &&
+            !liveTaskMatches(sqlite, currentTask)
+        ) {
+            SQLiteTrashTable.insertFromTask(
+                sqlite,
+                normalizedPayload.id,
+                payload.deletedAt,
+            )
+        }
         val taskDeleted = sqlite.delete(
             "tasks",
             "id = ? COLLATE NOCASE",
@@ -1037,6 +1052,68 @@ private fun currentCursor(database: SQLiteDatabase): Long = database.rawQuery(
 ).use { cursor ->
     check(cursor.moveToFirst()) { "同步状态未初始化" }
     cursor.getLong(0)
+}
+
+private fun removeMatchingTrashRows(
+    database: SQLiteDatabase,
+    task: TaskInstancePayload,
+) {
+    database.delete(
+        SQLiteTrashTable.TABLE,
+        """
+        series_id = ? COLLATE NOCASE AND id != ? COLLATE NOCASE
+        AND title = ? AND time_type = ? AND quest_line = ?
+        AND sort_order = ? AND created_at = ?
+        AND IFNULL(target_date, '') = IFNULL(?, '')
+        AND IFNULL(deadline_date, '') = IFNULL(?, '')
+        AND IFNULL(reminder_time, '') = IFNULL(?, '')
+        """.trimIndent(),
+        arrayOf(
+            task.seriesId,
+            task.id,
+            task.title,
+            task.timeType.value,
+            task.questLine,
+            task.sortOrder.toString(),
+            task.createdAt.toString(),
+            task.periodStart ?: "",
+            task.deadlineDate ?: "",
+            task.reminderTime ?: "",
+        ),
+    )
+}
+
+private fun liveTaskMatches(database: SQLiteDatabase, task: TaskEntity): Boolean {
+    val payload = task.toWirePayload()
+    val selection = """
+        series_id = ? COLLATE NOCASE AND id != ? COLLATE NOCASE
+        AND title = ? AND time_type = ? AND quest_line = ?
+        AND sort_order = ? AND created_at = ?
+        AND IFNULL(target_date, '') = IFNULL(?, '')
+        AND IFNULL(deadline_date, '') = IFNULL(?, '')
+        AND IFNULL(reminder_time, '') = IFNULL(?, '')
+    """.trimIndent()
+    return database.query(
+        "tasks",
+        arrayOf("id"),
+        selection,
+        arrayOf(
+            payload.seriesId,
+            payload.id,
+            payload.title,
+            payload.timeType.value,
+            payload.questLine,
+            payload.sortOrder.toString(),
+            payload.createdAt.toString(),
+            payload.periodStart ?: "",
+            payload.deadlineDate ?: "",
+            payload.reminderTime ?: "",
+        ),
+        null,
+        null,
+        null,
+        "1",
+    ).use { it.moveToFirst() }
 }
 
 private fun readTask(database: SQLiteDatabase, id: String): TaskEntity? = database.query(

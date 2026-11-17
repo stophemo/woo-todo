@@ -53,8 +53,9 @@ enum PanelDesktopLevelPolicy {
 
 enum PanelFramePolicy {
     static let autosaveName = "WooTodoFloatingPanel"
-    static let currentLayoutVersion = 2
-    static let defaultSize = NSSize(width: 610, height: 440)
+    static let currentLayoutVersion = 3
+    static let defaultSize = NSSize(width: 360, height: 440)
+    static let previousDefaultSize = NSSize(width: 610, height: 440)
     static let legacyDefaultSize = NSSize(width: 360, height: 520)
 
     static func usesLegacyDefaultSize(_ size: NSSize) -> Bool {
@@ -62,13 +63,19 @@ enum PanelFramePolicy {
             && abs(size.height - legacyDefaultSize.height) < 0.5
     }
 
+    static func usesPreviousDefaultSize(_ size: NSSize) -> Bool {
+        abs(size.width - previousDefaultSize.width) < 0.5
+            && abs(size.height - previousDefaultSize.height) < 0.5
+    }
+
     static func migratedFrame(from frame: NSRect, visibleFrame: NSRect) -> NSRect {
         let size = NSSize(
             width: min(defaultSize.width, visibleFrame.width),
             height: min(defaultSize.height, visibleFrame.height)
         )
+        // 桌面小组件默认贴在左上角，迁移时保持左上角位置，只收窄宽度。
         let proposedOrigin = NSPoint(
-            x: frame.maxX - size.width,
+            x: frame.minX,
             y: frame.maxY - size.height
         )
         return NSRect(
@@ -437,7 +444,8 @@ final class FloatingPanelController: NSWindowController {
                 forKey: PreferenceKey.frameLayoutVersion
             )
         }
-        guard PanelFramePolicy.usesLegacyDefaultSize(panel.frame.size),
+        guard PanelFramePolicy.usesLegacyDefaultSize(panel.frame.size) ||
+                PanelFramePolicy.usesPreviousDefaultSize(panel.frame.size),
               let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
             return
         }

@@ -91,21 +91,31 @@ struct FloatingPanelOpacityTests {
         #expect(!PanelFramePolicy.usesLegacyDefaultSize(NSSize(width: 360, height: 480)))
     }
 
-    @Test func panelFrameMigrationPreservesTopRightPositionWithinVisibleScreen() {
+    @Test func previousWideDefaultPanelSizeIsRecognized() {
+        #expect(PanelFramePolicy.usesPreviousDefaultSize(NSSize(width: 610, height: 440)))
+        #expect(!PanelFramePolicy.usesPreviousDefaultSize(NSSize(width: 420, height: 440)))
+        #expect(!PanelFramePolicy.usesPreviousDefaultSize(NSSize(width: 610, height: 480)))
+    }
+
+    @Test func defaultWidgetSizeIsCompact() {
+        #expect(PanelFramePolicy.defaultSize == NSSize(width: 360, height: 440))
+    }
+
+    @Test func panelFrameMigrationPreservesTopLeftPositionWithinVisibleScreen() {
         let migrated = PanelFramePolicy.migratedFrame(
-            from: NSRect(x: 1012, y: 383, width: 360, height: 520),
+            from: NSRect(x: 1012, y: 383, width: 610, height: 440),
             visibleFrame: NSRect(x: 0, y: 0, width: 1470, height: 923)
         )
 
-        #expect(migrated == NSRect(x: 762, y: 463, width: 610, height: 440))
+        #expect(migrated == NSRect(x: 1012, y: 383, width: 360, height: 440))
     }
 
-    @Test func panelFrameMigrationClampsExpandedPanelToVisibleScreen() {
+    @Test func panelFrameMigrationClampsToVisibleScreen() {
         let migrated = PanelFramePolicy.migratedFrame(
-            from: NSRect(x: 10, y: 20, width: 360, height: 520),
+            from: NSRect(x: 500, y: 20, width: 360, height: 520),
             visibleFrame: NSRect(x: 0, y: 0, width: 800, height: 600)
         )
 
-        #expect(migrated == NSRect(x: 0, y: 100, width: 610, height: 440))
+        #expect(migrated == NSRect(x: 440, y: 100, width: 360, height: 440))
     }
 }

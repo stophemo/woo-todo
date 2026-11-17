@@ -86,6 +86,7 @@ struct SettingsView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+            .background(Color(nsColor: .underPageBackgroundColor))
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
         } detail: {
             detail

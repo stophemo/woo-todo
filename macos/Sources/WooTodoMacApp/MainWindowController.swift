@@ -57,8 +57,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.title = "Woo Todo"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.isOpaque = false
-        window.backgroundColor = .clear
+        // 内容区必须保持不透明；否则侧栏透明会连桌面或后方应用文字一起透出。
+        window.isOpaque = true
+        window.backgroundColor = .windowBackgroundColor
         // 主窗口用隐藏/显示切换，不进入全屏，避免 orderOut 全屏窗口留下空白 Space。
         window.collectionBehavior = [.fullScreenNone]
         window.minSize = NSSize(width: 820, height: 560)

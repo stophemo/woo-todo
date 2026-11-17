@@ -126,6 +126,7 @@ struct MainWindowView: View {
             .scrollContentBackground(.hidden)
             sidebarFooter
         }
+        .background(Color(nsColor: .underPageBackgroundColor))
     }
 
     private func sidebarButton(_ section: MainWindowSection) -> some View {

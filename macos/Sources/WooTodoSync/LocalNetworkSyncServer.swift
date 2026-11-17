@@ -96,8 +96,11 @@ private struct LocalSyncStoredDevice: Codable {
 private struct LocalSyncPairingSession {
     let id: String
     let secretHash: String
+    /// 仅短码解析需要；配对会话本身仍只校验 secretHash。
+    var pairingSecret: String?
     let initiatorDeviceId: String
     let initiatorPublicKey: String
+    var shortCode: String?
     let createdAt: Int64
     let expiresAt: Int64
     var claimedDevice: LocalSyncClaimedDevice?
@@ -172,6 +175,8 @@ public actor LocalSyncServerStore {
     private let onRemoteOperationsStored: @Sendable (_ deviceId: String, _ inserted: Int) -> Void
     private var state: LocalSyncPersistedState
     private var pairings: [String: LocalSyncPairingSession] = [:]
+    private var pairingShortCodes: [String: String] = [:]
+    private var shortCodeAttempts: [Int64] = []
 
     public init(
         fileURL: URL,
@@ -287,6 +292,10 @@ public actor LocalSyncServerStore {
             let initiator = try authenticate(request)
             return try createPairing(request, initiator: initiator, requestId: requestId)
         }
+        if components == ["v1", "pairings", "resolve"] {
+            try requireMethod(request, "POST")
+            return try resolveShortCodePairing(request, requestId: requestId)
+        }
         if components == ["v1", "sync"] {
             try requireMethod(request, "POST")
             let device = try authenticate(request)
@@ -351,25 +360,89 @@ public actor LocalSyncServerStore {
         let timestamp = now()
         let pairingId = "pair-\(UUID().uuidString.lowercased())"
         let secret = Base64URL.encode(try SecureRandom.bytes(count: 32))
+        let shortCode = allocateShortCode()
         let session = LocalSyncPairingSession(
             id: pairingId,
             secretHash: Self.credentialHash(secret),
+            pairingSecret: secret,
             initiatorDeviceId: initiator.id,
             initiatorPublicKey: input.publicKey,
+            shortCode: shortCode,
             createdAt: timestamp,
             expiresAt: timestamp + LocalNetworkSyncConstants.pairingLifetimeMilliseconds,
             claimedDevice: nil,
             confirmedEnvelope: nil
         )
         pairings[pairingId] = session
+        pairingShortCodes[shortCode] = pairingId
         let data = CreatePairingData(
             pairingId: pairingId,
             pairingSecret: secret,
             initiatorPublicKey: input.publicKey,
             expiresAt: session.expiresAt,
-            serverTime: timestamp
+            serverTime: timestamp,
+            shortCode: shortCode
         )
         return try success(data, requestId: requestId, statusCode: 201)
+    }
+
+    private func allocateShortCode() -> String {
+        for _ in 0..<64 {
+            let code = String(format: "%06d", Int.random(in: 0...999_999))
+            if pairingShortCodes[code] == nil { return code }
+        }
+        for value in 0...999_999 {
+            let code = String(format: "%06d", value)
+            if pairingShortCodes[code] == nil { return code }
+        }
+        return String(format: "%06d", Int.random(in: 0...999_999))
+    }
+
+    private func resolveShortCodePairing(
+        _ request: LocalSyncHTTPRequest,
+        requestId: String
+    ) throws -> LocalSyncHTTPResponse {
+        try recordShortCodeAttempt()
+        let input: ResolveShortCodeRequest = try decode(request.body)
+        let code = input.code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard code.count == 6, code.allSatisfy(\.isNumber),
+              let pairingID = pairingShortCodes[code],
+              var session = pairings[pairingID],
+              session.expiresAt > now(),
+              let secret = session.pairingSecret else {
+            throw LocalSyncServiceFailure(
+                404,
+                "PAIRING_NOT_FOUND",
+                "配对码无效或已过期"
+            )
+        }
+        // 配对码只用于一次会合；兑换后立即失效，claim 继续使用 pairingSecret。
+        pairingShortCodes.removeValue(forKey: code)
+        session.shortCode = nil
+        pairings[pairingID] = session
+        return try success(
+            ResolveShortCodeData(
+                pairingId: pairingID,
+                pairingSecret: secret,
+                initiatorPublicKey: session.initiatorPublicKey,
+                vaultId: state.vaultId,
+                expiresAt: session.expiresAt
+            ),
+            requestId: requestId
+        )
+    }
+
+    private func recordShortCodeAttempt() throws {
+        let timestamp = now()
+        shortCodeAttempts.removeAll { $0 <= timestamp - 60_000 }
+        guard shortCodeAttempts.count < 20 else {
+            throw LocalSyncServiceFailure(
+                429,
+                "TOO_MANY_ATTEMPTS",
+                "配对码尝试过于频繁，请稍后再试"
+            )
+        }
+        shortCodeAttempts.append(timestamp)
     }
 
     private func pairingStatus(
@@ -459,6 +532,10 @@ public actor LocalSyncServerStore {
             claimedAt: now()
         )
         session.claimedDevice = claimed
+        if let code = session.shortCode {
+            pairingShortCodes.removeValue(forKey: code)
+            session.shortCode = nil
+        }
         pairings[id] = session
         return try success(
             PairingClaimData(
@@ -777,6 +854,7 @@ public actor LocalSyncServerStore {
         }
         guard session.expiresAt > now() else {
             pairings.removeValue(forKey: id)
+            pairingShortCodes = pairingShortCodes.filter { $0.value != id }
             throw LocalSyncServiceFailure(410, "PAIRING_EXPIRED", "配对会话已过期")
         }
         return session
@@ -785,6 +863,8 @@ public actor LocalSyncServerStore {
     private func expirePairings() {
         let timestamp = now()
         pairings = pairings.filter { $0.value.expiresAt > timestamp }
+        pairingShortCodes = pairingShortCodes.filter { pairings[$0.value] != nil }
+        shortCodeAttempts.removeAll { $0 <= timestamp - 60_000 }
     }
 
     private func requireMethod(_ request: LocalSyncHTTPRequest, _ method: String) throws {

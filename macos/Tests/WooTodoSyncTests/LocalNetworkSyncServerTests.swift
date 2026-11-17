@@ -166,6 +166,81 @@ struct LocalNetworkSyncServerTests {
         }
     }
 
+    @Test("六位配对码可解析一次并在兑换后失效")
+    func shortCodePairingResolvesOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-lan-code-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let credentials = try fixtureCredentials()
+        let store = try LocalSyncServerStore(
+            fileURL: directory.appendingPathComponent("state.json"),
+            bootstrapCredentials: credentials,
+            now: { 10_000 }
+        )
+        let initiatorPublicKey = Base64URL.encode(Data(repeating: 3, count: 32))
+        let created: CreatePairingData = try successData(await store.handle(request(
+            path: "/v1/pairings",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(
+                CreatePairingRequest(publicKey: initiatorPublicKey)
+            )
+        )))
+        let code = try #require(created.shortCode)
+        #expect(code.count == 6)
+        #expect(Int(code) != nil)
+
+        let resolved: ResolveShortCodeData = try successData(await store.handle(request(
+            path: "/v1/pairings/resolve",
+            body: try JSONEncoder().encode(ResolveShortCodeRequest(code: code))
+        )))
+        #expect(resolved.pairingId == created.pairingId)
+        #expect(resolved.pairingSecret == created.pairingSecret)
+        #expect(resolved.initiatorPublicKey == initiatorPublicKey)
+        #expect(resolved.vaultId == credentials.vaultId)
+
+        let replayed = await store.handle(request(
+            path: "/v1/pairings/resolve",
+            body: try JSONEncoder().encode(ResolveShortCodeRequest(code: code))
+        ))
+        #expect(replayed.statusCode == 404)
+
+        let deviceToken = Base64URL.encode(Data(repeating: 4, count: 32))
+        let claim: PairingClaimData = try successData(await store.handle(request(
+            path: "/v1/pairings/\(resolved.pairingId)/claim",
+            body: try JSONEncoder().encode(PairingClaimRequest(
+                pairingSecret: resolved.pairingSecret,
+                deviceToken: deviceToken,
+                device: PairingDeviceRegistration(
+                    name: "Android 短码设备",
+                    platform: .android,
+                    publicKey: Base64URL.encode(Data(repeating: 5, count: 32))
+                )
+            ))
+        )))
+        let envelope = EncryptedEnvelope(
+            ciphertext: Base64URL.encode(Data(repeating: 6, count: 32)),
+            nonce: Base64URL.encode(Data(repeating: 7, count: 12))
+        )
+        let confirmed: PairingConfirmData = try successData(await store.handle(request(
+            path: "/v1/pairings/\(resolved.pairingId)/confirm",
+            token: credentials.deviceToken,
+            body: try JSONEncoder().encode(
+                PairingConfirmRequest(vaultKeyEnvelope: envelope)
+            )
+        )))
+        #expect(confirmed.deviceId == claim.deviceId)
+        let result: PairingResultData = try successData(await store.handle(request(
+            path: "/v1/pairings/\(resolved.pairingId)/result",
+            body: try JSONEncoder().encode(PairingResultRequest(
+                pairingSecret: resolved.pairingSecret,
+                deviceToken: deviceToken
+            ))
+        )))
+        #expect(result.status == .confirmed)
+        #expect(result.vaultId == credentials.vaultId)
+        #expect(result.vaultKeyEnvelope == envelope)
+    }
+
     @Test("新设备完成配对后可同步且撤销后令牌立即失效")
     func pairedDeviceCanSyncUntilRevoked() async throws {
         let directory = FileManager.default.temporaryDirectory

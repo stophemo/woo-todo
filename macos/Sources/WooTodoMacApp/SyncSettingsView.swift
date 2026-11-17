@@ -12,6 +12,7 @@ struct SyncSettingsView: View {
     @ObservedObject var store: SyncSettingsStore
     @ObservedObject var webDavStore: WebDavSettingsStore
     @State private var pairingLinkCopied = false
+    @State private var shortCodeInput = ""
     @State private var webDavSetupLinkCopied = false
     @State private var webDavSetupLinkRevealed = false
     @State private var vaultCreationInviteCode = ""
@@ -151,6 +152,9 @@ struct SyncSettingsView: View {
                 webDavCard
                 runtimeCard
                 pairingCard
+                if store.isLocalNetworkConnection || store.localNetworkHostState != .disabled {
+                    shortCodeClaimCard
+                }
                 devicesCard
                 privacyNote
                 actionError
@@ -499,7 +503,7 @@ struct SyncSettingsView: View {
             Text("Android 不需要创建空间或手动填写服务器地址。按下面步骤加入当前同步：")
                 .foregroundStyle(.secondary)
             androidJoinSteps
-            Button("生成配对二维码") {
+            Button("生成六位配对码") {
                 pairingLinkCopied = false
                 Task { await store.createPairing() }
             }
@@ -514,11 +518,26 @@ struct SyncSettingsView: View {
                 HStack(alignment: .top, spacing: 22) {
                     QRCodeView(payload: payload, accessibilityLabel: "设备配对二维码")
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("等待手机扫描")
+                        if let shortCode = store.pairingShortCode {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("六位配对码")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(shortCode)
+                                    .font(.system(size: 42, weight: .bold, design: .monospaced))
+                                    .tracking(7)
+                                    .textSelection(.enabled)
+                                Text("在 Android 选择“输入六位配对码”，输入这 6 位数字。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Divider()
+                        }
+                        Text("等待手机加入")
                             .font(.headline)
-                        Text("在 Android 设备上使用系统相机、二维码扫描入口或 Woo Todo 内置扫码，扫描左侧二维码并用 Woo Todo 打开。")
+                        Text("也可以使用系统相机或 Woo Todo 内置扫码扫描左侧二维码。")
                             .foregroundStyle(.secondary)
-                        Text("打开后，两端都会显示同一个六位核对码；暂时不要关闭任一端。")
+                        Text("接入后，两端都会显示同一个六位核对码；暂时不要关闭任一端。")
                             .foregroundStyle(.secondary)
                         Text("有效至 \(formattedMilliseconds(invitation.expiresAt))")
                             .font(.caption)
@@ -552,7 +571,7 @@ struct SyncSettingsView: View {
                     .font(.system(size: 38, weight: .bold, design: .monospaced))
                     .tracking(6)
                     .textSelection(.enabled)
-                Text("请确认手机上显示完全相同的六位数字。只有两端一致时才允许传递同步密钥。")
+                Text("请核对两端显示的六位核对码完全一致。只有一致时才允许传递同步密钥。")
                     .foregroundStyle(.secondary)
                 HStack {
                     Button("核对一致，确认绑定") {
@@ -595,6 +614,78 @@ struct SyncSettingsView: View {
                 Button("重试") {
                     store.resetPairing()
                     Task { await store.createPairing() }
+                }
+            }
+        }
+    }
+
+    private var shortCodeClaimCard: some View {
+        SettingsCard(title: "输入另一台设备的六位码", systemImage: "number.square") {
+            shortCodeClaimContent
+        }
+    }
+
+    @ViewBuilder
+    private var shortCodeClaimContent: some View {
+        switch store.shortCodeClaimPhase {
+        case .idle:
+            Text("在另一台已加入同步空间的设备上选择“显示六位配对码”，然后把那 6 位数字输入这里。")
+                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                TextField("6 位数字", text: $shortCodeInput)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                    .frame(width: 150)
+                    .onChange(of: shortCodeInput) { _, value in
+                        let digits = String(value.filter(\.isNumber).prefix(6))
+                        if digits != value { shortCodeInput = digits }
+                    }
+                Button("配对") {
+                    Task { await store.claimByShortCode(shortCodeInput) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(shortCodeInput.count != 6)
+            }
+            Text("仅支持同一局域网；配对码 10 分钟内有效，使用一次后失效。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .claiming:
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("正在读取配对码并认领设备…")
+            }
+        case let .awaitingConfirmation(code, deviceName, deadline):
+            VStack(alignment: .leading, spacing: 10) {
+                Label("\(deviceName) 已认领配对", systemImage: "laptopcomputer.and.iphone")
+                Text(code)
+                    .font(.system(size: 38, weight: .bold, design: .monospaced))
+                    .tracking(6)
+                    .textSelection(.enabled)
+                Text("请在另一台设备上核对同一个六位核对码，并在那台设备上点击确认。")
+                    .foregroundStyle(.secondary)
+                Text("有效至 \(deadline.formatted(date: .omitted, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("取消", role: .cancel) {
+                    store.cancelShortCodeClaim()
+                }
+            }
+        case .confirmed:
+            VStack(alignment: .leading, spacing: 10) {
+                Label("已通过六位码加入同步空间", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("当前 Mac 已换成新的设备身份，本地任务会保留并重新同步。")
+                    .foregroundStyle(.secondary)
+                Button("完成") {
+                    store.cancelShortCodeClaim()
+                }
+            }
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 10) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Button("重试") {
+                    store.cancelShortCodeClaim()
                 }
             }
         }
@@ -700,9 +791,9 @@ struct SyncSettingsView: View {
             } else {
                 Text("1. 确认 Mac 与手机均可联网，且上方服务地址是 HTTPS Worker。")
             }
-            Text("2. 在 Mac 点击“生成配对二维码”。")
-            Text("3. 在 Android 设备上使用系统相机、二维码扫描入口或 Woo Todo 内置扫码，并用 Woo Todo 打开。")
-            Text("4. 核对两端六位码完全相同，再回到 Mac 点击“确认绑定”。")
+            Text("2. 在 Mac 点击“生成六位配对码”。")
+            Text("3. 在 Android 选择“输入六位配对码”，输入 Mac 上显示的 6 位配对码；也可以扫描二维码作为备用。")
+            Text("4. 两端会再显示一个六位核对码；确认完全一致后，在 Mac 点击“确认绑定”。")
             Text("5. 手机保存密钥后会自动首次同步；任务明文不会上传到服务端。")
         }
         .font(.callout)

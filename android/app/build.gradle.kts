@@ -35,8 +35,8 @@ android {
         applicationId = "com.wootodo"
         minSdk = 33
         targetSdk = 36
-        versionCode = 43
-        versionName = "0.2.10"
+        versionCode = 44
+        versionName = "0.2.11"
 
         testInstrumentationRunner = "com.wootodo.WooTodoTestRunner"
     }

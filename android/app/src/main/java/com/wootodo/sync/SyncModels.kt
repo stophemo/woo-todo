@@ -75,6 +75,17 @@ data class CreatePairingData(
     val initiatorPublicKey: String,
     val expiresAt: Long,
     val serverTime: Long,
+    val shortCode: String? = null,
+)
+
+data class ResolveShortCodeRequest(val code: String)
+
+data class ResolveShortCodeData(
+    val pairingId: String,
+    val pairingSecret: String,
+    val initiatorPublicKey: String,
+    val vaultId: String,
+    val expiresAt: Long,
 )
 
 data class PairingClaimRequest(

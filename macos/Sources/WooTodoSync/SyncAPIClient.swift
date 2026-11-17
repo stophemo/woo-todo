@@ -110,6 +110,18 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
         )
     }
 
+    /// 同一局域网内的六位配对码解析；不携带设备认证，由 Mac 本机同步服务处理。
+    public func resolveShortCode(
+        _ request: ResolveShortCodeRequest
+    ) async throws -> ResolveShortCodeData {
+        try await send(
+            method: "POST",
+            path: ["v1", "pairings", "resolve"],
+            body: encode(request),
+            deviceToken: nil
+        )
+    }
+
     public func pairingStatus(
         pairingId: String,
         deviceToken: String

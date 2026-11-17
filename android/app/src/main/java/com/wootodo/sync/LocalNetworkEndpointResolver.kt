@@ -148,12 +148,70 @@ class AndroidLocalNetworkServiceResolver(context: Context) : LocalNetworkService
         }
     }
 
+    /** 首次配对尚不知道同步空间时，列出同一网络内所有 Woo Todo 主机地址。 */
+    fun discoverEndpoints(): List<String> {
+        val nsdManager = applicationContext.getSystemService(NsdManager::class.java)
+            ?: return emptyList()
+        val wifiManager = applicationContext.getSystemService(WifiManager::class.java)
+        val multicastLock = wifiManager?.createMulticastLock(MULTICAST_LOCK_TAG)?.apply {
+            setReferenceCounted(false)
+        }
+        val discoveryStopped = AtomicBoolean(false)
+        val resolutionQueue = ServiceResolutionQueue(
+            nsdManager = nsdManager,
+            expectedFingerprint = null,
+            matchingService = null,
+        )
+        val discoveryListener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(serviceType: String) = Unit
+
+            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                if (normalizedType(serviceInfo.serviceType) ==
+                    normalizedType(LocalNetworkDiscoveryIdentity.SERVICE_TYPE)
+                ) {
+                    resolutionQueue.enqueue(serviceInfo)
+                }
+            }
+
+            override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
+
+            override fun onDiscoveryStopped(serviceType: String) {
+                discoveryStopped.set(true)
+            }
+
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                discoveryStopped.set(true)
+            }
+        }
+
+        return try {
+            multicastLock?.acquire()
+            nsdManager.discoverServices(
+                LocalNetworkDiscoveryIdentity.SERVICE_TYPE,
+                NsdManager.PROTOCOL_DNS_SD,
+                discoveryListener,
+            )
+            Thread.sleep(DISCOVERY_TIMEOUT_SECONDS * 1_000L)
+            resolutionQueue.endpoints()
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw CancellationException("局域网服务发现已取消").apply { initCause(error) }
+        } finally {
+            if (!discoveryStopped.get()) {
+                runCatching { nsdManager.stopServiceDiscovery(discoveryListener) }
+            }
+            if (multicastLock?.isHeld == true) multicastLock.release()
+        }
+    }
+
     private fun normalizedType(value: String): String = value.trimEnd('.').lowercase()
 
     private class ServiceResolutionQueue(
         private val nsdManager: NsdManager,
-        private val expectedFingerprint: String,
-        private val matchingService: CountDownLatch,
+        private val expectedFingerprint: String?,
+        private val matchingService: CountDownLatch?,
     ) {
         private val pending = ConcurrentLinkedQueue<NsdServiceInfo>()
         private val resolving = AtomicBoolean(false)
@@ -185,10 +243,10 @@ class AndroidLocalNetworkServiceResolver(context: Context) : LocalNetworkService
                         val fingerprint = serviceInfo.attributes[
                             LocalNetworkDiscoveryIdentity.VAULT_FINGERPRINT_KEY
                         ]?.toString(StandardCharsets.UTF_8)
-                        if (fingerprint == expectedFingerprint) {
+                        if (expectedFingerprint == null || fingerprint == expectedFingerprint) {
                             endpoint(serviceInfo)?.let {
                                 endpoints.add(it)
-                                matchingService.countDown()
+                                matchingService?.countDown()
                             }
                         }
                         finishResolution()

@@ -82,6 +82,54 @@ public struct CreatePairingData: Codable, Equatable, Sendable {
     public let initiatorPublicKey: String
     public let expiresAt: Int64
     public let serverTime: Int64
+    /// 同一局域网配对时展示给另一台设备的六位会合码；Worker/WebDAV 不支持时为 nil。
+    public let shortCode: String?
+
+    public init(
+        pairingId: String,
+        pairingSecret: String,
+        initiatorPublicKey: String,
+        expiresAt: Int64,
+        serverTime: Int64,
+        shortCode: String? = nil
+    ) {
+        self.pairingId = pairingId
+        self.pairingSecret = pairingSecret
+        self.initiatorPublicKey = initiatorPublicKey
+        self.expiresAt = expiresAt
+        self.serverTime = serverTime
+        self.shortCode = shortCode
+    }
+}
+
+public struct ResolveShortCodeRequest: Codable, Equatable, Sendable {
+    public let code: String
+
+    public init(code: String) {
+        self.code = code
+    }
+}
+
+public struct ResolveShortCodeData: Codable, Equatable, Sendable {
+    public let pairingId: String
+    public let pairingSecret: String
+    public let initiatorPublicKey: String
+    public let vaultId: String
+    public let expiresAt: Int64
+
+    public init(
+        pairingId: String,
+        pairingSecret: String,
+        initiatorPublicKey: String,
+        vaultId: String,
+        expiresAt: Int64
+    ) {
+        self.pairingId = pairingId
+        self.pairingSecret = pairingSecret
+        self.initiatorPublicKey = initiatorPublicKey
+        self.vaultId = vaultId
+        self.expiresAt = expiresAt
+    }
 }
 
 public struct PairingClaimRequest: Codable, Equatable, Sendable {

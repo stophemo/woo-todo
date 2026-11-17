@@ -84,6 +84,14 @@ private enum BackupUIError: LocalizedError {
     }
 }
 
+enum ShortCodeClaimPhase: Equatable {
+    case idle
+    case claiming
+    case awaitingConfirmation(code: String, deviceName: String, deadline: Date)
+    case confirmed
+    case failed(String)
+}
+
 @MainActor
 final class SyncSettingsStore: ObservableObject {
     @Published var endpointText: String
@@ -96,6 +104,8 @@ final class SyncSettingsStore: ObservableObject {
     @Published private(set) var isLoadingDevices = false
     @Published private(set) var pairingPhase: InitiatorPairingPhase = .idle
     @Published private(set) var pairingQRCodePayload: String?
+    @Published private(set) var pairingShortCode: String?
+    @Published private(set) var shortCodeClaimPhase: ShortCodeClaimPhase = .idle
     @Published private(set) var actionErrorMessage: String?
     @Published private(set) var isBackupBusy = false
     @Published private(set) var backupStatusMessage: String?
@@ -138,6 +148,8 @@ final class SyncSettingsStore: ObservableObject {
     private var syncTask: Task<Void, Never>?
     private var pairingPollTask: Task<Void, Never>?
     private var pairingPollGeneration: UUID?
+    private var shortCodeClaimTask: Task<Void, Never>?
+    private var shortCodeClaimGeneration = UUID()
     private var fallbackTimer: Timer?
     private var wakeObserver: NSObjectProtocol?
     private var pathMonitor: NWPathMonitor?
@@ -592,6 +604,7 @@ final class SyncSettingsStore: ObservableObject {
         pairingPollGeneration = nil
         pairingContext = nil
         pairingQRCodePayload = nil
+        pairingShortCode = nil
 
         do {
             try pairingMachine.beginCreation()
@@ -628,6 +641,7 @@ final class SyncSettingsStore: ObservableObject {
                 pairingSecret: created.pairingSecret
             )
             pairingQRCodePayload = try deepLink.url().absoluteString
+            pairingShortCode = created.shortCode
             try pairingMachine.didCreate(created)
             publishPairingState()
             startPairingPolling()
@@ -635,6 +649,7 @@ final class SyncSettingsStore: ObservableObject {
             pairingMachine.fail(userFacingMessage(for: error, action: .pairDevice))
             pairingContext = nil
             pairingQRCodePayload = nil
+            pairingShortCode = nil
             publishPairingState()
             logger.error("创建配对会话失败：\(error.localizedDescription, privacy: .public)")
         }
@@ -672,6 +687,7 @@ final class SyncSettingsStore: ObservableObject {
             context.sessionKey = nil
             pairingContext = nil
             pairingQRCodePayload = nil
+            pairingShortCode = nil
             publishPairingState()
             await refreshDevices()
             requestSync(.manual)
@@ -680,6 +696,7 @@ final class SyncSettingsStore: ObservableObject {
                 pairingMachine.expire()
                 pairingContext = nil
                 pairingQRCodePayload = nil
+                pairingShortCode = nil
             } else {
                 try? pairingMachine.cancelConfirmation()
             }
@@ -695,9 +712,187 @@ final class SyncSettingsStore: ObservableObject {
         pairingPollGeneration = nil
         pairingContext = nil
         pairingQRCodePayload = nil
+        pairingShortCode = nil
         pairingMachine.reset()
         actionErrorMessage = nil
         publishPairingState()
+    }
+
+    /// 输入另一台设备显示的六位码，作为新设备加入当前局域网同步空间。
+    func claimByShortCode(_ rawCode: String) {
+        let code = rawCode.filter(\.isNumber)
+        guard code.count == 6 else {
+            shortCodeClaimPhase = .failed("请输入另一台设备显示的 6 位数字配对码")
+            return
+        }
+        guard let endpoint = localPairingEndpoint else {
+            shortCodeClaimPhase = .failed("请先开启 Mac 局域网同步服务，或确认当前使用同一网络同步")
+            return
+        }
+        shortCodeClaimTask?.cancel()
+        let generation = UUID()
+        shortCodeClaimGeneration = generation
+        shortCodeClaimPhase = .claiming
+        shortCodeClaimTask = Task { [weak self] in
+            await self?.performShortCodeClaim(
+                code: code,
+                endpoint: endpoint,
+                generation: generation
+            )
+        }
+    }
+
+    func cancelShortCodeClaim() {
+        shortCodeClaimTask?.cancel()
+        shortCodeClaimTask = nil
+        shortCodeClaimGeneration = UUID()
+        shortCodeClaimPhase = .idle
+    }
+
+    private var localPairingEndpoint: URL? {
+        if case let .ready(endpoint) = localNetworkHostState {
+            return endpoint
+        }
+        if let connection,
+           SyncEndpointPolicy.scope(of: connection.endpoint) == .localNetwork {
+            return connection.endpoint
+        }
+        return nil
+    }
+
+    private func performShortCodeClaim(
+        code: String,
+        endpoint: URL,
+        generation: UUID
+    ) async {
+        do {
+            let keyPair = try PairingKeyPair.generate()
+            let deviceToken = Base64URL.encode(try SecureRandom.bytes(count: 32))
+            let client = try SyncAPIClient(endpoint: endpoint)
+            let resolved = try await client.resolveShortCode(
+                ResolveShortCodeRequest(code: code)
+            )
+            let claim = try await client.claimPairing(
+                pairingId: resolved.pairingId,
+                request: PairingClaimRequest(
+                    pairingSecret: resolved.pairingSecret,
+                    deviceToken: deviceToken,
+                    device: PairingDeviceRegistration(
+                        name: Self.localDeviceName,
+                        platform: .macos,
+                        publicKey: keyPair.publicKeyBase64URL
+                    )
+                )
+            )
+            let sessionKey = try keyPair.sessionKey(
+                peerPublicKeyBase64URL: resolved.initiatorPublicKey,
+                pairingId: resolved.pairingId,
+                pairingSecretBase64URL: resolved.pairingSecret
+            )
+            let verificationCode = try PairingSessionCrypto.verificationCode(
+                sessionKey: sessionKey,
+                initiatorPublicKey: Base64URL.decode(resolved.initiatorPublicKey),
+                claimPublicKey: keyPair.publicKey
+            )
+            guard shortCodeClaimGeneration == generation else { return }
+            let deadline = Date(
+                timeIntervalSince1970: Double(resolved.expiresAt) / 1_000
+            )
+            shortCodeClaimPhase = .awaitingConfirmation(
+                code: verificationCode,
+                deviceName: "另一台设备",
+                deadline: deadline
+            )
+
+            while !Task.isCancelled, Date() < deadline {
+                let result = try await client.pairingResult(
+                    pairingId: resolved.pairingId,
+                    request: PairingResultRequest(
+                        pairingSecret: resolved.pairingSecret,
+                        deviceToken: deviceToken
+                    )
+                )
+                if result.status == .confirmed,
+                   let vaultId = result.vaultId,
+                   let deviceId = result.deviceId,
+                   let envelope = result.vaultKeyEnvelope {
+                    let vaultKey = try PairingSessionCrypto.openVaultKey(
+                        envelope,
+                        sessionKey: sessionKey,
+                        pairingId: resolved.pairingId,
+                        claimedDeviceId: claim.deviceId
+                    )
+                    let newCredentials = try SyncCredentials(
+                        endpoint: endpoint,
+                        vaultId: vaultId,
+                        deviceId: deviceId,
+                        deviceToken: deviceToken,
+                        vaultKey: vaultKey
+                    )
+                    try await finishShortCodeClaim(
+                        newCredentials,
+                        generation: generation
+                    )
+                    return
+                }
+                try await Task.sleep(for: .seconds(2))
+            }
+            guard !Task.isCancelled, shortCodeClaimGeneration == generation else {
+                return
+            }
+            shortCodeClaimPhase = .failed("配对码已过期，请重新生成")
+        } catch is CancellationError {
+            // 用户主动取消，状态由 cancelShortCodeClaim 负责。
+        } catch {
+            guard shortCodeClaimGeneration == generation else { return }
+            shortCodeClaimPhase = .failed(
+                userFacingMessage(for: error, action: .pairDevice)
+            )
+            logger.error(
+                "六位码配对失败：\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    private func finishShortCodeClaim(
+        _ newCredentials: SyncCredentials,
+        generation: UUID
+    ) async throws {
+        guard shortCodeClaimGeneration == generation else { return }
+        let previousCredentials = try? credentialsStore.load()
+        do {
+            try credentialsStore.save(newCredentials)
+            try repository.replaceSyncBinding(with: SQLiteSyncConfiguration(
+                vaultId: newCredentials.vaultId,
+                deviceId: newCredentials.deviceId,
+                vaultKey: newCredentials.vaultKey
+            ))
+            defaults.set(
+                newCredentials.endpoint.absoluteString,
+                forKey: Self.endpointDefaultsKey
+            )
+            try activate(newCredentials)
+            runtimeMachine.setConfigured(true)
+            publishRuntimeState()
+            if let previousCredentials {
+                // 旧 Mac 设备令牌已不再保存，顺手撤销，避免同步空间里留下无法清理的设备。
+                _ = try? await SyncAPIClient(endpoint: newCredentials.endpoint)
+                    .revokeDevice(
+                        deviceId: previousCredentials.deviceId,
+                        deviceToken: newCredentials.deviceToken
+                    )
+            }
+            shortCodeClaimPhase = .confirmed
+            actionErrorMessage = nil
+            await refreshDevices()
+            requestSync(.manual)
+            logger.notice("已通过六位码加入同步空间")
+        } catch {
+            if let previousCredentials {
+                try? credentialsStore.save(previousCredentials)
+            }
+            throw error
+        }
     }
 
     func refreshDevices() async {
@@ -951,12 +1146,14 @@ final class SyncSettingsStore: ObservableObject {
                 context.sessionKey = sessionKey
                 pairingContext = context
                 pairingQRCodePayload = nil
+                pairingShortCode = nil
             }
             try pairingMachine.didPoll(status, verificationCode: code)
             actionErrorMessage = nil
             if case .expired = pairingMachine.phase {
                 pairingContext = nil
                 pairingQRCodePayload = nil
+                pairingShortCode = nil
             }
             publishPairingState()
         } catch {
@@ -970,6 +1167,7 @@ final class SyncSettingsStore: ObservableObject {
             pairingMachine.expire()
             pairingContext = nil
             pairingQRCodePayload = nil
+            pairingShortCode = nil
             actionErrorMessage = nil
             publishPairingState()
             return
@@ -994,6 +1192,7 @@ final class SyncSettingsStore: ObservableObject {
         pairingMachine.fail(error.localizedDescription)
         pairingContext = nil
         pairingQRCodePayload = nil
+        pairingShortCode = nil
         actionErrorMessage = nil
         publishPairingState()
     }

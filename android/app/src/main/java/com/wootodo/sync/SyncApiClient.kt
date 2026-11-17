@@ -64,6 +64,14 @@ class SyncApiClient(
         SyncJsonCodec::decodeCreatePairingData,
     )
 
+    fun resolveShortCode(request: ResolveShortCodeRequest): ResolveShortCodeData = send(
+        "POST",
+        listOf("v1", "pairings", "resolve"),
+        SyncJsonCodec.encode(request),
+        null,
+        SyncJsonCodec::decodeResolveShortCodeData,
+    )
+
     fun pairingStatus(
         pairingId: String,
         credential: BearerCredential,

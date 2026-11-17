@@ -38,6 +38,13 @@ object SyncJsonCodec {
         .put("vaultKeyEnvelope", encodeEnvelope(request.vaultKeyEnvelope))
         .toString()
 
+    fun encode(request: ResolveShortCodeRequest): String {
+        require(request.code.length == 6 && request.code.all(Char::isDigit)) {
+            "配对码必须是 6 位数字"
+        }
+        return JSONObject().put("code", request.code).toString()
+    }
+
     fun encode(request: PairingResultRequest): String {
         requireBase64Bytes(request.pairingSecret, 32, "pairingSecret")
         requireBase64Bytes(request.deviceToken, 32, "deviceToken")
@@ -77,6 +84,9 @@ object SyncJsonCodec {
 
     fun decodePairingResultData(source: String): PairingResultData =
         decodeSuccess(source, ::decodePairingResultDataObject)
+
+    fun decodeResolveShortCodeData(source: String): ResolveShortCodeData =
+        decodeSuccess(source, ::decodeResolveShortCodeDataObject)
 
     fun decodeSyncData(source: String): SyncData = decodeSuccess(source, ::decodeSyncDataObject)
 
@@ -151,6 +161,7 @@ object SyncJsonCodec {
     private fun decodeCreatePairingDataObject(value: JSONObject): CreatePairingData {
         value.requireKeys(
             setOf("pairingId", "pairingSecret", "initiatorPublicKey", "expiresAt", "serverTime"),
+            setOf("shortCode"),
         )
         val secret = value.string("pairingSecret").also { requireBase64Bytes(it, 32, "pairingSecret") }
         val publicKey = value.string("initiatorPublicKey")
@@ -161,6 +172,26 @@ object SyncJsonCodec {
             initiatorPublicKey = publicKey,
             expiresAt = value.nonNegativeLong("expiresAt"),
             serverTime = value.nonNegativeLong("serverTime"),
+            shortCode = value.nullableString("shortCode")?.also {
+                require(it.length == 6 && it.all(Char::isDigit)) { "shortCode 必须是 6 位数字" }
+            },
+        )
+    }
+
+    private fun decodeResolveShortCodeDataObject(value: JSONObject): ResolveShortCodeData {
+        value.requireKeys(
+            setOf("pairingId", "pairingSecret", "initiatorPublicKey", "vaultId", "expiresAt"),
+        )
+        return ResolveShortCodeData(
+            pairingId = value.string("pairingId"),
+            pairingSecret = value.string("pairingSecret").also {
+                requireBase64Bytes(it, 32, "pairingSecret")
+            },
+            initiatorPublicKey = value.string("initiatorPublicKey").also {
+                requireBase64Bytes(it, 32, "initiatorPublicKey")
+            },
+            vaultId = value.string("vaultId"),
+            expiresAt = value.nonNegativeLong("expiresAt"),
         )
     }
 

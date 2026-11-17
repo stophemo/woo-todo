@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.text.InputFilter
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -50,8 +51,13 @@ import com.wootodo.domain.TaskStatus
 import com.wootodo.reminder.ReminderPreferences
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.reminder.ReminderSettings
+import com.wootodo.sync.AndroidLocalNetworkServiceResolver
 import com.wootodo.sync.Base64Url
 import com.wootodo.sync.PairingDeepLink
+import com.wootodo.sync.ResolveShortCodeRequest
+import com.wootodo.sync.SyncApiClient
+import com.wootodo.sync.SyncEndpointPolicy
+import com.wootodo.sync.SyncEndpointScope
 import com.wootodo.sync.PairingPollPolicy
 import com.wootodo.sync.ScannedConfiguration
 import com.wootodo.sync.ScannedConfigurationParser
@@ -78,6 +84,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.URI
 
 class MainActivity : AppCompatActivity() {
     private lateinit var taskAdapter: TaskAdapter
@@ -668,6 +675,8 @@ class MainActivity : AppCompatActivity() {
                 setOnMenuItemClickListener { item ->
                     when (item.itemId) {
                         R.id.pairing_saved_worker -> switchToSavedWorkerOrLocalSync()
+                        R.id.pairing_enter_short_code -> showShortCodeInput()
+                        R.id.pairing_show_short_code -> showShortCodeDisplay()
                         R.id.pairing_scan_qr -> scanMacConfiguration()
                         R.id.pairing_paste_link -> showPairingLinkInput()
                         R.id.pairing_manual_webdav -> showWebDavSettings()
@@ -732,6 +741,112 @@ class MainActivity : AppCompatActivity() {
                 handleConfigurationSource(source, R.string.pairing_link_input_invalid)
             }
             .show()
+    }
+
+    private fun showShortCodeInput() {
+        val input = EditText(this).apply {
+            hint = getString(R.string.pairing_short_code_input_hint)
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf(InputFilter.LengthFilter(6))
+            setTextSize(24f)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.pairing_short_code_input_title)
+            .setView(input)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.confirm, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val code = input.text.toString().trim()
+                if (code.length != 6 || code.any { !it.isDigit() }) {
+                    input.error = getString(R.string.pairing_short_code_invalid)
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
+                showTransientMessage(R.string.pairing_short_code_searching, Snackbar.LENGTH_LONG)
+                resolveShortCodeAndPair(code)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun resolveShortCodeAndPair(code: String) {
+        val app = application as WooTodoApplication
+        lifecycleScope.launch {
+            val resolved = withContext(Dispatchers.IO) {
+                val credentials = app.syncCredentialsStore.load()
+                val candidates = linkedSetOf<String>()
+                if (credentials != null) {
+                    runCatching {
+                        AndroidLocalNetworkServiceResolver(this@MainActivity)
+                            .resolve(credentials.vaultId)
+                    }.getOrNull()?.let { candidates.addAll(it) }
+                    if (SyncEndpointPolicy.scope(URI(credentials.endpoint)) ==
+                        SyncEndpointScope.LOCAL_NETWORK
+                    ) {
+                        candidates.add(credentials.endpoint)
+                    }
+                }
+                if (candidates.isEmpty()) {
+                    runCatching {
+                        AndroidLocalNetworkServiceResolver(this@MainActivity)
+                            .discoverEndpoints()
+                    }.getOrNull()?.let { candidates.addAll(it) }
+                }
+                for (endpoint in candidates) {
+                    if (SyncEndpointPolicy.scope(URI(endpoint)) !=
+                        SyncEndpointScope.LOCAL_NETWORK
+                    ) {
+                        continue
+                    }
+                    val result = runCatching {
+                        SyncApiClient(endpoint)
+                            .resolveShortCode(ResolveShortCodeRequest(code))
+                    }.getOrNull()
+                    if (result != null) return@withContext endpoint to result
+                }
+                null
+            }
+            if (resolved == null) {
+                showTransientMessage(
+                    R.string.pairing_short_code_not_found,
+                    Snackbar.LENGTH_LONG,
+                )
+                return@launch
+            }
+            val (endpoint, data) = resolved
+            beginWorkerPairing(
+                PairingDeepLink(
+                    endpoint = endpoint,
+                    pairingId = data.pairingId,
+                    pairingSecret = data.pairingSecret,
+                    initiatorPublicKey = data.initiatorPublicKey,
+                    vaultId = data.vaultId,
+                ),
+            )
+        }
+    }
+
+    private fun showShortCodeDisplay() {
+        val app = application as WooTodoApplication
+        lifecycleScope.launch {
+            val credentials = withContext(Dispatchers.IO) {
+                app.syncCredentialsStore.load()
+            }
+            if (credentials == null ||
+                SyncEndpointPolicy.scope(URI(credentials.endpoint)) !=
+                SyncEndpointScope.LOCAL_NETWORK
+            ) {
+                showTransientMessage(
+                    R.string.pairing_short_code_requires_local,
+                    Snackbar.LENGTH_LONG,
+                )
+                return@launch
+            }
+            ShortCodePairingDialog.show(this@MainActivity, credentials)
+        }
     }
 
     private fun handleScannedConfiguration(source: String) {

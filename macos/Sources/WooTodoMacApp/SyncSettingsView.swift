@@ -167,7 +167,7 @@ struct SyncSettingsView: View {
 
     private var localNetworkCard: some View {
         SettingsCard(title: "同一网络同步", systemImage: "wifi") {
-            Text("Mac 作为本地同步主机。手机与 Mac 连接同一网络后扫码配对，无需填写服务地址或同步空间；离开网络仍可编辑，重新连上后自动补齐。")
+            Text("Mac 作为本地同步主机。手机与 Mac 连接同一网络后输入六位配对码即可加入，无需填写服务地址或同步空间；离开网络仍可编辑，重新连上后自动补齐。")
                 .foregroundStyle(.secondary)
 
             switch store.localNetworkHostState {
@@ -205,7 +205,7 @@ struct SyncSettingsView: View {
                 Label("局域网同步已开启", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                 LabeledContent("手机访问地址", value: endpoint.absoluteString)
-                Text("地址由应用自动维护，只用于同一网络内连接，无需手动填写。下方可生成 Android 配对二维码。")
+                Text("地址由应用自动维护，只用于同一网络内连接，无需手动填写。下方可生成六位配对码。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             case .failed(let message):
@@ -340,9 +340,6 @@ struct SyncSettingsView: View {
                             Label("WebDAV 已连接", systemImage: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
                         }
-                        Spacer()
-                        Button("立即同步") { webDavStore.requestSync(.manual) }
-                            .disabled(webDavStore.runtimeSnapshot.isRunning)
                     }
                     Button("更新服务地址或认证凭据") {
                         webDavSetupLinkRevealed = false
@@ -436,11 +433,6 @@ struct SyncSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-                Button("立即同步") {
-                    store.requestSync(.manual)
-                }
-                .disabled(store.runtimeSnapshot.isRunning)
             }
 
             if let summary = store.lastRunSummary {
@@ -514,28 +506,38 @@ struct SyncSettingsView: View {
                 Text("正在创建 10 分钟配对会话…")
             }
         case .awaitingClaim(let invitation):
-            if let payload = store.pairingQRCodePayload {
+            if store.isLocalNetworkConnection {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let shortCode = store.pairingShortCode {
+                        Text("六位配对码")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(shortCode)
+                            .font(.system(size: 44, weight: .bold, design: .monospaced))
+                            .tracking(8)
+                            .textSelection(.enabled)
+                        Text("在 Android 选择“配对设备 → 输入六位配对码”，输入这 6 位数字。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("等待手机加入")
+                        .font(.headline)
+                    Text("接入后，两端都会显示同一个六位核对码；暂时不要关闭任一端。")
+                        .foregroundStyle(.secondary)
+                    Text("有效至 \(formattedMilliseconds(invitation.expiresAt))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("取消显示", role: .cancel) {
+                        store.resetPairing()
+                    }
+                }
+            } else if let payload = store.pairingQRCodePayload {
                 HStack(alignment: .top, spacing: 22) {
                     QRCodeView(payload: payload, accessibilityLabel: "设备配对二维码")
                     VStack(alignment: .leading, spacing: 10) {
-                        if let shortCode = store.pairingShortCode {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("六位配对码")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(shortCode)
-                                    .font(.system(size: 42, weight: .bold, design: .monospaced))
-                                    .tracking(7)
-                                    .textSelection(.enabled)
-                                Text("在 Android 选择“输入六位配对码”，输入这 6 位数字。")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Divider()
-                        }
-                        Text("等待手机加入")
+                        Text("等待手机扫描")
                             .font(.headline)
-                        Text("也可以使用系统相机或 Woo Todo 内置扫码扫描左侧二维码。")
+                        Text("等待手机使用扫码或配对链接加入。")
                             .foregroundStyle(.secondary)
                         Text("接入后，两端都会显示同一个六位核对码；暂时不要关闭任一端。")
                             .foregroundStyle(.secondary)
@@ -600,7 +602,10 @@ struct SyncSettingsView: View {
             }
         case .expired:
             VStack(alignment: .leading, spacing: 10) {
-                Label("二维码已失效", systemImage: "clock.badge.exclamationmark")
+                Label(
+                    store.isLocalNetworkConnection ? "配对码已失效" : "二维码已失效",
+                    systemImage: "clock.badge.exclamationmark"
+                )
                     .foregroundStyle(.orange)
                 Button("重新生成") {
                     store.resetPairing()
@@ -788,13 +793,17 @@ struct SyncSettingsView: View {
         VStack(alignment: .leading, spacing: 7) {
             if store.isLocalNetworkConnection {
                 Text("1. 确认 Mac 与手机连接同一个 Wi-Fi 或有线局域网。")
+                Text("2. 在 Mac 点击“生成六位配对码”。")
+                Text("3. 在 Android 选择“配对设备 → 输入六位配对码”，输入 Mac 上显示的 6 位数字。")
+                Text("4. 两端会再显示一个六位核对码；确认完全一致后，在 Mac 点击“确认绑定”。")
+                Text("5. 手机会自动首次同步；任务明文不会上传到服务端。")
             } else {
                 Text("1. 确认 Mac 与手机均可联网，且上方服务地址是 HTTPS Worker。")
+                Text("2. 在 Mac 点击“生成配对二维码”。")
+                Text("3. 在 Android 使用扫码或配对链接加入。")
+                Text("4. 核对两端六位核对码完全相同，再回到 Mac 点击“确认绑定”。")
+                Text("5. 手机保存密钥后会自动首次同步；任务明文不会上传到服务端。")
             }
-            Text("2. 在 Mac 点击“生成六位配对码”。")
-            Text("3. 在 Android 选择“输入六位配对码”，输入 Mac 上显示的 6 位配对码；也可以扫描二维码作为备用。")
-            Text("4. 两端会再显示一个六位核对码；确认完全一致后，在 Mac 点击“确认绑定”。")
-            Text("5. 手机保存密钥后会自动首次同步；任务明文不会上传到服务端。")
         }
         .font(.callout)
     }

@@ -613,11 +613,7 @@ class MainActivity : AppCompatActivity() {
             menu.add(0, MENU_CATEGORIES, order++, R.string.category_manage)
             menu.add(0, MENU_TRASH, order++, R.string.trash_menu)
             menu.add(0, MENU_REMINDER, order++, R.string.reminder_settings_title)
-            if ((application as WooTodoApplication).syncRuntime.state.value == SyncRuntimeState.Unpaired) {
-                menu.add(0, MENU_PAIR_DEVICE, order++, R.string.pair_device_menu)
-            } else {
-                menu.add(0, MENU_SYNC_NOW, order++, R.string.sync_now)
-            }
+            menu.add(0, MENU_PAIR_DEVICE, order++, R.string.pair_device_menu)
             menu.add(0, MENU_SYNC_METHOD, order++, R.string.sync_method_settings)
             menu.add(0, MENU_CHECK_UPDATE, order++, R.string.check_for_updates)
             setOnMenuItemClickListener { item ->
@@ -630,7 +626,6 @@ class MainActivity : AppCompatActivity() {
                     MENU_TRASH -> showTrashDialog()
                     MENU_REMINDER -> showReminderSettings()
                     MENU_PAIR_DEVICE -> showPairingMethodMenu(anchor)
-                    MENU_SYNC_NOW -> synchronizeNow()
                     MENU_SYNC_METHOD -> showPairingMethodMenu(anchor)
                     MENU_CHECK_UPDATE -> checkForAppUpdate(manual = true)
                     else -> return@setOnMenuItemClickListener false
@@ -1339,27 +1334,14 @@ class MainActivity : AppCompatActivity() {
             .ifBlank { getString(R.string.android_device_name) }
     }
 
-    private fun synchronizeNow() {
-        lifecycleScope.launch {
-            val app = application as WooTodoApplication
-            if (app.synchronizeManually() == SyncExecutionResult.NotConfigured) {
-                Toast.makeText(
-                    this@MainActivity,
-                    R.string.sync_scan_pairing_first,
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-        }
-    }
-
     private fun handleSyncAction(anchor: View) {
+        // 同步始终在后台自动进行；状态行只用于查看当前方式或重新配对。
         when ((application as WooTodoApplication).syncRuntime.state.value) {
             SyncRuntimeState.Loading,
             SyncRuntimeState.Running,
             -> Unit
 
-            SyncRuntimeState.Unpaired -> showPairingMethodMenu(anchor)
-            else -> synchronizeNow()
+            else -> showPairingMethodMenu(anchor)
         }
     }
 
@@ -1516,7 +1498,6 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_DAY_COUNTER = 2
         private const val MENU_SYNC_METHOD = 3
         private const val MENU_PAIR_DEVICE = 4
-        private const val MENU_SYNC_NOW = 5
         private const val MENU_CHECK_UPDATE = 6
         private const val MENU_AVAILABLE_UPDATE = 7
         private const val MENU_CATEGORIES = 8

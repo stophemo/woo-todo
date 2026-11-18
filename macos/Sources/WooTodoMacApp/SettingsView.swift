@@ -93,19 +93,6 @@ struct SettingsView: View {
                 .background(Color(nsColor: .windowBackgroundColor))
                 .textSelection(.enabled)
         }
-        .toolbar {
-            if navigation.selection == .sync {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        syncSettingsStore.requestSync(.manual)
-                        webDavSettingsStore.requestSync(.manual)
-                        Task { await syncSettingsStore.refreshDevices() }
-                    } label: {
-                        Label("刷新", systemImage: "arrow.clockwise")
-                    }
-                }
-            }
-        }
         .tint(WooTodoTheme.purple)
     }
 

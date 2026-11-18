@@ -3,10 +3,12 @@ package com.wootodo.ui
 import android.app.AlertDialog
 import android.view.LayoutInflater
 import android.view.View
-import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.button.MaterialButton
 import com.wootodo.R
 import com.wootodo.sync.Base64Url
 import com.wootodo.sync.BearerCredential
@@ -38,11 +40,17 @@ object ShortCodePairingDialog {
     ) {
         val content = LayoutInflater.from(activity)
             .inflate(R.layout.dialog_short_code_pairing, null)
-        val codeView = content.findViewById<TextView>(R.id.short_code_value)
+        val codeView = content.findViewById<SixDigitCodeView>(R.id.short_code_value)
         val statusView = content.findViewById<TextView>(R.id.short_code_status)
-        val verificationView = content.findViewById<TextView>(R.id.short_code_verification)
-        val confirmButton = content.findViewById<Button>(R.id.short_code_confirm)
-        val cancelButton = content.findViewById<Button>(R.id.short_code_cancel)
+        val expiryView = content.findViewById<TextView>(R.id.short_code_expiry)
+        val verificationGroup = content.findViewById<LinearLayout>(
+            R.id.short_code_verification_group,
+        )
+        val verificationView = content.findViewById<SixDigitCodeView>(
+            R.id.short_code_verification,
+        )
+        val confirmButton = content.findViewById<MaterialButton>(R.id.short_code_confirm)
+        val cancelButton = content.findViewById<MaterialButton>(R.id.short_code_cancel)
         val dialog = AlertDialog.Builder(activity)
             .setView(content)
             .create()
@@ -50,10 +58,24 @@ object ShortCodePairingDialog {
         val confirmation = CompletableDeferred<Unit>()
         var job: Job? = null
         var finished = false
+        codeView.setEditable(false)
+        verificationView.setEditable(false)
 
-        fun updateStatus(text: String) {
+        fun updateStatus(text: String, isError: Boolean = false) {
             if (activity.isFinishing || activity.isDestroyed) return
             statusView.text = text
+            statusView.setTextColor(
+                ContextCompat.getColor(
+                    activity,
+                    if (isError) R.color.orange else R.color.muted,
+                ),
+            )
+        }
+
+        fun finishDialog() {
+            confirmButton.visibility = View.GONE
+            expiryView.visibility = View.GONE
+            cancelButton.text = activity.getString(R.string.done)
         }
 
         fun complete(message: String) {
@@ -61,8 +83,7 @@ object ShortCodePairingDialog {
             finished = true
             if (activity.isFinishing || activity.isDestroyed) return
             updateStatus(message)
-            confirmButton.visibility = View.GONE
-            cancelButton.text = activity.getString(R.string.done)
+            finishDialog()
             onFinished()
         }
 
@@ -70,9 +91,8 @@ object ShortCodePairingDialog {
             if (finished) return
             finished = true
             if (activity.isFinishing || activity.isDestroyed) return
-            updateStatus(message)
-            confirmButton.visibility = View.GONE
-            cancelButton.text = activity.getString(R.string.done)
+            updateStatus(message, isError = true)
+            finishDialog()
         }
 
         cancelButton.setOnClickListener {
@@ -109,7 +129,7 @@ object ShortCodePairingDialog {
                     )
                     return@launch
                 }
-                codeView.text = shortCode
+                codeView.setCode(shortCode)
                 updateStatus(activity.getString(R.string.pairing_short_code_waiting))
                 val deadline = System.currentTimeMillis() +
                     maxOf(0L, created.expiresAt - created.serverTime) + 30_000L
@@ -143,15 +163,15 @@ object ShortCodePairingDialog {
                             claimedDeviceId = claim.deviceId
                             verificationShown = true
                             if (!activity.isFinishing && !activity.isDestroyed) {
-                                verificationView.text = activity.getString(
-                                    R.string.pairing_short_code_verification,
+                                verificationView.setCode(
                                     PairingSessionCrypto.verificationCode(
                                         sessionKey = key,
                                         initiatorPublicKey = keyPair.publicKey,
                                         claimPublicKey = Base64Url.decode(claim.publicKey),
                                     ),
                                 )
-                                verificationView.visibility = View.VISIBLE
+                                verificationGroup.visibility = View.VISIBLE
+                                expiryView.visibility = View.GONE
                                 confirmButton.visibility = View.VISIBLE
                                 updateStatus(
                                     activity.getString(R.string.pairing_short_code_claimed),

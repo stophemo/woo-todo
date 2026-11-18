@@ -512,10 +512,7 @@ struct SyncSettingsView: View {
                         Text("六位配对码")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(shortCode)
-                            .font(.system(size: 44, weight: .bold, design: .monospaced))
-                            .tracking(8)
-                            .textSelection(.enabled)
+                        SixDigitCodeDisplay(code: shortCode)
                         Text("在 Android 选择“配对设备 → 输入六位配对码”，输入这 6 位数字。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -569,10 +566,7 @@ struct SyncSettingsView: View {
                     "\(verification.deviceName) 已扫描",
                     systemImage: verification.platform == .android ? "smartphone" : "laptopcomputer"
                 )
-                Text(verification.code)
-                    .font(.system(size: 38, weight: .bold, design: .monospaced))
-                    .tracking(6)
-                    .textSelection(.enabled)
+                SixDigitCodeDisplay(code: verification.code)
                 Text("请核对两端显示的六位核对码完全一致。只有一致时才允许传递同步密钥。")
                     .foregroundStyle(.secondary)
                 HStack {
@@ -634,26 +628,37 @@ struct SyncSettingsView: View {
     private var shortCodeClaimContent: some View {
         switch store.shortCodeClaimPhase {
         case .idle:
-            Text("在另一台已加入同步空间的设备上选择“显示六位配对码”，然后把那 6 位数字输入这里。")
-                .foregroundStyle(.secondary)
-            HStack(spacing: 10) {
-                TextField("6 位数字", text: $shortCodeInput)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 20, weight: .semibold, design: .monospaced))
-                    .frame(width: 150)
-                    .onChange(of: shortCodeInput) { _, value in
-                        let digits = String(value.filter(\.isNumber).prefix(6))
-                        if digits != value { shortCodeInput = digits }
-                    }
-                Button("配对") {
-                    Task { await store.claimByShortCode(shortCodeInput) }
+            VStack(spacing: 14) {
+                VStack(spacing: 4) {
+                    Text("输入另一台设备的六位码")
+                        .font(.headline)
+                    Text("在另一台设备上打开 Woo Todo → 配对设备 → 显示六位配对码")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(shortCodeInput.count != 6)
+                .multilineTextAlignment(.center)
+                SixDigitCodeField(code: $shortCodeInput) {
+                    submitShortCode()
+                }
+                HStack(spacing: 12) {
+                    Button {
+                        pasteShortCode()
+                    } label: {
+                        Label("粘贴", systemImage: "doc.on.clipboard")
+                    }
+                    .buttonStyle(.bordered)
+                    Button("配对") {
+                        submitShortCode()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(shortCodeInput.count != 6)
+                }
+                Text("仅支持同一局域网；配对码 10 分钟内有效，使用一次后失效。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Text("仅支持同一局域网；配对码 10 分钟内有效，使用一次后失效。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
         case .claiming:
             HStack(spacing: 10) {
                 ProgressView()
@@ -662,10 +667,7 @@ struct SyncSettingsView: View {
         case let .awaitingConfirmation(code, deviceName, deadline):
             VStack(alignment: .leading, spacing: 10) {
                 Label("\(deviceName) 已认领配对", systemImage: "laptopcomputer.and.iphone")
-                Text(code)
-                    .font(.system(size: 38, weight: .bold, design: .monospaced))
-                    .tracking(6)
-                    .textSelection(.enabled)
+                SixDigitCodeDisplay(code: code)
                 Text("请在另一台设备上核对同一个六位核对码，并在那台设备上点击确认。")
                     .foregroundStyle(.secondary)
                 Text("有效至 \(deadline.formatted(date: .omitted, time: .shortened))")
@@ -693,6 +695,20 @@ struct SyncSettingsView: View {
                     store.cancelShortCodeClaim()
                 }
             }
+        }
+    }
+
+    private func submitShortCode() {
+        let code = shortCodeInput.filter(\.isNumber)
+        guard code.count == 6 else { return }
+        store.claimByShortCode(code)
+    }
+
+    private func pasteShortCode() {
+        guard let value = NSPasteboard.general.string(forType: .string) else { return }
+        let digits = String(value.filter(\.isNumber).prefix(6))
+        if !digits.isEmpty {
+            shortCodeInput = digits
         }
     }
 

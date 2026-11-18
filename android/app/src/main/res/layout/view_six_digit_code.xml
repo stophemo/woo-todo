@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:id="@+id/pin_cells"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/pin_digit_0"
+            style="@style/WooTodo.PinDigit" />
+
+        <TextView
+            android:id="@+id/pin_digit_1"
+            style="@style/WooTodo.PinDigit" />
+
+        <TextView
+            android:id="@+id/pin_digit_2"
+            style="@style/WooTodo.PinDigit" />
+
+        <TextView
+            android:id="@+id/pin_digit_3"
+            style="@style/WooTodo.PinDigit" />
+
+        <TextView
+            android:id="@+id/pin_digit_4"
+            style="@style/WooTodo.PinDigit" />
+
+        <TextView
+            android:id="@+id/pin_digit_5"
+            style="@style/WooTodo.PinDigit" />
+    </LinearLayout>
+
+    <EditText
+        android:id="@+id/pin_input"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0.02"
+        android:background="@null"
+        android:cursorVisible="false"
+        android:gravity="center"
+        android:imeOptions="actionDone"
+        android:inputType="number"
+        android:maxLength="6"
+        android:singleLine="true"
+        android:textColor="@android:color/transparent"
+        android:textSize="1sp"
+        android:importantForAutofill="no" />
+
+</FrameLayout>

@@ -11,7 +11,6 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.text.InputFilter
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -739,32 +738,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showShortCodeInput() {
-        val input = EditText(this).apply {
-            hint = getString(R.string.pairing_short_code_input_hint)
-            isSingleLine = true
-            inputType = InputType.TYPE_CLASS_NUMBER
-            filters = arrayOf(InputFilter.LengthFilter(6))
-            setTextSize(24f)
+        ShortCodeInputDialog.show(this) { code ->
+            showTransientMessage(R.string.pairing_short_code_searching, Snackbar.LENGTH_LONG)
+            resolveShortCodeAndPair(code)
         }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.pairing_short_code_input_title)
-            .setView(input)
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.confirm, null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val code = input.text.toString().trim()
-                if (code.length != 6 || code.any { !it.isDigit() }) {
-                    input.error = getString(R.string.pairing_short_code_invalid)
-                    return@setOnClickListener
-                }
-                dialog.dismiss()
-                showTransientMessage(R.string.pairing_short_code_searching, Snackbar.LENGTH_LONG)
-                resolveShortCodeAndPair(code)
-            }
-        }
-        dialog.show()
     }
 
     private fun resolveShortCodeAndPair(code: String) {

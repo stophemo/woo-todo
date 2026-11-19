@@ -426,7 +426,12 @@ final class MCPMessageHandler {
                 "name": "woo-todo",
                 "version": serverVersion,
             ],
-            "instructions": "Woo Todo 是本地优先的待办应用。日期使用 YYYY-MM-DD，提醒使用 HH:mm；不设置日期时任务完成即止。新增任务会立即写入本机，并参与用户已配置的同步。",
+            "instructions": """
+            Woo Todo 是本地优先的待办应用，所有操作先写入本机并参与用户已配置的同步。日期字段使用 Asia/Shanghai 的 YYYY-MM-DD，提醒使用 HH:mm，时间戳为 ISO 8601 UTC；开始和结束日期必须成对设置，不设置日期表示任务完成即止。
+            推荐流程：先用 list_tasks（可按 status、tag、query、due 过滤）或 get_task 取得真实任务 id，再调用写入工具；不要编造 id。写入结果会返回最新任务，可再次读取确认。
+            状态规则：pending 可编辑、完成、放弃或删除；completed 可用 reopen_task 撤销；pass 是最终状态，不能撤销。delete_task 只把待办移到“最近删除”，可用 list_trash 查看、restore_task 恢复（会生成新 id）。purge_trash 和 clear_history 是永久操作，必须传 confirm=true。
+            标签名称忽略大小写，最多 8 个（含“未分类”），名称最长 12 个字符；新增任务时缺失的标签会自动创建。
+            """,
         ]
     }
 

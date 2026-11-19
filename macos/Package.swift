@@ -68,7 +68,7 @@ let package = Package(
         ),
         .testTarget(
             name: "WooTodoMacAppTests",
-            dependencies: ["WooTodoMacApp"],
+            dependencies: ["WooTodoMacApp", "WooTodoStorage"],
             path: "Tests/WooTodoMacAppTests"
         )
     ]

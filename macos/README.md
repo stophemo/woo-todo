@@ -53,10 +53,12 @@ swift run woo-todo-mac
 
 可用工具：
 
-- `add_task`：新增任务，可传标题、标签、`YYYY-MM-DD` 起止日期和 `HH:mm` 提醒；标签留空表示无标签，新标签会自动创建。
-- `list_tasks`：查看当前待办，避免重复添加。
-- `list_tags`：查看已有标签及其优先级。
+- 查询：`list_tasks`（状态、标签、标题、日期筛选与分页）、`get_task`、`list_tags`、`list_trash`、`get_statistics`。
+- 任务：`add_task`、`update_task`、`complete_task`、`reopen_task`、`abandon_task`、`delete_task`、`restore_task`、`purge_trash`、`clear_history`。
+- 标签：`create_tag`、`rename_tag`、`delete_tag`、`reorder_tags`。
+
+任务工具返回完整字段、真实 UUID、标签、日期状态和时间戳。`pending` 可编辑、完成、放弃和删除；`completed` 可撤销完成；`pass` 是最终状态。删除会进入最近删除并由 `restore_task` 恢复为新任务；`purge_trash` 与 `clear_history` 是永久操作，必须显式传 `confirm=true`。标签名称忽略大小写，最多 8 个（含“未分类”），名称最长 12 个字符。
 
 Claude Code、Codex、Pi、Hermes 可以直接执行页面中复制的命令；Cursor、VS Code 等客户端可复制页面生成的 JSON 配置。令牌相当于本机密码，重新生成后需要更新所有客户端配置。
 
-> `v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7`、`v0.2.8`、`v0.2.9`、`v0.2.10`、`v0.2.11`、`v0.2.12`、`v0.2.13` 与 `v0.2.14` 可以同步；`v0.2.6` 及更早客户端会把“未分类”固定在最前，不保留自定义排序位置，建议两端同时升级。
+> `v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7`、`v0.2.8`、`v0.2.9`、`v0.2.10`、`v0.2.11`、`v0.2.12`、`v0.2.13`、`v0.2.14` 与 `v0.2.15` 可以同步；`v0.2.6` 及更早客户端会把“未分类”固定在最前，不保留自定义排序位置，建议两端同时升级。

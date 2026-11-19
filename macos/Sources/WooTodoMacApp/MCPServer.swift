@@ -23,8 +23,8 @@ enum MCPHTTPServerError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidPort: "本机 MCP 接入端口无效"
-        case .listenerFailed(let message): "本机 MCP 接入启动失败：\(message)"
+        case .invalidPort: "本机 MCP 服务端口无效"
+        case .listenerFailed(let message): "本机 MCP 服务启动失败：\(message)"
         case .malformedRequest: "HTTP 请求格式无效"
         case .requestTooLarge: "请求体过大"
         }
@@ -349,7 +349,7 @@ final class MCPMessageHandler {
             return Self.jsonHTTPError(
                 statusCode: 405,
                 code: "METHOD_NOT_ALLOWED",
-                message: "MCP 接入仅支持 POST",
+                message: "MCP 服务仅支持 POST",
                 extraHeaders: ["Allow": "POST"]
             )
         }

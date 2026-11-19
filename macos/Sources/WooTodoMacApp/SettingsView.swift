@@ -15,7 +15,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .display: "显示"
         case .shortcuts: "快捷键"
         case .sync: "同步"
-        case .mcp: "MCP 接入"
+        case .mcp: "MCP 服务"
         case .localData: "本机数据"
         }
     }

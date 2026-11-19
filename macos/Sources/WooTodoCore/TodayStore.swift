@@ -48,7 +48,7 @@ public final class TodayStore: ObservableObject {
         ) != nil
     }
 
-    /// 与 add 相同，但把写入的任务返回给调用方，便于本机 MCP 接入回传任务标识。
+    /// 与 add 相同，但把写入的任务返回给调用方，便于本机 MCP 服务回传任务标识。
     @discardableResult
     public func addTask(
         title: String,

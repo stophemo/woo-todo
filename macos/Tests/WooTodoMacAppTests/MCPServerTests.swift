@@ -3,7 +3,7 @@ import Testing
 import WooTodoCore
 @testable import WooTodoMacApp
 
-@Suite("MCP 本机接入")
+@Suite("MCP 本机服务")
 @MainActor
 struct MCPServerTests {
     private let token = "test-token"
@@ -137,7 +137,7 @@ struct MCPServerTests {
         #expect(repository.tasks.isEmpty)
     }
 
-    @Test("MCP 接入开关可启动并停止本机服务")
+    @Test("MCP 服务开关可启动并停止本机服务")
     func settingsLifecycleStartsAndStopsServer() async throws {
         let suite = "io.github.stophemo.woo-todo.mcp-test.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -180,6 +180,31 @@ struct MCPServerTests {
         settings.setEnabled(false)
         #expect(!settings.isEnabled)
         #expect(settings.status == .disabled)
+    }
+
+    @Test("常用 Agent 命令包含本机地址与令牌")
+    func agentSnippetsUseEndpointAndToken() throws {
+        let suite = "io.github.stophemo.woo-todo.mcp-test.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let repository = MCPTestRepository()
+        let settings = MCPSettingsStore(
+            store: TodayStore(repository: repository),
+            repository: repository,
+            defaults: defaults,
+            allowsExternalServices: false
+        )
+        let endpoint = settings.endpointURL.absoluteString
+
+        #expect(settings.claudeCodeSnippet.contains(endpoint))
+        #expect(settings.claudeCodeSnippet.contains(settings.token))
+        #expect(settings.codexSnippet.contains(endpoint))
+        #expect(settings.codexSnippet.contains(settings.token))
+        #expect(settings.codexSnippet.contains("WOO_TODO_MCP_TOKEN"))
+        #expect(settings.piSnippet.contains(endpoint))
+        #expect(settings.piSnippet.contains(settings.token))
+        #expect(settings.hermesSnippet.contains(endpoint))
+        #expect(settings.configurationSnippet.contains(settings.token))
     }
 
     @Test("HTTP 服务完成鉴权并返回工具结果")

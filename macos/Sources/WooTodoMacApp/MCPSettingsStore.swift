@@ -76,9 +76,25 @@ final class MCPSettingsStore: ObservableObject {
         """
     }
 
-    var commandLineSnippet: String {
+    var claudeCodeSnippet: String {
         "claude mcp add --transport http woo-todo \(endpointURL.absoluteString) "
             + "--header \"Authorization: Bearer \(token)\""
+    }
+
+    var codexSnippet: String {
+        """
+        export WOO_TODO_MCP_TOKEN="\(token)"
+        codex mcp add woo-todo --url \(endpointURL.absoluteString) --bearer-token-env-var WOO_TODO_MCP_TOKEN
+        """
+    }
+
+    var piSnippet: String {
+        "pi mcp add woo-todo --url \(endpointURL.absoluteString) "
+            + "--header \"Authorization: Bearer \(token)\""
+    }
+
+    var hermesSnippet: String {
+        "hermes mcp add woo-todo --url \(endpointURL.absoluteString) --auth header"
     }
 
     func startIfNeeded() {
@@ -115,7 +131,7 @@ final class MCPSettingsStore: ObservableObject {
 
     private func startServer() {
         guard allowsExternalServices else {
-            status = .failed("当前运行模式不允许启动本机 MCP 接入")
+            status = .failed("当前运行模式不允许开放本机 MCP 服务")
             return
         }
         generation &+= 1

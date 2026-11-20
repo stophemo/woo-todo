@@ -8,6 +8,7 @@ import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskEntity
 import com.wootodo.domain.TaskCategories
 import com.wootodo.domain.TaskCategory
+import com.wootodo.domain.TaskRecurrence
 import com.wootodo.domain.TaskStatus
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
@@ -1252,6 +1253,7 @@ private fun Cursor.toTaskEntity(): TaskEntity {
         reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
             if (isNull(index) || effectiveStart == null) null else LocalTime.parse(getString(index))
         },
+        recurrence = TaskRecurrence.fromRaw(getString(getColumnIndexOrThrow("recurrence"))),
     )
 }
 
@@ -1266,7 +1268,7 @@ private fun TaskEntity.toContentValues(): ContentValues = ContentValues(14).appl
     if (startDate == null) putNull("target_date") else put("target_date", startDate.toString())
     put("quest_line", categoryId)
     put("status", status.rawValue)
-    put("recurrence", "once")
+    put("recurrence", recurrence.rawValue)
     put("sort_order", sortOrder)
     put("created_at", createdAt)
     put("updated_at", updatedAt)
@@ -1293,7 +1295,11 @@ fun TaskEntity.toWirePayload(): TaskInstancePayload {
         timezone = WIRE_FIXED_TIMEZONE,
         questLine = categoryId,
         state = status.toWire(),
-        recurrence = WireRecurrence.ONCE,
+        recurrence = if (recurrence == TaskRecurrence.DAILY) {
+            WireRecurrence.REPEAT
+        } else {
+            WireRecurrence.ONCE
+        },
         sortOrder = sortOrder.toLong(),
         createdAt = createdAt,
         updatedAt = updatedAt,
@@ -1334,6 +1340,11 @@ fun TaskInstancePayload.toTaskEntity(): TaskEntity {
         updatedAt = updatedAt,
         settledAt = settledAt,
         reminderTime = if (effectiveStart == null) null else reminderTime?.let(LocalTime::parse),
+        recurrence = if (recurrence == WireRecurrence.REPEAT && timeType == WireTimeType.DAY) {
+            TaskRecurrence.DAILY
+        } else {
+            TaskRecurrence.ONCE
+        },
     )
 }
 

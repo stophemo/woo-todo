@@ -77,6 +77,30 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.pendingOperations(limit: 50) == Array(operations.dropFirst(3)))
     }
 
+    @Test("每日重复任务写入 repeat 正文")
+    func dailyRecurrenceEntersWirePayload() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let task = try makeTask(
+            title: "每天任务",
+            createdAt: date("2026-11-20T08:00:00+08:00"),
+            recurrence: .daily
+        )
+        try repository.save(task)
+
+        let operations = try await repository.pendingOperations(limit: 10)
+        let entity = try open(try #require(operations.first), configuration: configuration)
+        guard case .task(let payload) = entity else {
+            Issue.record("outbox 应为任务正文")
+            return
+        }
+        #expect(payload.recurrence == .repeatRule)
+        #expect(payload.timeType == .day)
+    }
+
     @Test("删除后恢复会以新任务正文进入 outbox")
     func restoreAfterDeleteEntersOutboxAsNewTask() async throws {
         let configuration = syncConfiguration()
@@ -1812,7 +1836,8 @@ private func makeTask(
     createdAt: Date,
     updatedAt: Date? = nil,
     settledAt: Date? = nil,
-    sortIndex: Int = 0
+    sortIndex: Int = 0,
+    recurrence: TaskRecurrence = .once
 ) throws -> TodoTask {
     let day = TodoTask.protocolCalendar.startOfDay(for: createdAt)
     return try TodoTask(
@@ -1825,7 +1850,8 @@ private func makeTask(
         sortIndex: sortIndex,
         createdAt: createdAt,
         updatedAt: updatedAt ?? createdAt,
-        completedAt: status == .pending ? nil : settledAt
+        completedAt: status == .pending ? nil : settledAt,
+        recurrence: recurrence
     )
 }
 

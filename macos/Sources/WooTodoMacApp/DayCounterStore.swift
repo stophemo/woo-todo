@@ -22,6 +22,7 @@ final class DayCounterStore: ObservableObject {
     @Published private(set) var renderDate = Date()
     @Published private(set) var persistenceErrorMessage: String?
     var onLocalConfigurationChanged: (() -> Void)?
+    var onDateChanged: (() -> Void)?
 
     private let defaults: UserDefaults
     private let repository: SQLiteTaskRepository
@@ -125,6 +126,7 @@ final class DayCounterStore: ObservableObject {
 
     func refreshDate() {
         renderDate = Date()
+        onDateChanged?()
     }
 
     private func loadRepositoryConfiguration() {

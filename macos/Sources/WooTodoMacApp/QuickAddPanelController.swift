@@ -158,7 +158,10 @@ final class QuickAddModel: ObservableObject {
     }
     @Published var dateRangeEnabled = false {
         didSet {
-            if !dateRangeEnabled { reminderEnabled = false }
+            if !dateRangeEnabled {
+                reminderEnabled = false
+                dailyRepeat = false
+            }
             onLayoutChange?()
         }
     }
@@ -168,6 +171,9 @@ final class QuickAddModel: ObservableObject {
         didSet { onLayoutChange?() }
     }
     @Published var reminderDate = QuickAddModel.defaultReminderDate
+    @Published var dailyRepeat = false {
+        didSet { onLayoutChange?() }
+    }
     @Published private(set) var categories: [TaskCategory] = TaskCategory.defaults
     @Published private(set) var errorMessage: String? {
         didSet { onLayoutChange?() }
@@ -191,6 +197,7 @@ final class QuickAddModel: ObservableObject {
         isSchedulingExpanded = false
         dateRangeEnabled = false
         reminderEnabled = false
+        dailyRepeat = false
         let today = Calendar.current.startOfDay(for: Date())
         startDate = today
         endDate = today
@@ -223,7 +230,8 @@ final class QuickAddModel: ObservableObject {
             categoryID: categoryID,
             startDate: start,
             endDate: end,
-            reminderTime: resolvedReminderTime()
+            reminderTime: resolvedReminderTime(),
+            recurrence: dateRangeEnabled && dailyRepeat ? .daily : .once
         ) else {
             errorMessage = store.errorMessage ?? "无法新增任务"
             requestFocus()
@@ -249,6 +257,9 @@ final class QuickAddModel: ObservableObject {
         var summary = start == end ? start : "\(start) – \(end)"
         if reminderEnabled {
             summary += " · \(reminderDate.formatted(.dateTime.hour().minute()))"
+        }
+        if dailyRepeat {
+            summary += " · 每天"
         }
         return summary
     }
@@ -384,6 +395,12 @@ struct QuickAddView: View {
                     Text("开始日期不能晚于结束日期")
                         .font(.caption)
                         .foregroundStyle(.red)
+                }
+                Toggle("每天重复", isOn: $model.dailyRepeat)
+                if model.dailyRepeat {
+                    Text("每天生成一条新任务；前一天未完成会自动记为放弃。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Toggle("在指定时间提醒", isOn: $model.reminderEnabled)
                 if model.reminderEnabled {

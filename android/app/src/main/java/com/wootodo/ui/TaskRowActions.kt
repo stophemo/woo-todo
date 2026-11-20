@@ -59,4 +59,5 @@ internal fun Task.toRestoreDraft(): TaskDraft = TaskDraft(
     endDate = endDate,
     reminderTime = reminderTime,
     sortOrder = sortOrder,
+    recurrence = recurrence,
 )

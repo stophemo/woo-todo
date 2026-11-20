@@ -203,6 +203,9 @@ internal class TaskAdapter(
             val days = ChronoUnit.DAYS.between(task.endDate, today)
             add(itemViewContextString(R.string.task_overdue_days, days))
         }
+        if (task.recurrence == com.wootodo.domain.TaskRecurrence.DAILY) {
+            add(itemViewContextString(R.string.repeat_daily))
+        }
         task.reminderTime?.let {
             add(itemViewContextString(R.string.task_reminder_time_short, it.toString()))
         }

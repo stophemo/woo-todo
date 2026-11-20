@@ -51,6 +51,7 @@ class EditTaskActivity : AppCompatActivity() {
     private lateinit var endDateButton: Button
     private lateinit var reminderSwitch: SwitchCompat
     private lateinit var reminderTimeButton: Button
+    private lateinit var repeatDailySwitch: SwitchCompat
     private lateinit var saveButton: Button
     private lateinit var deleteButton: Button
     private var categories: List<TaskCategory> = TaskCategories.defaults
@@ -58,6 +59,7 @@ class EditTaskActivity : AppCompatActivity() {
     private var startDate: LocalDate = TaskDateRules.today()
     private var endDate: LocalDate = TaskDateRules.today()
     private var reminderTime: LocalTime = LocalTime.of(9, 0)
+    private var repeatDaily = false
     private var editingTask: Task? = null
     private var isLoading = true
     private var initialSnapshot: String? = null
@@ -79,6 +81,7 @@ class EditTaskActivity : AppCompatActivity() {
         endDateButton = findViewById(R.id.end_date_button)
         reminderSwitch = findViewById(R.id.reminder_switch)
         reminderTimeButton = findViewById(R.id.reminder_time_button)
+        repeatDailySwitch = findViewById(R.id.repeat_daily_switch)
         saveButton = findViewById(R.id.save_button)
         deleteButton = findViewById(R.id.delete_button)
         repository = (application as WooTodoApplication).taskRepository
@@ -97,8 +100,15 @@ class EditTaskActivity : AppCompatActivity() {
             dateRangeEnabled = enabled
             dateRangeContainer.isVisible = enabled
             if (enabled && startDate.isAfter(endDate)) endDate = startDate
+            if (!enabled) {
+                repeatDaily = false
+                repeatDailySwitch.isChecked = false
+            }
             updateDateButtons()
             updateReminderControls()
+        }
+        repeatDailySwitch.setOnCheckedChangeListener { _, checked ->
+            repeatDaily = checked && dateRangeEnabled
         }
         startDateButton.setOnClickListener { showDatePicker(isStart = true) }
         endDateButton.setOnClickListener { showDatePicker(isStart = false) }
@@ -154,6 +164,8 @@ class EditTaskActivity : AppCompatActivity() {
             ?.let { runCatching { LocalTime.parse(it) }.getOrNull() }
             ?: reminderTime
         reminderSwitch.isChecked = state?.getBoolean(STATE_REMINDER_ENABLED) ?: false
+        repeatDaily = state?.getBoolean(STATE_REPEAT_DAILY) ?: false
+        repeatDailySwitch.isChecked = repeatDaily
         dateRangeSwitch.isChecked = dateRangeEnabled
         dateRangeContainer.isVisible = dateRangeEnabled
         updateDateButtons()
@@ -188,6 +200,9 @@ class EditTaskActivity : AppCompatActivity() {
             ?: reminderTime
         reminderSwitch.isChecked = state?.getBoolean(STATE_REMINDER_ENABLED)
             ?: (task.reminderTime != null)
+        repeatDaily = state?.getBoolean(STATE_REPEAT_DAILY)
+            ?: (task.recurrence == com.wootodo.domain.TaskRecurrence.DAILY)
+        repeatDailySwitch.isChecked = repeatDaily
         dateRangeSwitch.isChecked = dateRangeEnabled
         dateRangeContainer.isVisible = dateRangeEnabled
         updateDateButtons()
@@ -206,6 +221,7 @@ class EditTaskActivity : AppCompatActivity() {
             endDateButton,
             reminderSwitch,
             reminderTimeButton,
+            repeatDailySwitch,
         ).forEach { it.isEnabled = editable }
         saveButton.isVisible = editable
         deleteButton.isVisible = editable &&
@@ -318,6 +334,11 @@ class EditTaskActivity : AppCompatActivity() {
                 reminderTime = reminderTime.takeIf {
                     dateRangeEnabled && reminderSwitch.isChecked
                 },
+                recurrence = if (dateRangeEnabled && repeatDaily) {
+                    com.wootodo.domain.TaskRecurrence.DAILY
+                } else {
+                    com.wootodo.domain.TaskRecurrence.ONCE
+                },
             )
             val saved = runCatching {
                 editingTask?.let { repository.update(it.id, draft) } ?: run {
@@ -412,6 +433,7 @@ class EditTaskActivity : AppCompatActivity() {
         endDate,
         reminderSwitch.isChecked,
         reminderTime,
+        repeatDaily,
     ).joinToString("|")
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -422,6 +444,7 @@ class EditTaskActivity : AppCompatActivity() {
         outState.putString(STATE_END_DATE, endDate.toString())
         outState.putBoolean(STATE_REMINDER_ENABLED, reminderSwitch.isChecked)
         outState.putString(STATE_REMINDER_TIME, reminderTime.toString())
+        outState.putBoolean(STATE_REPEAT_DAILY, repeatDaily)
         super.onSaveInstanceState(outState)
     }
 
@@ -434,6 +457,7 @@ class EditTaskActivity : AppCompatActivity() {
         const val STATE_END_DATE = "editor_end_date"
         const val STATE_REMINDER_ENABLED = "editor_reminder_enabled"
         const val STATE_REMINDER_TIME = "editor_reminder_time"
+        const val STATE_REPEAT_DAILY = "editor_repeat_daily"
         val dateFormatter: DateTimeFormatter =
             DateTimeFormatter.ofPattern("M月d日", Locale.SIMPLIFIED_CHINESE)
     }

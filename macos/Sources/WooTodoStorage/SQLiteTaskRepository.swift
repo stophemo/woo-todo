@@ -202,7 +202,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
 
                     sqlite3_reset(statement)
                     sqlite3_clear_bindings(statement)
-                    let recurrenceJSON = "{\"once\":{}}"
+                    let recurrenceJSON = Self.recurrenceJSON(for: task.recurrence)
                     let calendar = TodoTask.protocolCalendar
                     let periodEnd = task.endDate.flatMap {
                         calendar.date(byAdding: .day, value: 1, to: $0)
@@ -368,7 +368,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 createdAt: trashed.task.createdAt,
                 updatedAt: date,
                 reminderTime: trashed.task.reminderTime,
-                completedAt: nil
+                completedAt: nil,
+                recurrence: trashed.task.recurrence
             )
 
             try execute("BEGIN IMMEDIATE TRANSACTION")
@@ -1814,7 +1815,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             timezone: timeZone.identifier,
             questLine: task.categoryID,
             state: state,
-            recurrence: .once,
+            recurrence: task.recurrence == .daily ? .repeatRule : .once,
             sortOrder: Int64(task.sortIndex),
             createdAt: milliseconds(since1970: task.createdAt),
             updatedAt: milliseconds(since1970: task.updatedAt),
@@ -2344,12 +2345,15 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             reminderTime: effectiveStart == nil
                 ? nil
                 : payload.reminderTime.flatMap(TaskReminderTime.init(wireValue:)),
-            completedAt: status == .pending ? nil : settledDate
+            completedAt: status == .pending ? nil : settledDate,
+            recurrence: payload.recurrence == .repeatRule && payload.timeType == .day
+                ? .daily
+                : .once
         )
     }
 
     private func upsertTaskRow(_ task: TodoTask) throws {
-        let recurrenceJSON = "{\"once\":{}}"
+        let recurrenceJSON = Self.recurrenceJSON(for: task.recurrence)
         let calendar = TodoTask.protocolCalendar
         let periodEnd = task.endDate.flatMap {
             calendar.date(byAdding: .day, value: 1, to: $0)
@@ -2427,7 +2431,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             .text(task.startDate == nil ? "someday" : "day"),
             .text(task.categoryID),
             .text(task.status.rawValue),
-            .text("{\"once\":{}}"),
+            .text(Self.recurrenceJSON(for: task.recurrence)),
             task.startDate.map { .double($0.timeIntervalSince1970) } ?? .null,
             periodEnd.map { .double($0.timeIntervalSince1970) } ?? .null,
             .integer(Int64(task.sortIndex)),
@@ -2798,6 +2802,21 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
+    private static func recurrenceJSON(for recurrence: TaskRecurrence) -> String {
+        switch recurrence {
+        case .once: "{\"once\":{}}"
+        case .daily: "{\"daily\":{}}"
+        }
+    }
+
+    private static func recurrence(from value: String) -> TaskRecurrence {
+        // 旧版本写过 {"daily":{}}，迁移时把键名改成 day；两者都代表每日重复。
+        if value.contains("\"daily\"") || value.contains("\"day\"") {
+            return .daily
+        }
+        return .once
+    }
+
     private func decodeTask(from statement: OpaquePointer) throws -> TodoTask {
         guard
             let id = UUID(uuidString: text(at: 0, from: statement)),
@@ -2858,7 +2877,8 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 10)),
             updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 11)),
             reminderTime: effectiveStart == nil ? nil : try reminderTime(at: 13, from: statement),
-            completedAt: optionalDate(at: 12, from: statement)
+            completedAt: optionalDate(at: 12, from: statement),
+            recurrence: Self.recurrence(from: text(at: 6, from: statement))
         )
     }
 

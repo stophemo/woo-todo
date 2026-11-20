@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://woo-todo.vercel.app/">产品主页</a> ·
-  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.15">下载 v0.2.15</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.16">下载 v0.2.16</a> ·
   <a href="#装好以后从这里开始">安装指南</a> ·
   <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
 </p>
@@ -38,6 +38,10 @@
 
 需要时间限制时，同时选择开始日和结束日；不设置就表示“完成即止”。过了结束日期仍未完成的任务会显示为“已逾期”，继续留在列表里，由你完成或手动放弃，不会被自动 Pass。
 
+### 重复
+
+需要每天做的任务（例如铲屎）可以打开“每天重复”。每天会生成一条新任务；前一天未完成时，会在下一次结算时自动记为“已放弃”并生成下一条，历史里能看到漏做记录。已完成的任务则会正常生成下一条。每天重复任务必须设置起止日期；可在 macOS 或 Android 的任务编辑器中设置，也可以通过 MCP 的 `recurrence=daily` 设置。低于 `v0.2.16` 的客户端会把每天重复任务当作一次性任务显示，建议两端同时升级。
+
 ## 完成节奏看得见
 
 统计页不再用“已结束周期履约率”这类周期概念，而是围绕实际完成记录：
@@ -52,6 +56,7 @@
 ## 它刻意做少，但把这些做好
 
 - **本地优先**：新增、编辑、完成、删除都只依赖本机数据库，断网照常使用。
+- **每天重复**：显式设置重复的任务按天生成；漏做会记录为放弃，不会悄悄消失。
 - **轻量且贴近平台**：macOS 使用 AppKit/SwiftUI，Android 使用 Kotlin/RemoteViews；不引入 Electron、Flutter 或浏览器运行时。
 - **自定义标签**：默认只有“未分类”，新增任务时直接输入即可匹配已有标签或创建新标签，留空就不加标签；可以改名、删除和上下调整优先级；删除标签时该标签下的待办会归入未分类，历史记录保留原标签。
 - **清晰的更新入口**：Android 检测到新版本会直接弹出“立即更新 / 稍后 / 跳过此版本”；“更多”菜单仍可随时检查。
@@ -61,22 +66,22 @@
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.2.15`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.15)，只提供 macOS 与 Android 两个正式版本。
+当前稳定版是 [`v0.2.16`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.16)，只提供 macOS 与 Android 两个正式版本。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、独立主窗口与设置、最近删除恢复、统计与本机数据清理 | `v0.2.15` 正式版 |
-| Android 13+ | 统一任务列表、最近删除恢复、任务提醒、今日 Widget、统计与应用内更新 | `v0.2.15` 正式版 |
+| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、独立主窗口与设置、最近删除恢复、统计与本机数据清理 | `v0.2.16` 正式版 |
+| Android 13+ | 统一任务列表、最近删除恢复、任务提醒、今日 Widget、统计与应用内更新 | `v0.2.16` 正式版 |
 
-## 下载 v0.2.15
+## 下载 v0.2.16
 
 | 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.2.15-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.2.15/Woo-Todo-v0.2.15-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
-| Android | [Woo-Todo-v0.2.15-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.15/Woo-Todo-v0.2.15-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.15/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
+| macOS | [Woo-Todo-v0.2.16-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.2.16/Woo-Todo-v0.2.16-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.2.16-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.16/Woo-Todo-v0.2.16-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.16/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
 
-`v0.2.15` 把 macOS MCP 服务补成完整任务接口：支持查询、新增、部分编辑、完成、撤销完成、放弃、删除、最近删除与恢复、标签创建/重命名/重排/删除、历史清理和统计读取。任务工具返回真实 UUID、状态、标签、日期状态与时间戳；永久操作必须确认。MCP 鉴权、同步协议与任务正文没有变化，可与 `v0.2.14` 同步。
+`v0.2.16` 增加每天重复任务：过期未完成会自动记为放弃并生成下一条，历史保留漏做记录；macOS/Android 编辑器和 MCP 都可设置。Mac 桌面小组件新增“接下来”，未来任务（包括 MCP 新建）也能看到；主窗口图标和点击区域放大。MCP 服务改用持久化的五位随机端口，冲突时自动更换。同步协议沿用现有 recurrence 字段，建议两端同时升级。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名；同步凭据和 WebDAV 配置已改为本机加密文件保存，首次从旧版本迁移时会读取一次旧 Keychain 项，之后更新不再反复请求 Keychain 授权。Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -107,19 +112,20 @@ Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；�
 
 三种同步方式互斥，但都不会成为本地操作的前置条件。macOS 与 Android 都会保留已配置的局域网/自建服务和 WebDAV 身份，切回时无需重填；macOS 的同步凭据和 WebDAV 完整配置都使用本机 AES-256-GCM 加密文件保存并自动回填。切换同时保留本地任务和标签定义，并从远端 Lamport 水位之后建立加密基线。同一网络同步会在两端绕过系统 HTTP 代理，避免 `.local` 或私有地址被错误转发；全局 TUN/VPN 模式仍需把局域网配置为直连。配置二维码和配对链接可能含有完整凭据或一次性 secret，只应在自己的设备旁展示，用完立即隐藏或清理剪贴板。
 
-> **版本要求**：`v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7`、`v0.2.8`、`v0.2.9`、`v0.2.10`、`v0.2.11`、`v0.2.12`、`v0.2.13`、`v0.2.14` 与 `v0.2.15` 可以同步；`v0.2.6` 及更早客户端不保留“未分类”的自定义排序位置，建议两端同时升级。
+> **版本要求**：`v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7`、`v0.2.8`、`v0.2.9`、`v0.2.10`、`v0.2.11`、`v0.2.12`、`v0.2.13`、`v0.2.14`、`v0.2.15` 与 `v0.2.16` 可以同步；`v0.2.6` 及更早客户端不保留“未分类”的自定义排序位置，建议两端同时升级。
 
 ## 让本机 Agent 通过 MCP 直接写入计划
 
 macOS 设置里的“MCP 服务”可以开放本机 MCP 服务：Claude Code 等本机 Agent 不必再让你复制粘贴，而是直接查询、新增、编辑、完成、撤销完成、放弃、删除和恢复任务，管理标签并读取统计。
 
-- 只监听 `127.0.0.1:8765`，仅限本机其他 Agent 调用，不会暴露到局域网或互联网；每个请求都需要 Bearer 令牌。
+- 只监听本机回环地址，使用设置页生成并持久化的五位随机端口，仅限本机其他 Agent 调用，不会暴露到局域网或互联网；每个请求都需要 Bearer 令牌。
 - 服务运行在 Woo Todo 进程内，不额外启动后台进程；多个 Agent 共用同一个地址。关闭开关或退出应用立即停止；任务仍只写入本机 SQLite，不会把任务明文发送到云端。
 - 支持 Claude Code、Codex、Pi、Hermes，以及 Cursor、VS Code 等支持 HTTP MCP 的客户端；设置页可直接复制对应命令或 JSON 配置。
 - 写入前先用 `list_tasks` 取得任务 UUID；`delete_task` 会进入最近删除，`restore_task` 会以新 id 恢复；`purge_trash` 和 `clear_history` 是永久操作，必须显式确认。
+- `add_task` / `update_task` 支持 `recurrence=daily`；服务端口为首次生成后固定的五位随机端口，冲突时会自动更换，届时按设置页重新复制 Agent 命令。
 
 ```bash
-claude mcp add --transport http woo-todo http://127.0.0.1:8765/mcp \
+claude mcp add --transport http woo-todo http://127.0.0.1:<设置页端口>/mcp \
   --header "Authorization: Bearer <MCP 服务页显示的令牌>"
 ```
 

@@ -67,6 +67,8 @@
     <string name="extra_quest">外传</string>
     <string name="one_time">一次性</string>
     <string name="repeat_daily">每天</string>
+    <string name="repeat_daily_label">每天重复</string>
+    <string name="repeat_daily_hint">每天生成一条新任务；前一天未完成会自动记为放弃。</string>
     <string name="repeat_weekly">每周</string>
     <string name="repeat_monthly">每月</string>
     <string name="title_required">请先填写任务标题</string>

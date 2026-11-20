@@ -7,6 +7,7 @@ struct FullTaskInput {
     let startDate: Date?
     let endDate: Date?
     let reminderTime: TaskReminderTime?
+    let recurrence: TaskRecurrence
 }
 
 enum FullTaskEditorMode {
@@ -24,6 +25,7 @@ struct FullTaskEditorView: View {
     @State private var endDate: Date
     @State private var reminderEnabled: Bool
     @State private var reminderDate: Date
+    @State private var dailyRepeat: Bool
     @State private var localCategories: [TaskCategory]
     @State private var showingCategories = false
 
@@ -51,6 +53,7 @@ struct FullTaskEditorView: View {
             _endDate = State(initialValue: Calendar.current.startOfDay(for: Date()))
             _reminderEnabled = State(initialValue: false)
             _reminderDate = State(initialValue: Self.defaultReminderDate)
+            _dailyRepeat = State(initialValue: false)
         case let .edit(task):
             _title = State(initialValue: task.title)
             _categoryName = State(initialValue: resolvedCategories.first(where: {
@@ -61,6 +64,7 @@ struct FullTaskEditorView: View {
             _endDate = State(initialValue: task.endDate ?? task.startDate ?? Date())
             _reminderEnabled = State(initialValue: task.reminderTime != nil)
             _reminderDate = State(initialValue: Self.date(for: task.reminderTime))
+            _dailyRepeat = State(initialValue: task.recurrence == .daily)
         }
     }
 
@@ -108,6 +112,12 @@ struct FullTaskEditorView: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
+                Toggle("每天重复", isOn: $dailyRepeat)
+                if dailyRepeat {
+                    Text("每天生成一条新任务；前一天未完成会自动记为放弃。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Toggle("在指定时间提醒", isOn: $reminderEnabled)
                 if reminderEnabled {
                     DatePicker(
@@ -148,6 +158,7 @@ struct FullTaskEditorView: View {
         .onChange(of: dateRangeEnabled) { _, enabled in
             if !enabled {
                 reminderEnabled = false
+                dailyRepeat = false
             } else if startDate > endDate {
                 endDate = startDate
             }
@@ -175,7 +186,8 @@ struct FullTaskEditorView: View {
             categoryID: categoryID,
             startDate: dateRangeEnabled ? startDate : nil,
             endDate: dateRangeEnabled ? endDate : nil,
-            reminderTime: dateRangeEnabled && reminderEnabled ? selectedReminderTime : nil
+            reminderTime: dateRangeEnabled && reminderEnabled ? selectedReminderTime : nil,
+            recurrence: dateRangeEnabled && dailyRepeat ? .daily : .once
         ))
         dismiss()
     }

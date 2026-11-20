@@ -216,14 +216,14 @@ struct MainWindowView: View {
             Divider()
             Button(action: openSettings) {
                 Label("设置…", systemImage: "gearshape")
-                    .font(.system(size: 12))
+                    .font(.system(size: 13, weight: .medium))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 16)
-            .padding(.vertical, 11)
+            .padding(.vertical, 13)
         }
     }
 
@@ -385,11 +385,13 @@ struct MainWindowView: View {
                 } label: {
                     Label("管理标签", systemImage: "tag")
                 }
+                .controlSize(.large)
                 Button {
                     editorRequest = MainEditorRequest(mode: .create)
                 } label: {
                     Label("新增任务", systemImage: "plus")
                 }
+                .controlSize(.large)
             }
             Button {
                 store.reload()
@@ -399,6 +401,7 @@ struct MainWindowView: View {
             } label: {
                 Label("刷新", systemImage: "arrow.clockwise")
             }
+            .controlSize(.large)
         }
     }
 
@@ -515,7 +518,8 @@ struct MainWindowView: View {
                 categoryID: input.categoryID,
                 startDate: input.startDate,
                 endDate: input.endDate,
-                reminderTime: input.reminderTime
+                reminderTime: input.reminderTime,
+                recurrence: input.recurrence
             )
         case let .edit(task):
             store.edit(
@@ -524,7 +528,8 @@ struct MainWindowView: View {
                 categoryID: input.categoryID,
                 startDate: input.startDate,
                 endDate: input.endDate,
-                reminderTime: input.reminderTime
+                reminderTime: input.reminderTime,
+                recurrence: input.recurrence
             )
         }
     }
@@ -560,7 +565,7 @@ struct SidebarNavigationRow: View {
         .font(.system(size: 13))
         .foregroundStyle(isSelected ? accent : Color.primary)
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 7)
@@ -604,11 +609,13 @@ private struct QuickAddBar: View {
             if !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Button("添加", action: add)
                     .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .controlSize(.regular)
             }
             Button(action: onDetails) {
                 Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 13))
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
@@ -647,7 +654,8 @@ private struct MainTaskRow: View {
         HStack(spacing: 12) {
             Button(action: toggle) {
                 statusIndicator
-                    .frame(width: 28, height: 28)
+                    .frame(width: 22, height: 22)
+                    .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -676,6 +684,11 @@ private struct MainTaskRow: View {
                     Text(TaskDateLabel.range(start: task.startDate, end: task.endDate))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if task.recurrence == .daily {
+                        Label("每天", systemImage: "repeat")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     if let overdue = TaskDateLabel.overdue(task) {
                         Label(overdue, systemImage: "exclamationmark.circle")
                             .font(.caption)
@@ -692,17 +705,23 @@ private struct MainTaskRow: View {
 
             Spacer(minLength: 8)
 
-            if isHovered, task.status == .pending {
+            if task.status == .pending {
                 Button(action: edit) {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 12))
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 34, height: 34)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(isHovered ? Color.primary.opacity(0.07) : Color.clear)
+                        )
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isHovered ? Color.primary : Color.secondary.opacity(0.65))
                 .help("编辑任务")
             }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 7)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2) {
@@ -739,7 +758,7 @@ private struct MainTaskRow: View {
                     .foregroundStyle(.white)
             }
         }
-        .frame(width: 18, height: 18)
+        .frame(width: 20, height: 20)
     }
 
     private var statusColor: Color {
@@ -815,6 +834,7 @@ private struct TrashView: View {
                     } label: {
                         Label("清空最近删除", systemImage: "trash")
                     }
+                    .controlSize(.large)
                 }
             }
         }
@@ -880,7 +900,7 @@ private struct TrashRow: View {
             Spacer(minLength: 8)
             Button("恢复", action: restore)
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.regular)
         }
         .padding(.vertical, 6)
         .contextMenu {

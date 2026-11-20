@@ -90,6 +90,16 @@ sealed interface CategoryInputResult {
     data object SaveFailed : CategoryInputResult
 }
 
+enum class TaskRecurrence(val rawValue: String) {
+    ONCE("once"),
+    DAILY("daily");
+
+    companion object {
+        fun fromRaw(value: String?): TaskRecurrence =
+            entries.firstOrNull { it.rawValue == value?.lowercase() } ?: ONCE
+    }
+}
+
 enum class TaskStatus(val rawValue: String) {
     PENDING("pending"),
     COMPLETED("completed"),
@@ -115,6 +125,7 @@ data class Task(
     val updatedAt: Long,
     val settledAt: Long?,
     val reminderTime: LocalTime? = null,
+    val recurrence: TaskRecurrence = TaskRecurrence.ONCE,
 )
 
 /** 本机恢复快照；任务已通过同步删除记录从其他设备移除。 */
@@ -130,4 +141,5 @@ data class TaskDraft(
     val endDate: LocalDate? = null,
     val reminderTime: LocalTime? = null,
     val sortOrder: Int? = null,
+    val recurrence: TaskRecurrence = TaskRecurrence.ONCE,
 )

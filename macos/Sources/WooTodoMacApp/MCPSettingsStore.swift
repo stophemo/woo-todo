@@ -24,18 +24,20 @@ final class MCPSettingsStore: ObservableObject {
         }
     }
 
-    static let defaultPort: UInt16 = 8_765
     private static let enabledDefaultsKey = "mcp.enabled.v1"
     private static let tokenDefaultsKey = "mcp.token.v1"
+    private static let portDefaultsKey = "mcp.port.v1"
+    private static let portRange: ClosedRange<UInt16> = 20_000...60_000
 
     @Published private(set) var isEnabled: Bool
     @Published private(set) var token: String
+    @Published private(set) var port: UInt16
     @Published private(set) var status: Status
 
     private let defaults: UserDefaults
     private let service: MCPTaskService
     private let allowsExternalServices: Bool
-    private let port: UInt16
+    private let allowsPortRotation: Bool
     private var server: MCPHTTPServer?
     private var generation = 0
 
@@ -44,12 +46,13 @@ final class MCPSettingsStore: ObservableObject {
         repository: TaskRepository,
         defaults: UserDefaults = .standard,
         allowsExternalServices: Bool = true,
-        port: UInt16 = MCPSettingsStore.defaultPort
+        port: UInt16? = nil
     ) {
         self.defaults = defaults
         self.service = MCPTaskService(store: store, repository: repository)
         self.allowsExternalServices = allowsExternalServices
-        self.port = port
+        self.allowsPortRotation = port == nil
+        self.port = port ?? Self.loadOrCreatePort(defaults: defaults)
         let enabled = defaults.bool(forKey: Self.enabledDefaultsKey)
         isEnabled = enabled
         token = Self.loadOrCreateToken(defaults: defaults)
@@ -129,7 +132,7 @@ final class MCPSettingsStore: ObservableObject {
         if !isEnabled { status = .disabled }
     }
 
-    private func startServer() {
+    private func startServer(attempt: Int = 0) {
         guard allowsExternalServices else {
             status = .failed("当前运行模式不允许开放本机 MCP 服务")
             return
@@ -156,12 +159,30 @@ final class MCPSettingsStore: ObservableObject {
                 } catch {
                     guard let self, self.generation == currentGeneration else { return }
                     self.server = nil
-                    self.status = .failed(error.localizedDescription)
+                    self.handleStartFailure(error, attempt: attempt)
                 }
             }
         } catch {
+            handleStartFailure(error, attempt: attempt)
+        }
+    }
+
+    private func handleStartFailure(_ error: Error, attempt: Int) {
+        if allowsPortRotation, attempt < 3 {
+            rotatePort()
+            startServer(attempt: attempt + 1)
+        } else {
             status = .failed(error.localizedDescription)
         }
+    }
+
+    private func rotatePort() {
+        var next = port
+        while next == port {
+            next = UInt16.random(in: Self.portRange)
+        }
+        port = next
+        defaults.set(Int(next), forKey: Self.portDefaultsKey)
     }
 
     private func stopServer() {
@@ -169,6 +190,18 @@ final class MCPSettingsStore: ObservableObject {
         server?.stop()
         server = nil
         if isEnabled { status = .starting }
+    }
+
+    private static func loadOrCreatePort(defaults: UserDefaults) -> UInt16 {
+        if let saved = defaults.object(forKey: portDefaultsKey) as? NSNumber {
+            let value = saved.uint16Value
+            if portRange.contains(value) {
+                return value
+            }
+        }
+        let value = UInt16.random(in: portRange)
+        defaults.set(Int(value), forKey: portDefaultsKey)
+        return value
     }
 
     private static func loadOrCreateToken(defaults: UserDefaults) -> String {

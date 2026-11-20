@@ -161,6 +161,12 @@ final class MCPTaskService {
                     "startDate": scheduleProperties["startDate"]!,
                     "endDate": scheduleProperties["endDate"]!,
                     "reminderTime": scheduleProperties["reminderTime"]!,
+                    "recurrence": [
+                        "type": "string",
+                        "enum": ["once", "daily"],
+                        "default": "once",
+                        "description": "重复方式；daily 表示每天生成一条新任务，必须设置起止日期。过期未完成的上一条会自动记为放弃",
+                    ],
                 ],
                 required: ["title"],
             ),
@@ -193,6 +199,11 @@ final class MCPTaskService {
                     "reminderTime": [
                         "type": ["string", "null"],
                         "description": "新提醒 HH:mm；空字符串或 null 清除提醒；省略则保持原提醒",
+                    ],
+                    "recurrence": [
+                        "type": "string",
+                        "enum": ["once", "daily"],
+                        "description": "重复方式；daily 每天生成一条新任务，必须保留起止日期；省略则保持原值",
                     ],
                 ],
                 required: ["taskId"],
@@ -410,6 +421,7 @@ final class MCPTaskService {
     // MARK: - 读取
 
     private func listTasks(_ arguments: [String: Any]) throws -> MCPToolResult {
+        store.settleRecurringTasks()
         let today = calendar.startOfDay(for: now())
         let categories = try normalizedCategories()
         let status = try listStatus(arguments)
@@ -475,6 +487,7 @@ final class MCPTaskService {
     }
 
     private func getTask(_ arguments: [String: Any]) throws -> MCPToolResult {
+        store.settleRecurringTasks()
         let id = try requiredUUID(arguments, "taskId")
         let today = calendar.startOfDay(for: now())
         let categories = try normalizedCategories()
@@ -545,6 +558,7 @@ final class MCPTaskService {
     }
 
     private func getStatistics(_ arguments: [String: Any]) throws -> MCPToolResult {
+        store.settleRecurringTasks()
         let historyLimit = try integerArgument(
             arguments,
             "historyLimit",
@@ -590,6 +604,10 @@ final class MCPTaskService {
     private func addTask(_ arguments: [String: Any]) throws -> MCPToolResult {
         let title = try requiredString(arguments, "title")
         let schedule = try scheduleArguments(arguments)
+        let recurrence = try recurrenceArgument(arguments, default: .once)
+        guard recurrence != .daily || schedule.startDate != nil else {
+            throw MCPToolError(message: "每天重复的任务必须设置起止日期")
+        }
         let categories = try normalizedCategories()
 
         // 先校验任务本身，避免校验失败时留下新建标签。
@@ -598,7 +616,8 @@ final class MCPTaskService {
             categoryID: TaskCategory.inboxID,
             startDate: schedule.startDate,
             endDate: schedule.endDate,
-            reminderTime: schedule.reminderTime
+            reminderTime: schedule.reminderTime,
+            recurrence: recurrence
         )
 
         let originalTag = try optionalString(arguments, "tag")
@@ -620,7 +639,8 @@ final class MCPTaskService {
             endDate: schedule.endDate,
             sortIndex: nextSortIndex(),
             createdAt: date,
-            reminderTime: schedule.reminderTime
+            reminderTime: schedule.reminderTime,
+            recurrence: recurrence
         )
         try repository.save(task)
         notifyChange()
@@ -649,7 +669,9 @@ final class MCPTaskService {
         }
 
         let keys = Set(arguments.keys)
-        guard keys.contains(where: { ["title", "tag", "startDate", "endDate", "reminderTime"].contains($0) }) else {
+        guard keys.contains(where: {
+            ["title", "tag", "startDate", "endDate", "reminderTime", "recurrence"].contains($0)
+        }) else {
             throw MCPToolError(message: "没有需要更新的字段")
         }
 
@@ -676,6 +698,12 @@ final class MCPTaskService {
             throw MCPToolError(message: "startDate 不能晚于 endDate")
         }
 
+        let recurrence = keys.contains("recurrence")
+            ? try recurrenceArgument(arguments, default: existing.recurrence)
+            : existing.recurrence
+        guard recurrence != .daily || schedule.startDate != nil else {
+            throw MCPToolError(message: "每天重复的任务必须设置起止日期")
+        }
         var reminder = existing.reminderTime
         if keys.contains("reminderTime") {
             if let value = try optionalString(arguments, "reminderTime") {
@@ -704,7 +732,8 @@ final class MCPTaskService {
             createdAt: existing.createdAt,
             updatedAt: now(),
             reminderTime: reminder,
-            completedAt: nil
+            completedAt: nil,
+            recurrence: recurrence
         )
 
         var categoryID = existing.categoryID
@@ -727,12 +756,14 @@ final class MCPTaskService {
             || existing.startDate != schedule.startDate
             || existing.endDate != schedule.endDate
             || existing.reminderTime != reminder
+            || existing.recurrence != recurrence
         let date = now()
         existing.title = title
         existing.categoryID = categoryID
         existing.startDate = schedule.startDate.map { calendar.startOfDay(for: $0) }
         existing.endDate = schedule.endDate.map { calendar.startOfDay(for: $0) }
         existing.reminderTime = existing.startDate == nil ? nil : reminder
+        existing.recurrence = recurrence
         if changed {
             existing.updatedAt = date
             try repository.save(existing)
@@ -1054,6 +1085,21 @@ final class MCPTaskService {
         return .pending
     }
 
+    private func recurrenceArgument(
+        _ arguments: [String: Any],
+        default defaultValue: TaskRecurrence
+    ) throws -> TaskRecurrence {
+        guard let raw = try optionalString(arguments, "recurrence") else {
+            return defaultValue
+        }
+        switch raw {
+        case "once": return .once
+        case "daily": return .daily
+        default:
+            throw MCPToolError(message: "recurrence 只能是 once/daily")
+        }
+    }
+
     private func scheduleArguments(
         _ arguments: [String: Any]
     ) throws -> (startDate: Date?, endDate: Date?, reminderTime: TaskReminderTime?) {
@@ -1110,6 +1156,7 @@ final class MCPTaskService {
             "title": task.title,
             "status": task.status.rawValue,
             "statusLabel": task.status.displayName,
+            "recurrence": task.recurrence.rawValue,
             "tag": TaskCategory.resolveName(id: task.categoryID, categories: categories),
             "tagId": task.categoryID,
             "startDate": task.startDate.map(dateString) ?? NSNull(),

@@ -132,7 +132,8 @@ public final class DashboardStore: ObservableObject {
         categoryID: String = TaskCategory.inboxID,
         startDate: Date? = nil,
         endDate: Date? = nil,
-        reminderTime: TaskReminderTime? = nil
+        reminderTime: TaskReminderTime? = nil,
+        recurrence: TaskRecurrence = .once
     ) {
         mutate {
             let date = now()
@@ -143,7 +144,8 @@ public final class DashboardStore: ObservableObject {
                 endDate: endDate,
                 sortIndex: nextSortIndex(),
                 createdAt: date,
-                reminderTime: reminderTime
+                reminderTime: reminderTime,
+                recurrence: recurrence
             )
             try repository.save(task)
         }
@@ -155,7 +157,8 @@ public final class DashboardStore: ObservableObject {
         categoryID: String,
         startDate: Date?,
         endDate: Date?,
-        reminderTime: TaskReminderTime?
+        reminderTime: TaskReminderTime?,
+        recurrence: TaskRecurrence = .once
     ) {
         guard allTasks.first(where: { $0.id == id })?.status == .pending else { return }
         mutate {
@@ -172,7 +175,8 @@ public final class DashboardStore: ObservableObject {
                 createdAt: existing.createdAt,
                 updatedAt: now(),
                 reminderTime: reminderTime,
-                completedAt: existing.completedAt
+                completedAt: existing.completedAt,
+                recurrence: recurrence
             )
             try repository.save(replacement)
         }

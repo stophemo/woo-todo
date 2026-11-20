@@ -6,7 +6,9 @@ import com.wootodo.domain.TaskCategories
 import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskDateState
+import com.wootodo.domain.RecurringTaskSettler
 import com.wootodo.domain.TaskDraft
+import com.wootodo.domain.TaskRecurrence
 import com.wootodo.domain.TaskStatus
 import com.wootodo.domain.TrashedTask
 import java.time.Clock
@@ -40,6 +42,9 @@ class TaskRepository(
     suspend fun create(draft: TaskDraft): String {
         val title = validateTitle(draft.title)
         val (start, end) = validateDates(draft.startDate, draft.endDate)
+        require(draft.recurrence != TaskRecurrence.DAILY || start != null) {
+            "每天重复的任务必须设置起止日期"
+        }
         val categoryId = resolveCategory(draft.categoryId)
         val now = clock.millis()
         val sortOrder = draft.sortOrder
@@ -59,6 +64,7 @@ class TaskRepository(
                 updatedAt = now,
                 settledAt = null,
                 reminderTime = draft.reminderTime.takeIf { start != null },
+                recurrence = draft.recurrence,
             ),
         )
         return id
@@ -69,6 +75,9 @@ class TaskRepository(
         if (current.status != TaskStatus.PENDING) return false
         val title = validateTitle(draft.title)
         val (start, end) = validateDates(draft.startDate, draft.endDate)
+        require(draft.recurrence != TaskRecurrence.DAILY || start != null) {
+            "每天重复的任务必须设置起止日期"
+        }
         val categoryId = resolveCategory(draft.categoryId)
         return store.update(
             current.copy(
@@ -79,8 +88,26 @@ class TaskRepository(
                 reminderTime = draft.reminderTime.takeIf { start != null },
                 sortOrder = draft.sortOrder ?: current.sortOrder,
                 updatedAt = clock.millis(),
+                recurrence = draft.recurrence,
             ),
         )
+    }
+
+    /** 结算每天重复任务：过期未完成的上一条记为放弃，并逐日补齐到今天。 */
+    suspend fun settleRecurringTasks(today: LocalDate = TaskDateRules.today()): Int {
+        val tasks = store.getAll()
+        val settlement = RecurringTaskSettler.settle(
+            tasks = tasks,
+            today = today,
+            now = clock.millis(),
+            deletedTaskIds = store.deletedTaskIds(),
+        )
+        if (settlement.isEmpty) return 0
+        store.applyRecurringSettlement(
+            settlement.updatedTasks,
+            settlement.createdTasks,
+        )
+        return settlement.updatedTasks.size + settlement.createdTasks.size
     }
 
     suspend fun delete(id: String): Boolean = store.deletePending(id, clock.millis())

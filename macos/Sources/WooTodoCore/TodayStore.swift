@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 public final class TodayStore: ObservableObject {
     @Published public private(set) var tasks: [TodoTask] = []
+    @Published public private(set) var upcomingTasks: [TodoTask] = []
     @Published public private(set) var categories: [TaskCategory] = TaskCategory.defaults
     @Published public private(set) var errorMessage: String?
 
@@ -21,12 +22,27 @@ public final class TodayStore: ObservableObject {
         perform {
             let date = now()
             categories = TaskCategory.normalizeList(try repository.fetchCategories())
-            tasks = try repository.fetchAll()
+            let allTasks = try repository.fetchAll()
+            tasks = allTasks
                 .filter {
                     TaskDateState.isRelevant($0, on: date) ||
                         TaskDateState.isSettled($0, on: date)
                 }
                 .sorted(by: dashboardOrder)
+            let today = TodoTask.protocolCalendar.startOfDay(for: date)
+            upcomingTasks = allTasks
+                .filter { task in
+                    task.status == .pending
+                        && task.startDate.map {
+                            TodoTask.protocolCalendar.startOfDay(for: $0) > today
+                        } == true
+                }
+                .sorted {
+                    let left = $0.startDate ?? .distantFuture
+                    let right = $1.startDate ?? .distantFuture
+                    if left != right { return left < right }
+                    return TodoTask.displayOrder($0, $1)
+                }
         }
     }
 
@@ -37,14 +53,16 @@ public final class TodayStore: ObservableObject {
         categoryID: String = TaskCategory.inboxID,
         startDate: Date? = nil,
         endDate: Date? = nil,
-        reminderTime: TaskReminderTime? = nil
+        reminderTime: TaskReminderTime? = nil,
+        recurrence: TaskRecurrence = .once
     ) -> Bool {
         addTask(
             title: title,
             categoryID: categoryID,
             startDate: startDate,
             endDate: endDate,
-            reminderTime: reminderTime
+            reminderTime: reminderTime,
+            recurrence: recurrence
         ) != nil
     }
 
@@ -55,7 +73,8 @@ public final class TodayStore: ObservableObject {
         categoryID: String = TaskCategory.inboxID,
         startDate: Date? = nil,
         endDate: Date? = nil,
-        reminderTime: TaskReminderTime? = nil
+        reminderTime: TaskReminderTime? = nil,
+        recurrence: TaskRecurrence = .once
     ) -> TodoTask? {
         var created: TodoTask?
         let didAdd = perform {
@@ -67,7 +86,8 @@ public final class TodayStore: ObservableObject {
                 endDate: endDate,
                 sortIndex: nextSortIndex(),
                 createdAt: date,
-                reminderTime: reminderTime
+                reminderTime: reminderTime,
+                recurrence: recurrence
             )
             try repository.save(task)
             created = task
@@ -85,7 +105,8 @@ public final class TodayStore: ObservableObject {
         categoryID: String,
         startDate: Date?,
         endDate: Date?,
-        reminderTime: TaskReminderTime?
+        reminderTime: TaskReminderTime?,
+        recurrence: TaskRecurrence = .once
     ) {
         guard tasks.first(where: { $0.id == id })?.status == .pending else { return }
         if perform({
@@ -102,7 +123,8 @@ public final class TodayStore: ObservableObject {
                 createdAt: existing.createdAt,
                 updatedAt: now(),
                 reminderTime: reminderTime,
-                completedAt: existing.completedAt
+                completedAt: existing.completedAt,
+                recurrence: recurrence
             )
             try repository.save(replacement)
             reload()
@@ -207,6 +229,35 @@ public final class TodayStore: ObservableObject {
             onTasksChanged?()
         }
         return normalized
+    }
+
+    /// 结算每天重复任务：过期未完成的上一条记为已放弃，并生成下一条。
+    /// 多次调用、跨设备调用都依赖确定性 occurrence id 保持幂等。
+    @discardableResult
+    public func settleRecurringTasks() -> Bool {
+        let date = now()
+        var didChange = false
+        let didSettle = perform {
+            let allTasks = try repository.fetchAll()
+            let deleted = try repository.deletedTaskIDs()
+            let settlement = RecurringTaskSettler.settle(
+                tasks: allTasks,
+                today: date,
+                now: date,
+                deletedTaskIDs: deleted
+            )
+            if !settlement.isEmpty {
+                try repository.save(
+                    settlement.updatedTasks + settlement.createdTasks
+                )
+                didChange = true
+            }
+            reload()
+        }
+        if didSettle, didChange {
+            onTasksChanged?()
+        }
+        return didChange
     }
 
     public func delete(id: UUID) {

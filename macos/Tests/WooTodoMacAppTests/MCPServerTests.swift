@@ -125,6 +125,43 @@ struct MCPServerTests {
         #expect(repository.categories.contains { $0.name == "工作" })
     }
 
+    @Test("add_task 和 update_task 支持每天重复")
+    func addAndUpdateDailyRecurrence() async throws {
+        let repository = MCPTestRepository()
+        let handler = makeHandler(repository: repository, now: { testNow })
+        let added = try await callTool(
+            "add_task",
+            arguments: [
+                "title": "铲屎",
+                "startDate": "2026-11-20",
+                "endDate": "2026-11-20",
+                "recurrence": "daily",
+            ],
+            handler: handler
+        )
+        let addedTask = try task(in: added)
+        #expect(addedTask["recurrence"] as? String == "daily")
+        let id = try #require(addedTask["id"] as? String)
+
+        let invalid = try await callTool(
+            "update_task",
+            arguments: [
+                "taskId": id,
+                "startDate": NSNull(),
+                "endDate": NSNull(),
+            ],
+            handler: handler
+        )
+        #expect(invalid.isError)
+
+        let updated = try await callTool(
+            "update_task",
+            arguments: ["taskId": id, "recurrence": "once"],
+            handler: handler
+        )
+        #expect(try task(in: updated)["recurrence"] as? String == "once")
+    }
+
     @Test("非法日期返回工具错误且不写入任务")
     func rejectsInvalidDate() async throws {
         let repository = MCPTestRepository()
@@ -193,6 +230,30 @@ struct MCPServerTests {
         settings.setEnabled(false)
         #expect(!settings.isEnabled)
         #expect(settings.status == .disabled)
+    }
+
+    @Test("MCP 默认使用持久化的五位随机端口")
+    func portIsPersisted() throws {
+        let suite = "io.github.stophemo.woo-todo.mcp-test.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let repository = MCPTestRepository()
+        let first = MCPSettingsStore(
+            store: TodayStore(repository: repository),
+            repository: repository,
+            defaults: defaults,
+            allowsExternalServices: false
+        )
+        let second = MCPSettingsStore(
+            store: TodayStore(repository: repository),
+            repository: repository,
+            defaults: defaults,
+            allowsExternalServices: false
+        )
+
+        #expect((10_000...65_535).contains(Int(first.port)))
+        #expect(first.port == second.port)
+        #expect(first.endpointURL.absoluteString.contains(":\(first.port)/mcp"))
     }
 
     @Test("常用 Agent 命令包含本机地址与令牌")

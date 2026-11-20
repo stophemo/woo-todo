@@ -182,8 +182,28 @@ class WooTodoApplication : Application() {
 
     private fun onRemoteTasksChanged() {
         taskStore.invalidateFromSync()
-        TodayWidgetUpdater.updateAllAsync(this)
-        TaskReminderScheduler.scheduleAllAsync(this)
+        applicationScope.launch {
+            val settled = runCatching {
+                taskRepository.settleRecurringTasks()
+            }.getOrDefault(0)
+            TodayWidgetUpdater.updateAll(this@WooTodoApplication)
+            TaskReminderScheduler.scheduleAll(this@WooTodoApplication)
+            if (settled > 0) notifyLocalMutation()
+        }
+    }
+
+    /** 日期变化或应用回到前台时结算每天重复任务。 */
+    fun settleRecurringTasksAsync() {
+        applicationScope.launch {
+            val settled = runCatching {
+                taskRepository.settleRecurringTasks()
+            }.getOrDefault(0)
+            if (settled > 0) {
+                TodayWidgetUpdater.updateAll(this@WooTodoApplication)
+                TaskReminderScheduler.scheduleAll(this@WooTodoApplication)
+                notifyLocalMutation()
+            }
+        }
     }
 
     private fun onRemoteDisplayConfigurationChanged(
@@ -447,6 +467,7 @@ class WooTodoApplication : Application() {
                 activeSyncBackend() != null
             }.getOrDefault(false)
             try {
+                taskRepository.settleRecurringTasks()
                 TodayWidgetUpdater.updateAll(this@WooTodoApplication)
                 TaskReminderScheduler.scheduleAll(this@WooTodoApplication)
             } finally {

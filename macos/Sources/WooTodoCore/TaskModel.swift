@@ -145,6 +145,19 @@ public enum TaskStatus: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// 任务重复规则。当前只支持每天生成一条新任务。
+public enum TaskRecurrence: String, Codable, CaseIterable, Sendable {
+    case once
+    case daily
+
+    public var displayName: String {
+        switch self {
+        case .once: "不重复"
+        case .daily: "每天"
+        }
+    }
+}
+
 public enum TaskValidationError: LocalizedError, Equatable {
     case emptyTitle
     case titleTooLong
@@ -153,6 +166,7 @@ public enum TaskValidationError: LocalizedError, Equatable {
     case categoryLimitReached
     case invalidReminderTime
     case invalidState
+    case invalidRecurrence
 
     public var errorDescription: String? {
         switch self {
@@ -163,6 +177,7 @@ public enum TaskValidationError: LocalizedError, Equatable {
         case .categoryLimitReached: "最多只能有 8 个标签，请先删除一个已有标签"
         case .invalidReminderTime: "提醒时间必须是 00:00 到 23:59，且任务需要有日期"
         case .invalidState: "任务状态与结算时间组合无效"
+        case .invalidRecurrence: "每天重复的任务必须设置起止日期"
         }
     }
 }
@@ -224,6 +239,7 @@ public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
     public var updatedAt: Date
     public var reminderTime: TaskReminderTime?
     public var completedAt: Date?
+    public var recurrence: TaskRecurrence
 
     public init(
         id: UUID = UUID(),
@@ -237,7 +253,8 @@ public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
         createdAt: Date = Date(),
         updatedAt: Date? = nil,
         reminderTime: TaskReminderTime? = nil,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        recurrence: TaskRecurrence = .once
     ) throws {
         let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedTitle.isEmpty else { throw TaskValidationError.emptyTitle }
@@ -259,6 +276,9 @@ public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
         if reminderTime != nil, normalizedStart == nil {
             throw TaskValidationError.invalidReminderTime
         }
+        if recurrence == .daily, normalizedStart == nil {
+            throw TaskValidationError.invalidRecurrence
+        }
         if status == .pending {
             guard completedAt == nil else { throw TaskValidationError.invalidState }
         } else {
@@ -277,6 +297,7 @@ public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
         self.updatedAt = updatedAt ?? createdAt
         self.reminderTime = normalizedStart == nil ? nil : reminderTime
         self.completedAt = completedAt
+        self.recurrence = recurrence
     }
 
     public static func displayOrder(_ lhs: TodoTask, _ rhs: TodoTask) -> Bool {

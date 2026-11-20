@@ -1,6 +1,7 @@
 package com.wootodo.data
 
 import com.wootodo.domain.Task
+import com.wootodo.domain.TaskRecurrence
 import com.wootodo.domain.TaskStatus
 import java.time.LocalDate
 import java.time.LocalTime
@@ -18,6 +19,7 @@ data class TaskEntity(
     val updatedAt: Long,
     val settledAt: Long?,
     val reminderTime: LocalTime? = null,
+    val recurrence: TaskRecurrence = TaskRecurrence.ONCE,
 )
 
 data class TrashedTaskEntity(
@@ -39,4 +41,5 @@ fun TaskEntity.toDomain(): Task =
         updatedAt = updatedAt,
         settledAt = settledAt,
         reminderTime = reminderTime,
+        recurrence = recurrence,
     )

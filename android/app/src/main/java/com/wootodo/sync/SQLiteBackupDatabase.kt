@@ -5,6 +5,7 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskEntity
+import com.wootodo.domain.TaskRecurrence
 import com.wootodo.domain.TaskStatus
 import java.time.LocalDate
 import java.time.LocalTime
@@ -218,7 +219,7 @@ private fun TaskEntity.toContentValues(): ContentValues = ContentValues(14).appl
     if (startDate == null) putNull("target_date") else put("target_date", startDate.toString())
     put("quest_line", categoryId)
     put("status", status.rawValue)
-    put("recurrence", "once")
+    put("recurrence", recurrence.rawValue)
     put("sort_order", sortOrder)
     put("created_at", createdAt)
     put("updated_at", updatedAt)
@@ -270,6 +271,7 @@ private fun Cursor.toTaskEntity(): TaskEntity {
         reminderTime = getColumnIndexOrThrow("reminder_time").let { index ->
             if (isNull(index) || effectiveStart == null) null else LocalTime.parse(getString(index))
         },
+        recurrence = TaskRecurrence.fromRaw(getString(getColumnIndexOrThrow("recurrence"))),
     )
 }
 

@@ -3,11 +3,13 @@ package com.wootodo.reminder
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.wootodo.WooTodoApplication
 import com.wootodo.widget.TodayWidgetUpdater
 
 class SystemScheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action !in SUPPORTED_ACTIONS) return
+        (context.applicationContext as? WooTodoApplication)?.settleRecurringTasksAsync()
         ReminderScheduler.schedule(context)
         TaskReminderScheduler.scheduleAllAsync(context)
         TodayWidgetUpdater.updateAllAsync(context)

@@ -279,6 +279,7 @@ class MainActivity : AppCompatActivity() {
         viewModel.refresh()
         renderDayCounter()
         refreshSyncTransportMode()
+        (application as WooTodoApplication).settleRecurringTasksAsync()
         (application as WooTodoApplication).notifyAppForegrounded()
     }
 

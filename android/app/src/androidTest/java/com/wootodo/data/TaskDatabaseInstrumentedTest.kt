@@ -5,7 +5,9 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteException
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.wootodo.domain.RecurringTaskSettler
 import com.wootodo.domain.TaskCategories
+import com.wootodo.domain.TaskRecurrence
 import com.wootodo.domain.TaskStatus
 import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
@@ -61,6 +63,47 @@ class TaskDatabaseInstrumentedTest {
         }
 
         assertEquals(task, store.getById(task.id))
+    }
+
+    @Test
+    fun `每日重复结算会写入放弃记录并生成新任务`() = runBlocking {
+        val store = SQLiteTaskStore(database)
+        val task = TaskEntity(
+            id = "task-daily-settlement",
+            seriesId = "series-daily-settlement",
+            title = "铲屎",
+            categoryId = TaskCategories.INBOX_ID,
+            startDate = LocalDate.of(2026, 11, 19),
+            endDate = LocalDate.of(2026, 11, 19),
+            status = TaskStatus.PENDING,
+            sortOrder = 0,
+            createdAt = 1_000,
+            updatedAt = 1_000,
+            settledAt = null,
+            recurrence = TaskRecurrence.DAILY,
+        )
+        store.insert(task)
+        val today = LocalDate.of(2026, 11, 20)
+        val settlement = RecurringTaskSettler.settle(
+            store.getAll(),
+            today,
+            5_000,
+        )
+        assertTrue(
+            store.applyRecurringSettlement(
+                settlement.updatedTasks,
+                settlement.createdTasks,
+            ),
+        )
+
+        val all = store.getAll()
+        assertEquals(2, all.size)
+        assertEquals(TaskStatus.PASS, all.first { it.id == task.id }.status)
+        val next = all.first { it.id != task.id }
+        assertEquals(today, next.startDate)
+        assertEquals(TaskRecurrence.DAILY, next.recurrence)
+        assertTrue(store.deletePending(next.id, 6_000))
+        assertTrue(next.id.lowercase() in store.deletedTaskIds())
     }
 
     @Test

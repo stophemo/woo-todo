@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import com.wootodo.domain.TaskCategory
+import com.wootodo.domain.TaskRecurrence
 import com.wootodo.domain.TaskStatus
 import com.wootodo.sync.SQLiteLocalMutationRecorder
 import com.wootodo.sync.SyncOperationKind
@@ -32,6 +33,13 @@ interface TaskStore {
     suspend fun replaceCategories(categories: List<TaskCategory>, updatedAt: Long)
 
     suspend fun getById(id: String): TaskEntity?
+
+    suspend fun deletedTaskIds(): Set<String> = emptySet()
+
+    suspend fun applyRecurringSettlement(
+        updated: List<TaskEntity>,
+        created: List<TaskEntity>,
+    ): Boolean = false
 
     suspend fun insert(task: TaskEntity)
 
@@ -151,6 +159,48 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         changed
     }
 
+    override suspend fun deletedTaskIds(): Set<String> = withContext(Dispatchers.IO) {
+        val sqlite = database.readableDatabase
+        buildSet {
+            sqlite.rawQuery(
+                "SELECT entity_id FROM sync_tombstones " +
+                    "UNION SELECT entity_id FROM sync_deferred_deletions",
+                null,
+            ).use { cursor ->
+                while (cursor.moveToNext()) add(cursor.getString(0).lowercase())
+            }
+        }
+    }
+
+    override suspend fun applyRecurringSettlement(
+        updated: List<TaskEntity>,
+        created: List<TaskEntity>,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (updated.isEmpty() && created.isEmpty()) return@withContext false
+        val sqlite = database.writableDatabase
+        sqlite.beginTransaction()
+        try {
+            updated.forEach { task ->
+                sqlite.update(
+                    TABLE_TASKS,
+                    task.toContentValues(),
+                    "id = ?",
+                    arrayOf(task.id),
+                )
+                SQLiteLocalMutationRecorder.recordTask(sqlite, task, SyncOperationKind.PASS)
+            }
+            created.forEach { task ->
+                sqlite.insertOrThrow(TABLE_TASKS, null, task.toContentValues())
+                SQLiteLocalMutationRecorder.recordTask(sqlite, task, SyncOperationKind.UPSERT)
+            }
+            sqlite.setTransactionSuccessful()
+        } finally {
+            sqlite.endTransaction()
+        }
+        invalidate()
+        true
+    }
+
     override suspend fun deletePending(id: String, deletedAt: Long): Boolean =
         withContext(Dispatchers.IO) {
             val sqlite = database.writableDatabase
@@ -202,6 +252,7 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
                     updatedAt = restoredAt,
                     settledAt = null,
                     reminderTime = trashed.task.reminderTime,
+                    recurrence = trashed.task.recurrence,
                 )
                 sqlite.insertOrThrow(TABLE_TASKS, null, restored.toContentValues())
                 SQLiteLocalMutationRecorder.recordTask(sqlite, restored, SyncOperationKind.UPSERT)
@@ -514,7 +565,7 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         if (startDate == null) putNull("target_date") else put("target_date", startDate.toString())
         put("quest_line", categoryId)
         put("status", status.rawValue)
-        put("recurrence", "once")
+        put("recurrence", recurrence.rawValue)
         put("sort_order", sortOrder)
         put("created_at", createdAt)
         put("updated_at", updatedAt)
@@ -572,6 +623,9 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
                     LocalTime.parse(getString(index))
                 }
             },
+            recurrence = TaskRecurrence.fromRaw(
+                getString(getColumnIndexOrThrow("recurrence")),
+            ),
         )
     }
 

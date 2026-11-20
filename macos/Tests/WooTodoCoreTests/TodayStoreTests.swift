@@ -26,6 +26,61 @@ struct TodayStoreTests {
         #expect(changeCount == 1)
     }
 
+    @Test("面板会结算每日重复任务并只回调一次")
+    func settlesDailyRecurringTasks() throws {
+        let now = date("2026-11-20T10:00:00+08:00")
+        let yesterday = date("2026-11-19T00:00:00+08:00")
+        let repository = TodayMemoryRepository(tasks: [
+            try TodoTask(
+                title: "铲屎",
+                categoryID: TaskCategory.inboxID,
+                startDate: yesterday,
+                endDate: yesterday,
+                createdAt: yesterday,
+                recurrence: .daily
+            ),
+        ])
+        let store = TodayStore(repository: repository, now: { now })
+        var changeCount = 0
+        store.onTasksChanged = { changeCount += 1 }
+        store.reload()
+
+        #expect(store.settleRecurringTasks())
+        #expect(repository.tasks.count == 2)
+        #expect(repository.tasks.filter { $0.status == .pass }.count == 1)
+        #expect(repository.tasks.filter { $0.status == .pending }.first?.startDate
+            == TodoTask.protocolCalendar.startOfDay(for: now))
+        #expect(changeCount == 1)
+        #expect(!store.settleRecurringTasks())
+        #expect(changeCount == 1)
+    }
+
+    @Test("未来的待办会进入小组件的接下来列表")
+    func futureTasksAreExposedSeparately() throws {
+        let now = date("2026-11-20T10:00:00+08:00")
+        let future = date("2026-11-22T00:00:00+08:00")
+        let repository = TodayMemoryRepository(tasks: [
+            try TodoTask(
+                title: "未来兼职",
+                categoryID: TaskCategory.inboxID,
+                startDate: future,
+                endDate: future,
+                createdAt: now
+            ),
+            try TodoTask(
+                title: "今天无日期",
+                categoryID: TaskCategory.inboxID,
+                createdAt: now
+            ),
+        ])
+        let store = TodayStore(repository: repository, now: { now })
+
+        store.reload()
+
+        #expect(store.tasks.map(\.title) == ["今天无日期"])
+        #expect(store.upcomingTasks.map(\.title) == ["未来兼职"])
+    }
+
     @Test("面板内删除类型会把待办归入未分类")
     func updateCategoriesReassignsRemovedCategory() throws {
         let now = date("2026-07-17T22:30:00+08:00")

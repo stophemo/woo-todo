@@ -11,7 +11,7 @@ struct TodayView: View {
         VStack(spacing: 0) {
             header
             progress
-            if store.tasks.isEmpty {
+            if store.tasks.isEmpty && store.upcomingTasks.isEmpty {
                 emptyState
             } else {
                 taskList
@@ -41,7 +41,8 @@ struct TodayView: View {
                     categoryID: input.categoryID,
                     startDate: input.startDate,
                     endDate: input.endDate,
-                    reminderTime: input.reminderTime
+                    reminderTime: input.reminderTime,
+                    recurrence: input.recurrence
                 )
             }
         }
@@ -57,7 +58,8 @@ struct TodayView: View {
                     categoryID: input.categoryID,
                     startDate: input.startDate,
                     endDate: input.endDate,
-                    reminderTime: input.reminderTime
+                    reminderTime: input.reminderTime,
+                    recurrence: input.recurrence
                 )
             }
         }
@@ -173,6 +175,40 @@ struct TodayView: View {
                                 delete: { store.delete(id: task.id) }
                             )
                         }
+                    }
+                }
+            }
+            if !store.upcomingTasks.isEmpty {
+                Section {
+                    HStack(spacing: 7) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 10))
+                        Text("接下来")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(WooTodoTheme.mutedOnDark)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: 18)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 9)
+                    .padding(.bottom, 2)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .accessibilityAddTraits(.isHeader)
+
+                    ForEach(store.upcomingTasks.prefix(8)) { task in
+                        TaskRow(
+                            task: task,
+                            toggle: { store.toggleCompletion(id: task.id) },
+                            pass: {
+                                if task.status == .pending {
+                                    store.pass(id: task.id)
+                                }
+                            },
+                            edit: { editingTask = task },
+                            delete: { store.delete(id: task.id) }
+                        )
                     }
                 }
             }
@@ -308,10 +344,12 @@ private struct TaskRow: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
         formatter.dateFormat = "M月d日"
-        if TodoTask.protocolCalendar.isDate(start, inSameDayAs: end) {
-            return formatter.string(from: start)
+        let range = if TodoTask.protocolCalendar.isDate(start, inSameDayAs: end) {
+            formatter.string(from: start)
+        } else {
+            "\(formatter.string(from: start))–\(formatter.string(from: end))"
         }
-        return "\(formatter.string(from: start))–\(formatter.string(from: end))"
+        return task.recurrence == .daily ? "\(range) · 每天" : range
     }
 
     private var overdueText: String {

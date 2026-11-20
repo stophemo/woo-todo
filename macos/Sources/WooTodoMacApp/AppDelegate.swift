@@ -259,21 +259,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.syncSettingsStore?.requestSync(.localChange)
                 self?.webDavSettingsStore?.requestSync(.localChange)
             }
+            dayCounterStore.onDateChanged = { [weak self] in
+                self?.todayStore?.settleRecurringTasks()
+                self?.mainWindowController?.reloadIfVisible()
+                self?.refreshTaskNotifications()
+            }
             if runtime.allowsExternalServices {
                 shortcutSettingsStore.start()
             }
             syncSettingsStore.onRemoteChanges = { [weak self] in
+                self?.todayStore?.settleRecurringTasks()
                 self?.todayStore?.reload()
                 self?.dayCounterStore?.reloadFromRepository()
                 self?.mainWindowController?.reloadIfVisible()
                 self?.refreshTaskNotifications()
             }
             syncSettingsStore.onLifecycleRefresh = { [weak self] in
+                self?.todayStore?.settleRecurringTasks()
                 self?.todayStore?.reload()
                 self?.mainWindowController?.reloadIfVisible()
                 self?.refreshTaskNotifications()
             }
             webDavSettingsStore.onRemoteChanges = { [weak self] in
+                self?.todayStore?.settleRecurringTasks()
                 self?.todayStore?.reload()
                 self?.dayCounterStore?.reloadFromRepository()
                 self?.mainWindowController?.reloadIfVisible()
@@ -298,6 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 syncSettingsStore?.resumeAfterFailedReplacement()
             }
             mcpSettingsStore.startIfNeeded()
+            store.settleRecurringTasks()
             if runtime.allowsExternalServices {
                 syncSettingsStore.start()
                 webDavSettingsStore.start()

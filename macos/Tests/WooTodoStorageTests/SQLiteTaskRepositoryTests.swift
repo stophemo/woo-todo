@@ -6,6 +6,36 @@ import WooTodoSync
 
 @Suite("SQLite 本地仓储")
 struct SQLiteTaskRepositoryTests {
+    @Test("每天重复任务可以持久化并随恢复保留")
+    func dailyRecurrenceRoundTrip() throws {
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let now = date("2026-11-20T12:00:00+08:00")
+        let task = try TodoTask(
+            title: "铲屎",
+            categoryID: TaskCategory.inboxID,
+            startDate: date("2026-11-20"),
+            endDate: date("2026-11-20"),
+            createdAt: now,
+            recurrence: .daily
+        )
+
+        try repository.save(task)
+        let stored = try #require(try repository.fetchAll().first)
+        #expect(stored.recurrence == .daily)
+
+        try repository.delete(id: task.id)
+        let trashed = try #require(try repository.fetchTrash().first)
+        #expect(trashed.task.recurrence == .daily)
+
+        let restoredID = try #require(
+            try repository.restoreTrash(id: task.id, at: now)
+        )
+        let restored = try #require(
+            try repository.fetchAll().first { $0.id == restoredID }
+        )
+        #expect(restored.recurrence == .daily)
+    }
+
     @Test("可以保存、更新和读取，已结算任务不可改写")
     func repositoryRoundTrip() throws {
         let repository = try SQLiteTaskRepository(path: ":memory:")

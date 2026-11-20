@@ -18,8 +18,8 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.wootodo.R
 import com.wootodo.domain.Task
-import com.wootodo.domain.TaskCategories
 import com.wootodo.domain.TaskStatus
+import com.wootodo.ui.TaskSectionKind
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -83,13 +83,13 @@ class TodayWidgetContractInstrumentedTest {
     }
 
     @Test
-    fun `分类标题可由RemoteViews安全应用`() {
-        TaskCategories.defaults.forEach { category ->
-            val view = TodayWidgetHeaderViews.create(context, category)
+    fun `日期分区标题可由RemoteViews安全应用`() {
+        TaskSectionKind.entries.forEach { kind ->
+            val view = TodayWidgetHeaderViews.create(context, kind)
                 .apply(context, FrameLayout(context))
 
             assertEquals(
-                category.name,
+                context.getString(kind.titleRes),
                 view.findViewById<TextView>(R.id.widget_group_title).text.toString(),
             )
         }

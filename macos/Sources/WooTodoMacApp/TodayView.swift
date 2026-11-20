@@ -133,60 +133,29 @@ struct TodayView: View {
     }
 
     private var taskList: some View {
-        let knownCategories = Set(store.categories.map(\.id))
-        let grouped = Dictionary(grouping: store.tasks) { task in
-            knownCategories.contains(task.categoryID)
-                ? task.categoryID
-                : TaskCategory.inboxID
+        let allTasks = store.tasks + store.upcomingTasks.filter { upcoming in
+            !store.tasks.contains(where: { $0.id == upcoming.id })
         }
+        let sections = TaskListPresenter.sections(
+            tasks: allTasks,
+            categories: store.categories,
+            on: store.referenceDate
+        )
         return List {
-            ForEach(store.categories.sorted(by: { $0.order < $1.order })) { category in
-                let tasks = (grouped[category.id] ?? []).sorted(by: rowOrder)
-                if !tasks.isEmpty {
-                    Section {
-                        HStack(spacing: 7) {
-                            Circle()
-                                .fill(WooTodoTheme.categoryColor(order: category.order))
-                                .frame(width: 7, height: 7)
-                            Text(category.name)
-                        }
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(WooTodoTheme.mutedOnDark)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(height: 18)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 9)
-                        .padding(.bottom, 2)
-                        .listRowInsets(EdgeInsets())
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                        .accessibilityAddTraits(.isHeader)
-
-                        ForEach(tasks) { task in
-                            TaskRow(
-                                task: task,
-                                toggle: { store.toggleCompletion(id: task.id) },
-                                pass: {
-                                    if task.status == .pending {
-                                        store.pass(id: task.id)
-                                    }
-                                },
-                                edit: { editingTask = task },
-                                delete: { store.delete(id: task.id) }
-                            )
-                        }
-                    }
-                }
-            }
-            if !store.upcomingTasks.isEmpty {
+            ForEach(sections) { section in
                 Section {
                     HStack(spacing: 7) {
-                        Image(systemName: "calendar")
-                            .font(.system(size: 10))
-                        Text("接下来")
+                        Image(systemName: sectionSymbol(section.kind))
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(section.kind.title)
+                        Spacer(minLength: 4)
+                        Text("\(section.tasks.count)")
+                            .monospacedDigit()
                     }
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(WooTodoTheme.mutedOnDark)
+                    .foregroundStyle(section.kind == .overdue
+                        ? WooTodoTheme.orange
+                        : WooTodoTheme.mutedOnDark)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: 18)
                     .padding(.horizontal, 16)
@@ -197,7 +166,7 @@ struct TodayView: View {
                     .listRowBackground(Color.clear)
                     .accessibilityAddTraits(.isHeader)
 
-                    ForEach(store.upcomingTasks.prefix(8)) { task in
+                    ForEach(section.tasks) { task in
                         TaskRow(
                             task: task,
                             toggle: { store.toggleCompletion(id: task.id) },
@@ -221,6 +190,16 @@ struct TodayView: View {
         .environment(\.defaultMinListHeaderHeight, 1)
     }
 
+    private func sectionSymbol(_ kind: TaskSectionKind) -> String {
+        switch kind {
+        case .overdue: "exclamationmark.circle"
+        case .today: "sun.max"
+        case .upcoming: "calendar"
+        case .unscheduled: "tray"
+        case .settledToday: "checkmark.circle"
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 10) {
             Spacer()
@@ -242,12 +221,6 @@ struct TodayView: View {
         .padding()
     }
 
-    private func rowOrder(_ lhs: TodoTask, _ rhs: TodoTask) -> Bool {
-        let lhsEnd = lhs.endDate ?? .distantFuture
-        let rhsEnd = rhs.endDate ?? .distantFuture
-        if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
-        return TodoTask.displayOrder(lhs, rhs)
-    }
 }
 
 private struct TaskRow: View {

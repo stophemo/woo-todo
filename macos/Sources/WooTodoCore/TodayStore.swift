@@ -5,6 +5,7 @@ import Foundation
 public final class TodayStore: ObservableObject {
     @Published public private(set) var tasks: [TodoTask] = []
     @Published public private(set) var upcomingTasks: [TodoTask] = []
+    @Published public private(set) var referenceDate = Date()
     @Published public private(set) var categories: [TaskCategory] = TaskCategory.defaults
     @Published public private(set) var errorMessage: String?
 
@@ -22,6 +23,7 @@ public final class TodayStore: ObservableObject {
         perform {
             let date = now()
             categories = TaskCategory.normalizeList(try repository.fetchCategories())
+            referenceDate = date
             let allTasks = try repository.fetchAll()
             tasks = allTasks
                 .filter {

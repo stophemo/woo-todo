@@ -11,9 +11,11 @@ import android.widget.RemoteViewsService
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.domain.Task
-import com.wootodo.domain.TaskCategories
-import com.wootodo.domain.TaskCategory
+import com.wootodo.domain.TaskDateRules
 import com.wootodo.domain.TaskStatus
+import com.wootodo.ui.TaskListPresenter
+import com.wootodo.ui.TaskListSection
+import com.wootodo.ui.TaskSectionKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
@@ -34,9 +36,14 @@ private class TodayWidgetFactory(
         items = try {
             runBlocking(Dispatchers.IO) {
                 val application = context.applicationContext as WooTodoApplication
-                val tasks = application.taskRepository.tasksForToday().take(MAX_VISIBLE_TASKS)
+                val tasks = application.taskRepository.allTasks()
                 val categories = application.taskRepository.allCategories()
-                TodayWidgetItems.from(tasks, categories)
+                val sections = TaskListPresenter.sections(
+                    tasks,
+                    categories,
+                    TaskDateRules.today(),
+                )
+                TodayWidgetItems.from(sections, MAX_VISIBLE_TASKS)
             }
         } catch (error: Exception) {
             Log.e(TAG, "读取今日任务失败", error)
@@ -51,7 +58,7 @@ private class TodayWidgetFactory(
     override fun getCount(): Int = items.size
 
     override fun getViewAt(position: Int): RemoteViews? = when (val item = items.getOrNull(position)) {
-        is TodayWidgetListItem.Header -> TodayWidgetHeaderViews.create(context, item.category)
+        is TodayWidgetListItem.Header -> TodayWidgetHeaderViews.create(context, item.kind)
         is TodayWidgetListItem.Row -> TodayWidgetRowViews.create(context, item.task)
         null -> null
     }
@@ -78,9 +85,9 @@ internal sealed interface TodayWidgetListItem {
     val stableId: Long
     val viewType: Int
 
-    data class Header(val category: TaskCategory) : TodayWidgetListItem {
+    data class Header(val kind: TaskSectionKind) : TodayWidgetListItem {
         override val stableId: Long =
-            Long.MIN_VALUE + (category.id.hashCode().toLong() and 0x7FFF_FFFFL)
+            Long.MIN_VALUE + (kind.name.hashCode().toLong() and 0x7FFF_FFFFL)
         override val viewType: Int = TODAY_WIDGET_VIEW_TYPE_HEADER
     }
 
@@ -92,24 +99,18 @@ internal sealed interface TodayWidgetListItem {
 
 internal object TodayWidgetItems {
     fun from(
-        tasks: List<Task>,
-        categories: List<TaskCategory> = TaskCategories.defaults,
-    ): List<TodayWidgetListItem> {
-        val normalized = TaskCategories.normalizeList(
-            categories.ifEmpty { TaskCategories.defaults },
-        )
-        val knownIds = normalized.mapTo(HashSet()) { it.id }
-        return buildList {
-            normalized.forEach { category ->
-                val group = tasks.filter { task ->
-                    val categoryId = task.categoryId.takeIf { it in knownIds }
-                        ?: TaskCategories.INBOX_ID
-                    categoryId == category.id
-                }
-                if (group.isNotEmpty()) {
-                    add(TodayWidgetListItem.Header(category))
-                    group.forEach { add(TodayWidgetListItem.Row(it)) }
-                }
+        sections: List<TaskListSection>,
+        maxRows: Int = Int.MAX_VALUE,
+    ): List<TodayWidgetListItem> = buildList {
+        var rows = 0
+        for (section in sections) {
+            if (rows >= maxRows) break
+            val visible = section.tasks.take(maxRows - rows)
+            if (visible.isEmpty()) continue
+            add(TodayWidgetListItem.Header(section.kind))
+            visible.forEach {
+                add(TodayWidgetListItem.Row(it))
+                rows += 1
             }
         }
     }
@@ -125,17 +126,11 @@ private fun stableTaskId(taskId: String): Long {
 }
 
 internal object TodayWidgetHeaderViews {
-    fun create(context: Context, category: TaskCategory): RemoteViews =
+    fun create(context: Context, kind: TaskSectionKind): RemoteViews =
         RemoteViews(context.packageName, R.layout.item_widget_header).apply {
-            setTextViewText(R.id.widget_group_title, category.name)
-            setImageViewResource(R.id.widget_group_marker, category.markerRes())
+            setTextViewText(R.id.widget_group_title, context.getString(kind.titleRes))
+            setImageViewResource(R.id.widget_group_marker, R.drawable.quest_marker)
         }
-
-    private fun TaskCategory.markerRes(): Int = when (order % 3) {
-        0 -> R.drawable.quest_marker
-        1 -> R.drawable.quest_marker_side
-        else -> R.drawable.quest_marker_extra
-    }
 }
 
 internal object TodayWidgetRowViews {

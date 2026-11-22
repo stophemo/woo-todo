@@ -29,12 +29,12 @@ struct TaskModelTests {
         }
     }
 
-    @Test("日期范围必须同时为空或同时有值且开始不晚于结束")
+    @Test("任务日期必填，结束日期可选且不能早于任务日期")
     func dateRangeValidation() throws {
-        #expect(throws: TaskValidationError.invalidDates) {
-            try TodoTask(title: "半开区间", categoryID: "main", startDate: Date())
-        }
         let start = date("2026-07-20")
+        #expect(throws: TaskValidationError.invalidDates) {
+            try TodoTask(title: "只有结束日期", categoryID: "main", endDate: start)
+        }
         #expect(throws: TaskValidationError.invalidDates) {
             try TodoTask(
                 title: "倒置范围",
@@ -43,13 +43,21 @@ struct TaskModelTests {
                 endDate: date("2026-07-19")
             )
         }
+        let singleDay = try TodoTask(
+            title: "单日任务",
+            categoryID: "main",
+            startDate: date("2026-07-20T18:00:00+08:00")
+        )
+        #expect(singleDay.startDate == start)
+        #expect(singleDay.endDate == start)
+
         let task = try TodoTask(
-            title: "合法范围",
+            title: "跨天任务",
             categoryID: "main",
             startDate: date("2026-07-20T18:00:00+08:00"),
             endDate: date("2026-07-25T03:00:00+08:00")
         )
-        #expect(task.startDate == date("2026-07-20"))
+        #expect(task.startDate == start)
         #expect(task.endDate == date("2026-07-25"))
     }
 

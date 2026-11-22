@@ -53,7 +53,7 @@ class TaskRepositoryTest {
     }
 
     @Test
-    fun `创建日期范围任务并拒绝开始晚于结束`() = runBlocking {
+    fun `任务日期必填且结束日期可选`() = runBlocking {
         val work = repository.addCategory("整理")!!
         val id = repository.create(
             TaskDraft(
@@ -69,6 +69,13 @@ class TaskRepositoryTest {
         assertEquals(date, task.startDate)
         assertEquals(date.plusDays(2), task.endDate)
 
+        val singleDay = repository.create(
+            TaskDraft(title = "单日任务", startDate = date),
+        )
+        val single = repository.get(singleDay)!!
+        assertEquals(date, single.startDate)
+        assertEquals(date, single.endDate)
+
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking {
                 repository.create(
@@ -77,6 +84,13 @@ class TaskRepositoryTest {
                         startDate = date.plusDays(1),
                         endDate = date,
                     ),
+                )
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                repository.create(
+                    TaskDraft(title = "只有结束日期", endDate = date),
                 )
             }
         }

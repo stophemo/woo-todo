@@ -279,13 +279,26 @@ struct MainWindowView: View {
                 )
             } else {
                 List {
-                    ForEach(allPendingSections, id: \.category.id) { section in
+                    ForEach(allPendingSections) { section in
                         Section {
                             ForEach(section.tasks) { task in
-                                taskRow(task, showCategory: false, categoryOrder: section.category.order)
+                                taskRow(
+                                    task,
+                                    showCategory: true,
+                                    categoryOrder: categoryOrder(for: task.categoryID)
+                                )
                             }
                         } header: {
-                            sectionHeader(section.category.name, order: section.category.order, count: section.tasks.count)
+                            HStack(spacing: 7) {
+                                Text(section.kind.title)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                Text("\(section.tasks.count)")
+                                    .font(.caption2)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.top, 8)
                         }
                     }
                 }
@@ -417,18 +430,12 @@ struct MainWindowView: View {
         }
     }
 
-    private var allPendingSections: [(category: TaskCategory, tasks: [TodoTask])] {
-        let knownIDs = Set(store.categories.map(\.id))
-        let pending = store.allTasks.filter { $0.status == .pending }
-        let grouped = Dictionary(grouping: pending) { task in
-            knownIDs.contains(task.categoryID) ? task.categoryID : TaskCategory.inboxID
-        }
-        return store.categories
-            .sorted { $0.order < $1.order }
-            .compactMap { category in
-                let tasks = (grouped[category.id] ?? []).sorted(by: TodoTask.displayOrder)
-                return tasks.isEmpty ? nil : (category, tasks)
-            }
+    private var allPendingSections: [TaskListSection] {
+        TaskListPresenter.sections(
+            tasks: store.allTasks.filter { $0.status == .pending },
+            categories: store.categories,
+            on: store.referenceDate
+        )
     }
 
     private var pendingCount: Int {
@@ -488,22 +495,6 @@ struct MainWindowView: View {
         case .trash:
             return "删除的任务会保留在本机，可随时恢复；恢复后会像新任务一样同步到其他设备。"
         }
-    }
-
-    private func sectionHeader(_ title: String, order: Int, count: Int) -> some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(WooTodoTheme.categoryColor(order: order))
-                .frame(width: 7, height: 7)
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text("\(count)")
-                .font(.caption2)
-                .monospacedDigit()
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.top, 8)
     }
 
     private func categoryOrder(for categoryID: String) -> Int? {
@@ -619,7 +610,7 @@ private struct QuickAddBar: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
-            .help("详细设置标签、时间与提醒")
+            .help("详细设置标签、日期与提醒")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

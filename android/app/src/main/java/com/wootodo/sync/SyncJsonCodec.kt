@@ -54,6 +54,47 @@ object SyncJsonCodec {
             .toString()
     }
 
+    fun encode(request: CreateJoinRequest): String {
+        requireBase64Bytes(request.publicKey, 32, "publicKey")
+        requireBase64Bytes(request.deviceToken, 32, "deviceToken")
+        val name = request.device.name.trim()
+        require(name.isNotEmpty() && name.length <= 80) { "设备名称无效" }
+        return JSONObject()
+            .put("publicKey", request.publicKey)
+            .put("deviceToken", request.deviceToken)
+            .put(
+                "device",
+                JSONObject()
+                    .put("name", name)
+                    .put("platform", request.device.platform.wireValue),
+            )
+            .toString()
+    }
+
+    fun encode(request: ResolveJoinRequest): String {
+        require(request.code.length == 6 && request.code.all(Char::isDigit)) {
+            "配对码必须是 6 位数字"
+        }
+        requireBase64Bytes(request.publicKey, 32, "publicKey")
+        return JSONObject()
+            .put("code", request.code)
+            .put("publicKey", request.publicKey)
+            .toString()
+    }
+
+    fun encode(request: JoinResultRequest): String {
+        requireBase64Bytes(request.joinSecret, 32, "joinSecret")
+        return JSONObject().put("joinSecret", request.joinSecret).toString()
+    }
+
+    fun encode(request: UpdateRelayRequest): String {
+        val uri = runCatching { java.net.URI(request.relayUrl.trim()) }.getOrNull()
+        require(uri != null && uri.scheme == "https" && !uri.host.isNullOrBlank()) {
+            "中继地址必须是 HTTPS 地址"
+        }
+        return JSONObject().put("relayUrl", request.relayUrl.trim().trimEnd('/')).toString()
+    }
+
     fun encode(request: SyncRequest): String {
         require(request.cursor >= 0)
         request.ack?.let { require(it in 0..request.cursor) }
@@ -87,6 +128,27 @@ object SyncJsonCodec {
 
     fun decodeResolveShortCodeData(source: String): ResolveShortCodeData =
         decodeSuccess(source, ::decodeResolveShortCodeDataObject)
+
+    fun decodeCreateJoinRequestData(source: String): CreateJoinRequestData =
+        decodeSuccess(source, ::decodeCreateJoinRequestDataObject)
+
+    fun decodeResolveJoinRequestData(source: String): ResolveJoinRequestData =
+        decodeSuccess(source, ::decodeResolveJoinRequestDataObject)
+
+    fun decodeJoinResultData(source: String): JoinResultData =
+        decodeSuccess(source, ::decodeJoinResultDataObject)
+
+    fun decodeCancelJoinData(source: String): CancelJoinData =
+        decodeSuccess(source, ::decodeCancelJoinDataObject)
+
+    fun decodeApproveJoinData(source: String): ApproveJoinData =
+        decodeSuccess(source, ::decodeApproveJoinDataObject)
+
+    fun decodeRelayConfigData(source: String): RelayConfigData =
+        decodeSuccess(source, ::decodeRelayConfigDataObject)
+
+    fun decodeUpdateRelayData(source: String): UpdateRelayData =
+        decodeSuccess(source, ::decodeUpdateRelayDataObject)
 
     fun decodeSyncData(source: String): SyncData = decodeSuccess(source, ::decodeSyncDataObject)
 
@@ -192,6 +254,120 @@ object SyncJsonCodec {
             },
             vaultId = value.string("vaultId"),
             expiresAt = value.nonNegativeLong("expiresAt"),
+        )
+    }
+
+    private fun decodeCreateJoinRequestDataObject(value: JSONObject): CreateJoinRequestData {
+        value.requireKeys(
+            setOf("joinRequestId", "joinSecret", "shortCode", "deviceId", "expiresAt", "serverTime"),
+        )
+        return CreateJoinRequestData(
+            joinRequestId = value.string("joinRequestId"),
+            joinSecret = value.string("joinSecret").also {
+                requireBase64Bytes(it, 32, "joinSecret")
+            },
+            shortCode = value.string("shortCode").also {
+                require(it.length == 6 && it.all(Char::isDigit)) { "shortCode 必须是 6 位数字" }
+            },
+            deviceId = value.string("deviceId"),
+            expiresAt = value.nonNegativeLong("expiresAt"),
+            serverTime = value.nonNegativeLong("serverTime"),
+        )
+    }
+
+    private fun decodeResolveJoinRequestDataObject(value: JSONObject): ResolveJoinRequestData {
+        value.requireKeys(
+            setOf(
+                "joinRequestId", "joinPublicKey", "deviceId", "device",
+                "approverPublicKey", "expiresAt", "serverTime",
+            ),
+        )
+        val device = value.objectValue("device").apply {
+            requireKeys(setOf("name", "platform"))
+        }
+        return ResolveJoinRequestData(
+            joinRequestId = value.string("joinRequestId"),
+            joinPublicKey = value.string("joinPublicKey").also {
+                requireBase64Bytes(it, 32, "joinPublicKey")
+            },
+            deviceId = value.string("deviceId"),
+            device = JoinDeviceRegistration(
+                name = device.string("name"),
+                platform = DevicePlatform.fromWire(device.string("platform")),
+            ),
+            approverPublicKey = value.string("approverPublicKey").also {
+                requireBase64Bytes(it, 32, "approverPublicKey")
+            },
+            expiresAt = value.nonNegativeLong("expiresAt"),
+            serverTime = value.nonNegativeLong("serverTime"),
+        )
+    }
+
+    private fun decodeJoinResultDataObject(value: JSONObject): JoinResultData {
+        value.requireKeys(
+            setOf("joinRequestId", "status", "deviceId", "expiresAt", "serverTime"),
+            setOf("vaultId", "approverPublicKey", "vaultKeyEnvelope"),
+        )
+        return JoinResultData(
+            joinRequestId = value.string("joinRequestId"),
+            status = JoinRequestStatus.fromWire(value.string("status")),
+            deviceId = value.string("deviceId"),
+            vaultId = value.nullableString("vaultId"),
+            approverPublicKey = value.nullableString("approverPublicKey")?.also {
+                requireBase64Bytes(it, 32, "approverPublicKey")
+            },
+            vaultKeyEnvelope = value.nullableObject("vaultKeyEnvelope")?.let(::decodeEnvelope),
+            expiresAt = value.nonNegativeLong("expiresAt"),
+            serverTime = value.nonNegativeLong("serverTime"),
+        )
+    }
+
+    private fun decodeCancelJoinDataObject(value: JSONObject): CancelJoinData {
+        value.requireKeys(setOf("joinRequestId", "status", "serverTime"))
+        return CancelJoinData(
+            joinRequestId = value.string("joinRequestId"),
+            status = value.string("status"),
+            serverTime = value.nonNegativeLong("serverTime"),
+        )
+    }
+
+    private fun decodeApproveJoinDataObject(value: JSONObject): ApproveJoinData {
+        value.requireKeys(setOf("joinRequestId", "status", "vaultId", "deviceId", "expiresAt"))
+        return ApproveJoinData(
+            joinRequestId = value.string("joinRequestId"),
+            status = value.string("status"),
+            vaultId = value.string("vaultId"),
+            deviceId = value.string("deviceId"),
+            expiresAt = value.nonNegativeLong("expiresAt"),
+        )
+    }
+
+    private fun decodeRelayConfigDataObject(value: JSONObject): RelayConfigData {
+        value.requireKeys(setOf("epoch", "relayUrl", "serverTime"))
+        val epoch = value.string("epoch")
+        require(epoch.length >= 32) { "relay epoch 长度无效" }
+        val relayUrl = value.string("relayUrl")
+        val uri = runCatching { java.net.URI(relayUrl) }.getOrNull()
+        require(uri != null && uri.scheme == "https" && !uri.host.isNullOrBlank()) {
+            "relayUrl 必须是 HTTPS 地址"
+        }
+        return RelayConfigData(
+            epoch = epoch,
+            relayUrl = relayUrl,
+            serverTime = value.nonNegativeLong("serverTime"),
+        )
+    }
+
+    private fun decodeUpdateRelayDataObject(value: JSONObject): UpdateRelayData {
+        value.requireKeys(setOf("relayUrl", "serverTime"))
+        val relayUrl = value.string("relayUrl")
+        val uri = runCatching { java.net.URI(relayUrl) }.getOrNull()
+        require(uri != null && uri.scheme == "https" && !uri.host.isNullOrBlank()) {
+            "relayUrl 必须是 HTTPS 地址"
+        }
+        return UpdateRelayData(
+            relayUrl = relayUrl,
+            serverTime = value.nonNegativeLong("serverTime"),
         )
     }
 

@@ -1794,7 +1794,10 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         for task: TodoTask,
         timeZone: TimeZone
     ) throws -> WireTaskPayload {
-        let ranged = task.startDate != nil && task.endDate != nil
+        let scheduled = task.startDate != nil
+        let hasDistinctEnd = task.endDate.map { end in
+            task.startDate.map { !TodoTask.protocolCalendar.isDate(end, inSameDayAs: $0) } ?? false
+        } ?? false
         let state: WireTaskState
         switch task.status {
         case .pending: state = .pending
@@ -1809,9 +1812,11 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             id: canonicalEntityID(task.id.uuidString),
             seriesId: canonicalEntityID(task.seriesID.uuidString),
             title: task.title,
-            timeType: ranged ? .day : .someday,
+            timeType: scheduled ? .day : .someday,
             periodStart: task.startDate.map { dateKey($0, timeZone: timeZone) },
-            deadlineDate: task.endDate.map { dateKey($0, timeZone: timeZone) },
+            deadlineDate: hasDistinctEnd
+                ? task.endDate.map { dateKey($0, timeZone: timeZone) }
+                : nil,
             timezone: timeZone.identifier,
             questLine: task.categoryID,
             state: state,
@@ -1819,7 +1824,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             sortOrder: Int64(task.sortIndex),
             createdAt: milliseconds(since1970: task.createdAt),
             updatedAt: milliseconds(since1970: task.updatedAt),
-            reminderTime: ranged ? task.reminderTime?.wireValue : nil,
+            reminderTime: scheduled ? task.reminderTime?.wireValue : nil,
             settledAt: settledAt
         )
     }

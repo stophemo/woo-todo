@@ -161,11 +161,15 @@ final class QuickAddModel: ObservableObject {
             if !dateRangeEnabled {
                 reminderEnabled = false
                 dailyRepeat = false
+                endDateEnabled = false
             }
             onLayoutChange?()
         }
     }
     @Published var startDate = Calendar.current.startOfDay(for: Date())
+    @Published var endDateEnabled = false {
+        didSet { onLayoutChange?() }
+    }
     @Published var endDate = Calendar.current.startOfDay(for: Date())
     @Published var reminderEnabled = false {
         didSet { onLayoutChange?() }
@@ -196,6 +200,7 @@ final class QuickAddModel: ObservableObject {
         errorMessage = nil
         isSchedulingExpanded = false
         dateRangeEnabled = false
+        endDateEnabled = false
         reminderEnabled = false
         dailyRepeat = false
         let today = Calendar.current.startOfDay(for: Date())
@@ -217,11 +222,11 @@ final class QuickAddModel: ObservableObject {
         let start = dateRangeEnabled
             ? Calendar.current.startOfDay(for: startDate)
             : nil
-        let end = dateRangeEnabled
+        let end = dateRangeEnabled && endDateEnabled
             ? Calendar.current.startOfDay(for: endDate)
             : nil
         if let start, let end, start > end {
-            errorMessage = "开始日期不能晚于结束日期"
+            errorMessage = "任务日期不能晚于结束日期"
             return
         }
         guard let categoryID = resolveCategoryID() else { return }
@@ -251,10 +256,13 @@ final class QuickAddModel: ObservableObject {
     }
 
     var schedulingSummary: String {
-        guard dateRangeEnabled else { return "时间与提醒" }
+        guard dateRangeEnabled else { return "日期与提醒" }
         let start = startDate.formatted(.dateTime.month().day())
-        let end = endDate.formatted(.dateTime.month().day())
-        var summary = start == end ? start : "\(start) – \(end)"
+        var summary = start
+        if endDateEnabled {
+            let end = endDate.formatted(.dateTime.month().day())
+            summary = "\(start) – \(end)"
+        }
         if reminderEnabled {
             summary += " · \(reminderDate.formatted(.dateTime.hour().minute()))"
         }
@@ -365,8 +373,8 @@ struct QuickAddView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help(model.isSchedulingExpanded ? "收起时间与提醒" : "展开时间与提醒")
-            .accessibilityLabel(model.isSchedulingExpanded ? "收起时间与提醒" : "展开时间与提醒")
+            .help(model.isSchedulingExpanded ? "收起日期与提醒" : "展开日期与提醒")
+            .accessibilityLabel(model.isSchedulingExpanded ? "收起日期与提醒" : "展开日期与提醒")
 
             if model.isSchedulingExpanded {
                 scheduleFields
@@ -382,19 +390,30 @@ struct QuickAddView: View {
             isTitleFocused = true
         }
         .onExitCommand(perform: model.cancel)
+        .onChange(of: model.startDate) { _, value in
+            if model.endDate < value { model.endDate = value }
+        }
+        .onChange(of: model.endDateEnabled) { _, enabled in
+            if enabled && model.endDate < model.startDate {
+                model.endDate = model.startDate
+            }
+        }
         .animation(.easeInOut(duration: 0.16), value: model.isSchedulingExpanded)
     }
 
     private var scheduleFields: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("设置起止时间", isOn: $model.dateRangeEnabled)
+            Toggle("设置任务日期", isOn: $model.dateRangeEnabled)
             if model.dateRangeEnabled {
-                DatePicker("开始日期", selection: $model.startDate, displayedComponents: .date)
-                DatePicker("结束日期", selection: $model.endDate, displayedComponents: .date)
-                if model.startDate > model.endDate {
-                    Text("开始日期不能晚于结束日期")
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                DatePicker("任务日期", selection: $model.startDate, displayedComponents: .date)
+                Toggle("设置结束日期", isOn: $model.endDateEnabled)
+                if model.endDateEnabled {
+                    DatePicker("结束日期", selection: $model.endDate, displayedComponents: .date)
+                    if model.startDate > model.endDate {
+                        Text("任务日期不能晚于结束日期")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
                 Toggle("每天重复", isOn: $model.dailyRepeat)
                 if model.dailyRepeat {
@@ -409,6 +428,9 @@ struct QuickAddView: View {
                         selection: $model.reminderDate,
                         displayedComponents: .hourAndMinute
                     )
+                    Text("提醒会在任务日期当天的这个时间触发。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

@@ -36,7 +36,7 @@ function configuredLimit(
   return parsed;
 }
 
-function requestSource(request: Request): string {
+export function requestSource(request: Request): string {
   const cloudflareAddress = request.headers.get("cf-connecting-ip")?.trim();
   if (cloudflareAddress) return cloudflareAddress.toLowerCase();
 
@@ -206,6 +206,60 @@ export async function assertVaultDeviceCapacity(
   `).bind(vaultId).first<{ active_devices: number }>();
   if ((row?.active_devices ?? 0) >= VAULT_QUOTAS.activeDevicesPerVault) {
     throw vaultDeviceLimitError();
+  }
+}
+
+export type PairingRateScope =
+  | "resolve_source"
+  | "resolve_service"
+  | "join_source"
+  | "join_service"
+  | "join_device"
+  | "code_device";
+
+export async function consumePairingRateLimit(
+  request: Request,
+  env: Env,
+  scope: PairingRateScope,
+  limit: number,
+  windowMs: number,
+  now: number,
+  subject?: string,
+): Promise<void> {
+  const rawSubject = scope.endsWith("_service")
+    ? "all"
+    : subject ?? requestSource(request);
+  const subjectHash = await hashCredential(
+    rawSubject,
+    "pairing-source",
+    env.TOKEN_PEPPER,
+  );
+  const start = windowStart(now, windowMs);
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+      DELETE FROM pairing_rate_windows WHERE window_ends_at <= ?
+    `).bind(now),
+    env.DB.prepare(`
+      INSERT INTO pairing_rate_windows(
+        scope, subject_hash, window_started_at, window_ends_at, request_count
+      ) VALUES (?, ?, ?, ?, 1)
+      ON CONFLICT(scope, subject_hash, window_started_at) DO UPDATE SET
+        request_count = pairing_rate_windows.request_count + 1
+      RETURNING request_count
+    `).bind(scope, subjectHash, start, start + windowMs),
+  ]);
+  const count = counterValue(results[1]);
+  if (count === undefined || count > limit) {
+    throw new ApiError(
+      429,
+      "PAIRING_RATE_LIMITED",
+      "配对尝试过于频繁，请稍后重试",
+      {
+        scope,
+        limit,
+        retryAfterSeconds: Math.max(1, Math.ceil((start + windowMs - now) / 1000)),
+      },
+    );
   }
 }
 

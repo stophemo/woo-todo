@@ -132,6 +132,117 @@ public struct ResolveShortCodeData: Codable, Equatable, Sendable {
     }
 }
 
+public struct CreateJoinRequest: Codable, Equatable, Sendable {
+    public let publicKey: String
+    public let deviceToken: String
+    public let device: JoinDeviceRegistration
+
+    public init(publicKey: String, deviceToken: String, device: JoinDeviceRegistration) {
+        self.publicKey = publicKey
+        self.deviceToken = deviceToken
+        self.device = device
+    }
+}
+
+public struct JoinDeviceRegistration: Codable, Equatable, Sendable {
+    public let name: String
+    public let platform: DevicePlatform
+
+    public init(name: String, platform: DevicePlatform) {
+        self.name = name
+        self.platform = platform
+    }
+}
+
+public struct CreateJoinRequestData: Codable, Equatable, Sendable {
+    public let joinRequestId: String
+    public let joinSecret: String
+    public let shortCode: String
+    public let deviceId: String
+    public let expiresAt: Int64
+    public let serverTime: Int64
+}
+
+public struct ResolveJoinRequest: Codable, Equatable, Sendable {
+    public let code: String
+    public let publicKey: String
+
+    public init(code: String, publicKey: String) {
+        self.code = code
+        self.publicKey = publicKey
+    }
+}
+
+public struct ResolveJoinRequestData: Codable, Equatable, Sendable {
+    public let joinRequestId: String
+    public let joinPublicKey: String
+    public let deviceId: String
+    public let device: JoinDeviceRegistration
+    public let approverPublicKey: String
+    public let expiresAt: Int64
+    public let serverTime: Int64
+}
+
+public enum JoinRequestStatus: String, Codable, Sendable {
+    case open
+    case resolved
+    case approved
+    case expired
+    case canceled
+}
+
+public struct JoinResultRequest: Codable, Equatable, Sendable {
+    public let joinSecret: String
+
+    public init(joinSecret: String) {
+        self.joinSecret = joinSecret
+    }
+}
+
+public struct JoinResultData: Codable, Equatable, Sendable {
+    public let joinRequestId: String
+    public let status: JoinRequestStatus
+    public let deviceId: String
+    public let vaultId: String?
+    public let approverPublicKey: String?
+    public let vaultKeyEnvelope: EncryptedEnvelope?
+    public let expiresAt: Int64
+    public let serverTime: Int64
+}
+
+public struct CancelJoinData: Codable, Equatable, Sendable {
+    public let joinRequestId: String
+    public let status: String
+    public let serverTime: Int64
+}
+
+public struct ApproveJoinData: Codable, Equatable, Sendable {
+    public let joinRequestId: String
+    public let status: String
+    public let vaultId: String
+    public let deviceId: String
+    public let expiresAt: Int64
+}
+
+public struct RelayConfigData: Codable, Equatable, Sendable {
+    public let epoch: String
+    public let relayUrl: String
+    public let serverTime: Int64
+}
+
+public struct UpdateRelayRequest: Codable, Equatable, Sendable {
+    public let relayUrl: String
+
+    public init(relayUrl: String) {
+        self.relayUrl = relayUrl
+    }
+}
+
+public struct UpdateRelayData: Codable, Equatable, Sendable {
+    public let relayUrl: String
+    public let serverTime: Int64
+}
+
 public struct PairingClaimRequest: Codable, Equatable, Sendable {
     public let pairingSecret: String
     public let deviceToken: String

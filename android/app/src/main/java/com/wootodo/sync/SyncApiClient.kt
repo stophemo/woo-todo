@@ -64,12 +64,100 @@ class SyncApiClient(
         SyncJsonCodec::decodeCreatePairingData,
     )
 
+    fun createPairingCode(
+        request: CreatePairingRequest,
+        credential: BearerCredential,
+    ): CreatePairingData = send(
+        "POST",
+        listOf("v1", "pairings", "code"),
+        SyncJsonCodec.encode(request),
+        credential,
+        SyncJsonCodec::decodeCreatePairingData,
+    )
+
     fun resolveShortCode(request: ResolveShortCodeRequest): ResolveShortCodeData = send(
         "POST",
         listOf("v1", "pairings", "resolve"),
         SyncJsonCodec.encode(request),
         null,
         SyncJsonCodec::decodeResolveShortCodeData,
+    )
+
+    fun createJoinRequest(request: CreateJoinRequest): CreateJoinRequestData = send(
+        "POST",
+        listOf("v1", "pairings", "join"),
+        SyncJsonCodec.encode(request),
+        null,
+        SyncJsonCodec::decodeCreateJoinRequestData,
+    )
+
+    fun resolveJoinRequest(
+        request: ResolveJoinRequest,
+        credential: BearerCredential,
+    ): ResolveJoinRequestData = send(
+        "POST",
+        listOf("v1", "pairings", "join", "resolve"),
+        SyncJsonCodec.encode(request),
+        credential,
+        SyncJsonCodec::decodeResolveJoinRequestData,
+    )
+
+    fun approveJoinRequest(
+        joinRequestId: String,
+        request: PairingConfirmRequest,
+        credential: BearerCredential,
+    ): ApproveJoinData = send(
+        "POST",
+        listOf("v1", "pairings", "join", joinRequestId, "approve"),
+        SyncJsonCodec.encode(request),
+        credential,
+        SyncJsonCodec::decodeApproveJoinData,
+    )
+
+    fun joinResult(joinRequestId: String, request: JoinResultRequest): JoinResultData = send(
+        "POST",
+        listOf("v1", "pairings", "join", joinRequestId, "result"),
+        SyncJsonCodec.encode(request),
+        null,
+        SyncJsonCodec::decodeJoinResultData,
+    )
+
+    fun cancelJoinRequest(
+        joinRequestId: String,
+        request: JoinResultRequest,
+    ): CancelJoinData = send(
+        "POST",
+        listOf("v1", "pairings", "join", joinRequestId, "cancel"),
+        SyncJsonCodec.encode(request),
+        null,
+        SyncJsonCodec::decodeCancelJoinData,
+    )
+
+    fun relayConfig(credential: BearerCredential): RelayConfigData = send(
+        "GET",
+        listOf("v1", "relay"),
+        null,
+        credential,
+        SyncJsonCodec::decodeRelayConfigData,
+    )
+
+    fun updateRelay(
+        request: UpdateRelayRequest,
+        credential: BearerCredential,
+    ): UpdateRelayData = send(
+        "PUT",
+        listOf("v1", "relay"),
+        SyncJsonCodec.encode(request),
+        credential,
+        SyncJsonCodec::decodeUpdateRelayData,
+    )
+
+    fun revokeCurrentDevice(credential: BearerCredential): RevokeDeviceData = send(
+        "POST",
+        listOf("v1", "devices", "current", "revoke"),
+        null,
+        credential,
+        SyncJsonCodec::decodeRevokeDeviceData,
     )
 
     fun pairingStatus(

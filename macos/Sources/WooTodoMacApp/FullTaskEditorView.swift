@@ -22,6 +22,7 @@ struct FullTaskEditorView: View {
     @State private var categoryError: String?
     @State private var dateRangeEnabled: Bool
     @State private var startDate: Date
+    @State private var endDateEnabled: Bool
     @State private var endDate: Date
     @State private var reminderEnabled: Bool
     @State private var reminderDate: Date
@@ -50,6 +51,7 @@ struct FullTaskEditorView: View {
             _categoryName = State(initialValue: "")
             _dateRangeEnabled = State(initialValue: false)
             _startDate = State(initialValue: Calendar.current.startOfDay(for: Date()))
+            _endDateEnabled = State(initialValue: false)
             _endDate = State(initialValue: Calendar.current.startOfDay(for: Date()))
             _reminderEnabled = State(initialValue: false)
             _reminderDate = State(initialValue: Self.defaultReminderDate)
@@ -59,8 +61,15 @@ struct FullTaskEditorView: View {
             _categoryName = State(initialValue: resolvedCategories.first(where: {
                 $0.id == task.categoryID && $0.id != TaskCategory.inboxID
             })?.name ?? "")
-            _dateRangeEnabled = State(initialValue: task.startDate != nil && task.endDate != nil)
+            _dateRangeEnabled = State(initialValue: task.startDate != nil)
             _startDate = State(initialValue: task.startDate ?? Date())
+            _endDateEnabled = State(initialValue: {
+                guard let start = task.startDate, let end = task.endDate else {
+                    return false
+                }
+                let calendar = TodoTask.protocolCalendar
+                return calendar.startOfDay(for: end) > calendar.startOfDay(for: start)
+            }())
             _endDate = State(initialValue: task.endDate ?? task.startDate ?? Date())
             _reminderEnabled = State(initialValue: task.reminderTime != nil)
             _reminderDate = State(initialValue: Self.date(for: task.reminderTime))
@@ -102,15 +111,18 @@ struct FullTaskEditorView: View {
                 }
             }
 
-            Toggle("设置时间范围", isOn: $dateRangeEnabled)
+            Toggle("设置任务日期", isOn: $dateRangeEnabled)
 
             if dateRangeEnabled {
-                DatePicker("开始日期", selection: $startDate, displayedComponents: .date)
-                DatePicker("结束日期", selection: $endDate, displayedComponents: .date)
-                if startDate > endDate {
-                    Text("开始日期不能晚于结束日期")
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                DatePicker("任务日期", selection: $startDate, displayedComponents: .date)
+                Toggle("设置结束日期", isOn: $endDateEnabled)
+                if endDateEnabled {
+                    DatePicker("结束日期", selection: $endDate, displayedComponents: .date)
+                    if startDate > endDate {
+                        Text("任务日期不能晚于结束日期")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
                 Toggle("每天重复", isOn: $dailyRepeat)
                 if dailyRepeat {
@@ -125,6 +137,9 @@ struct FullTaskEditorView: View {
                         selection: $reminderDate,
                         displayedComponents: .hourAndMinute
                     )
+                    Text("提醒会在任务日期当天的这个时间触发。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -134,7 +149,9 @@ struct FullTaskEditorView: View {
                     .keyboardShortcut(.cancelAction)
                 Button("保存", action: commit)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(normalizedTitle.isEmpty || (dateRangeEnabled && startDate > endDate))
+                    .disabled(normalizedTitle.isEmpty || (
+                        dateRangeEnabled && endDateEnabled && startDate > endDate
+                    ))
             }
         }
         .padding(22)
@@ -159,12 +176,18 @@ struct FullTaskEditorView: View {
             if !enabled {
                 reminderEnabled = false
                 dailyRepeat = false
-            } else if startDate > endDate {
+                endDateEnabled = false
+            } else if endDateEnabled && startDate > endDate {
                 endDate = startDate
             }
         }
         .onChange(of: startDate) { _, value in
             if endDate < value { endDate = value }
+        }
+        .onChange(of: endDateEnabled) { _, enabled in
+            if enabled && endDate < startDate {
+                endDate = startDate
+            }
         }
     }
 
@@ -179,13 +202,13 @@ struct FullTaskEditorView: View {
 
     private func commit() {
         guard !normalizedTitle.isEmpty else { return }
-        if dateRangeEnabled && startDate > endDate { return }
+        if dateRangeEnabled && endDateEnabled && startDate > endDate { return }
         guard let categoryID = resolvedCategoryID() else { return }
         save(FullTaskInput(
             title: normalizedTitle,
             categoryID: categoryID,
             startDate: dateRangeEnabled ? startDate : nil,
-            endDate: dateRangeEnabled ? endDate : nil,
+            endDate: dateRangeEnabled && endDateEnabled ? endDate : nil,
             reminderTime: dateRangeEnabled && reminderEnabled ? selectedReminderTime : nil,
             recurrence: dateRangeEnabled && dailyRepeat ? .daily : .once
         ))

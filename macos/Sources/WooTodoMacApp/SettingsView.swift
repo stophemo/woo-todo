@@ -3,6 +3,7 @@ import WooTodoCore
 
 enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
     case display
+    case reminders
     case shortcuts
     case sync
     case mcp
@@ -13,6 +14,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
     var title: String {
         switch self {
         case .display: "显示"
+        case .reminders: "提醒"
         case .shortcuts: "快捷键"
         case .sync: "同步"
         case .mcp: "MCP 服务"
@@ -23,6 +25,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
     var systemImage: String {
         switch self {
         case .display: "textformat"
+        case .reminders: "bell"
         case .shortcuts: "command"
         case .sync: "arrow.triangle.2.circlepath"
         case .mcp: "link"
@@ -44,6 +47,7 @@ struct SettingsView: View {
     @ObservedObject var syncSettingsStore: SyncSettingsStore
     @ObservedObject var webDavSettingsStore: WebDavSettingsStore
     @ObservedObject var dayCounterStore: DayCounterStore
+    @ObservedObject var dailyDigestSettingsStore: DailyDigestSettingsStore
     @ObservedObject var shortcutSettingsStore: ShortcutSettingsStore
     @ObservedObject var mcpSettingsStore: MCPSettingsStore
     let localDataManager: LocalDataManager
@@ -108,6 +112,8 @@ struct SettingsView: View {
         switch navigation.selection {
         case .display:
             DayCounterSettingsView(store: dayCounterStore)
+        case .reminders:
+            ReminderSettingsView(digestStore: dailyDigestSettingsStore)
         case .shortcuts:
             ShortcutSettingsView(store: shortcutSettingsStore)
         case .sync:

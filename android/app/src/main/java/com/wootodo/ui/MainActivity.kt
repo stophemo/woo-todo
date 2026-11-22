@@ -578,6 +578,16 @@ class MainActivity : AppCompatActivity() {
         }
         container.addView(enabledSwitch)
         container.addView(timePicker)
+        container.addView(
+            TextView(this).apply {
+                setText(R.string.reminder_settings_message)
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+                setPadding(0, padding / 2, 0, 0)
+                setTextColor(
+                    androidx.core.content.ContextCompat.getColor(context, R.color.muted),
+                )
+            },
+        )
 
         AlertDialog.Builder(this)
             .setTitle(R.string.reminder_settings_title)

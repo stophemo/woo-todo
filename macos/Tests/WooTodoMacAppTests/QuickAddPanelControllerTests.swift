@@ -39,7 +39,7 @@ struct QuickAddPanelControllerTests {
         #expect(task.reminderTime == nil)
     }
 
-    @Test("快速新增可设置起止日期和提醒")
+    @Test("快速新增可设置任务日期和提醒")
     func savesScheduleAndReminder() throws {
         let repository = QuickAddTestRepository()
         let model = QuickAddModel(store: TodayStore(repository: repository))
@@ -50,6 +50,7 @@ struct QuickAddPanelControllerTests {
         model.title = "准备发布"
         model.dateRangeEnabled = true
         model.startDate = start
+        model.endDateEnabled = true
         model.endDate = end
         model.reminderEnabled = true
         model.reminderDate = Calendar.current.date(
@@ -67,7 +68,25 @@ struct QuickAddPanelControllerTests {
         #expect(task.reminderTime == expectedReminder)
     }
 
-    @Test("展开时间与提醒会调整面板高度")
+    @Test("不设置结束日期时按单日任务保存")
+    func savesSingleDayTask() throws {
+        let repository = QuickAddTestRepository()
+        let model = QuickAddModel(store: TodayStore(repository: repository))
+        model.prepareForPresentation()
+        let start = date(2026, 11, 16)
+
+        model.title = "单日任务"
+        model.dateRangeEnabled = true
+        model.startDate = start
+        model.submit()
+
+        let task = try #require(repository.saved.first)
+        let day = TodoTask.protocolCalendar.startOfDay(for: start)
+        #expect(task.startDate == day)
+        #expect(task.endDate == day)
+    }
+
+    @Test("展开日期与提醒会调整面板高度")
     func schedulingSectionResizesPanel() async throws {
         let controller = QuickAddPanelController(
             store: TodayStore(repository: QuickAddTestRepository())
@@ -90,7 +109,7 @@ struct QuickAddPanelControllerTests {
         #expect(expandedHeight > collapsedHeight)
     }
 
-    @Test("展开时间与提醒会增加内容高度")
+    @Test("展开日期与提醒会增加内容高度")
     func schedulingSectionGrowsContent() throws {
         let repository = QuickAddTestRepository()
         let model = QuickAddModel(store: TodayStore(repository: repository))
@@ -109,7 +128,7 @@ struct QuickAddPanelControllerTests {
         #expect(expandedHeight > collapsedHeight)
     }
 
-    @Test("开始日期晚于结束日期时拒绝提交")
+    @Test("任务日期晚于结束日期时拒绝提交")
     func rejectsReversedSchedule() throws {
         let repository = QuickAddTestRepository()
         let model = QuickAddModel(store: TodayStore(repository: repository))
@@ -119,11 +138,12 @@ struct QuickAddPanelControllerTests {
         model.title = "准备发布"
         model.dateRangeEnabled = true
         model.startDate = start
+        model.endDateEnabled = true
         model.endDate = start.addingTimeInterval(-86_400)
         model.submit()
 
         #expect(repository.saved.isEmpty)
-        #expect(model.errorMessage == "开始日期不能晚于结束日期")
+        #expect(model.errorMessage == "任务日期不能晚于结束日期")
     }
 
     private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {

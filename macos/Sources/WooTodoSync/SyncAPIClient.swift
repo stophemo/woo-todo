@@ -110,7 +110,19 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
         )
     }
 
-    /// 同一局域网内的六位配对码解析；不携带设备认证，由 Mac 本机同步服务处理。
+    public func createPairingCode(
+        _ request: CreatePairingRequest,
+        deviceToken: String
+    ) async throws -> CreatePairingData {
+        try await send(
+            method: "POST",
+            path: ["v1", "pairings", "code"],
+            body: encode(request),
+            deviceToken: deviceToken
+        )
+    }
+
+    /// 六位配对码解析；不携带设备认证，由同步 Worker 处理。
     public func resolveShortCode(
         _ request: ResolveShortCodeRequest
     ) async throws -> ResolveShortCodeData {
@@ -119,6 +131,96 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
             path: ["v1", "pairings", "resolve"],
             body: encode(request),
             deviceToken: nil
+        )
+    }
+
+    public func createJoinRequest(
+        _ request: CreateJoinRequest
+    ) async throws -> CreateJoinRequestData {
+        try await send(
+            method: "POST",
+            path: ["v1", "pairings", "join"],
+            body: encode(request),
+            deviceToken: nil
+        )
+    }
+
+    public func resolveJoinRequest(
+        _ request: ResolveJoinRequest,
+        deviceToken: String
+    ) async throws -> ResolveJoinRequestData {
+        try await send(
+            method: "POST",
+            path: ["v1", "pairings", "join", "resolve"],
+            body: encode(request),
+            deviceToken: deviceToken
+        )
+    }
+
+    public func approveJoinRequest(
+        joinRequestId: String,
+        request: PairingConfirmRequest,
+        deviceToken: String
+    ) async throws -> ApproveJoinData {
+        try await send(
+            method: "POST",
+            path: ["v1", "pairings", "join", joinRequestId, "approve"],
+            body: encode(request),
+            deviceToken: deviceToken
+        )
+    }
+
+    public func joinResult(
+        joinRequestId: String,
+        request: JoinResultRequest
+    ) async throws -> JoinResultData {
+        try await send(
+            method: "POST",
+            path: ["v1", "pairings", "join", joinRequestId, "result"],
+            body: encode(request),
+            deviceToken: nil
+        )
+    }
+
+    public func cancelJoinRequest(
+        joinRequestId: String,
+        request: JoinResultRequest
+    ) async throws -> CancelJoinData {
+        try await send(
+            method: "POST",
+            path: ["v1", "pairings", "join", joinRequestId, "cancel"],
+            body: encode(request),
+            deviceToken: nil
+        )
+    }
+
+    public func relayConfig(deviceToken: String) async throws -> RelayConfigData {
+        try await send(
+            method: "GET",
+            path: ["v1", "relay"],
+            body: nil,
+            deviceToken: deviceToken
+        )
+    }
+
+    public func updateRelay(
+        _ request: UpdateRelayRequest,
+        deviceToken: String
+    ) async throws -> UpdateRelayData {
+        try await send(
+            method: "PUT",
+            path: ["v1", "relay"],
+            body: encode(request),
+            deviceToken: deviceToken
+        )
+    }
+
+    public func revokeCurrentDevice(deviceToken: String) async throws -> RevokeDeviceData {
+        try await send(
+            method: "POST",
+            path: ["v1", "devices", "current", "revoke"],
+            body: nil,
+            deviceToken: deviceToken
         )
     }
 

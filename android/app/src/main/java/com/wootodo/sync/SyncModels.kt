@@ -88,6 +88,95 @@ data class ResolveShortCodeData(
     val expiresAt: Long,
 )
 
+data class CreateJoinRequest(
+    val publicKey: String,
+    val deviceToken: String,
+    val device: JoinDeviceRegistration,
+)
+
+data class JoinDeviceRegistration(
+    val name: String,
+    val platform: DevicePlatform,
+)
+
+data class CreateJoinRequestData(
+    val joinRequestId: String,
+    val joinSecret: String,
+    val shortCode: String,
+    val deviceId: String,
+    val expiresAt: Long,
+    val serverTime: Long,
+)
+
+data class ResolveJoinRequest(
+    val code: String,
+    val publicKey: String,
+)
+
+data class ResolveJoinRequestData(
+    val joinRequestId: String,
+    val joinPublicKey: String,
+    val deviceId: String,
+    val device: JoinDeviceRegistration,
+    val approverPublicKey: String,
+    val expiresAt: Long,
+    val serverTime: Long,
+)
+
+data class JoinResultRequest(val joinSecret: String)
+
+enum class JoinRequestStatus(val value: String) {
+    OPEN("open"),
+    RESOLVED("resolved"),
+    APPROVED("approved"),
+    EXPIRED("expired"),
+    CANCELED("canceled");
+
+    companion object {
+        fun fromWire(value: String): JoinRequestStatus =
+            entries.firstOrNull { it.value == value }
+                ?: throw IllegalArgumentException("未知 pairing join 状态：$value")
+    }
+}
+
+data class JoinResultData(
+    val joinRequestId: String,
+    val status: JoinRequestStatus,
+    val deviceId: String,
+    val vaultId: String?,
+    val approverPublicKey: String?,
+    val vaultKeyEnvelope: EncryptedEnvelope?,
+    val expiresAt: Long,
+    val serverTime: Long,
+)
+
+data class CancelJoinData(
+    val joinRequestId: String,
+    val status: String,
+    val serverTime: Long,
+)
+
+data class ApproveJoinData(
+    val joinRequestId: String,
+    val status: String,
+    val vaultId: String,
+    val deviceId: String,
+    val expiresAt: Long,
+)
+
+data class RelayConfigData(
+    val epoch: String,
+    val relayUrl: String,
+    val serverTime: Long,
+)
+
+data class UpdateRelayRequest(val relayUrl: String)
+
+data class UpdateRelayData(
+    val relayUrl: String,
+    val serverTime: Long,
+)
+
 data class PairingClaimRequest(
     val pairingSecret: String,
     val deviceToken: String,

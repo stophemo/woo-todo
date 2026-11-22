@@ -1,4 +1,9 @@
-import { hashCredential, randomSecret } from "./crypto.ts";
+import {
+  deriveShortPairingSecret,
+  hashCredential,
+  randomSecret,
+  randomShortCode,
+} from "./crypto.ts";
 import { vaultCapacityReachedError } from "./capacity.ts";
 import {
   type AuthenticatedDevice,
@@ -16,17 +21,23 @@ import {
   paginateOperations,
   type PairingStatus,
   type Platform,
+  parseCreateJoinRequest,
   parseCreatePairingRequest,
   parseCreateVaultRequest,
+  parseJoinSecretRequest,
   parsePairingClaimRequest,
   parsePairingConfirmRequest,
   parsePairingResultRequest,
+  parseRelayUpdateRequest,
+  parseResolveJoinRequest,
+  parseShortCodeRequest,
   parseSyncRequest,
   ProtocolValidationError,
   validateIdentifier,
 } from "./protocol.ts";
 import {
   assertVaultDeviceCapacity,
+  consumePairingRateLimit,
   consumeVaultCreationQuota,
   vaultDeviceLimitError,
 } from "./quota.ts";
@@ -58,6 +69,32 @@ interface PairingRow {
   expires_at: number;
   claimed_at: number | null;
   confirmed_at: number | null;
+}
+
+interface JoinRequestRow {
+  id: string;
+  short_code_hash: string | null;
+  join_secret_hash: string;
+  join_public_key: string;
+  device_id: string;
+  device_name: string;
+  device_platform: Platform;
+  device_token_hash: string;
+  status: "OPEN" | "RESOLVED" | "APPROVED" | "EXPIRED" | "CANCELED";
+  approver_device_id: string | null;
+  approver_public_key: string | null;
+  vault_id: string | null;
+  confirmed_ciphertext: string | null;
+  confirmed_nonce: string | null;
+  created_at: number;
+  expires_at: number;
+  resolved_at: number | null;
+  approved_at: number | null;
+}
+
+interface RelayRow {
+  relay_epoch: string;
+  relay_url: string;
 }
 
 interface ChangeRow {
@@ -106,7 +143,7 @@ async function markPairingExpired(
 ): Promise<void> {
   await env.DB.prepare(`
     UPDATE pairing_sessions
-    SET status = 'EXPIRED'
+    SET status = 'EXPIRED', short_code_hash = NULL
     WHERE id = ?
       AND status IN ('OPEN', 'CLAIMED', 'CONFIRMED')
       AND expires_at <= ?
@@ -135,7 +172,8 @@ async function handleHealth(env: Env, requestId: string): Promise<Response> {
     SELECT COUNT(*) AS required_objects
     FROM sqlite_master
     WHERE (type = 'table' AND name IN (
-         'vaults', 'vault_creation_windows', 'vault_usage'
+         'vaults', 'vault_creation_windows', 'vault_usage',
+         'pairing_join_requests', 'pairing_rate_windows'
        ))
        OR (type = 'trigger' AND name IN (
          'reject_change_log_op_id_conflict',
@@ -147,7 +185,7 @@ async function handleHealth(env: Env, requestId: string): Promise<Response> {
          'track_change_log_delete'
        ))
   `).first<{ required_objects: number }>();
-  if (result?.required_objects !== 10) {
+  if (result?.required_objects !== 12) {
     throw new ApiError(503, "DATABASE_UNAVAILABLE", "D1 健康检查未通过");
   }
   const missingUsage = await env.DB.prepare(`
@@ -286,6 +324,544 @@ async function handleCreatePairing(
   );
 }
 
+async function allocateShortCode(
+  env: Env,
+): Promise<{ code: string; hash: string }> {
+  const pepper = requireTokenPepper(env);
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE pairing_sessions
+      SET short_code_hash = NULL
+      WHERE short_code_hash IS NOT NULL AND expires_at <= ?
+    `).bind(now),
+    env.DB.prepare(`
+      UPDATE pairing_join_requests
+      SET short_code_hash = NULL
+      WHERE short_code_hash IS NOT NULL AND expires_at <= ?
+    `).bind(now),
+  ]);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = randomShortCode();
+    const hash = await hashCredential(code, "pairing-code", pepper);
+    const existing = await env.DB.prepare(`
+      SELECT 1 AS found FROM pairing_sessions WHERE short_code_hash = ?
+      UNION ALL
+      SELECT 1 AS found FROM pairing_join_requests WHERE short_code_hash = ?
+      LIMIT 1
+    `).bind(hash, hash).first<{ found: number }>();
+    if (!existing) return { code, hash };
+  }
+  throw new ApiError(
+    503,
+    "PAIRING_CODE_UNAVAILABLE",
+    "暂时无法分配配对码，请稍后重试",
+  );
+}
+
+async function handleCreatePairingCode(
+  request: Request,
+  env: Env,
+  requestId: string,
+  device: AuthenticatedDevice,
+): Promise<Response> {
+  const input = parseProtocol(
+    parseCreatePairingRequest,
+    await readJsonBody(request),
+  );
+  const now = Date.now();
+  await consumePairingRateLimit(request, env, "code_device", 10, 60_000, now, device.id);
+  const active = await env.DB.prepare(`
+    SELECT COUNT(*) AS count FROM pairing_sessions
+    WHERE vault_id = ?
+      AND short_code_hash IS NOT NULL
+      AND status IN ('OPEN', 'CLAIMED')
+      AND expires_at > ?
+  `).bind(device.vaultId, now).first<{ count: number }>();
+  if ((active?.count ?? 0) >= LIMITS.maximumActivePairingCodes) {
+    throw new ApiError(
+      429,
+      "PAIRING_CODE_LIMIT",
+      "当前配对码过多，请等待已有配对码过期",
+    );
+  }
+
+  const pairingId = crypto.randomUUID();
+  const { code, hash: shortCodeHash } = await allocateShortCode(env);
+  const pairingSecret = await deriveShortPairingSecret(
+    pairingId,
+    code,
+    requireTokenPepper(env),
+  );
+  const secretHash = await hashCredential(
+    pairingSecret,
+    "pairing-secret",
+    requireTokenPepper(env),
+  );
+  const expiresAt = now + LIMITS.shortCodeLifetimeMs;
+  await env.DB.prepare(`
+    INSERT INTO pairing_sessions(
+      id, vault_id, initiator_device_id, secret_hash, initiator_public_key,
+      short_code_hash, status, created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)
+  `).bind(
+    pairingId,
+    device.vaultId,
+    device.id,
+    secretHash,
+    input.publicKey,
+    shortCodeHash,
+    now,
+    expiresAt,
+  ).run();
+
+  return jsonResponse({
+    pairingId,
+    pairingSecret,
+    initiatorPublicKey: input.publicKey,
+    expiresAt,
+    serverTime: now,
+    shortCode: code,
+  }, requestId, 201);
+}
+
+async function handleResolvePairingCode(
+  request: Request,
+  env: Env,
+  requestId: string,
+): Promise<Response> {
+  const input = parseProtocol(
+    parseShortCodeRequest,
+    await readJsonBody(request),
+  );
+  const now = Date.now();
+  await consumePairingRateLimit(request, env, "resolve_source", 10, 60_000, now);
+  await consumePairingRateLimit(request, env, "resolve_service", 60, 60_000, now);
+  const shortCodeHash = await hashCredential(
+    input.code,
+    "pairing-code",
+    requireTokenPepper(env),
+  );
+  const row = await env.DB.prepare(`
+    SELECT * FROM pairing_sessions
+    WHERE short_code_hash = ?
+      AND status IN ('OPEN', 'CLAIMED')
+      AND expires_at > ?
+    LIMIT 1
+  `).bind(shortCodeHash, now).first<PairingRow>();
+  if (!row) {
+    throw new ApiError(404, "PAIRING_NOT_FOUND", "配对码无效或已过期");
+  }
+  const pairingSecret = await deriveShortPairingSecret(
+    row.id,
+    input.code,
+    requireTokenPepper(env),
+  );
+  return jsonResponse({
+    pairingId: row.id,
+    pairingSecret,
+    initiatorPublicKey: row.initiator_public_key,
+    vaultId: row.vault_id,
+    expiresAt: row.expires_at,
+    serverTime: now,
+  }, requestId);
+}
+
+async function handleCreateJoinRequest(
+  request: Request,
+  env: Env,
+  requestId: string,
+): Promise<Response> {
+  const input = parseProtocol(
+    parseCreateJoinRequest,
+    await readJsonBody(request),
+  );
+  const now = Date.now();
+  await consumePairingRateLimit(request, env, "join_source", 5, 60_000, now);
+  await consumePairingRateLimit(request, env, "join_service", 200, 86_400_000, now);
+  const pepper = requireTokenPepper(env);
+  const joinSecret = randomSecret();
+  const tokenHash = await hashCredential(input.deviceToken, "device-token", pepper);
+  const joinSecretHash = await hashCredential(joinSecret, "join-secret", pepper);
+  const conflict = await env.DB.prepare(`
+    SELECT 1 AS found FROM devices WHERE token_hash = ?
+    UNION ALL
+    SELECT 1 AS found FROM pairing_sessions WHERE claimed_token_hash = ?
+    UNION ALL
+    SELECT 1 AS found FROM pairing_join_requests WHERE device_token_hash = ?
+    LIMIT 1
+  `).bind(tokenHash, tokenHash, tokenHash).first<{ found: number }>();
+  if (conflict) {
+    throw new ApiError(409, "DEVICE_TOKEN_IN_USE", "新设备令牌已被使用，请重新生成");
+  }
+
+  const joinRequestId = crypto.randomUUID();
+  const deviceId = crypto.randomUUID();
+  const { code, hash: shortCodeHash } = await allocateShortCode(env);
+  const expiresAt = now + LIMITS.shortCodeLifetimeMs;
+  await env.DB.prepare(`
+    INSERT INTO pairing_join_requests(
+      id, short_code_hash, join_secret_hash, join_public_key, device_id,
+      device_name, device_platform, device_token_hash, status,
+      created_at, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)
+  `).bind(
+    joinRequestId,
+    shortCodeHash,
+    joinSecretHash,
+    input.publicKey,
+    deviceId,
+    input.device.name,
+    input.device.platform,
+    tokenHash,
+    now,
+    expiresAt,
+  ).run();
+
+  return jsonResponse({
+    joinRequestId,
+    joinSecret,
+    shortCode: code,
+    deviceId,
+    expiresAt,
+    serverTime: now,
+  }, requestId, 201);
+}
+
+async function handleResolveJoinRequest(
+  request: Request,
+  env: Env,
+  requestId: string,
+  device: AuthenticatedDevice,
+): Promise<Response> {
+  const input = parseProtocol(
+    parseResolveJoinRequest,
+    await readJsonBody(request),
+  );
+  const now = Date.now();
+  await consumePairingRateLimit(request, env, "join_device", 10, 60_000, now, device.id);
+  const shortCodeHash = await hashCredential(
+    input.code,
+    "pairing-code",
+    requireTokenPepper(env),
+  );
+  const row = await env.DB.prepare(`
+    SELECT * FROM pairing_join_requests
+    WHERE short_code_hash = ?
+      AND status = 'OPEN'
+      AND expires_at > ?
+    LIMIT 1
+  `).bind(shortCodeHash, now).first<JoinRequestRow>();
+  if (!row) {
+    throw new ApiError(404, "PAIRING_NOT_FOUND", "配对码无效或已过期");
+  }
+  const result = await env.DB.prepare(`
+    UPDATE pairing_join_requests
+    SET status = 'RESOLVED',
+        approver_device_id = ?,
+        approver_public_key = ?,
+        vault_id = ?,
+        resolved_at = ?,
+        short_code_hash = NULL
+    WHERE id = ? AND status = 'OPEN' AND expires_at > ?
+  `).bind(
+    device.id,
+    input.publicKey,
+    device.vaultId,
+    now,
+    row.id,
+    now,
+  ).run();
+  if (changedRows(result) !== 1) {
+    throw new ApiError(409, "PAIRING_CODE_USED", "配对码刚被其他设备使用");
+  }
+  return jsonResponse({
+    joinRequestId: row.id,
+    joinPublicKey: row.join_public_key,
+    deviceId: row.device_id,
+    device: { name: row.device_name, platform: row.device_platform },
+    approverPublicKey: input.publicKey,
+    expiresAt: row.expires_at,
+    serverTime: now,
+  }, requestId);
+}
+
+async function handleApproveJoinRequest(
+  request: Request,
+  env: Env,
+  requestId: string,
+  device: AuthenticatedDevice,
+  joinRequestId: string,
+): Promise<Response> {
+  const input = parseProtocol(
+    parsePairingConfirmRequest,
+    await readJsonBody(request),
+  );
+  const now = Date.now();
+  const row = await env.DB.prepare(`
+    SELECT * FROM pairing_join_requests
+    WHERE id = ? AND approver_device_id = ? AND vault_id = ?
+    LIMIT 1
+  `).bind(joinRequestId, device.id, device.vaultId).first<JoinRequestRow>();
+  if (!row) {
+    throw new ApiError(404, "PAIRING_NOT_FOUND", "配对请求不存在");
+  }
+  if (row.status === "APPROVED") {
+    return jsonResponse({
+      joinRequestId,
+      status: "approved",
+      vaultId: row.vault_id,
+      deviceId: row.device_id,
+      expiresAt: row.expires_at,
+    }, requestId);
+  }
+  if (row.status !== "RESOLVED") {
+    throw new ApiError(409, "PAIRING_NOT_READY", "配对请求尚未准备好确认");
+  }
+  if (now >= row.expires_at) {
+    await env.DB.prepare(`
+      UPDATE pairing_join_requests
+      SET status = 'EXPIRED', short_code_hash = NULL
+      WHERE id = ? AND status IN ('OPEN', 'RESOLVED')
+    `).bind(joinRequestId).run();
+    throw new ApiError(410, "PAIRING_EXPIRED", "配对请求已过期");
+  }
+  await assertVaultDeviceCapacity(env, device.vaultId);
+
+  let results: D1Result[];
+  try {
+    results = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT OR IGNORE INTO devices(
+          id, vault_id, token_hash, name, platform, public_key,
+          created_by_device_id, created_at, last_seen_at, revoked_at
+        )
+        SELECT device_id, vault_id, device_token_hash, device_name,
+               device_platform, join_public_key, ?, ?, NULL, NULL
+        FROM pairing_join_requests
+        WHERE id = ? AND status = 'RESOLVED' AND approver_device_id = ?
+          AND expires_at > ?
+      `).bind(device.id, now, joinRequestId, device.id, now),
+      env.DB.prepare(`
+        INSERT OR IGNORE INTO device_cursors(device_id, vault_id, cursor, updated_at)
+        SELECT j.device_id, j.vault_id, 0, ?
+        FROM pairing_join_requests j
+        INNER JOIN devices d ON d.id = j.device_id AND d.token_hash = j.device_token_hash
+        WHERE j.id = ?
+      `).bind(now, joinRequestId),
+      env.DB.prepare(`
+        UPDATE pairing_join_requests
+        SET status = 'APPROVED',
+            confirmed_ciphertext = ?,
+            confirmed_nonce = ?,
+            approved_at = ?,
+            short_code_hash = NULL
+        WHERE id = ? AND status = 'RESOLVED' AND approver_device_id = ?
+          AND expires_at > ?
+          AND EXISTS (
+            SELECT 1 FROM devices d
+            WHERE d.id = pairing_join_requests.device_id
+              AND d.token_hash = pairing_join_requests.device_token_hash
+          )
+      `).bind(
+        input.vaultKeyEnvelope.ciphertext,
+        input.vaultKeyEnvelope.nonce,
+        now,
+        joinRequestId,
+        device.id,
+        now,
+      ),
+      env.DB.prepare(`
+        SELECT status, device_id FROM pairing_join_requests WHERE id = ?
+      `).bind(joinRequestId),
+    ]);
+  } catch (error) {
+    if (hasDatabaseSignal(error, "VAULT_DEVICE_LIMIT")) {
+      throw vaultDeviceLimitError();
+    }
+    throw error;
+  }
+  const finalRow = (results[3] as D1Result<{
+    status: string;
+    device_id: string;
+  }>).results?.[0];
+  if (finalRow?.status !== "APPROVED") {
+    throw new ApiError(
+      409,
+      "PAIRING_APPROVE_FAILED",
+      "无法创建设备，可能是令牌冲突或配对状态已改变",
+    );
+  }
+  return jsonResponse({
+    joinRequestId,
+    status: "approved",
+    vaultId: device.vaultId,
+    deviceId: finalRow.device_id,
+    expiresAt: row.expires_at,
+  }, requestId);
+}
+
+async function handleJoinResult(
+  request: Request,
+  env: Env,
+  requestId: string,
+  joinRequestId: string,
+): Promise<Response> {
+  const input = parseProtocol(
+    parseJoinSecretRequest,
+    await readJsonBody(request),
+  );
+  const now = Date.now();
+  const joinSecretHash = await hashCredential(
+    input.joinSecret,
+    "join-secret",
+    requireTokenPepper(env),
+  );
+  const row = await env.DB.prepare(`
+    SELECT * FROM pairing_join_requests
+    WHERE id = ? AND join_secret_hash = ?
+    LIMIT 1
+  `).bind(joinRequestId, joinSecretHash).first<JoinRequestRow>();
+  if (!row) {
+    throw new ApiError(404, "PAIRING_NOT_FOUND", "配对请求或凭据无效");
+  }
+  if (row.status === "CANCELED") {
+    throw new ApiError(409, "PAIRING_CANCELED", "配对请求已取消");
+  }
+  if (row.status !== "APPROVED" && now >= row.expires_at) {
+    await env.DB.prepare(`
+      UPDATE pairing_join_requests
+      SET status = 'EXPIRED', short_code_hash = NULL
+      WHERE id = ? AND status IN ('OPEN', 'RESOLVED')
+    `).bind(joinRequestId).run();
+    throw new ApiError(410, "PAIRING_EXPIRED", "配对请求已过期");
+  }
+  if (row.status === "APPROVED") {
+    if (!row.confirmed_ciphertext || !row.confirmed_nonce) {
+      throw new ApiError(409, "PAIRING_NOT_READY", "配对尚未完成确认");
+    }
+    return jsonResponse({
+      joinRequestId,
+      status: "approved",
+      vaultId: row.vault_id,
+      deviceId: row.device_id,
+      approverPublicKey: row.approver_public_key,
+      vaultKeyEnvelope: {
+        ciphertext: row.confirmed_ciphertext,
+        nonce: row.confirmed_nonce,
+      },
+      expiresAt: row.expires_at,
+      serverTime: now,
+    }, requestId);
+  }
+  return jsonResponse({
+    joinRequestId,
+    status: row.status.toLowerCase(),
+    deviceId: row.device_id,
+    approverPublicKey: row.approver_public_key,
+    expiresAt: row.expires_at,
+    serverTime: now,
+  }, requestId, 202);
+}
+
+async function handleCancelJoinRequest(
+  request: Request,
+  env: Env,
+  requestId: string,
+  joinRequestId: string,
+): Promise<Response> {
+  const input = parseProtocol(
+    parseJoinSecretRequest,
+    await readJsonBody(request),
+  );
+  const now = Date.now();
+  const joinSecretHash = await hashCredential(
+    input.joinSecret,
+    "join-secret",
+    requireTokenPepper(env),
+  );
+  const result = await env.DB.prepare(`
+    UPDATE pairing_join_requests
+    SET status = 'CANCELED', short_code_hash = NULL
+    WHERE id = ? AND join_secret_hash = ? AND status IN ('OPEN', 'RESOLVED')
+  `).bind(joinRequestId, joinSecretHash).run();
+  if (changedRows(result) === 0) {
+    const existing = await env.DB.prepare(`
+      SELECT status FROM pairing_join_requests
+      WHERE id = ? AND join_secret_hash = ?
+      LIMIT 1
+    `).bind(joinRequestId, joinSecretHash).first<{ status: string }>();
+    if (!existing) {
+      throw new ApiError(404, "PAIRING_NOT_FOUND", "配对请求或凭据无效");
+    }
+    return jsonResponse({
+      joinRequestId,
+      status: existing.status.toLowerCase(),
+      serverTime: now,
+    }, requestId);
+  }
+  return jsonResponse({
+    joinRequestId,
+    status: "canceled",
+    serverTime: now,
+  }, requestId);
+}
+
+async function handleGetRelay(
+  env: Env,
+  requestId: string,
+  device: AuthenticatedDevice,
+): Promise<Response> {
+  let row = await env.DB.prepare(`
+    SELECT relay_epoch, relay_url FROM vaults WHERE id = ? LIMIT 1
+  `).bind(device.vaultId).first<RelayRow>();
+  if (!row) {
+    throw new ApiError(404, "VAULT_NOT_FOUND", "同步空间不存在");
+  }
+  if (row.relay_epoch === "") {
+    row = { ...row, relay_epoch: randomSecret(32) };
+    await env.DB.prepare(`
+      UPDATE vaults SET relay_epoch = ? WHERE id = ?
+    `).bind(row.relay_epoch, device.vaultId).run();
+  }
+  return jsonResponse({
+    epoch: row.relay_epoch,
+    relayUrl: row.relay_url,
+    serverTime: Date.now(),
+  }, requestId);
+}
+
+async function handleUpdateRelay(
+  request: Request,
+  env: Env,
+  requestId: string,
+  device: AuthenticatedDevice,
+): Promise<Response> {
+  const input = parseProtocol(
+    parseRelayUpdateRequest,
+    await readJsonBody(request),
+  );
+  const result = await env.DB.prepare(`
+    UPDATE vaults SET relay_url = ? WHERE id = ?
+  `).bind(input.relayUrl, device.vaultId).run();
+  if (changedRows(result) !== 1) {
+    throw new ApiError(404, "VAULT_NOT_FOUND", "同步空间不存在");
+  }
+  return jsonResponse({
+    relayUrl: input.relayUrl,
+    serverTime: Date.now(),
+  }, requestId);
+}
+
+async function rotateRelayEpoch(
+  env: Env,
+  vaultId: string,
+): Promise<void> {
+  await env.DB.prepare(`
+    UPDATE vaults SET relay_epoch = ? WHERE id = ?
+  `).bind(randomSecret(32), vaultId).run();
+}
+
 async function handleClaimPairing(
   request: Request,
   env: Env,
@@ -358,7 +934,8 @@ async function handleClaimPairing(
         claimed_platform = ?,
         claimed_public_key = ?,
         claimed_token_hash = ?,
-        claimed_at = ?
+        claimed_at = ?,
+        short_code_hash = NULL
     WHERE id = ? AND secret_hash = ? AND status = 'OPEN' AND expires_at > ?
   `).bind(
     claimedDeviceId,
@@ -755,11 +1332,48 @@ async function handleRevokeDevice(
       WHERE id = ? AND vault_id = ? AND revoked_at IS NULL
     `).bind(now, targetId, device.vaultId),
     env.DB.prepare(`
-      UPDATE pairing_sessions SET status = 'CANCELED'
+      UPDATE pairing_sessions
+      SET status = 'CANCELED', short_code_hash = NULL
       WHERE initiator_device_id = ? AND status IN ('OPEN', 'CLAIMED')
     `).bind(targetId),
+    env.DB.prepare(`
+      UPDATE pairing_join_requests
+      SET status = 'CANCELED', short_code_hash = NULL
+      WHERE approver_device_id = ? AND status IN ('OPEN', 'RESOLVED')
+    `).bind(targetId),
+    env.DB.prepare(`
+      UPDATE vaults SET relay_epoch = ? WHERE id = ?
+    `).bind(randomSecret(32), device.vaultId),
   ]);
   return jsonResponse({ deviceId: targetId, revokedAt: now }, requestId);
+}
+
+async function handleRevokeCurrentDevice(
+  env: Env,
+  requestId: string,
+  device: AuthenticatedDevice,
+): Promise<Response> {
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE devices SET revoked_at = ?
+      WHERE id = ? AND vault_id = ? AND revoked_at IS NULL
+    `).bind(now, device.id, device.vaultId),
+    env.DB.prepare(`
+      UPDATE pairing_sessions
+      SET status = 'CANCELED', short_code_hash = NULL
+      WHERE initiator_device_id = ? AND status IN ('OPEN', 'CLAIMED')
+    `).bind(device.id),
+    env.DB.prepare(`
+      UPDATE pairing_join_requests
+      SET status = 'CANCELED', short_code_hash = NULL
+      WHERE approver_device_id = ? AND status IN ('OPEN', 'RESOLVED')
+    `).bind(device.id),
+    env.DB.prepare(`
+      UPDATE vaults SET relay_epoch = ? WHERE id = ?
+    `).bind(randomSecret(32), device.vaultId),
+  ]);
+  return jsonResponse({ deviceId: device.id, revokedAt: now }, requestId);
 }
 
 function methodNotAllowed(): never {
@@ -789,6 +1403,34 @@ async function route(
     const device = await authenticateDevice(request, env);
     return handleCreatePairing(request, env, requestId, device);
   }
+  if (path === "/v1/pairings/code") {
+    if (request.method !== "POST") methodNotAllowed();
+    const device = await authenticateDevice(request, env);
+    return handleCreatePairingCode(request, env, requestId, device);
+  }
+  if (path === "/v1/pairings/resolve") {
+    if (request.method !== "POST") methodNotAllowed();
+    return handleResolvePairingCode(request, env, requestId);
+  }
+  if (path === "/v1/pairings/join") {
+    if (request.method !== "POST") methodNotAllowed();
+    return handleCreateJoinRequest(request, env, requestId);
+  }
+  if (path === "/v1/pairings/join/resolve") {
+    if (request.method !== "POST") methodNotAllowed();
+    const device = await authenticateDevice(request, env);
+    return handleResolveJoinRequest(request, env, requestId, device);
+  }
+  if (path === "/v1/relay") {
+    const device = await authenticateDevice(request, env);
+    if (request.method === "GET") {
+      return handleGetRelay(env, requestId, device);
+    }
+    if (request.method === "PUT") {
+      return handleUpdateRelay(request, env, requestId, device);
+    }
+    methodNotAllowed();
+  }
   if (path === "/v1/sync") {
     if (request.method !== "POST") methodNotAllowed();
     const device = await authenticateDevice(request, env);
@@ -816,11 +1458,39 @@ async function route(
     return handleConfirmPairing(request, env, requestId, device, pairingId);
   }
 
+  const joinAction = /^\/v1\/pairings\/join\/([^/]+)\/(approve|result|cancel)$/u
+    .exec(path);
+  if (joinAction) {
+    const joinRequestId = joinAction[1];
+    const action = joinAction[2];
+    if (request.method !== "POST") methodNotAllowed();
+    if (action === "result") {
+      return handleJoinResult(request, env, requestId, joinRequestId);
+    }
+    if (action === "cancel") {
+      return handleCancelJoinRequest(request, env, requestId, joinRequestId);
+    }
+    const device = await authenticateDevice(request, env);
+    return handleApproveJoinRequest(
+      request,
+      env,
+      requestId,
+      device,
+      joinRequestId,
+    );
+  }
+
   const pairingStatus = /^\/v1\/pairings\/([^/]+)$/u.exec(path);
   if (pairingStatus) {
     if (request.method !== "GET") methodNotAllowed();
     const device = await authenticateDevice(request, env);
     return handlePairingStatus(env, requestId, device, pairingStatus[1]);
+  }
+
+  if (path === "/v1/devices/current/revoke") {
+    if (request.method !== "POST") methodNotAllowed();
+    const device = await authenticateDevice(request, env);
+    return handleRevokeCurrentDevice(env, requestId, device);
   }
 
   const deviceRevoke = /^\/v1\/devices\/([^/]+)\/revoke$/u.exec(path);

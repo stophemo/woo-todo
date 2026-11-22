@@ -8,6 +8,8 @@ export const LIMITS = Object.freeze({
   identifierCharacters: 128,
   deviceNameCharacters: 80,
   pairingLifetimeMs: 10 * 60 * 1000,
+  shortCodeLifetimeMs: 5 * 60 * 1000,
+  maximumActivePairingCodes: 3,
 });
 
 const PLATFORMS = ["macos", "android", "windows"] as const;
@@ -53,6 +55,17 @@ export interface PairingClaimRequest {
   pairingSecret: string;
   deviceToken: string;
   device: DeviceRegistration & { publicKey: string };
+}
+
+export interface CreateJoinRequestInput {
+  publicKey: string;
+  deviceToken: string;
+  device: DeviceRegistration;
+}
+
+export interface ResolveJoinRequestInput {
+  code: string;
+  publicKey: string;
 }
 
 export interface SyncOperationInput {
@@ -240,6 +253,75 @@ export function parseCreatePairingRequest(
     fail("publicKey", "必须是 32 字节的临时 X25519 公钥");
   }
   return { publicKey: parsed.publicKey };
+}
+
+export function parseShortCodeRequest(value: unknown): { code: string } {
+  const parsed = record(value, "body");
+  exactKeys(parsed, ["code"], "body");
+  const code = text(parsed.code, "code");
+  if (!/^[0-9]{6}$/u.test(code)) {
+    fail("code", "必须是六位数字");
+  }
+  return { code };
+}
+
+export function parseResolveJoinRequest(
+  value: unknown,
+): ResolveJoinRequestInput {
+  const parsed = record(value, "body");
+  exactKeys(parsed, ["code", "publicKey"], "body");
+  const code = text(parsed.code, "code");
+  if (!/^[0-9]{6}$/u.test(code)) {
+    fail("code", "必须是六位数字");
+  }
+  if (!isBase64UrlBytes(parsed.publicKey, 32)) {
+    fail("publicKey", "必须是 32 字节的临时 X25519 公钥");
+  }
+  return { code, publicKey: parsed.publicKey };
+}
+
+export function parseCreateJoinRequest(
+  value: unknown,
+): CreateJoinRequestInput {
+  const parsed = record(value, "body");
+  exactKeys(parsed, ["publicKey", "deviceToken", "device"], "body");
+  if (!isBase64UrlBytes(parsed.publicKey, 32)) {
+    fail("publicKey", "必须是 32 字节的临时 X25519 公钥");
+  }
+  return {
+    publicKey: parsed.publicKey,
+    deviceToken: validateOpaqueSecret(parsed.deviceToken, "deviceToken"),
+    device: deviceRegistration(parsed.device, "device"),
+  };
+}
+
+export function parseJoinSecretRequest(value: unknown): {
+  joinSecret: string;
+} {
+  const parsed = record(value, "body");
+  exactKeys(parsed, ["joinSecret"], "body");
+  return {
+    joinSecret: validateOpaqueSecret(parsed.joinSecret, "joinSecret"),
+  };
+}
+
+export function parseRelayUpdateRequest(value: unknown): { relayUrl: string } {
+  const parsed = record(value, "body");
+  exactKeys(parsed, ["relayUrl"], "body");
+  const raw = text(parsed.relayUrl, "relayUrl").trim();
+  if (raw.length < 8 || raw.length > 2_048) {
+    fail("relayUrl", "必须是 8 至 2048 个字符的 HTTPS 地址");
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    fail("relayUrl", "必须是有效的 HTTPS 地址");
+  }
+  if (url.protocol !== "https:" || !url.hostname) {
+    fail("relayUrl", "必须是有效的 HTTPS 地址");
+  }
+  return { relayUrl: url.toString().replace(/\/$/u, "") };
 }
 
 export function parsePairingClaimRequest(value: unknown): PairingClaimRequest {

@@ -40,7 +40,7 @@ object NotificationHelper {
             .createNotificationChannel(taskChannel)
     }
 
-    fun showPlanningReminder(context: Context) {
+    fun showPlanningReminder(context: Context, summary: DailyDigestSummary) {
         if (ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.POST_NOTIFICATIONS,
@@ -57,10 +57,18 @@ object NotificationHelper {
             planningIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val body = if (summary.count == 0) {
+            context.getString(R.string.reminder_text)
+        } else {
+            val preview = summary.titles.joinToString("、") +
+                if (summary.count > summary.titles.size) " 等" else ""
+            context.getString(R.string.reminder_tomorrow_tasks, summary.count, preview)
+        }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.reminder_title))
-            .setContentText(context.getString(R.string.reminder_text))
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)

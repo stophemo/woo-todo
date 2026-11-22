@@ -70,15 +70,15 @@ final class MCPTaskService {
         let scheduleProperties: [String: Any] = [
             "startDate": [
                 "type": "string",
-                "description": "开始日期，格式 YYYY-MM-DD（Asia/Shanghai）；必须与 endDate 同时提供",
+                "description": "任务日期，格式 YYYY-MM-DD（Asia/Shanghai）；设置提醒或每天重复时必须提供",
             ],
             "endDate": [
                 "type": "string",
-                "description": "结束日期，格式 YYYY-MM-DD（Asia/Shanghai）；必须与 startDate 同时提供",
+                "description": "可选的结束日期，格式 YYYY-MM-DD（Asia/Shanghai）；省略或 null 表示单日任务，不能早于任务日期",
             ],
             "reminderTime": [
                 "type": "string",
-                "description": "提醒时间，格式 HH:mm；只有设置起止日期时才能使用",
+                "description": "任务日期当天的提醒时间，格式 HH:mm；只有设置任务日期时才能使用",
             ],
         ]
 
@@ -86,8 +86,8 @@ final class MCPTaskService {
             toolDefinition(
                 name: "list_tasks",
                 description: """
-                查询任务并取得后续写入操作需要的 id。默认只返回待办任务，按标签优先级、结束日期和创建顺序排列。
-                每条任务包含 id、status、tag、起止日期、提醒、dateState、创建/更新/完成时间和是否逾期。
+                查询任务并取得后续写入操作需要的 id。默认只返回待办任务，按任务日期、标签优先级和创建顺序排列，无日期任务排在最后。
+                每条任务包含 id、status、tag、任务日期、可选结束日期、提醒、dateState、创建/更新/完成时间和是否逾期。
                 建议先用 query、tag、due 缩小范围，再对具体 id 调用其他工具。
                 """,
                 readOnly: true,
@@ -146,7 +146,7 @@ final class MCPTaskService {
             toolDefinition(
                 name: "add_task",
                 description: """
-                新增一条待办。日期必须成对提供；不设置日期表示完成即止。
+                新增一条待办。任务日期可选；设置任务日期后可再提供可选结束日期，省略表示单日任务。不设置任务日期表示完成即止。
                 tag 留空表示无标签；不存在的标签会自动创建。返回完整任务，包含新 id 和 tagCreated。
                 """,
                 properties: [
@@ -165,7 +165,7 @@ final class MCPTaskService {
                         "type": "string",
                         "enum": ["once", "daily"],
                         "default": "once",
-                        "description": "重复方式；daily 表示每天生成一条新任务，必须设置起止日期。过期未完成的上一条会自动记为放弃",
+                        "description": "重复方式；daily 表示每天生成一条新任务，必须设置任务日期。过期未完成的上一条会自动记为放弃",
                     ],
                 ],
                 required: ["title"],
@@ -174,7 +174,7 @@ final class MCPTaskService {
                 name: "update_task",
                 description: """
                 修改一条待办的部分字段。只传需要修改的字段，未传字段保持原值。
-                tag 传空字符串或 null 清除标签；startDate/endDate 必须成对传，传 null 清除日期并同时清除提醒；reminderTime 传 null 或空字符串清除提醒。
+                tag 传空字符串或 null 清除标签；startDate 传 null 清除任务日期并同时清除提醒；endDate 传 null 表示改成单日任务。
                 仅待办可编辑。已完成任务请先 reopen_task；已放弃任务是最终状态。
                 """,
                 idempotent: true,
@@ -190,11 +190,11 @@ final class MCPTaskService {
                     ],
                     "startDate": [
                         "type": ["string", "null"],
-                        "description": "新开始日期 YYYY-MM-DD；与 endDate 一起传 null 可清除日期。省略则保持原日期",
+                        "description": "新任务日期 YYYY-MM-DD；传 null 清除日期与提醒。省略则保持原日期",
                     ],
                     "endDate": [
                         "type": ["string", "null"],
-                        "description": "新结束日期 YYYY-MM-DD；与 startDate 一起传 null 可清除日期。省略则保持原日期",
+                        "description": "新结束日期 YYYY-MM-DD；传 null 表示单日任务。省略则保持原结束日期",
                     ],
                     "reminderTime": [
                         "type": ["string", "null"],
@@ -203,7 +203,7 @@ final class MCPTaskService {
                     "recurrence": [
                         "type": "string",
                         "enum": ["once", "daily"],
-                        "description": "重复方式；daily 每天生成一条新任务，必须保留起止日期；省略则保持原值",
+                        "description": "重复方式；daily 每天生成一条新任务，必须保留任务日期；省略则保持原值",
                     ],
                 ],
                 required: ["taskId"],
@@ -606,7 +606,7 @@ final class MCPTaskService {
         let schedule = try scheduleArguments(arguments)
         let recurrence = try recurrenceArgument(arguments, default: .once)
         guard recurrence != .daily || schedule.startDate != nil else {
-            throw MCPToolError(message: "每天重复的任务必须设置起止日期")
+            throw MCPToolError(message: "每天重复的任务必须设置任务日期")
         }
         let categories = try normalizedCategories()
 
@@ -678,31 +678,51 @@ final class MCPTaskService {
         let title = keys.contains("title")
             ? try requiredString(arguments, "title")
             : existing.title
-        let datesProvided = keys.contains("startDate") || keys.contains("endDate")
-        guard !datesProvided || (keys.contains("startDate") && keys.contains("endDate")) else {
-            throw MCPToolError(message: "startDate 与 endDate 需要同时提供或同时省略")
+        let hasStart = keys.contains("startDate")
+        let hasEnd = keys.contains("endDate")
+        var scheduleStart = existing.startDate
+        var rawScheduleEnd = existing.endDate
+        if hasStart {
+            if let newStart = try optionalDate(arguments, "startDate") {
+                scheduleStart = newStart
+                if hasEnd {
+                    rawScheduleEnd = try optionalDate(arguments, "endDate")
+                } else if let currentStart = existing.startDate,
+                          let currentEnd = rawScheduleEnd {
+                    rawScheduleEnd = calendar.isDate(currentEnd, inSameDayAs: currentStart)
+                        ? newStart
+                        : max(currentEnd, newStart)
+                } else {
+                    rawScheduleEnd = newStart
+                }
+            } else {
+                if hasEnd, try optionalDate(arguments, "endDate") != nil {
+                    throw MCPToolError(message: "清除 startDate 时不能保留 endDate")
+                }
+                scheduleStart = nil
+                rawScheduleEnd = nil
+            }
+        } else if hasEnd {
+            guard let start = scheduleStart else {
+                throw MCPToolError(message: "设置 endDate 时也需要设置 startDate")
+            }
+            if let newEnd = try optionalDate(arguments, "endDate") {
+                rawScheduleEnd = newEnd
+            } else {
+                rawScheduleEnd = start
+            }
         }
-        let schedule: (startDate: Date?, endDate: Date?)
-        if datesProvided {
-            schedule = (
-                try optionalDate(arguments, "startDate"),
-                try optionalDate(arguments, "endDate")
-            )
-        } else {
-            schedule = (existing.startDate, existing.endDate)
+        if let start = scheduleStart, let end = rawScheduleEnd, start > end {
+            throw MCPToolError(message: "任务日期不能晚于结束日期")
         }
-        guard (schedule.startDate == nil) == (schedule.endDate == nil) else {
-            throw MCPToolError(message: "startDate 与 endDate 需要同时提供或同时省略")
-        }
-        if let start = schedule.startDate, let end = schedule.endDate, start > end {
-            throw MCPToolError(message: "startDate 不能晚于 endDate")
-        }
+        let scheduleEnd = scheduleStart.map { start in rawScheduleEnd ?? start }
+        let schedule = (startDate: scheduleStart, endDate: scheduleEnd)
 
         let recurrence = keys.contains("recurrence")
             ? try recurrenceArgument(arguments, default: existing.recurrence)
             : existing.recurrence
         guard recurrence != .daily || schedule.startDate != nil else {
-            throw MCPToolError(message: "每天重复的任务必须设置起止日期")
+            throw MCPToolError(message: "每天重复的任务必须设置任务日期")
         }
         var reminder = existing.reminderTime
         if keys.contains("reminderTime") {
@@ -1105,21 +1125,21 @@ final class MCPTaskService {
     ) throws -> (startDate: Date?, endDate: Date?, reminderTime: TaskReminderTime?) {
         let hasStart = arguments.keys.contains("startDate")
         let hasEnd = arguments.keys.contains("endDate")
-        guard hasStart == hasEnd else {
-            throw MCPToolError(message: "startDate 与 endDate 需要同时提供或同时省略")
+        guard hasStart || !hasEnd else {
+            throw MCPToolError(message: "设置 endDate 时也需要设置 startDate")
         }
         let startDate = hasStart ? try optionalDate(arguments, "startDate") : nil
         let endDate = hasEnd ? try optionalDate(arguments, "endDate") : nil
-        guard (startDate == nil) == (endDate == nil) else {
-            throw MCPToolError(message: "startDate 与 endDate 需要同时提供或同时省略")
+        if startDate == nil, endDate != nil {
+            throw MCPToolError(message: "设置 endDate 时也需要设置 startDate")
         }
         if let start = startDate, let end = endDate, start > end {
-            throw MCPToolError(message: "startDate 不能晚于 endDate")
+            throw MCPToolError(message: "任务日期不能晚于结束日期")
         }
         var reminder: TaskReminderTime?
         if let rawReminder = try optionalString(arguments, "reminderTime") {
             guard startDate != nil else {
-                throw MCPToolError(message: "设置 reminderTime 时需要同时设置起止日期")
+                throw MCPToolError(message: "设置 reminderTime 时需要同时设置任务日期")
             }
             guard let parsed = TaskReminderTime(wireValue: rawReminder) else {
                 throw MCPToolError(message: "reminderTime 格式应为 HH:mm")
@@ -1160,7 +1180,10 @@ final class MCPTaskService {
             "tag": TaskCategory.resolveName(id: task.categoryID, categories: categories),
             "tagId": task.categoryID,
             "startDate": task.startDate.map(dateString) ?? NSNull(),
-            "endDate": task.endDate.map(dateString) ?? NSNull(),
+            "endDate": task.endDate.flatMap { end -> Date? in
+                guard let start = task.startDate else { return end }
+                return calendar.isDate(end, inSameDayAs: start) ? nil : end
+            }.map(dateString) ?? NSNull(),
             "reminderTime": task.reminderTime?.wireValue ?? NSNull(),
             "dateState": dateState(task, today: today),
             "isOverdue": TaskDateState.isOverdue(task, on: today),
@@ -1217,12 +1240,15 @@ final class MCPTaskService {
                 let right = rhs.endDate ?? .distantFuture
                 if left != right { return left < right }
             default:
-                let left = order[lhs.categoryID] ?? Int.max
-                let right = order[rhs.categoryID] ?? Int.max
-                if left != right { return left < right }
+                let leftDate = lhs.startDate ?? .distantFuture
+                let rightDate = rhs.startDate ?? .distantFuture
+                if leftDate != rightDate { return leftDate < rightDate }
                 let leftEnd = lhs.endDate ?? .distantFuture
                 let rightEnd = rhs.endDate ?? .distantFuture
                 if leftEnd != rightEnd { return leftEnd < rightEnd }
+                let left = order[lhs.categoryID] ?? Int.max
+                let right = order[rhs.categoryID] ?? Int.max
+                if left != right { return left < right }
             }
             if TodoTask.displayOrder(lhs, rhs) { return true }
             if TodoTask.displayOrder(rhs, lhs) { return false }

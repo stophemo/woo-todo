@@ -48,6 +48,7 @@ class EditTaskActivity : AppCompatActivity() {
     private lateinit var dateRangeSwitch: SwitchCompat
     private lateinit var dateRangeContainer: LinearLayout
     private lateinit var startDateButton: Button
+    private lateinit var endDateSwitch: SwitchCompat
     private lateinit var endDateButton: Button
     private lateinit var reminderSwitch: SwitchCompat
     private lateinit var reminderTimeButton: Button
@@ -57,6 +58,7 @@ class EditTaskActivity : AppCompatActivity() {
     private var categories: List<TaskCategory> = TaskCategories.defaults
     private var dateRangeEnabled = false
     private var startDate: LocalDate = TaskDateRules.today()
+    private var endDateEnabled = false
     private var endDate: LocalDate = TaskDateRules.today()
     private var reminderTime: LocalTime = LocalTime.of(9, 0)
     private var repeatDaily = false
@@ -78,6 +80,7 @@ class EditTaskActivity : AppCompatActivity() {
         dateRangeSwitch = findViewById(R.id.date_range_switch)
         dateRangeContainer = findViewById(R.id.date_range_container)
         startDateButton = findViewById(R.id.start_date_button)
+        endDateSwitch = findViewById(R.id.end_date_switch)
         endDateButton = findViewById(R.id.end_date_button)
         reminderSwitch = findViewById(R.id.reminder_switch)
         reminderTimeButton = findViewById(R.id.reminder_time_button)
@@ -103,12 +106,19 @@ class EditTaskActivity : AppCompatActivity() {
             if (!enabled) {
                 repeatDaily = false
                 repeatDailySwitch.isChecked = false
+                endDateEnabled = false
+                endDateSwitch.isChecked = false
             }
             updateDateButtons()
             updateReminderControls()
         }
         repeatDailySwitch.setOnCheckedChangeListener { _, checked ->
             repeatDaily = checked && dateRangeEnabled
+        }
+        endDateSwitch.setOnCheckedChangeListener { _, checked ->
+            endDateEnabled = checked && dateRangeEnabled
+            if (endDateEnabled && endDate.isBefore(startDate)) endDate = startDate
+            updateDateButtons()
         }
         startDateButton.setOnClickListener { showDatePicker(isStart = true) }
         endDateButton.setOnClickListener { showDatePicker(isStart = false) }
@@ -158,6 +168,7 @@ class EditTaskActivity : AppCompatActivity() {
         dateRangeEnabled = state?.getBoolean(STATE_DATE_RANGE_ENABLED) ?: false
         state?.getString(STATE_START_DATE)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
             ?.let { startDate = it }
+        endDateEnabled = state?.getBoolean(STATE_END_DATE_ENABLED) ?: false
         state?.getString(STATE_END_DATE)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
             ?.let { endDate = it }
         reminderTime = state?.getString(STATE_REMINDER_TIME)
@@ -166,6 +177,7 @@ class EditTaskActivity : AppCompatActivity() {
         reminderSwitch.isChecked = state?.getBoolean(STATE_REMINDER_ENABLED) ?: false
         repeatDaily = state?.getBoolean(STATE_REPEAT_DAILY) ?: false
         repeatDailySwitch.isChecked = repeatDaily
+        endDateSwitch.isChecked = endDateEnabled
         dateRangeSwitch.isChecked = dateRangeEnabled
         dateRangeContainer.isVisible = dateRangeEnabled
         updateDateButtons()
@@ -192,8 +204,10 @@ class EditTaskActivity : AppCompatActivity() {
             ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
             ?: task.endDate
             ?: startDate
+        endDateEnabled = state?.getBoolean(STATE_END_DATE_ENABLED)
+            ?: (task.startDate != null && task.endDate != null && task.endDate.isAfter(task.startDate))
         dateRangeEnabled = state?.getBoolean(STATE_DATE_RANGE_ENABLED)
-            ?: (task.startDate != null && task.endDate != null)
+            ?: (task.startDate != null)
         reminderTime = state?.getString(STATE_REMINDER_TIME)
             ?.let { runCatching { LocalTime.parse(it) }.getOrNull() }
             ?: task.reminderTime
@@ -203,6 +217,7 @@ class EditTaskActivity : AppCompatActivity() {
         repeatDaily = state?.getBoolean(STATE_REPEAT_DAILY)
             ?: (task.recurrence == com.wootodo.domain.TaskRecurrence.DAILY)
         repeatDailySwitch.isChecked = repeatDaily
+        endDateSwitch.isChecked = endDateEnabled
         dateRangeSwitch.isChecked = dateRangeEnabled
         dateRangeContainer.isVisible = dateRangeEnabled
         updateDateButtons()
@@ -218,6 +233,7 @@ class EditTaskActivity : AppCompatActivity() {
             manageCategoriesButton,
             dateRangeSwitch,
             startDateButton,
+            endDateSwitch,
             endDateButton,
             reminderSwitch,
             reminderTimeButton,
@@ -235,6 +251,7 @@ class EditTaskActivity : AppCompatActivity() {
             getString(R.string.start_date_label),
             startDate.format(dateFormatter),
         )
+        endDateButton.isVisible = endDateEnabled
         endDateButton.text = getString(
             R.string.date_button_format,
             getString(R.string.end_date_label),
@@ -264,8 +281,7 @@ class EditTaskActivity : AppCompatActivity() {
                     startDate = picked
                     if (endDate.isBefore(startDate)) endDate = picked
                 } else {
-                    endDate = picked
-                    if (startDate.isAfter(endDate)) startDate = picked
+                    endDate = if (picked.isBefore(startDate)) startDate else picked
                 }
                 updateDateButtons()
             },
@@ -296,7 +312,7 @@ class EditTaskActivity : AppCompatActivity() {
             titleInput.error = getString(R.string.title_required)
             return
         }
-        if (dateRangeEnabled && startDate.isAfter(endDate)) {
+        if (dateRangeEnabled && endDateEnabled && startDate.isAfter(endDate)) {
             Toast.makeText(this, R.string.date_range_invalid, Toast.LENGTH_SHORT).show()
             return
         }
@@ -330,7 +346,7 @@ class EditTaskActivity : AppCompatActivity() {
                 title = title,
                 categoryId = category.id,
                 startDate = startDate.takeIf { dateRangeEnabled },
-                endDate = endDate.takeIf { dateRangeEnabled },
+                endDate = endDate.takeIf { dateRangeEnabled && endDateEnabled },
                 reminderTime = reminderTime.takeIf {
                     dateRangeEnabled && reminderSwitch.isChecked
                 },
@@ -430,6 +446,7 @@ class EditTaskActivity : AppCompatActivity() {
         categoryInput.text.toString().trim(),
         dateRangeEnabled,
         startDate,
+        endDateEnabled,
         endDate,
         reminderSwitch.isChecked,
         reminderTime,
@@ -441,6 +458,7 @@ class EditTaskActivity : AppCompatActivity() {
         outState.putString(STATE_CATEGORY_INPUT, categoryInput.text.toString())
         outState.putBoolean(STATE_DATE_RANGE_ENABLED, dateRangeEnabled)
         outState.putString(STATE_START_DATE, startDate.toString())
+        outState.putBoolean(STATE_END_DATE_ENABLED, endDateEnabled)
         outState.putString(STATE_END_DATE, endDate.toString())
         outState.putBoolean(STATE_REMINDER_ENABLED, reminderSwitch.isChecked)
         outState.putString(STATE_REMINDER_TIME, reminderTime.toString())
@@ -454,6 +472,7 @@ class EditTaskActivity : AppCompatActivity() {
         const val STATE_CATEGORY_INPUT = "editor_category_input"
         const val STATE_DATE_RANGE_ENABLED = "editor_date_range_enabled"
         const val STATE_START_DATE = "editor_start_date"
+        const val STATE_END_DATE_ENABLED = "editor_end_date_enabled"
         const val STATE_END_DATE = "editor_end_date"
         const val STATE_REMINDER_ENABLED = "editor_reminder_enabled"
         const val STATE_REMINDER_TIME = "editor_reminder_time"

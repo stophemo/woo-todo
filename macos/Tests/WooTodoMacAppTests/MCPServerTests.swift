@@ -125,6 +125,52 @@ struct MCPServerTests {
         #expect(repository.categories.contains { $0.name == "工作" })
     }
 
+    @Test("add_task 可只设置任务日期")
+    func addTaskWithSingleDate() async throws {
+        let repository = MCPTestRepository()
+        let store = TodayStore(repository: repository)
+        let handler = makeHandler(store: store, repository: repository)
+        let response = await handler.handle(request([
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": [
+                "name": "add_task",
+                "arguments": [
+                    "title": "单日任务",
+                    "startDate": "2026-11-16",
+                ],
+            ],
+        ]))
+
+        let result = try #require(try decode(response)["result"] as? [String: Any])
+        let structured = try #require(result["structuredContent"] as? [String: Any])
+        let addedTask = try #require(structured["task"] as? [String: Any])
+        #expect(addedTask["startDate"] as? String == "2026-11-16")
+        #expect(addedTask["endDate"] is NSNull)
+
+        let saved = try #require(repository.tasks.first)
+        let day = TodoTask.protocolCalendar.startOfDay(
+            for: TodoTask.protocolCalendar.date(from: DateComponents(
+                year: 2026, month: 11, day: 16
+            ))!
+        )
+        #expect(saved.startDate == day)
+        #expect(saved.endDate == day)
+
+        let id = try #require(addedTask["id"] as? String)
+        let updated = try await callTool(
+            "update_task",
+            arguments: ["taskId": id, "startDate": "2026-11-18"],
+            handler: handler
+        )
+        let updatedPayload = try task(in: updated)
+        #expect(updatedPayload["startDate"] as? String == "2026-11-18")
+        #expect(updatedPayload["endDate"] is NSNull)
+        let moved = try #require(repository.tasks.first)
+        #expect(moved.endDate == moved.startDate)
+    }
+
     @Test("add_task 和 update_task 支持每天重复")
     func addAndUpdateDailyRecurrence() async throws {
         let repository = MCPTestRepository()

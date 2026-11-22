@@ -50,7 +50,7 @@ class TaskListPresenterTest {
     }
 
     @Test
-    fun `组内先按标签优先级再按结束日期和排序值排列`() {
+    fun `组内先按时间再按标签优先级和排序值排列`() {
         val tasks = listOf(
             task("late", startDate = today, endDate = today.plusDays(3), categoryId = "work", sortOrder = 0),
             task("early-life", startDate = today, endDate = today.plusDays(1), categoryId = "life", sortOrder = 0),
@@ -62,7 +62,7 @@ class TaskListPresenterTest {
         val sections = TaskListPresenter.sections(tasks, categories, today, zone)
         val todayTasks = sections.first { it.kind == TaskSectionKind.TODAY }.tasks
         assertEquals(
-            listOf("early-work-1", "early-work-2", "late", "early-life"),
+            listOf("early-work-1", "early-work-2", "early-life", "late"),
             todayTasks.map(Task::id),
         )
         assertEquals(
@@ -72,7 +72,7 @@ class TaskListPresenterTest {
     }
 
     @Test
-    fun `标签优先级高的任务排在组内前面`() {
+    fun `时间更近的任务优先于标签优先级`() {
         val prioritized = listOf(
             TaskCategory("life", "生活", 0),
             TaskCategory("work", "工作", 1),
@@ -86,7 +86,7 @@ class TaskListPresenterTest {
         val sections = TaskListPresenter.sections(tasks, prioritized, today, zone)
 
         assertEquals(
-            listOf("life-later", "work-sooner"),
+            listOf("work-sooner", "life-later"),
             sections.first { it.kind == TaskSectionKind.TODAY }.tasks.map(Task::id),
         )
     }

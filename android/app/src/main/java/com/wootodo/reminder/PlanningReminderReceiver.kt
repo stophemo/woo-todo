@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import com.wootodo.WooTodoApplication
 import com.wootodo.domain.TaskDateRules
-import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,10 +23,8 @@ class PlanningReminderReceiver : BroadcastReceiver() {
             }
             try {
                 val repository = (appContext as WooTodoApplication).taskRepository
-                val tomorrow = TaskDateRules.today().plusDays(1)
-                if (repository.countTasksForDay(tomorrow) == 0) {
-                    NotificationHelper.showPlanningReminder(appContext)
-                }
+                val summary = DailyDigestText.summary(repository.allTasks(), handledDate)
+                NotificationHelper.showPlanningReminder(appContext, summary)
             } finally {
                 ReminderPreferences.markHandled(appContext, handledDate)
                 ReminderScheduler.schedule(appContext)

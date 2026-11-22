@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var syncSettingsStore: SyncSettingsStore?
     private var webDavSettingsStore: WebDavSettingsStore?
     private var dayCounterStore: DayCounterStore?
+    private var dailyDigestSettingsStore: DailyDigestSettingsStore?
     private var shortcutSettingsStore: ShortcutSettingsStore?
     private var mcpSettingsStore: MCPSettingsStore?
     private var taskNotificationScheduler: TaskNotificationScheduler?
@@ -135,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 defaults: runtime.defaults,
                 repository: repository
             )
+            let dailyDigestSettingsStore = DailyDigestSettingsStore(defaults: runtime.defaults)
             let taskNotificationScheduler: TaskNotificationScheduler? = runtime.allowsExternalServices
                 ? TaskNotificationScheduler()
                 : nil
@@ -220,6 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.syncSettingsStore = syncSettingsStore
             self.webDavSettingsStore = webDavSettingsStore
             self.dayCounterStore = dayCounterStore
+            self.dailyDigestSettingsStore = dailyDigestSettingsStore
             self.shortcutSettingsStore = shortcutSettingsStore
             self.mcpSettingsStore = mcpSettingsStore
             self.taskNotificationScheduler = taskNotificationScheduler
@@ -262,6 +265,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dayCounterStore.onDateChanged = { [weak self] in
                 self?.todayStore?.settleRecurringTasks()
                 self?.mainWindowController?.reloadIfVisible()
+                self?.refreshTaskNotifications()
+            }
+            dailyDigestSettingsStore.onChange = { [weak self] in
                 self?.refreshTaskNotifications()
             }
             if runtime.allowsExternalServices {
@@ -515,6 +521,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let syncSettingsStore,
               let webDavSettingsStore,
               let dayCounterStore,
+              let dailyDigestSettingsStore,
               let shortcutSettingsStore,
               let mcpSettingsStore,
               let localDataManager else { return }
@@ -523,6 +530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             syncSettingsStore: syncSettingsStore,
             webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
+            dailyDigestSettingsStore: dailyDigestSettingsStore,
             shortcutSettingsStore: shortcutSettingsStore,
             mcpSettingsStore: mcpSettingsStore,
             localDataManager: localDataManager,
@@ -559,9 +567,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshTaskNotifications() {
-        guard let repository, let taskNotificationScheduler else { return }
+        guard let repository,
+              let taskNotificationScheduler,
+              let dailyDigestSettingsStore else { return }
         do {
-            taskNotificationScheduler.synchronize(try repository.fetchAll())
+            taskNotificationScheduler.synchronize(
+                try repository.fetchAll(),
+                digest: dailyDigestSettingsStore.configuration
+            )
         } catch {
             logger.error(
                 "刷新任务提醒失败：\(error.localizedDescription, privacy: .public)"

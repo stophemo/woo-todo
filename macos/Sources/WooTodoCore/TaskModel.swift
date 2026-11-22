@@ -172,12 +172,12 @@ public enum TaskValidationError: LocalizedError, Equatable {
         switch self {
         case .emptyTitle: "任务内容不能为空"
         case .titleTooLong: "任务内容不能超过 120 个 Unicode 字符"
-        case .invalidDates: "开始日期和结束日期必须同时设置或同时为空，且开始不能晚于结束"
+        case .invalidDates: "结束日期不能早于任务日期，且设置结束日期时必须同时设置任务日期"
         case .invalidCategory: "标签无效：名称需为 1–12 个字符，标识需为 1–32 位小写字母、数字、下划线或连字符"
         case .categoryLimitReached: "最多只能有 8 个标签，请先删除一个已有标签"
-        case .invalidReminderTime: "提醒时间必须是 00:00 到 23:59，且任务需要有日期"
+        case .invalidReminderTime: "提醒时间必须是 00:00 到 23:59，且任务需要有任务日期"
         case .invalidState: "任务状态与结算时间组合无效"
-        case .invalidRecurrence: "每天重复的任务必须设置起止日期"
+        case .invalidRecurrence: "每天重复的任务必须设置任务日期"
         }
     }
 }
@@ -225,7 +225,7 @@ public struct TrashedTask: Identifiable, Equatable, Sendable {
     }
 }
 
-/// 一条任务。日期范围同时为空表示“未安排”，否则必须同时有开始和结束日期。
+/// 一条任务。任务日期为空表示“未安排”；有任务日期时可额外设置结束日期，只有单日任务可省略结束日期。
 public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public let seriesID: UUID
@@ -264,12 +264,12 @@ public struct TodoTask: Identifiable, Codable, Equatable, Sendable {
         guard TaskCategory.isValidID(categoryID) else {
             throw TaskValidationError.invalidCategory
         }
-        guard (startDate == nil) == (endDate == nil) else {
+        guard startDate != nil || endDate == nil else {
             throw TaskValidationError.invalidDates
         }
         let calendar = Self.protocolCalendar
         let normalizedStart = startDate.map { calendar.startOfDay(for: $0) }
-        let normalizedEnd = endDate.map { calendar.startOfDay(for: $0) }
+        let normalizedEnd = endDate.map { calendar.startOfDay(for: $0) } ?? normalizedStart
         if let start = normalizedStart, let end = normalizedEnd, start > end {
             throw TaskValidationError.invalidDates
         }

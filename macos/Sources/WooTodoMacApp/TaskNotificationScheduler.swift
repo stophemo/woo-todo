@@ -6,6 +6,7 @@ import WooTodoCore
 @MainActor
 final class TaskNotificationScheduler {
     private static let identifierPrefix = "woo-todo.task."
+    private static let digestIdentifier = "woo-todo.daily-digest"
     private static let logger = Logger(
         subsystem: "io.github.stophemo.woo-todo",
         category: "任务提醒"
@@ -18,7 +19,11 @@ final class TaskNotificationScheduler {
         self.center = center
     }
 
-    func synchronize(_ tasks: [TodoTask], now: Date = Date()) {
+    func synchronize(
+        _ tasks: [TodoTask],
+        digest: DailyDigestConfiguration,
+        now: Date = Date()
+    ) {
         let generation = UUID()
         self.generation = generation
         schedulingTask?.cancel()
@@ -29,11 +34,15 @@ final class TaskNotificationScheduler {
                       fireDate > now else { return nil }
                 return (task, fireDate)
             }
+            let digestFireDate = digest.enabled
+                ? Self.nextDigestFireDate(for: digest.time, after: now)
+                : nil
 
             let settings = await center.notificationSettings()
             var authorized = settings.authorizationStatus == .authorized ||
                 settings.authorizationStatus == .provisional
-            if settings.authorizationStatus == .notDetermined && !candidates.isEmpty {
+            if settings.authorizationStatus == .notDetermined,
+               !candidates.isEmpty || digestFireDate != nil {
                 authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) == true
             }
 
@@ -41,7 +50,10 @@ final class TaskNotificationScheduler {
             let pending = await center.pendingNotificationRequests()
             let managed = pending
                 .map(\.identifier)
-                .filter { $0.hasPrefix(Self.identifierPrefix) }
+                .filter {
+                    $0.hasPrefix(Self.identifierPrefix)
+                        || $0 == Self.digestIdentifier
+                }
             guard !Task.isCancelled, self.generation == generation else { return }
             center.removePendingNotificationRequests(withIdentifiers: managed)
             guard authorized, !Task.isCancelled, self.generation == generation else { return }
@@ -79,6 +91,58 @@ final class TaskNotificationScheduler {
                     )
                 }
             }
+
+            guard let digestFireDate,
+                  !Task.isCancelled,
+                  self.generation == generation else { return }
+            let message = DailyDigestBuilder.message(tasks: tasks, on: digestFireDate)
+            let content = UNMutableNotificationContent()
+            content.title = message.title
+            content.body = message.body
+            content.sound = .default
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TaskReminderSchedulePolicy.protocolTimeZone
+            var components = calendar.dateComponents(
+                [.year, .month, .day, .hour, .minute],
+                from: digestFireDate
+            )
+            components.timeZone = calendar.timeZone
+            let request = UNNotificationRequest(
+                identifier: Self.digestIdentifier,
+                content: content,
+                trigger: UNCalendarNotificationTrigger(
+                    dateMatching: components,
+                    repeats: false
+                )
+            )
+            do {
+                try await center.add(request)
+            } catch {
+                Self.logger.error(
+                    "无法调度晚间提醒：\(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
+    }
+
+    private static func nextDigestFireDate(
+        for time: TaskReminderTime,
+        after now: Date
+    ) -> Date? {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TaskReminderSchedulePolicy.protocolTimeZone
+        var components = calendar.dateComponents([.year, .month, .day], from: now)
+        components.timeZone = calendar.timeZone
+        components.hour = time.hour
+        components.minute = time.minute
+        components.second = 0
+        guard var fireDate = calendar.date(from: components) else { return nil }
+        if fireDate <= now {
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: fireDate) else {
+                return nil
+            }
+            fireDate = nextDay
+        }
+        return fireDate
     }
 }

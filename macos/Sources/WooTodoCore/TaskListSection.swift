@@ -61,12 +61,15 @@ public enum TaskListPresenter {
 
         func ordered(_ values: [TodoTask]) -> [TodoTask] {
             values.sorted { left, right in
-                let leftOrder = categoryOrder[left.categoryID] ?? Int.max
-                let rightOrder = categoryOrder[right.categoryID] ?? Int.max
-                if leftOrder != rightOrder { return leftOrder < rightOrder }
+                let leftDate = left.startDate ?? .distantFuture
+                let rightDate = right.startDate ?? .distantFuture
+                if leftDate != rightDate { return leftDate < rightDate }
                 let leftEnd = left.endDate ?? .distantFuture
                 let rightEnd = right.endDate ?? .distantFuture
                 if leftEnd != rightEnd { return leftEnd < rightEnd }
+                let leftOrder = categoryOrder[left.categoryID] ?? Int.max
+                let rightOrder = categoryOrder[right.categoryID] ?? Int.max
+                if leftOrder != rightOrder { return leftOrder < rightOrder }
                 if left.sortIndex != right.sortIndex {
                     return left.sortIndex < right.sortIndex
                 }

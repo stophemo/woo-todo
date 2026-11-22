@@ -296,12 +296,15 @@ public final class TodayStore: ObservableObject {
     }
 
     private func dashboardOrder(_ lhs: TodoTask, _ rhs: TodoTask) -> Bool {
-        let lhsOrder = categories.first(where: { $0.id == lhs.categoryID })?.order ?? Int.max
-        let rhsOrder = categories.first(where: { $0.id == rhs.categoryID })?.order ?? Int.max
-        if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
+        let lhsDate = lhs.startDate ?? .distantFuture
+        let rhsDate = rhs.startDate ?? .distantFuture
+        if lhsDate != rhsDate { return lhsDate < rhsDate }
         let lhsEnd = lhs.endDate ?? .distantFuture
         let rhsEnd = rhs.endDate ?? .distantFuture
         if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
+        let lhsOrder = categories.first(where: { $0.id == lhs.categoryID })?.order ?? Int.max
+        let rhsOrder = categories.first(where: { $0.id == rhs.categoryID })?.order ?? Int.max
+        if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
         return TodoTask.displayOrder(lhs, rhs)
     }
 }

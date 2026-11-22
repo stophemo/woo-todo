@@ -43,7 +43,7 @@ class TaskRepository(
         val title = validateTitle(draft.title)
         val (start, end) = validateDates(draft.startDate, draft.endDate)
         require(draft.recurrence != TaskRecurrence.DAILY || start != null) {
-            "每天重复的任务必须设置起止日期"
+            "每天重复的任务必须设置任务日期"
         }
         val categoryId = resolveCategory(draft.categoryId)
         val now = clock.millis()
@@ -76,7 +76,7 @@ class TaskRepository(
         val title = validateTitle(draft.title)
         val (start, end) = validateDates(draft.startDate, draft.endDate)
         require(draft.recurrence != TaskRecurrence.DAILY || start != null) {
-            "每天重复的任务必须设置起止日期"
+            "每天重复的任务必须设置任务日期"
         }
         val categoryId = resolveCategory(draft.categoryId)
         return store.update(
@@ -254,11 +254,11 @@ class TaskRepository(
     }
 
     private fun validateDates(start: LocalDate?, end: LocalDate?): Pair<LocalDate?, LocalDate?> {
-        require((start == null) == (end == null)) { "开始日期和结束日期必须同时设置或同时为空" }
+        require(start != null || end == null) { "设置结束日期时必须同时设置任务日期" }
         if (start != null && end != null) {
-            require(!start.isAfter(end)) { "开始日期不能晚于结束日期" }
+            require(!start.isAfter(end)) { "任务日期不能晚于结束日期" }
         }
-        return start to end
+        return start to (end ?: start)
     }
 
     private val ordering: Comparator<Task> = compareBy<Task> { statusRank(it.status) }

@@ -983,3 +983,239 @@ test("同步空间条数和密文字节容量在并发及整批事务中不可�
   assert.equal(missingUsage.status, 503);
   assert.equal(missingUsage.payload.error.code, "VAULT_USAGE_UNAVAILABLE");
 });
+
+test("短码配对可让新设备加入并一次性消费", async (context) => {
+  const db = new MemoryD1();
+  context.after(() => db.close());
+  const env = {
+    DB: db,
+    TOKEN_PEPPER: "短码测试专用且长度超过三十二字符的随机pepper-1234567890",
+    VAULT_CREATION_INVITE_CODE: TEST_INVITE_CODE,
+    APP_ENV: "test",
+  };
+  const created = await callApi(env, "POST", "/v1/vaults", {
+    device: { name: "Mac", platform: "macos" },
+  });
+  const macToken = created.payload.data.device.token as string;
+
+  const codeResult = await callApi(env, "POST", "/v1/pairings/code", {
+    publicKey: encodedBytes(32, 11),
+  }, macToken);
+  assert.equal(codeResult.status, 201);
+  const shortCode = codeResult.payload.data.shortCode as string;
+  assert.match(shortCode, /^\d{6}$/);
+
+  const resolved = await callApi(env, "POST", "/v1/pairings/resolve", {
+    code: shortCode,
+  });
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.payload.data.pairingId, codeResult.payload.data.pairingId);
+  assert.equal(resolved.payload.data.vaultId, created.payload.data.vaultId);
+  assert.equal(
+    resolved.payload.data.pairingSecret,
+    codeResult.payload.data.pairingSecret,
+  );
+
+  const androidToken = encodedBytes(32, 12);
+  const claimed = await callApi(
+    env,
+    "POST",
+    `/v1/pairings/${resolved.payload.data.pairingId}/claim`,
+    {
+      pairingSecret: resolved.payload.data.pairingSecret,
+      deviceToken: androidToken,
+      device: {
+        name: "Pixel",
+        platform: "android",
+        publicKey: encodedBytes(32, 13),
+      },
+    },
+  );
+  assert.equal(claimed.status, 202);
+
+  const confirmed = await callApi(
+    env,
+    "POST",
+    `/v1/pairings/${resolved.payload.data.pairingId}/confirm`,
+    {
+      vaultKeyEnvelope: {
+        ciphertext: encodedBytes(48, 14),
+        nonce: encodedBytes(12, 15),
+      },
+    },
+    macToken,
+  );
+  assert.equal(confirmed.status, 200);
+
+  const result = await callApi(
+    env,
+    "POST",
+    `/v1/pairings/${resolved.payload.data.pairingId}/result`,
+    {
+      pairingSecret: resolved.payload.data.pairingSecret,
+      deviceToken: androidToken,
+    },
+  );
+  assert.equal(result.status, 200);
+  assert.equal(result.payload.data.status, "confirmed");
+  assert.equal(result.payload.data.vaultId, created.payload.data.vaultId);
+
+  const replay = await callApi(env, "POST", "/v1/pairings/resolve", {
+    code: shortCode,
+  });
+  assert.equal(replay.status, 404);
+  const devices = await callApi(env, "GET", "/v1/devices", undefined, macToken);
+  assert.equal(devices.payload.data.devices.length, 2);
+});
+
+test("新设备显示码等待已有设备批准后可双向加入", async (context) => {
+  const db = new MemoryD1();
+  context.after(() => db.close());
+  const env = {
+    DB: db,
+    TOKEN_PEPPER: "反向配对测试专用且长度超过三十二字符的pepper-1234567890",
+    VAULT_CREATION_INVITE_CODE: TEST_INVITE_CODE,
+    APP_ENV: "test",
+  };
+  const created = await callApi(env, "POST", "/v1/vaults", {
+    device: { name: "Mac", platform: "macos" },
+  });
+  const macToken = created.payload.data.device.token as string;
+  const newToken = encodedBytes(32, 21);
+  const join = await callApi(env, "POST", "/v1/pairings/join", {
+    publicKey: encodedBytes(32, 22),
+    deviceToken: newToken,
+    device: { name: "Pixel", platform: "android" },
+  });
+  assert.equal(join.status, 201);
+  const { shortCode, joinSecret, joinRequestId, deviceId } = join.payload.data;
+  assert.match(shortCode, /^\d{6}$/);
+
+  const resolved = await callApi(
+    env,
+    "POST",
+    "/v1/pairings/join/resolve",
+    { code: shortCode, publicKey: encodedBytes(32, 23) },
+    macToken,
+  );
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.payload.data.deviceId, deviceId);
+  assert.equal(resolved.payload.data.device.name, "Pixel");
+
+  const pending = await callApi(
+    env,
+    "POST",
+    `/v1/pairings/join/${joinRequestId}/result`,
+    { joinSecret },
+  );
+  assert.equal(pending.status, 202);
+  assert.equal(pending.payload.data.status, "resolved");
+  assert.equal(pending.payload.data.approverPublicKey, encodedBytes(32, 23));
+
+  const approved = await callApi(
+    env,
+    "POST",
+    `/v1/pairings/join/${joinRequestId}/approve`,
+    {
+      vaultKeyEnvelope: {
+        ciphertext: encodedBytes(48, 24),
+        nonce: encodedBytes(12, 25),
+      },
+    },
+    macToken,
+  );
+  assert.equal(approved.status, 200);
+  assert.equal(approved.payload.data.vaultId, created.payload.data.vaultId);
+
+  const result = await callApi(
+    env,
+    "POST",
+    `/v1/pairings/join/${joinRequestId}/result`,
+    { joinSecret },
+  );
+  assert.equal(result.status, 200);
+  assert.equal(result.payload.data.status, "approved");
+  assert.equal(result.payload.data.vaultId, created.payload.data.vaultId);
+  assert.equal(result.payload.data.deviceId, deviceId);
+
+  const replay = await callApi(env, "POST", "/v1/pairings/join/resolve", {
+    code: shortCode,
+    publicKey: encodedBytes(32, 26),
+  }, macToken);
+  assert.equal(replay.status, 404);
+
+  const devices = await callApi(env, "GET", "/v1/devices", undefined, macToken);
+  assert.deepEqual(
+    devices.payload.data.devices.map((device: { name: string }) => device.name),
+    ["Mac", "Pixel"],
+  );
+});
+
+test("中继 epoch 在撤销设备后旋转并可更新 relay URL", async (context) => {
+  const db = new MemoryD1();
+  context.after(() => db.close());
+  const env = {
+    DB: db,
+    TOKEN_PEPPER: "中继测试专用且长度超过三十二字符的随机pepper-1234567890",
+    VAULT_CREATION_INVITE_CODE: TEST_INVITE_CODE,
+    APP_ENV: "test",
+  };
+  const created = await callApi(env, "POST", "/v1/vaults", {
+    device: { name: "Mac", platform: "macos" },
+  });
+  const macToken = created.payload.data.device.token as string;
+  const initial = await callApi(env, "GET", "/v1/relay", undefined, macToken);
+  assert.equal(initial.status, 200);
+  assert.equal(initial.payload.data.relayUrl, "https://ntfy.sh");
+  assert.ok(initial.payload.data.epoch.length >= 32);
+
+  const updated = await callApi(env, "PUT", "/v1/relay", {
+    relayUrl: "https://ntfy.example.test",
+  }, macToken);
+  assert.equal(updated.status, 200);
+  assert.equal(updated.payload.data.relayUrl, "https://ntfy.example.test");
+
+  const androidToken = encodedBytes(32, 31);
+  const pairing = await callApi(env, "POST", "/v1/pairings", {
+    publicKey: encodedBytes(32, 32),
+  }, macToken);
+  const claimed = await callApi(
+    env,
+    "POST",
+    `/v1/pairings/${pairing.payload.data.pairingId}/claim`,
+    {
+      pairingSecret: pairing.payload.data.pairingSecret,
+      deviceToken: androidToken,
+      device: {
+        name: "Pixel",
+        platform: "android",
+        publicKey: encodedBytes(32, 33),
+      },
+    },
+  );
+  const androidDeviceId = claimed.payload.data.deviceId as string;
+  await callApi(
+    env,
+    "POST",
+    `/v1/pairings/${pairing.payload.data.pairingId}/confirm`,
+    {
+      vaultKeyEnvelope: {
+        ciphertext: encodedBytes(48, 34),
+        nonce: encodedBytes(12, 35),
+      },
+    },
+    macToken,
+  );
+  const beforeRevoke = await callApi(env, "GET", "/v1/relay", undefined, macToken);
+  const revoked = await callApi(
+    env,
+    "POST",
+    `/v1/devices/${androidDeviceId}/revoke`,
+    undefined,
+    macToken,
+  );
+  assert.equal(revoked.status, 200);
+  const afterRevoke = await callApi(env, "GET", "/v1/relay", undefined, macToken);
+  assert.notEqual(afterRevoke.payload.data.epoch, beforeRevoke.payload.data.epoch);
+  assert.equal(afterRevoke.payload.data.relayUrl, "https://ntfy.example.test");
+});

@@ -4,8 +4,8 @@ import Testing
 
 @Suite("任务列表排序")
 struct TaskListPresenterTests {
-    @Test("组内先按标签优先级再按结束日期")
-    func categoryPriorityComesFirst() throws {
+    @Test("组内先按时间再按标签优先级")
+    func timeComesBeforeCategoryPriority() throws {
         let today = date("2026-07-15")
         let categories = TaskCategory.normalizeList([
             try TaskCategory(id: "life", name: "生活", order: 0),
@@ -32,7 +32,7 @@ struct TaskListPresenterTests {
         )
 
         let todaySection = try #require(sections.first { $0.kind == .today })
-        #expect(todaySection.tasks.map(\.title) == ["高优先级稍晚", "低优先级更早"])
+        #expect(todaySection.tasks.map(\.title) == ["低优先级更早", "高优先级稍晚"])
     }
 
     private func date(_ value: String) -> Date {

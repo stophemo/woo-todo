@@ -117,12 +117,20 @@
                 android:layout_height="wrap_content"
                 android:text="@string/start_date_label" />
 
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/end_date_switch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/set_end_date" />
+
             <Button
                 android:id="@+id/end_date_button"
                 style="@style/Widget.Material3.Button.OutlinedButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/end_date_label" />
+                android:text="@string/end_date_label"
+                android:visibility="gone" />
 
             <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/repeat_daily_switch"
@@ -161,6 +169,15 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/task_reminder_not_set" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:text="@string/task_reminder_hint"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="@color/muted" />
 
         <Button
             android:id="@+id/save_button"

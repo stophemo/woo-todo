@@ -5,13 +5,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-
-    <uses-feature
-        android:name="android.hardware.camera.any"
-        android:required="false" />
 
     <application
         android:name=".WooTodoApplication"
@@ -34,12 +28,9 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
-            android:name=".ui.WooTodoCaptureActivity"
+            android:name=".ui.CrossDeviceSettingsActivity"
             android:exported="false"
-            android:screenOrientation="unspecified"
-            android:stateNotNeeded="true"
-            android:theme="@style/zxing_CaptureTheme"
-            android:windowSoftInputMode="stateAlwaysHidden" />
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".ui.MainActivity"
@@ -48,22 +39,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:host="pair"
-                    android:scheme="wootodo" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:host="webdav"
-                    android:scheme="wootodo" />
             </intent-filter>
         </activity>
 

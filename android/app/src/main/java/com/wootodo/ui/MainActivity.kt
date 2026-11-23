@@ -9,16 +9,11 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.text.InputType
-import android.view.Gravity
 import android.view.View
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.TimePicker
 import android.widget.Toast
 import android.widget.TextView
@@ -38,7 +33,6 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.ItemTouchHelper
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.snackbar.Snackbar
-import com.journeyapps.barcodescanner.ScanContract
 import com.wootodo.BuildConfig
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
@@ -50,24 +44,7 @@ import com.wootodo.domain.TaskStatus
 import com.wootodo.reminder.ReminderPreferences
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.reminder.ReminderSettings
-import com.wootodo.sync.AndroidLocalNetworkServiceResolver
-import com.wootodo.sync.Base64Url
-import com.wootodo.sync.PairingDeepLink
-import com.wootodo.sync.ResolveShortCodeRequest
-import com.wootodo.sync.SyncApiClient
-import com.wootodo.sync.SyncEndpointPolicy
-import com.wootodo.sync.SyncEndpointScope
-import com.wootodo.sync.PairingPollPolicy
-import com.wootodo.sync.ScannedConfiguration
-import com.wootodo.sync.ScannedConfigurationParser
-import com.wootodo.sync.SyncBackend
-import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRuntimeState
-import com.wootodo.sync.SyncTransportMode
-import com.wootodo.sync.SecureBytes
-import com.wootodo.sync.WebDavCredentials
-import com.wootodo.sync.WebDavSetupLink
-import com.wootodo.sync.newWebDavIdentity
 import com.wootodo.update.AppUpdateCheckResult
 import com.wootodo.update.AppUpdateEvent
 import com.wootodo.update.AppUpdatePolicy
@@ -83,7 +60,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.URI
 
 class MainActivity : AppCompatActivity() {
     private lateinit var taskAdapter: TaskAdapter
@@ -94,16 +70,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var screenTitle: TextView
     private lateinit var dayCounterText: TextView
     private lateinit var titleEditHint: View
-    private var pairingDialog: AlertDialog? = null
-    private var pairingSwitchDialog: AlertDialog? = null
-    private var pairingMessageView: TextView? = null
-    private var pairingCodeView: TextView? = null
-    private var pairingEntryJob: Job? = null
-    private var syncTransportModeJob: Job? = null
-    private val pairingEntryGeneration = PairingSessionGeneration()
-    private var latestSyncState: SyncRuntimeState = SyncRuntimeState.Loading
-    private var syncTransportMode: SyncTransportMode? = null
-    private var deepLinkIntentConsumed = false
     private var updateProgressDialog: AlertDialog? = null
     private var updatePromptDialog: AlertDialog? = null
     private var updateDownloadJob: Job? = null
@@ -126,15 +92,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-    private val qrScanner = registerForActivityResult(ScanContract()) { result ->
-        val source = result.contents
-        if (source == null) {
-            Toast.makeText(this, R.string.scan_qr_cancelled, Toast.LENGTH_SHORT).show()
-        } else {
-            handleScannedConfiguration(source)
-        }
-    }
-
     private val requestUpdateInstallPermission = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
@@ -154,10 +111,6 @@ class MainActivity : AppCompatActivity() {
             TodayWidgetUpdater.updateAllAsync(applicationContext)
             app.notifyLocalMutation()
         }
-    }
-
-    private val pairingViewModel: PairingViewModel by viewModels {
-        PairingViewModel.Factory(application as WooTodoApplication)
     }
 
     private val appUpdateViewModel: AppUpdateViewModel by viewModels()
@@ -207,11 +160,10 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.reminder_settings_button).setOnClickListener { anchor ->
             showMoreMenu(anchor)
         }
-        // 配对不再占用顶栏按钮：状态行本身和“更多”菜单都能进入连接与同步。
-        syncStatus.setOnClickListener { handleSyncAction(anchor = syncStatus) }
+        // 同步状态行和“更多 → 跨设备”都进入同一个设置页。
+        syncStatus.setOnClickListener { openCrossDeviceSettings() }
         // 凭据在 Application 的后台初始化中读取；先按当前快照渲染，避免启动窗口仍可点击。
         renderSyncState((application as WooTodoApplication).syncRuntime.state.value)
-        refreshSyncTransportMode()
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -225,9 +177,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 launch {
                     (application as WooTodoApplication).syncRuntime.state.collect(::renderSyncState)
-                }
-                launch {
-                    pairingViewModel.state.collect(::renderPairingState)
                 }
             }
         }
@@ -250,35 +199,13 @@ class MainActivity : AppCompatActivity() {
         requestNotificationPermissionIfNeeded()
         renderDayCounter()
         availableUpdateRelease?.let { maybeShowUpdatePrompt(it, manual = false) }
-        deepLinkIntentConsumed = savedInstanceState?.getBoolean(STATE_DEEP_LINK_INTENT_CONSUMED)
-            ?: false
-        val pairingWasActive = savedInstanceState?.getBoolean(STATE_PAIRING_ACTIVE) == true
-        if (PairingRecoveryPolicy.requiresRescan(
-                wasPairingInSavedState = pairingWasActive,
-                runtimeStillActive = pairingViewModel.isPairingActive(),
-            )
-        ) {
-            consumeDeepLinkIntent()
-            pairingViewModel.recoverInterruptedPairing()
-        } else if (!deepLinkIntentConsumed) {
-            handleDeepLinkIntent(intent)
-        } else {
-            consumeDeepLinkIntent()
-        }
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        deepLinkIntentConsumed = false
-        handleDeepLinkIntent(intent)
+        maybeShowLegacySyncNotice()
     }
 
     override fun onResume() {
         super.onResume()
         viewModel.refresh()
         renderDayCounter()
-        refreshSyncTransportMode()
         (application as WooTodoApplication).settleRecurringTasksAsync()
         (application as WooTodoApplication).notifyAppForegrounded()
     }
@@ -293,20 +220,35 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        outState.putBoolean(STATE_PAIRING_ACTIVE, pairingViewModel.isPairingActive())
-        outState.putBoolean(STATE_DEEP_LINK_INTENT_CONSUMED, deepLinkIntentConsumed)
-        super.onSaveInstanceState(outState)
-    }
-
     override fun onDestroy() {
-        pairingEntryJob?.cancel()
-        syncTransportModeJob?.cancel()
-        pairingDialog?.dismiss()
-        pairingSwitchDialog?.dismiss()
         updateProgressDialog?.dismiss()
         updatePromptDialog?.dismiss()
         super.onDestroy()
+    }
+
+    private fun openCrossDeviceSettings() {
+        startActivity(Intent(this, CrossDeviceSettingsActivity::class.java))
+    }
+
+    /** 旧同步方式只提示一次；旧凭据保留在安全存储中，不删除也不启用。 */
+    private fun maybeShowLegacySyncNotice() {
+        val app = application as WooTodoApplication
+        lifecycleScope.launch {
+            val legacy = withContext(Dispatchers.IO) {
+                app.legacySyncDetected() && app.legacySyncNotice.shouldShowOnce()
+            }
+            if (!legacy || isFinishing || isDestroyed) return@launch
+            app.legacySyncNotice.markShown()
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle(R.string.legacy_sync_disabled_title)
+                .setMessage(R.string.legacy_sync_disabled_message)
+                .setNegativeButton(R.string.legacy_sync_later, null)
+                .setPositiveButton(R.string.legacy_sync_go_pair) { _, _ ->
+                    openCrossDeviceSettings()
+                }
+                .show()
+                .enableMessageSelection()
+        }
     }
 
     private fun openEditor(taskId: String? = null) {
@@ -623,8 +565,7 @@ class MainActivity : AppCompatActivity() {
             menu.add(0, MENU_CATEGORIES, order++, R.string.category_manage)
             menu.add(0, MENU_TRASH, order++, R.string.trash_menu)
             menu.add(0, MENU_REMINDER, order++, R.string.reminder_settings_title)
-            menu.add(0, MENU_PAIR_DEVICE, order++, R.string.pair_device_menu)
-            menu.add(0, MENU_SYNC_METHOD, order++, R.string.sync_method_settings)
+            menu.add(0, MENU_CROSS_DEVICE, order++, R.string.cross_device_settings)
             menu.add(0, MENU_CHECK_UPDATE, order++, R.string.check_for_updates)
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
@@ -635,8 +576,7 @@ class MainActivity : AppCompatActivity() {
                     MENU_CATEGORIES -> manageCategories()
                     MENU_TRASH -> showTrashDialog()
                     MENU_REMINDER -> showReminderSettings()
-                    MENU_PAIR_DEVICE -> showPairingMethodMenu(anchor)
-                    MENU_SYNC_METHOD -> showPairingMethodMenu(anchor)
+                    MENU_CROSS_DEVICE -> openCrossDeviceSettings()
                     MENU_CHECK_UPDATE -> checkForAppUpdate(manual = true)
                     else -> return@setOnMenuItemClickListener false
                 }
@@ -659,348 +599,6 @@ class MainActivity : AppCompatActivity() {
         TrashDialog.show(this, app.taskRepository) {
             app.notifyLocalMutation()
             TodayWidgetUpdater.updateAllAsync(applicationContext)
-        }
-    }
-
-    private fun scanMacConfiguration() {
-        qrScanner.launch(WooTodoScanOptions.create(this))
-    }
-
-    private fun showPairingMethodMenu(anchor: View) {
-        lifecycleScope.launch {
-            val canSwitchToSavedWorker = withContext(Dispatchers.IO) {
-                runCatching {
-                    (application as WooTodoApplication).canSwitchToSavedWorkerOrLocalSync()
-                }.getOrDefault(false)
-            }
-            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@launch
-            PopupMenu(this@MainActivity, anchor).apply {
-                menuInflater.inflate(R.menu.pairing_methods, menu)
-                menu.findItem(R.id.pairing_saved_worker).isVisible = canSwitchToSavedWorker
-                setOnMenuItemClickListener { item ->
-                    when (item.itemId) {
-                        R.id.pairing_saved_worker -> switchToSavedWorkerOrLocalSync()
-                        R.id.pairing_enter_short_code -> showShortCodeInput()
-                        R.id.pairing_show_short_code -> showShortCodeDisplay()
-                        R.id.pairing_scan_qr -> scanMacConfiguration()
-                        R.id.pairing_paste_link -> showPairingLinkInput()
-                        R.id.pairing_manual_webdav -> showWebDavSettings()
-                        else -> return@setOnMenuItemClickListener false
-                    }
-                    true
-                }
-                show()
-            }
-        }
-    }
-
-    private fun switchToSavedWorkerOrLocalSync() {
-        showSyncSwitchConfirmation(
-            messageRes = R.string.sync_switch_to_saved_worker_message,
-            onConfirm = {
-                lifecycleScope.launch {
-                    val app = application as WooTodoApplication
-                    val result = runCatching {
-                        app.switchToSavedWorkerOrLocalSync()
-                        refreshSyncTransportMode()
-                        when (val syncResult = app.synchronizeManually()) {
-                            is SyncExecutionResult.Succeeded ->
-                                getString(R.string.sync_switched_to_saved_worker)
-
-                            is SyncExecutionResult.Failed -> if (syncResult.retryable) {
-                                getString(R.string.sync_switched_to_saved_worker_retrying)
-                            } else {
-                                getString(R.string.sync_switched_to_saved_worker_failed)
-                            }
-
-                            SyncExecutionResult.NotConfigured ->
-                                getString(R.string.sync_switched_to_saved_worker_pending)
-                        }
-                    }
-                    Toast.makeText(
-                        this@MainActivity,
-                        result.getOrElse {
-                            it.localizedMessage ?: getString(R.string.sync_switch_saved_worker_failed)
-                        },
-                        Toast.LENGTH_LONG,
-                    ).show()
-                }
-            },
-        )
-    }
-
-    private fun showPairingLinkInput() {
-        val input = EditText(this).apply {
-            hint = getString(R.string.pairing_link_input_hint)
-            isSingleLine = true
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            enableEditableTextActions()
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.pairing_link_input_title)
-            .setView(input)
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                val source = input.text.toString().trim()
-                input.text.clear()
-                handleConfigurationSource(source, R.string.pairing_link_input_invalid)
-            }
-            .show()
-    }
-
-    private fun showShortCodeInput() {
-        ShortCodeInputDialog.show(this) { code ->
-            showTransientMessage(R.string.pairing_short_code_searching, Snackbar.LENGTH_LONG)
-            resolveShortCodeAndPair(code)
-        }
-    }
-
-    private fun resolveShortCodeAndPair(code: String) {
-        val app = application as WooTodoApplication
-        lifecycleScope.launch {
-            val resolved = withContext(Dispatchers.IO) {
-                val credentials = app.syncCredentialsStore.load()
-                val candidates = linkedSetOf<String>()
-                if (credentials != null) {
-                    runCatching {
-                        AndroidLocalNetworkServiceResolver(this@MainActivity)
-                            .resolve(credentials.vaultId)
-                    }.getOrNull()?.let { candidates.addAll(it) }
-                    if (SyncEndpointPolicy.scope(URI(credentials.endpoint)) ==
-                        SyncEndpointScope.LOCAL_NETWORK
-                    ) {
-                        candidates.add(credentials.endpoint)
-                    }
-                }
-                if (candidates.isEmpty()) {
-                    runCatching {
-                        AndroidLocalNetworkServiceResolver(this@MainActivity)
-                            .discoverEndpoints()
-                    }.getOrNull()?.let { candidates.addAll(it) }
-                }
-                for (endpoint in candidates) {
-                    if (SyncEndpointPolicy.scope(URI(endpoint)) !=
-                        SyncEndpointScope.LOCAL_NETWORK
-                    ) {
-                        continue
-                    }
-                    val result = runCatching {
-                        SyncApiClient(endpoint)
-                            .resolveShortCode(ResolveShortCodeRequest(code))
-                    }.getOrNull()
-                    if (result != null) return@withContext endpoint to result
-                }
-                null
-            }
-            if (resolved == null) {
-                showTransientMessage(
-                    R.string.pairing_short_code_not_found,
-                    Snackbar.LENGTH_LONG,
-                )
-                return@launch
-            }
-            val (endpoint, data) = resolved
-            beginWorkerPairing(
-                PairingDeepLink(
-                    endpoint = endpoint,
-                    pairingId = data.pairingId,
-                    pairingSecret = data.pairingSecret,
-                    initiatorPublicKey = data.initiatorPublicKey,
-                    vaultId = data.vaultId,
-                ),
-            )
-        }
-    }
-
-    private fun showShortCodeDisplay() {
-        val app = application as WooTodoApplication
-        lifecycleScope.launch {
-            val credentials = withContext(Dispatchers.IO) {
-                app.syncCredentialsStore.load()
-            }
-            if (credentials == null ||
-                SyncEndpointPolicy.scope(URI(credentials.endpoint)) !=
-                SyncEndpointScope.LOCAL_NETWORK
-            ) {
-                showTransientMessage(
-                    R.string.pairing_short_code_requires_local,
-                    Snackbar.LENGTH_LONG,
-                )
-                return@launch
-            }
-            ShortCodePairingDialog.show(this@MainActivity, credentials)
-        }
-    }
-
-    private fun handleScannedConfiguration(source: String) {
-        handleConfigurationSource(source, R.string.scan_qr_invalid)
-    }
-
-    private fun handleConfigurationSource(source: String, @StringRes invalidMessageRes: Int) {
-        when (val configuration = runCatching {
-            ScannedConfigurationParser.parse(source)
-        }.getOrNull()) {
-            is ScannedConfiguration.WebDav -> showWebDavSettings(configuration.setupLink)
-            is ScannedConfiguration.WorkerPairing -> {
-                beginWorkerPairing(configuration.pairingLink)
-            }
-            null -> Toast.makeText(this, invalidMessageRes, Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun showWebDavSettings(setupLink: WebDavSetupLink? = null) {
-        val importedVaultKey = setupLink?.let { link ->
-            try {
-                Base64Url.encode(link.vaultKey)
-            } finally {
-                link.vaultKey.fill(0)
-            }
-        }
-        lifecycleScope.launch {
-            val app = application as WooTodoApplication
-            val existing = withContext(Dispatchers.IO) {
-                runCatching { app.webDavCredentialsStore.load() }.getOrNull()
-            }
-            val workerSyncConfigured = withContext(Dispatchers.IO) {
-                runCatching {
-                    app.activeSyncBackend() == SyncBackend.WORKER_OR_LOCAL
-                }.getOrDefault(false)
-            }
-            val generatedIdentity = newWebDavIdentity()
-            val generatedKey = Base64Url.encode(SecureBytes.generate(32))
-            val padding = (20 * resources.displayMetrics.density).toInt()
-            val container = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(padding, 0, padding, 0)
-            }
-            fun field(hintRes: Int, value: String, password: Boolean = false): EditText =
-                EditText(this@MainActivity).apply {
-                    hint = getString(hintRes)
-                    setText(value)
-                    isSingleLine = true
-                    inputType = if (password) {
-                        InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-                    } else {
-                        InputType.TYPE_CLASS_TEXT
-                    }
-                    enableEditableTextActions()
-                }
-            val endpoint = field(
-                R.string.webdav_endpoint_hint,
-                setupLink?.endpoint ?: existing?.endpoint.orEmpty(),
-            ).apply {
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            }
-            val username = field(
-                R.string.webdav_username_hint,
-                setupLink?.username ?: existing?.username.orEmpty(),
-            )
-            val appPassword = field(
-                R.string.webdav_app_password_hint,
-                setupLink?.appPassword ?: existing?.appPassword.orEmpty(),
-                password = true,
-            )
-            val vaultId = field(
-                R.string.webdav_vault_id_hint,
-                setupLink?.vaultId ?: existing?.vaultId ?: generatedIdentity.first,
-            )
-            // vaultKey 等同同步密钥：加密码掩码，且不预填已保存的凭据（扫码导入的新
-            // 密钥或新生成的密钥除外），避免截屏或旁观泄露。
-            val vaultKey = field(
-                R.string.webdav_vault_key_hint,
-                importedVaultKey ?: generatedKey,
-                password = true,
-            )
-            container.addView(endpoint)
-            container.addView(username)
-            container.addView(appPassword)
-            container.addView(vaultId)
-            container.addView(vaultKey)
-            val scrollView = ScrollView(this@MainActivity).apply {
-                isFillViewport = true
-                addView(container)
-            }
-
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle(R.string.webdav_settings_title)
-                .setMessage(
-                    if (workerSyncConfigured) {
-                        R.string.webdav_switch_message
-                    } else if (setupLink == null) {
-                        R.string.webdav_settings_message
-                    } else {
-                        R.string.webdav_setup_link_message
-                    },
-                )
-                .setView(scrollView)
-                .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(
-                    if (workerSyncConfigured) R.string.sync_switch_to_webdav else R.string.save,
-                ) { _, _ ->
-                    val configure: () -> Unit = {
-                        lifecycleScope.launch {
-                            val result = runCatching {
-                                val vaultKeyText = vaultKey.text.toString().trim()
-                                val effectiveVaultKey = if (vaultKeyText.isEmpty()) {
-                                    // 编辑已有配置且未重新输入时沿用已保存密钥。
-                                    existing?.vaultKey
-                                } else {
-                                    Base64Url.decode(vaultKeyText)
-                                }
-                                val credentials = WebDavCredentials(
-                                    endpoint = endpoint.text.toString().trim(),
-                                    username = username.text.toString().trim(),
-                                    appPassword = appPassword.text.toString(),
-                                    vaultId = vaultId.text.toString().trim(),
-                                    deviceId = existing?.deviceId ?: generatedIdentity.second,
-                                    vaultKey = effectiveVaultKey
-                                        ?: throw IllegalArgumentException(
-                                            getString(R.string.webdav_vault_key_hint),
-                                        ),
-                                )
-                                credentials.validate()
-                                app.configureWebDav(
-                                    credentials,
-                                    replacingWorkerSync = workerSyncConfigured,
-                                )
-                                refreshSyncTransportMode()
-                                when (val syncResult = app.synchronizeManually()) {
-                                    is SyncExecutionResult.Succeeded ->
-                                        getString(R.string.webdav_saved_and_synced)
-
-                                    is SyncExecutionResult.Failed -> if (syncResult.retryable) {
-                                        getString(R.string.webdav_saved_sync_retrying)
-                                    } else {
-                                        getString(R.string.webdav_saved_sync_failed)
-                                    }
-
-                                    SyncExecutionResult.NotConfigured ->
-                                        getString(R.string.webdav_saved_sync_pending)
-                                }
-                            }
-                            Toast.makeText(
-                                this@MainActivity,
-                                result.fold(
-                                    onSuccess = { it },
-                                    onFailure = {
-                                        it.localizedMessage ?: getString(R.string.webdav_invalid)
-                                    },
-                                ),
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                    }
-                    if (workerSyncConfigured) {
-                        showSyncSwitchConfirmation(
-                            messageRes = R.string.sync_switch_to_webdav_message,
-                            onConfirm = configure,
-                        )
-                    } else {
-                        configure()
-                    }
-                }
-                .show()
-                .enableMessageSelection()
         }
     }
 
@@ -1086,12 +684,7 @@ class MainActivity : AppCompatActivity() {
     private fun maybeShowUpdatePrompt(release: GitHubRelease, manual: Boolean) {
         if (isFinishing || isDestroyed) return
         if (updatePromptDialog?.isShowing == true) return
-        if (pairingDialog?.isShowing == true ||
-            pairingSwitchDialog?.isShowing == true ||
-            updateProgressDialog?.isShowing == true
-        ) {
-            return
-        }
+        if (updateProgressDialog?.isShowing == true) return
         val now = System.currentTimeMillis()
         if (!updatePreferences.shouldPrompt(release, manual, now)) return
         val hasApk = release.apkUrl != null
@@ -1213,129 +806,8 @@ class MainActivity : AppCompatActivity() {
         if (version.startsWith("v", ignoreCase = true)) version else "v$version"
     }
 
-    private fun handleDeepLinkIntent(intent: Intent) {
-        if (intent.action != Intent.ACTION_VIEW ||
-            !intent.data?.scheme.equals("wootodo", ignoreCase = true)
-        ) return
-        val source = intent.dataString ?: return
-        deepLinkIntentConsumed = true
-        consumeDeepLinkIntent()
-        when {
-            intent.data?.host.equals("pair", ignoreCase = true) -> handlePairingDeepLink(source)
-            intent.data?.host.equals("webdav", ignoreCase = true) -> handleWebDavSetupLink(source)
-            else -> Toast.makeText(this, R.string.deep_link_invalid, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun handlePairingDeepLink(source: String) {
-        val pairingLink = runCatching {
-            PairingDeepLink.parse(source)
-        }.getOrNull()
-        if (pairingLink == null) {
-            Toast.makeText(this, R.string.pairing_link_invalid, Toast.LENGTH_SHORT).show()
-        } else {
-            beginWorkerPairing(pairingLink)
-        }
-    }
-
-    private fun beginWorkerPairing(link: PairingDeepLink) {
-        pairingEntryJob?.cancel()
-        pairingSwitchDialog?.dismiss()
-        pairingSwitchDialog = null
-        val generation = pairingEntryGeneration.advance()
-        pairingViewModel.prepareForNewPairing()
-        showTransientMessage(R.string.pairing_link_received, Snackbar.LENGTH_LONG)
-        pairingEntryJob = lifecycleScope.launch {
-            val activeBackend = withContext(Dispatchers.IO) {
-                runCatching {
-                    (application as WooTodoApplication).activeSyncBackend()
-                }.getOrNull()
-            }
-            if (!pairingEntryGeneration.isCurrent(generation)) return@launch
-            val begin = {
-                if (pairingEntryGeneration.isCurrent(generation)) {
-                    pairingViewModel.begin(
-                        link = link,
-                        deviceName = deviceDisplayName(),
-                        replaceExistingCredentials = activeBackend != null,
-                    )
-                }
-            }
-            if (activeBackend == SyncBackend.WEB_DAV) {
-                pairingSwitchDialog = showSyncSwitchConfirmation(
-                    messageRes = R.string.sync_switch_to_worker_message,
-                    onConfirm = begin,
-                )
-            } else if (activeBackend == SyncBackend.WORKER_OR_LOCAL) {
-                pairingSwitchDialog = showSyncSwitchConfirmation(
-                    messageRes = R.string.sync_replace_worker_message,
-                    onConfirm = begin,
-                )
-            } else {
-                begin()
-            }
-            pairingEntryJob = null
-        }
-    }
-
-    private fun showSyncSwitchConfirmation(
-        @StringRes messageRes: Int,
-        onConfirm: () -> Unit,
-    ): AlertDialog = AlertDialog.Builder(this)
-        .setTitle(R.string.sync_switch_title)
-        .setMessage(messageRes)
-        .setNegativeButton(R.string.cancel, null)
-        .setPositiveButton(R.string.sync_switch_confirm) { _, _ -> onConfirm() }
-        .show()
-        .enableMessageSelection()
-
-    private fun handleWebDavSetupLink(source: String) {
-        val setupLink = runCatching { WebDavSetupLink.parse(source) }.getOrNull()
-        if (setupLink == null) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.webdav_link_invalid_title)
-                .setMessage(R.string.webdav_link_invalid_message)
-                .setPositiveButton(R.string.confirm, null)
-                .show()
-                .enableMessageSelection()
-            return
-        }
-        Toast.makeText(this, R.string.webdav_link_received, Toast.LENGTH_SHORT).show()
-        showWebDavSettings(setupLink)
-    }
-
-    private fun consumeDeepLinkIntent() {
-        setIntent(
-            Intent(this, MainActivity::class.java).apply {
-                action = Intent.ACTION_MAIN
-            },
-        )
-    }
-
-    private fun deviceDisplayName(): String {
-        val manufacturer = Build.MANUFACTURER.trim()
-        val model = Build.MODEL.trim()
-        return listOf(manufacturer, model)
-            .filter { it.isNotBlank() }
-            .distinctBy { it.lowercase() }
-            .joinToString(" ")
-            .ifBlank { getString(R.string.android_device_name) }
-    }
-
-    private fun handleSyncAction(anchor: View) {
-        // 同步始终在后台自动进行；状态行只用于查看当前方式或重新配对。
-        when ((application as WooTodoApplication).syncRuntime.state.value) {
-            SyncRuntimeState.Loading,
-            SyncRuntimeState.Running,
-            -> Unit
-
-            else -> showPairingMethodMenu(anchor)
-        }
-    }
-
     private fun renderSyncState(state: SyncRuntimeState) {
-        latestSyncState = state
-        val statusText = when (state) {
+        syncStatus.text = when (state) {
             SyncRuntimeState.Loading -> getString(R.string.sync_loading)
             SyncRuntimeState.Unpaired -> getString(R.string.sync_unpaired)
             SyncRuntimeState.Idle -> getString(R.string.sync_ready)
@@ -1347,135 +819,8 @@ class MainActivity : AppCompatActivity() {
             )
             is SyncRuntimeState.Failed -> state.message
         }
-        syncStatus.text = if (state == SyncRuntimeState.Loading ||
-            state == SyncRuntimeState.Unpaired || syncTransportMode == null
-        ) {
-            statusText
-        } else {
-            getString(
-                R.string.sync_status_with_method,
-                syncTransportModeLabel(requireNotNull(syncTransportMode)),
-                statusText,
-            )
-        }
     }
 
-    private fun refreshSyncTransportMode() {
-        syncTransportModeJob?.cancel()
-        syncTransportModeJob = lifecycleScope.launch {
-            val mode = withContext(Dispatchers.IO) {
-                runCatching {
-                    (application as WooTodoApplication).activeSyncTransportMode()
-                }.getOrNull()
-            }
-            syncTransportMode = mode
-            renderSyncState(latestSyncState)
-            syncTransportModeJob = null
-        }
-    }
-
-    private fun syncTransportModeLabel(mode: SyncTransportMode): String = getString(
-        when (mode) {
-            SyncTransportMode.LOCAL_NETWORK -> R.string.sync_method_local_network
-            SyncTransportMode.SELF_HOSTED_SERVICE -> R.string.sync_method_self_hosted
-            SyncTransportMode.WEB_DAV -> R.string.sync_method_webdav
-        },
-    )
-
-    private fun renderPairingState(state: PairingUiState) {
-        when (state) {
-            PairingUiState.Idle -> dismissPairingProgress()
-            PairingUiState.Claiming -> showPairingProgress(
-                message = getString(R.string.pairing_claiming),
-                verificationCode = null,
-            )
-            is PairingUiState.AwaitingConfirmation -> {
-                val remainingMinutes = (
-                    PairingPollPolicy.remainingSeconds(
-                        System.currentTimeMillis(),
-                        state.expiresAt,
-                    ) + 59L
-                    ) / 60L
-                showPairingProgress(
-                    message = getString(
-                        R.string.pairing_verify_message,
-                        remainingMinutes.coerceAtLeast(1L),
-                    ),
-                    verificationCode = state.verificationCode,
-                )
-            }
-            PairingUiState.SavingCredentials -> showPairingProgress(
-                message = getString(R.string.pairing_saving),
-                verificationCode = null,
-                allowCancel = false,
-            )
-            is PairingUiState.Succeeded -> {
-                dismissPairingProgress()
-                refreshSyncTransportMode()
-                showTransientMessage(R.string.pairing_succeeded, Snackbar.LENGTH_LONG)
-                pairingViewModel.acknowledgeTerminalState()
-            }
-            is PairingUiState.Failed -> {
-                dismissPairingProgress()
-                showTransientMessage(state.message, Snackbar.LENGTH_LONG)
-                pairingViewModel.acknowledgeTerminalState()
-            }
-            PairingUiState.Interrupted -> {
-                dismissPairingProgress()
-                showTransientMessage(R.string.pairing_interrupted_message, Snackbar.LENGTH_LONG)
-                pairingViewModel.acknowledgeTerminalState()
-            }
-        }
-    }
-
-    private fun showPairingProgress(
-        message: String,
-        verificationCode: String?,
-        allowCancel: Boolean = true,
-    ) {
-        if (pairingDialog?.isShowing != true) {
-            val padding = (24 * resources.displayMetrics.density).toInt()
-            val container = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(padding, padding / 2, padding, 0)
-            }
-            pairingMessageView = TextView(this).apply {
-                gravity = Gravity.CENTER
-                textSize = 16f
-                enableReadOnlyTextSelection()
-            }
-            pairingCodeView = TextView(this).apply {
-                gravity = Gravity.CENTER
-                textSize = 36f
-                letterSpacing = 0.12f
-                setPadding(0, padding / 2, 0, padding / 2)
-                enableReadOnlyTextSelection()
-            }
-            container.addView(pairingMessageView)
-            container.addView(pairingCodeView)
-            container.addView(ProgressBar(this))
-            pairingDialog = AlertDialog.Builder(this)
-                .setTitle(R.string.pairing_title)
-                .setView(container)
-                .setNegativeButton(R.string.cancel) { _, _ -> pairingViewModel.cancel() }
-                .setOnCancelListener { pairingViewModel.cancel() }
-                .show()
-        }
-        pairingMessageView?.text = message
-        pairingCodeView?.apply {
-            text = verificationCode.orEmpty()
-            isVisible = verificationCode != null
-        }
-        pairingDialog?.getButton(AlertDialog.BUTTON_NEGATIVE)?.isEnabled = allowCancel
-    }
-
-    private fun dismissPairingProgress() {
-        pairingDialog?.dismiss()
-        pairingDialog = null
-        pairingMessageView = null
-        pairingCodeView = null
-    }
 
     private fun AlertDialog.enableMessageSelection(): AlertDialog = apply {
         findViewById<TextView>(android.R.id.message)?.enableReadOnlyTextSelection()
@@ -1484,14 +829,11 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val MENU_REMINDER = 1
         private const val MENU_DAY_COUNTER = 2
-        private const val MENU_SYNC_METHOD = 3
-        private const val MENU_PAIR_DEVICE = 4
+        private const val MENU_CROSS_DEVICE = 3
         private const val MENU_CHECK_UPDATE = 6
         private const val MENU_AVAILABLE_UPDATE = 7
         private const val MENU_CATEGORIES = 8
         private const val MENU_TRASH = 9
-        private const val STATE_PAIRING_ACTIVE = "pairing_active"
-        private const val STATE_DEEP_LINK_INTENT_CONSUMED = "deep_link_intent_consumed"
         private const val NOTIFICATION_PERMISSION_STATE = "notification_permission_state"
         private const val KEY_NOTIFICATION_PERMISSION_REQUESTED = "requested"
     }

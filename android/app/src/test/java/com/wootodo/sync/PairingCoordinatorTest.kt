@@ -11,13 +11,14 @@ import org.junit.Test
 
 class PairingCoordinatorTest {
     @Test
-    fun `认领后轮询确认并仅保存完整解密凭据`() = runBlocking {
+    fun `输入固定服务地址的六位码后认领并保存凭据`() = runBlocking {
         val fixture = PairingFixture()
         val store = MemoryCredentialsStore()
         val progress = mutableListOf<PairingProgress>()
         val pauses = mutableListOf<Long>()
+        val http = QueuedHttpConnectionFactory(fixture.responses())
         val coordinator = PairingCoordinator(
-            transportFactory = { fixture.transport },
+            clientFactory = fixture.clientFactory(http),
             credentialsStore = store,
             keyPairFactory = { fixture.claimant },
             tokenFactory = { fixture.deviceToken.copyOf() },
@@ -25,40 +26,67 @@ class PairingCoordinatorTest {
             pause = { pauses += it },
         )
 
-        val completion = coordinator.pair(fixture.link, "  Android 测试设备  ") {
+        val completion = coordinator.pair(
+            endpoint = " https://sync.example.test/ ",
+            shortCode = "012345",
+            deviceName = "  Android 测试设备  ",
+        ) {
             progress += it
         }
 
-        assertEquals(PairingCompletion(fixture.vaultId, fixture.deviceId), completion)
+        assertEquals(
+            PairingCompletion(
+                vaultId = fixture.vaultId,
+                deviceId = fixture.deviceId,
+                replacedExistingCredentials = false,
+            ),
+            completion,
+        )
         assertEquals(listOf(PairingPollPolicy.INTERVAL_MILLIS), pauses)
         assertTrue(progress.first() == PairingProgress.Claiming)
         val waiting = progress.filterIsInstance<PairingProgress.AwaitingConfirmation>().single()
         assertTrue(waiting.verificationCode.matches(Regex("^[0-9]{6}$")))
         assertTrue(progress.last() == PairingProgress.SavingCredentials)
-        assertEquals("Android 测试设备", fixture.transport.claimRequest?.device?.name)
+        assertTrue(
+            http.connections[1].sentBody()
+                .contains("\"name\":\"Android 测试设备\""),
+        )
 
         assertNotNull(store.credentials)
         val credentials = requireNotNull(store.credentials)
-        assertEquals(fixture.link.endpoint, credentials.endpoint)
+        assertEquals("https://sync.example.test", credentials.endpoint)
         assertEquals(fixture.vaultId, credentials.vaultId)
         assertEquals(fixture.deviceId, credentials.deviceId)
         assertTrue(credentials.vaultKey.contentEquals(fixture.vaultKey))
+
+        assertEquals(
+            listOf(
+                "/v1/pairings/resolve",
+                "/v1/pairings/${fixture.pairingId}/claim",
+                "/v1/pairings/${fixture.pairingId}/result",
+                "/v1/pairings/${fixture.pairingId}/result",
+            ),
+            http.paths(),
+        )
+        // 成功保存后不撤销新设备。
+        assertTrue(http.paths().none { it.endsWith("/revoke") })
+        val resolveBody = http.connections.first().sentBody()
+        assertTrue(resolveBody.contains("\"code\":\"012345\""))
+        assertNull(http.connections.first().getRequestProperty("Authorization"))
     }
 
     @Test
-    fun `主地址不可达时按备选地址重试并保存可用地址`() = runBlocking {
-        val alternate = "http://192.168.43.12:48473"
-        val fixture = PairingFixture(alternateEndpoints = listOf(alternate))
+    fun `本地时钟快十分钟仍能完成配对`() = runBlocking {
+        val fixture = PairingFixture(
+            now = 1_600_000L,
+            serverNow = 1_000_000L,
+            expiresAt = 1_300_000L,
+        )
         val store = MemoryCredentialsStore()
-        val attempts = mutableListOf<String>()
+        val waiting = mutableListOf<PairingProgress.AwaitingConfirmation>()
+        val http = QueuedHttpConnectionFactory(fixture.responses())
         val coordinator = PairingCoordinator(
-            transportFactory = { endpoint ->
-                attempts += endpoint
-                if (endpoint != alternate) {
-                    throw SyncApiException.Transport(java.net.ConnectException("地址不可达"))
-                }
-                fixture.transport
-            },
+            clientFactory = fixture.clientFactory(http),
             credentialsStore = store,
             keyPairFactory = { fixture.claimant },
             tokenFactory = { fixture.deviceToken.copyOf() },
@@ -66,39 +94,86 @@ class PairingCoordinatorTest {
             pause = {},
         )
 
-        coordinator.pair(fixture.link, "Android 测试设备")
-
-        assertEquals(listOf(fixture.link.endpoint, alternate), attempts)
-        assertEquals(alternate, requireNotNull(store.credentials).endpoint)
-    }
-
-    @Test
-    fun `全部候选地址都不可达时抛出传输错误且不落盘`() = runBlocking {
-        val fixture = PairingFixture(alternateEndpoints = listOf("http://192.168.43.12:48473"))
-        val store = MemoryCredentialsStore()
-        val attempts = mutableListOf<String>()
-        val coordinator = PairingCoordinator(
-            transportFactory = { endpoint ->
-                attempts += endpoint
-                throw SyncApiException.Transport(java.net.ConnectException("地址不可达"))
-            },
-            credentialsStore = store,
-            keyPairFactory = { fixture.claimant },
-            tokenFactory = { fixture.deviceToken.copyOf() },
-            clockMillis = { fixture.now },
-            pause = {},
-        )
-
-        var failure: Throwable? = null
-        try {
-            coordinator.pair(fixture.link, "Android 测试设备")
-        } catch (error: Throwable) {
-            failure = error
+        val completion = coordinator.pair(fixture.endpoint, "012345", "Android 设备") {
+            if (it is PairingProgress.AwaitingConfirmation) waiting += it
         }
 
-        assertTrue(failure is SyncApiException.Transport)
-        assertEquals(2, attempts.size)
-        assertNull(store.credentials)
+        assertEquals(fixture.deviceId, completion.deviceId)
+        // 服务器 expiresAt 早于本机时钟，但本地等待截止时间按剩余有效期计算。
+        assertEquals(
+            fixture.now + (fixture.expiresAt - fixture.serverNow),
+            waiting.single().expiresAt,
+        )
+        assertNotNull(store.credentials)
+    }
+
+    @Test
+    fun `确认后保存凭据失败会撤销临时设备`() = runBlocking {
+        val fixture = PairingFixture()
+        val http = QueuedHttpConnectionFactory(
+            fixture.responses() + FakeHttpResponse(200, revokeData(fixture.deviceId)),
+        )
+        val coordinator = PairingCoordinator(
+            clientFactory = fixture.clientFactory(http),
+            credentialsStore = RejectingSaveStore(),
+            keyPairFactory = { fixture.claimant },
+            tokenFactory = { fixture.deviceToken.copyOf() },
+            clockMillis = { fixture.now },
+            pause = {},
+        )
+
+        val error = runCatching {
+            coordinator.pair(fixture.endpoint, "012345", "Android 设备")
+        }.exceptionOrNull()
+
+        assertSame(PairingException.AlreadyPaired, error)
+        assertEquals("/v1/devices/current/revoke", http.paths().last())
+        assertEquals(
+            "Bearer ${Base64Url.encode(fixture.deviceToken)}",
+            http.connections.last().getRequestProperty("Authorization"),
+        )
+    }
+
+    @Test
+    fun `认领后取消会撤销临时设备`() = runBlocking {
+        val fixture = PairingFixture()
+        val http = QueuedHttpConnectionFactory(
+            fixture.responses().take(3) + FakeHttpResponse(200, revokeData(fixture.deviceId)),
+        )
+        val coordinator = PairingCoordinator(
+            clientFactory = fixture.clientFactory(http),
+            credentialsStore = MemoryCredentialsStore(),
+            keyPairFactory = { fixture.claimant },
+            tokenFactory = { fixture.deviceToken.copyOf() },
+            clockMillis = { fixture.now },
+            pause = { throw kotlinx.coroutines.CancellationException("测试取消") },
+        )
+
+        val error = runCatching {
+            coordinator.pair(fixture.endpoint, "012345", "Android 设备")
+        }.exceptionOrNull()
+
+        assertTrue(error is kotlinx.coroutines.CancellationException)
+        assertEquals("/v1/devices/current/revoke", http.paths().last())
+    }
+
+    @Test
+    fun `非法服务地址不会发起网络请求`() = runBlocking {
+        var clientCreated = false
+        val coordinator = PairingCoordinator(
+            clientFactory = {
+                clientCreated = true
+                error("不应创建客户端")
+            },
+            credentialsStore = MemoryCredentialsStore(),
+        )
+
+        val error = runCatching {
+            coordinator.pair("http://192.168.1.10:8787", "012345", "Android 设备")
+        }.exceptionOrNull()
+
+        assertSame(PairingException.InvalidEndpoint, error)
+        assertFalse(clientCreated)
     }
 
     @Test
@@ -106,56 +181,7 @@ class PairingCoordinatorTest {
         val fixture = PairingFixture(wrongInitiatorInResult = true)
         val store = MemoryCredentialsStore()
         val coordinator = PairingCoordinator(
-            transportFactory = { fixture.transport },
-            credentialsStore = store,
-            keyPairFactory = { fixture.claimant },
-            tokenFactory = { fixture.deviceToken.copyOf() },
-            clockMillis = { fixture.now },
-            pause = {},
-        )
-
-        val error = runCatching { coordinator.pair(fixture.link, "Android 设备") }.exceptionOrNull()
-
-        assertSame(PairingException.InvalidResult, error)
-        assertNull(store.credentials)
-    }
-
-    @Test
-    fun `本机已有凭据时不会认领新二维码`() = runBlocking {
-        val fixture = PairingFixture()
-        val store = MemoryCredentialsStore().apply {
-            credentials = SyncCredentials(
-                endpoint = fixture.link.endpoint,
-                vaultId = fixture.vaultId,
-                deviceId = fixture.deviceId,
-                deviceToken = Base64Url.encode(fixture.deviceToken),
-                vaultKey = fixture.vaultKey,
-            )
-        }
-        val coordinator = PairingCoordinator(
-            transportFactory = { fixture.transport },
-            credentialsStore = store,
-        )
-
-        val error = runCatching { coordinator.pair(fixture.link, "Android 设备") }.exceptionOrNull()
-
-        assertSame(PairingException.AlreadyPaired, error)
-        assertNull(fixture.transport.claimRequest)
-    }
-
-    @Test
-    fun `用户确认后拒绝属于另一个同步空间的新二维码`() = runBlocking {
-        val fixture = PairingFixture()
-        val oldCredentials = SyncCredentials(
-            endpoint = "http://192.168.1.10:48473",
-            vaultId = "old-vault",
-            deviceId = "old-device",
-            deviceToken = Base64Url.encode(ByteArray(32) { 3 }),
-            vaultKey = ByteArray(32) { 4 },
-        )
-        val store = MemoryCredentialsStore().apply { credentials = oldCredentials }
-        val coordinator = PairingCoordinator(
-            transportFactory = { fixture.transport },
+            clientFactory = fixture.clientFactory(QueuedHttpConnectionFactory(fixture.responses())),
             credentialsStore = store,
             keyPairFactory = { fixture.claimant },
             tokenFactory = { fixture.deviceToken.copyOf() },
@@ -164,134 +190,182 @@ class PairingCoordinatorTest {
         )
 
         val error = runCatching {
-            coordinator.pair(
-                link = fixture.link,
-                deviceName = "Android 设备",
-                replaceExistingCredentials = true,
-            )
+            coordinator.pair(fixture.endpoint, "012345", "Android 设备")
         }.exceptionOrNull()
 
-        assertSame(PairingException.DifferentSyncSpace, error)
-        assertEquals(oldCredentials, store.credentials)
+        assertSame(PairingException.InvalidResult, error)
+        assertNull(store.credentials)
     }
 
     @Test
-    fun `手机拒绝连接只属于当前设备的回环地址`() = runBlocking {
-        var transportCreated = false
-        val localLink = PairingDeepLink(
-            endpoint = "http://127.0.0.1:8787",
-            pairingId = "pair-local",
-            pairingSecret = Base64Url.encode(ByteArray(32) { 1 }),
-            initiatorPublicKey = Base64Url.encode(ByteArray(32) { 2 }),
+    fun `本机已有有效凭据时不会再次认领`() = runBlocking {
+        val fixture = PairingFixture()
+        val store = MemoryCredentialsStore().apply {
+            credentials = SyncCredentials(
+                endpoint = fixture.endpoint,
+                vaultId = fixture.vaultId,
+                deviceId = fixture.deviceId,
+                deviceToken = Base64Url.encode(fixture.deviceToken),
+                vaultKey = fixture.vaultKey,
+            )
+        }
+        val http = QueuedHttpConnectionFactory(emptyList())
+        val coordinator = PairingCoordinator(
+            clientFactory = fixture.clientFactory(http),
+            credentialsStore = store,
+        )
+
+        val error = runCatching {
+            coordinator.pair(fixture.endpoint, "012345", "Android 设备")
+        }.exceptionOrNull()
+
+        assertSame(PairingException.AlreadyPaired, error)
+        assertTrue(http.connections.isEmpty())
+    }
+
+    @Test
+    fun `换掉旧版本遗留的局域网凭据并重新绑定`() = runBlocking {
+        val fixture = PairingFixture()
+        val legacy = SyncCredentials(
+            endpoint = "http://192.168.1.10:48473",
+            vaultId = "old-vault",
+            deviceId = "old-device",
+            deviceToken = Base64Url.encode(ByteArray(32) { 3 }),
+            vaultKey = ByteArray(32) { 4 },
+        )
+        val store = MemoryCredentialsStore().apply { credentials = legacy }
+        val coordinator = PairingCoordinator(
+            clientFactory = fixture.clientFactory(QueuedHttpConnectionFactory(fixture.responses())),
+            credentialsStore = store,
+            keyPairFactory = { fixture.claimant },
+            tokenFactory = { fixture.deviceToken.copyOf() },
+            clockMillis = { fixture.now },
+            pause = {},
+        )
+
+        val completion = coordinator.pair(fixture.endpoint, "012345", "Android 设备")
+
+        assertTrue(completion.replacedExistingCredentials)
+        assertEquals(fixture.vaultId, requireNotNull(store.credentials).vaultId)
+    }
+
+    @Test
+    fun `配对码解析失败不落盘`() = runBlocking {
+        val fixture = PairingFixture()
+        val store = MemoryCredentialsStore()
+        val http = QueuedHttpConnectionFactory(
+            listOf(
+                FakeHttpResponse(
+                    status = 404,
+                    body = """
+                        {"ok":false,"error":{"code":"PAIRING_NOT_FOUND","message":"配对码无效或已过期"},
+                        "requestId":"req-404"}
+                    """.trimIndent(),
+                ),
+            ),
         )
         val coordinator = PairingCoordinator(
-            transportFactory = {
-                transportCreated = true
-                error("不应创建网络客户端")
-            },
-            credentialsStore = MemoryCredentialsStore(),
+            clientFactory = fixture.clientFactory(http),
+            credentialsStore = store,
+            keyPairFactory = { fixture.claimant },
+            tokenFactory = { fixture.deviceToken.copyOf() },
+            pause = {},
         )
 
-        val error = runCatching { coordinator.pair(localLink, "Android 设备") }.exceptionOrNull()
+        val error = runCatching {
+            coordinator.pair(fixture.endpoint, "012345", "Android 设备")
+        }.exceptionOrNull()
 
-        assertSame(PairingException.CurrentDeviceOnlyEndpoint, error)
-        assertFalse(transportCreated)
+        assertTrue(error is SyncApiException.Server)
+        assertEquals(404, (error as SyncApiException.Server).statusCode)
+        assertNull(store.credentials)
     }
 }
 
 private class PairingFixture(
-    wrongInitiatorInResult: Boolean = false,
-    alternateEndpoints: List<String> = emptyList(),
+    private val wrongInitiatorInResult: Boolean = false,
+    val now: Long = 1_000L,
+    val serverNow: Long = 1_000L,
+    val expiresAt: Long = 601_000L,
 ) {
-    val now = 1_000L
-    val expiresAt = 601_000L
     val pairingId = "pairing-test-android"
     val deviceId = "device-android-test"
     val vaultId = "vault-test"
     val pairingSecret = ByteArray(32) { it.toByte() }
     val deviceToken = ByteArray(32) { (it + 32).toByte() }
     val vaultKey = ByteArray(32) { (it + 64).toByte() }
+    val endpoint = "https://sync.example.test"
     val initiator = PairingKeyPair.fromPrivateKey(ByteArray(32) { (it + 1).toByte() })
     val claimant = PairingKeyPair.fromPrivateKey(ByteArray(32) { (it + 97).toByte() })
-    val link = PairingDeepLink(
-        endpoint = "https://sync.example.test",
-        pairingId = pairingId,
-        pairingSecret = Base64Url.encode(pairingSecret),
-        initiatorPublicKey = initiator.publicKeyBase64Url,
-        vaultId = vaultId,
-        alternateEndpoints = alternateEndpoints,
-    )
-    val transport = ConfirmingPairingTransport(this, wrongInitiatorInResult)
-}
 
-private class ConfirmingPairingTransport(
-    private val fixture: PairingFixture,
-    private val wrongInitiatorInResult: Boolean,
-) : PairingTransport {
-    var claimRequest: PairingClaimRequest? = null
-    private var resultCalls = 0
+    fun clientFactory(
+        http: QueuedHttpConnectionFactory,
+    ): (String) -> SyncApiClient = { endpoint ->
+        SyncApiClient(endpoint) { url -> http.create(url) }
+    }
 
-    override fun claimPairing(
-        pairingId: String,
-        request: PairingClaimRequest,
-    ): PairingClaimData {
-        assertEquals(fixture.pairingId, pairingId)
-        claimRequest = request
-        return PairingClaimData(
-            pairingId = pairingId,
-            status = PairingStatus.CLAIMED,
-            deviceId = fixture.deviceId,
-            expiresAt = fixture.expiresAt,
+    fun responses(): List<FakeHttpResponse> {
+        val resolve = successData(
+            """
+            {"pairingId":"$pairingId","pairingSecret":"${Base64Url.encode(pairingSecret)}",
+            "initiatorPublicKey":"${initiator.publicKeyBase64Url}","vaultId":"$vaultId",
+            "expiresAt":$expiresAt,"serverTime":$serverNow}
+            """.trimIndent(),
+        )
+        val claim = successData(
+            """
+            {"pairingId":"$pairingId","status":"claimed","deviceId":"$deviceId",
+            "expiresAt":$expiresAt}
+            """.trimIndent(),
+        )
+        val pending = successData(
+            """
+            {"pairingId":"$pairingId","status":"claimed","vaultId":null,"deviceId":null,
+            "initiatorPublicKey":null,"vaultKeyEnvelope":null,"expiresAt":$expiresAt}
+            """.trimIndent(),
+        )
+        val confirmed = successData(confirmedData())
+        return listOf(
+            FakeHttpResponse(200, resolve),
+            FakeHttpResponse(201, claim),
+            FakeHttpResponse(202, pending),
+            FakeHttpResponse(200, confirmed),
         )
     }
 
-    override fun pairingResult(
-        pairingId: String,
-        request: PairingResultRequest,
-    ): PairingResultData {
-        resultCalls += 1
-        if (resultCalls == 1) {
-            return PairingResultData(
-                pairingId = pairingId,
-                status = PairingStatus.CLAIMED,
-                vaultId = null,
-                deviceId = null,
-                initiatorPublicKey = null,
-                vaultKeyEnvelope = null,
-                expiresAt = fixture.expiresAt,
-            )
-        }
-        val claimantPublicKey = requireNotNull(claimRequest?.device?.publicKey)
-        val sessionKey = fixture.initiator.sessionKey(
-            claimantPublicKey,
-            fixture.pairingId,
-            fixture.link.pairingSecret,
+    private fun confirmedData(): String {
+        val sessionKey = initiator.sessionKey(
+            claimant.publicKey,
+            pairingId,
+            pairingSecret,
         )
         val envelope = PairingSessionCrypto.sealVaultKey(
-            vaultKey = fixture.vaultKey,
+            vaultKey = vaultKey,
             sessionKey = sessionKey,
-            pairingId = fixture.pairingId,
-            claimedDeviceId = fixture.deviceId,
+            pairingId = pairingId,
+            claimedDeviceId = deviceId,
             nonce = ByteArray(12) { 7 },
         )
         sessionKey.fill(0)
-        return PairingResultData(
-            pairingId = pairingId,
-            status = PairingStatus.CONFIRMED,
-            vaultId = fixture.vaultId,
-            deviceId = fixture.deviceId,
-            initiatorPublicKey = if (wrongInitiatorInResult) {
-                Base64Url.encode(ByteArray(32) { 9 })
-            } else {
-                fixture.initiator.publicKeyBase64Url
-            },
-            vaultKeyEnvelope = envelope,
-            expiresAt = fixture.expiresAt,
-        )
+        val initiatorKey = if (wrongInitiatorInResult) {
+            Base64Url.encode(ByteArray(32) { 9 })
+        } else {
+            initiator.publicKeyBase64Url
+        }
+        return """
+            {"pairingId":"$pairingId","status":"confirmed","vaultId":"$vaultId",
+            "deviceId":"$deviceId","initiatorPublicKey":"$initiatorKey",
+            "vaultKeyEnvelope":{"ciphertext":"${envelope.ciphertext}",
+            "nonce":"${envelope.nonce}"},"expiresAt":$expiresAt}
+        """.trimIndent()
     }
 }
 
-private class MemoryCredentialsStore : SyncCredentialsStore {
+private fun revokeData(deviceId: String): String = successData(
+    """{"deviceId":"$deviceId","revokedAt":1000}""",
+)
+
+internal open class MemoryCredentialsStore : SyncCredentialsStore {
     var credentials: SyncCredentials? = null
 
     override fun save(credentials: SyncCredentials) {
@@ -309,4 +383,9 @@ private class MemoryCredentialsStore : SyncCredentialsStore {
     override fun delete() {
         credentials = null
     }
+}
+
+/** 模拟并发配对已经抢先保存：saveIfAbsent 返回 false。 */
+private class RejectingSaveStore : MemoryCredentialsStore() {
+    override fun saveIfAbsent(credentials: SyncCredentials): Boolean = false
 }

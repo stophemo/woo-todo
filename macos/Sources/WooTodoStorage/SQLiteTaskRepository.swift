@@ -51,7 +51,7 @@ public struct SQLiteSyncConfiguration: Sendable {
 
 /// 小数据量本地优先仓储；串行锁确保面板刷新与后台同步不会并发访问同一连接。
 public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalApplying,
-    WebDavLocalApplying, @unchecked Sendable {
+    @unchecked Sendable {
     private var database: OpaquePointer?
     private let lock = NSRecursiveLock()
     private let encoder = JSONEncoder()
@@ -757,14 +757,6 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         )
         try execute(
             """
-            CREATE TABLE IF NOT EXISTS sync_webdav_applied_operations (
-                op_id TEXT PRIMARY KEY NOT NULL,
-                applied_at INTEGER NOT NULL
-            )
-            """
-        )
-        try execute(
-            """
             CREATE TABLE IF NOT EXISTS sync_deferred_upserts (
                 entity_id TEXT PRIMARY KEY NOT NULL,
                 kind TEXT NOT NULL DEFAULT 'upsert'
@@ -830,7 +822,9 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             )
         }
         try removeUnusedLegacyCategories()
-        try execute("PRAGMA user_version = 8")
+        // 0.3.0 起移除 WebDAV 同步：升级时清理遗留的幂等记录表。
+        try execute("DROP TABLE IF EXISTS sync_webdav_applied_operations")
+        try execute("PRAGMA user_version = 9")
     }
 
     public func displayConfiguration() throws -> WireDisplayConfigurationPayload? {
@@ -1043,7 +1037,6 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         try execute("DELETE FROM sync_outbox")
         try execute("DELETE FROM sync_entity_versions")
         try execute("DELETE FROM sync_applied_operations")
-        try execute("DELETE FROM sync_webdav_applied_operations")
         try execute("DELETE FROM sync_deferred_upserts")
         try execute("DELETE FROM sync_deferred_deletions")
         try execute("DELETE FROM sync_deferred_display_configuration")
@@ -1120,16 +1113,6 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         try applyRemoteOperationsSynchronously(operations, advancingCursorTo: cursor)
     }
 
-    public func applyWebDavOperations(_ operations: [WebDavOperation]) async throws {
-        // WebDAV 远端对象可能很多；小批次落地避免长时间独占本地写锁，
-        // 让用户操作可以在同步期间继续写入任务。
-        for start in stride(from: 0, to: operations.count, by: Self.webDavApplyBatchSize) {
-            let end = min(start + Self.webDavApplyBatchSize, operations.count)
-            try applyWebDavOperationsSynchronously(Array(operations[start..<end]))
-            await Task.yield()
-        }
-    }
-
     public func resetCursor() async throws {
         try withLock {
             try execute("BEGIN IMMEDIATE TRANSACTION")
@@ -1145,18 +1128,6 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 try? execute("ROLLBACK")
                 throw error
             }
-        }
-    }
-
-    public func pendingWebDavOperationIDs(_ operationIDs: [String]) async throws -> Set<String> {
-        try withLock {
-            var pending = Set<String>()
-            for operationID in Set(operationIDs) {
-                if try !isWebDavOperationApplied(operationID) {
-                    pending.insert(operationID)
-                }
-            }
-            return pending
         }
     }
 
@@ -1261,53 +1232,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
-    private func applyWebDavOperationsSynchronously(
-        _ operations: [WebDavOperation]
-    ) throws {
-        try withLock {
-            guard let configuration = syncConfiguration else {
-                throw SQLiteRepositoryError.syncCredentialsUnavailable
-            }
-            try execute("BEGIN IMMEDIATE TRANSACTION")
-            do {
-                for operation in operations {
-                    guard operation.vaultId == configuration.vaultId else {
-                        throw SQLiteRepositoryError.invalidRemotePage("WebDAV 同步空间不匹配")
-                    }
-                    if try isWebDavOperationApplied(operation.opId) { continue }
-                    if try !isOperationApplied(operation.opId) {
-                        try applyRemoteOperation(
-                            SyncPulledOperation(
-                                serverSeq: 1,
-                                opId: operation.opId,
-                                deviceId: operation.deviceId,
-                                entityId: operation.entityId,
-                                kind: operation.kind,
-                                lamport: operation.lamport,
-                                ciphertext: operation.ciphertext,
-                                nonce: operation.nonce,
-                                createdAt: milliseconds(since1970: Date())
-                            ),
-                            configuration: configuration
-                        )
-                        try advanceLamportClock(toAtLeast: operation.lamport)
-                    }
-                    try recordWebDavOperation(operation.opId)
-                }
-                // 只保留最近 10000 条 WebDAV applied 记录，防止表无限增长；
-                // 幂等性由 LWW 与实体版本表保证。
-                try trimWebDavAppliedOperations(retaining: Self.appliedOperationRetentionWindow)
-                try execute("COMMIT")
-            } catch {
-                try? execute("ROLLBACK")
-                throw error
-            }
-        }
-    }
-
-    private static let webDavApplyBatchSize = 25
-
-    /// applied 记录保留窗口：同步（按 server_seq）与 WebDAV（按 applied_at）各保留最近 10000 条。
+    /// applied 记录保留窗口：同步按 server_seq 保留最近 10000 条。
     private static let appliedOperationRetentionWindow: Int64 = 10_000
 
     private func trimSyncAppliedOperations(keepingServerSeqAtLeast lowerBound: Int64) throws {
@@ -1318,32 +1243,49 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
     }
 
-    private func trimWebDavAppliedOperations(retaining count: Int64) throws {
-        let statement = try prepare(
-            """
-            DELETE FROM sync_webdav_applied_operations
-            WHERE op_id IN (
-                SELECT op_id FROM (
-                    SELECT op_id FROM sync_webdav_applied_operations
-                    ORDER BY applied_at DESC
-                    LIMIT -1 OFFSET ?
-                )
-            )
-            """
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind([.integer(count)], to: statement)
-        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
-    }
-
     /// 测试用：返回 sync_applied_operations 的行数（有界性断言）。
     internal func syncAppliedOperationCount() throws -> Int {
         try withLock { try scalarCount("SELECT COUNT(*) FROM sync_applied_operations") }
     }
 
-    /// 测试用：返回 sync_webdav_applied_operations 的行数（有界性断言）。
-    internal func webDavAppliedOperationCount() throws -> Int {
-        try withLock { try scalarCount("SELECT COUNT(*) FROM sync_webdav_applied_operations") }
+    /// 测试用：当前数据库 schema 版本。
+    internal func schemaVersion() throws -> Int {
+        try withLock {
+            let statement = try prepare("PRAGMA user_version")
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_step(statement) == SQLITE_ROW else { throw statementError() }
+            return Int(sqlite3_column_int(statement, 0))
+        }
+    }
+
+    /// 测试用：确认表是否存在（迁移断言）。
+    internal func tableExists(_ name: String) throws -> Bool {
+        try withLock {
+            let statement = try prepare(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1"
+            )
+            defer { sqlite3_finalize(statement) }
+            try bind([.text(name)], to: statement)
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW: return true
+            case SQLITE_DONE: return false
+            default: throw statementError()
+            }
+        }
+    }
+
+    /// 测试用：模拟 0.2.x 版本留下的 WebDAV 幂等表，验证升级会删除。
+    internal func recreateLegacyWebDavTableForTesting() throws {
+        try withLock {
+            try execute(
+                """
+                CREATE TABLE IF NOT EXISTS sync_webdav_applied_operations (
+                    op_id TEXT PRIMARY KEY NOT NULL,
+                    applied_at INTEGER NOT NULL
+                )
+                """
+            )
+        }
     }
 
     private func scalarCount(_ sql: String) throws -> Int {
@@ -1531,7 +1473,6 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
                 AND NOT EXISTS(SELECT 1 FROM sync_outbox)
                 AND NOT EXISTS(SELECT 1 FROM sync_entity_versions)
                 AND NOT EXISTS(SELECT 1 FROM sync_applied_operations)
-                AND NOT EXISTS(SELECT 1 FROM sync_webdav_applied_operations)
                 AND NOT EXISTS(SELECT 1 FROM sync_deferred_upserts)
                 AND NOT EXISTS(SELECT 1 FROM sync_deferred_deletions)
                 AND vault_id IS NULL
@@ -2642,31 +2583,6 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         try bind([
             .text(operation.opId),
             .integer(operation.serverSeq),
-            .integer(milliseconds(since1970: Date())),
-        ], to: statement)
-        guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }
-    }
-
-    private func isWebDavOperationApplied(_ operationID: String) throws -> Bool {
-        let statement = try prepare(
-            "SELECT 1 FROM sync_webdav_applied_operations WHERE op_id = ? LIMIT 1"
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind([.text(operationID)], to: statement)
-        switch sqlite3_step(statement) {
-        case SQLITE_ROW: return true
-        case SQLITE_DONE: return false
-        default: throw statementError()
-        }
-    }
-
-    private func recordWebDavOperation(_ operationID: String) throws {
-        let statement = try prepare(
-            "INSERT INTO sync_webdav_applied_operations(op_id, applied_at) VALUES (?, ?)"
-        )
-        defer { sqlite3_finalize(statement) }
-        try bind([
-            .text(operationID),
             .integer(milliseconds(since1970: Date())),
         ], to: statement)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw statementError() }

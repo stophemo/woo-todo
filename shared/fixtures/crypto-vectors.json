@@ -80,5 +80,26 @@
     "envelopeNonce": "QEFCQ0RFRkdISUpL",
     "envelopeAadUtf8": "woo-todo-pair-v1|pair-demo-001|device-android-demo",
     "vaultKeyCiphertext": "6M_ekN6wtiP9nFmIOGIUDSqiikbM0PGGpVq0f9xBJFnhlfhRlDB6p6125SLGS0Ir"
+  },
+  "pairingJoin": {
+    "description": "新设备显示码 join 配对：X25519 + HKDF-SHA256（salt 为 namespace|salt|joinRequestId 的 SHA-256 摘要），核对码与 vaultKey envelope 使用独立 join 命名空间。私钥仅用于测试。",
+    "joinRequestId": "join-demo-001",
+    "deviceId": "device-android-join-demo",
+    "hkdfSaltUtf8": "woo-todo-pairing-join-v1|salt|join-demo-001",
+    "hkdfInfoUtf8": "woo-todo-pairing-join-v1|join-demo-001",
+    "creatorPrivateKey": "gF9zN1K8eIFEzktmcXCDdkZ1nqEvOwpOUZgEHPAxJ2A",
+    "creatorPublicKey": "IztdYSXQFr8KAMJQJu8RPRU7znwZciq-FG0gjBKjBnA",
+    "approverPrivateKey": "sOBUf4sv4nFXbvLbydFM_dto_SmjY8fZDHYLBXUyzH4",
+    "approverPublicKey": "R0iEo6DjFaxzPdb4oKYpZDhuOZvyRWoh93dLY4aM_CU",
+    "sharedSecret": "_i_wI5_0LdjH5YgnfK5VIY2WxuioL3EIpPeY7W0wHkY",
+    "sessionKey": "mLfeD0CkK1c1MZcuZOsVbxCWyn0k-NhRpmV6Ancxkng",
+    "verificationInputUtf8": "woo-todo-pairing-code-v1|join|join-demo-001|IztdYSXQFr8KAMJQJu8RPRU7znwZciq-FG0gjBKjBnA|R0iEo6DjFaxzPdb4oKYpZDhuOZvyRWoh93dLY4aM_CU",
+    "verificationCode": "742215",
+    "vaultKey": "gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8",
+    "envelopeAadUtf8": "woo-todo-pair-v1|join|join-demo-001|device-android-join-demo",
+    "vaultKeyEnvelope": {
+      "ciphertext": "Uj-1fr3r025D5GL0m4KT2r5ahvOyzalOhwrZA4Do62NIsE05K003GVwkav75iR2A",
+      "nonce": "UFFSU1RVVldYWVpb"
+    }
   }
 }

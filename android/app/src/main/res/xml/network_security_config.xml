@@ -1,16 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    跨设备同步只允许 HTTPS Worker；应用更新也固定使用 HTTPS。
+    v0.3.0 移除局域网同步后，不再需要放行任何明文流量。
+-->
 <network-security-config>
-    <!--
-        调查结论（保留 base-config 放行明文的理由）：
-        1. 局域网同步端点由 NSD 解析为具体 IP（LocalNetworkEndpointResolver 取
-           NsdServiceInfo.hostAddress），network_security_config 不支持按 IP 段放行，
-           也无法用 domain-config 覆盖；关闭全局明文会直接破坏 LAN 同步。
-        2. 明文流量已被代码层收窄：SyncEndpointPolicy 只允许 http 指向私网 IPv4 /
-           *.local / 本机回环，SyncApiClient 构造时校验端点；WebDAV 强制 https
-           （WebDavEndpointPolicy）；更新检查固定 https。
-        3. 云端同步始终 https，不受本配置影响。
-        残余风险：若未来新增网络组件并直接使用 http，需先经 SyncEndpointPolicy 类
-        似的校验；本配置无法静态阻止此类新增。
-    -->
-    <base-config cleartextTrafficPermitted="true" />
+    <base-config cleartextTrafficPermitted="false" />
 </network-security-config>

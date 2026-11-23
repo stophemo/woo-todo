@@ -86,6 +86,7 @@ data class ResolveShortCodeData(
     val initiatorPublicKey: String,
     val vaultId: String,
     val expiresAt: Long,
+    val serverTime: Long,
 )
 
 data class CreateJoinRequest(

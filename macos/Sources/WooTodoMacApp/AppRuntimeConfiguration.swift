@@ -19,13 +19,28 @@ struct AppRuntimeConfiguration {
     let savedStateURL: URL
     let defaults: UserDefaults
     let syncCredentialsStore: any SyncCredentialsStoring
-    let webDavCredentialsStore: any WebDavCredentialsStoring
+    /// 构建期写入 Info.plist 的 Worker 根地址；为空时由首台设备手填。
+    let defaultSyncEndpoint: URL?
     let allowsExternalServices: Bool
     let allowsLocalDataRemoval: Bool
     let initialScreen: InitialScreen
     let shouldSeedUITestFixtures: Bool
     let uiTestArtifactDirectory: URL?
     let uiTestScreenName: String?
+
+    static func resolveDefaultSyncEndpoint(
+        infoDictionary: [String: Any]
+    ) -> URL? {
+        guard let raw = infoDictionary["WooTodoSyncEndpoint"] as? String else {
+            return nil
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if case let .ready(endpoint) = SyncEndpointSetupPolicy.assess(trimmed) {
+            return endpoint
+        }
+        return nil
+    }
 
     static func initialScreen(for screen: String) throws -> InitialScreen {
         switch screen {
@@ -59,8 +74,12 @@ struct AppRuntimeConfiguration {
     static func current(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary,
         fileManager: FileManager = .default
     ) throws -> Self {
+        let defaultSyncEndpoint = resolveDefaultSyncEndpoint(
+            infoDictionary: infoDictionary ?? [:]
+        )
         guard environment["WOO_TODO_UI_TEST"] == "1" else {
             let applicationSupport = try fileManager.url(
                 for: .applicationSupportDirectory,
@@ -98,12 +117,7 @@ struct AppRuntimeConfiguration {
                     ),
                     legacyStore: KeychainCredentialsStore()
                 ),
-                webDavCredentialsStore: EncryptedFileWebDavCredentialsStore(
-                    directoryURL: applicationData.appendingPathComponent(
-                        "Secure",
-                        isDirectory: true
-                    )
-                ),
+                defaultSyncEndpoint: defaultSyncEndpoint,
                 allowsExternalServices: true,
                 allowsLocalDataRemoval: true,
                 initialScreen: .panel,
@@ -150,17 +164,6 @@ struct AppRuntimeConfiguration {
         guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
             throw AppRuntimeConfigurationError.defaultsUnavailable
         }
-        let webDavCredentialsStore = InMemoryWebDavCredentialsStore()
-        if initialScreen == .settings(.sync) {
-            try webDavCredentialsStore.save(WebDavCredentials(
-                endpoint: URL(string: "https://dav.example.invalid/woo-todo/")!,
-                username: "ui-test@example.invalid",
-                appPassword: "ui-test-only",
-                vaultId: "vault-ui-test",
-                deviceId: "ui-test-device-0001",
-                vaultKey: Data(repeating: 7, count: 32)
-            ))
-        }
         return Self(
             databaseURL: root.appendingPathComponent("tasks.sqlite"),
             appDataURL: root,
@@ -168,7 +171,7 @@ struct AppRuntimeConfiguration {
             savedStateURL: root.appendingPathComponent("saved-state", isDirectory: true),
             defaults: defaults,
             syncCredentialsStore: InMemorySyncCredentialsStore(),
-            webDavCredentialsStore: webDavCredentialsStore,
+            defaultSyncEndpoint: defaultSyncEndpoint,
             allowsExternalServices: false,
             allowsLocalDataRemoval: false,
             initialScreen: initialScreen,
@@ -273,30 +276,6 @@ private final class InMemorySyncCredentialsStore: SyncCredentialsStoring, @unche
     }
 
     func load() throws -> SyncCredentials? {
-        lock.lock()
-        defer { lock.unlock() }
-        return credentials
-    }
-
-    func delete() throws {
-        lock.lock()
-        defer { lock.unlock() }
-        credentials = nil
-    }
-}
-
-private final class InMemoryWebDavCredentialsStore: WebDavCredentialsStoring, @unchecked Sendable {
-    private let lock = NSLock()
-    private var credentials: WebDavCredentials?
-
-    func save(_ credentials: WebDavCredentials) throws {
-        try credentials.validate()
-        lock.lock()
-        defer { lock.unlock() }
-        self.credentials = credentials
-    }
-
-    func load() throws -> WebDavCredentials? {
         lock.lock()
         defer { lock.unlock() }
         return credentials

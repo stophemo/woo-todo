@@ -1088,127 +1088,6 @@ struct SQLiteSyncIntegrationTests {
         #expect(try await repository.currentCursor() == 1)
     }
 
-    @Test("WebDAV 重复操作幂等且不推进 Worker cursor")
-    func webDavDuplicateIsIdempotent() async throws {
-        let configuration = syncConfiguration()
-        let repository = try SQLiteTaskRepository(
-            path: ":memory:",
-            syncConfiguration: configuration
-        )
-        let task = try makeTask(
-            title: "WebDAV 只应用一次",
-            createdAt: date("2026-07-15T08:00:00+08:00")
-        )
-        let pulled = try remoteTaskOperation(
-            task,
-            kind: .upsert,
-            lamport: 7,
-            serverSequence: 1,
-            deviceID: "device-webdav",
-            configuration: configuration
-        )
-        let operation = try webDavOperation(from: pulled, configuration: configuration)
-        try await repository.applyWebDavOperations([operation])
-
-        let corrupted = try WebDavOperation(
-            vaultId: configuration.vaultId,
-            deviceId: pulled.deviceId,
-            operation: SyncPushOperation(
-                opId: pulled.opId,
-                entityId: pulled.entityId,
-                kind: pulled.kind,
-                lamport: pulled.lamport,
-                ciphertext: Base64URL.encode(Data(repeating: 9, count: 16)),
-                nonce: pulled.nonce
-            )
-        )
-        try await repository.applyWebDavOperations([corrupted])
-
-        #expect(try repository.fetchAll().first?.title == "WebDAV 只应用一次")
-        #expect(try await repository.currentCursor() == 0)
-        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
-    }
-
-    @Test("WebDAV 不会把标题副标题带到另一台设备")
-    func webDavKeepsDisplayConfigurationLocal() async throws {
-        let senderConfiguration = syncConfiguration()
-        let receiverConfiguration = SQLiteSyncConfiguration(
-            vaultId: senderConfiguration.vaultId,
-            deviceId: "device-webdav-receiver",
-            vaultKey: senderConfiguration.vaultKey
-        )
-        let sender = try SQLiteTaskRepository(
-            path: ":memory:",
-            syncConfiguration: senderConfiguration
-        )
-        let receiver = try SQLiteTaskRepository(path: ":memory:")
-        let receiverOwn = try displayConfiguration(header: "新设备默认标题")
-        try receiver.seedDisplayConfiguration(receiverOwn)
-        try receiver.configureSync(receiverConfiguration)
-        #expect(try await receiver.pendingOperations(limit: 50).isEmpty)
-
-        try sender.saveDisplayConfiguration(
-            try displayConfiguration(
-                header: "西安 · {elapsedMonthsDays:2026-03-03}",
-                subtitle: "DDL · {deadlineMonthsDays:2026-11-17}",
-                startDate: "2026-03-03",
-                deadlineDate: "2026-11-17"
-            )
-        )
-        // 显示配置不进同步队列，因此对端永远拿不到发送方的标题写法。
-        #expect(try await sender.pendingOperations(limit: 50).isEmpty)
-        #expect(try receiver.displayConfiguration() == receiverOwn)
-        #expect(try await receiver.currentCursor() == 0)
-    }
-
-    @Test("WebDAV 批次坏密文会回滚此前任务并可重试")
-    func webDavBatchIsAtomicAndRetryable() async throws {
-        let configuration = syncConfiguration()
-        let repository = try SQLiteTaskRepository(
-            path: ":memory:",
-            syncConfiguration: configuration
-        )
-        let task = try makeTask(
-            title: "必须整批回滚",
-            createdAt: date("2026-07-15T08:00:00+08:00")
-        )
-        let valid = try webDavOperation(
-            from: remoteTaskOperation(
-                task,
-                kind: .upsert,
-                lamport: 1,
-                serverSequence: 1,
-                deviceID: "device-webdav",
-                configuration: configuration
-            ),
-            configuration: configuration
-        )
-        let broken = try WebDavOperation(
-            vaultId: configuration.vaultId,
-            deviceId: "device-webdav",
-            operation: SyncPushOperation(
-                opId: "operation-webdav-broken",
-                entityId: task.id.uuidString.lowercased(),
-                kind: .upsert,
-                lamport: 2,
-                ciphertext: Base64URL.encode(Data(repeating: 2, count: 16)),
-                nonce: Base64URL.encode(Data(repeating: 3, count: 12))
-            )
-        )
-
-        do {
-            try await repository.applyWebDavOperations([valid, broken])
-            Issue.record("损坏密文应使 WebDAV 批次失败")
-        } catch {
-            // 预期解密失败，事务应回滚。
-        }
-        #expect(try repository.fetchAll().isEmpty)
-        #expect(try await repository.currentCursor() == 0)
-
-        try await repository.applyWebDavOperations([valid])
-        #expect(try repository.fetchAll().first?.title == "必须整批回滚")
-    }
-
     @Test("tombstone 是最高优先级终态且与 task 到达顺序无关")
     func tombstonePreventsResurrection() async throws {
         let configuration = syncConfiguration()
@@ -1345,58 +1224,10 @@ struct SQLiteSyncIntegrationTests {
         #expect(try repository.fetchAll().map(\.title) == ["裁剪测试"])
     }
 
-    @Test("WebDAV applied 记录裁剪到最近 10000 条且重放不增长")
-    func webDavAppliedTableIsBounded() async throws {
-        let configuration = syncConfiguration()
-        let repository = try SQLiteTaskRepository(
-            path: ":memory:",
-            syncConfiguration: configuration
-        )
-        let task = try makeTask(
-            title: "WebDAV 裁剪测试",
-            createdAt: date("2026-07-15T08:00:00+08:00")
-        )
-        let total = 10_001
-        let operations = try (1...total).map { index in
-            try webDavOperation(
-                from: remoteTaskOperation(
-                    task,
-                    kind: .upsert,
-                    lamport: Int64(index),
-                    serverSequence: Int64(index),
-                    deviceID: "device-webdav",
-                    configuration: configuration
-                ),
-                configuration: configuration
-            )
-        }
-        try await repository.applyWebDavOperations(operations)
-        #expect(try repository.webDavAppliedOperationCount() == 10_000)
-        #expect(try repository.fetchAll().map(\.title) == ["WebDAV 裁剪测试"])
-
-        // 幂等重放整批旧对象：全部被 applied 表去重跳过，行数不增长。
-        try await repository.applyWebDavOperations(operations)
-        #expect(try repository.webDavAppliedOperationCount() == 10_000)
-        #expect(try repository.fetchAll().map(\.title) == ["WebDAV 裁剪测试"])
-    }
-
     @Test("服务端状态丢失重建（CURSOR_AHEAD）后客户端自动恢复同步")
     func cursorAheadRecoversAfterServerStateLoss() async throws {
         let configuration = syncConfiguration()
-        let credentials = SyncCredentials(
-            endpoint: URL(string: "http://192.168.8.21:48473")!,
-            vaultId: configuration.vaultId,
-            deviceId: configuration.deviceId,
-            deviceToken: Base64URL.encode(Data(repeating: 1, count: 32)),
-            vaultKey: configuration.vaultKey
-        )
-        try credentials.validate()
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("woo-todo-cursor-ahead-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let firstStateURL = directory.appendingPathComponent("state-1.json")
-        let rebuiltStateURL = directory.appendingPathComponent("state-2.json")
+        let deviceToken = Base64URL.encode(Data(repeating: 1, count: 32))
 
         // 第一阶段：正常同步，客户端游标推进到 1。
         let repository = try SQLiteTaskRepository(
@@ -1407,33 +1238,25 @@ struct SQLiteSyncIntegrationTests {
             title: "第一台设备任务",
             createdAt: date("2026-07-15T08:00:00+08:00")
         ))
-        let firstStore = try LocalSyncServerStore(
-            fileURL: firstStateURL,
-            bootstrapCredentials: credentials,
-            now: { 1_000 }
-        )
+        let firstServer = CursorAwareStubServer(deviceId: configuration.deviceId)
         let firstCoordinator = SyncCoordinator(
-            transport: StoreSyncTransport(store: firstStore),
+            transport: firstServer,
             outbox: repository,
             local: repository,
-            deviceToken: credentials.deviceToken
+            deviceToken: deviceToken
         )
         let firstSummary = try await firstCoordinator.synchronize()
         #expect(firstSummary.pushed == 1)
         #expect(firstSummary.finalCursor == 1)
 
-        // 第二阶段：server-state.json 丢失后服务端从序号 1 重建（maxCursor = 0）。
+        // 第二阶段：服务端状态丢失后从序号 1 重建（maxCursor = 0）。
         // 客户端 cursor=1 触发 409 CURSOR_AHEAD；协调器应重置本地游标并自动恢复，不抛错。
-        let rebuiltStore = try LocalSyncServerStore(
-            fileURL: rebuiltStateURL,
-            bootstrapCredentials: credentials,
-            now: { 2_000 }
-        )
+        let rebuiltServer = CursorAwareStubServer(deviceId: configuration.deviceId)
         let recoveredCoordinator = SyncCoordinator(
-            transport: StoreSyncTransport(store: rebuiltStore),
+            transport: rebuiltServer,
             outbox: repository,
             local: repository,
-            deviceToken: credentials.deviceToken
+            deviceToken: deviceToken
         )
         let recoveredSummary = try await recoveredCoordinator.synchronize()
         #expect(recoveredSummary.finalCursor == 0)
@@ -2010,24 +1833,6 @@ private func remoteTombstoneOperation(
     )
 }
 
-private func webDavOperation(
-    from operation: SyncPulledOperation,
-    configuration: SQLiteSyncConfiguration
-) throws -> WebDavOperation {
-    try WebDavOperation(
-        vaultId: configuration.vaultId,
-        deviceId: operation.deviceId,
-        operation: SyncPushOperation(
-            opId: operation.opId,
-            entityId: operation.entityId,
-            kind: operation.kind,
-            lamport: operation.lamport,
-            ciphertext: operation.ciphertext,
-            nonce: operation.nonce
-        )
-    )
-}
-
 private func open(
     _ operation: SyncPushOperation,
     configuration: SQLiteSyncConfiguration
@@ -2054,42 +1859,61 @@ private func date(_ value: String) -> Date {
     ISO8601DateFormatter().date(from: value)!
 }
 
-/// 把 LocalSyncServerStore 包装为 SyncTransport，便于在仓储集成测试中跑完整同步协调器。
-private struct StoreSyncTransport: SyncTransport {
-    let store: LocalSyncServerStore
+/// 模拟 Worker 的游标推进：请求游标超过服务端记录时返回 CURSOR_AHEAD。
+/// 推送的操作会分配新的 server_seq，并在下一次拉取中回显，交由本地仓储幂等应用。
+private actor CursorAwareStubServer: SyncTransport {
+    private let deviceId: String
+    private var cursor: Int64 = 0
+    private var storedOperations: [SyncPulledOperation] = []
+    private var seenOperationIDs = Set<String>()
+
+    init(deviceId: String) {
+        self.deviceId = deviceId
+    }
 
     func sync(_ request: SyncRequest, deviceToken: String) async throws -> SyncData {
-        let response = await store.handle(LocalSyncHTTPRequest(
-            method: "POST",
-            path: "/v1/sync",
-            headers: ["Authorization": "Bearer \(deviceToken)"],
-            body: try JSONEncoder().encode(request)
-        ))
-        guard (200..<300).contains(response.statusCode) else {
-            let failure = try JSONDecoder().decode(
-                StoreSyncFailureEnvelope.self,
-                from: response.body
-            )
+        guard request.cursor <= cursor else {
             throw SyncAPIError.server(
-                statusCode: response.statusCode,
-                payload: failure.error,
+                statusCode: 409,
+                payload: ServerErrorPayload(
+                    code: "CURSOR_AHEAD",
+                    message: "客户端游标超过服务端"
+                ),
                 requestId: nil
             )
         }
-        let envelope = try JSONDecoder().decode(
-            StoreSyncSuccessEnvelope<SyncData>.self,
-            from: response.body
+        var inserted = 0
+        var duplicates = 0
+        for operation in request.push {
+            if seenOperationIDs.insert(operation.opId).inserted {
+                cursor += 1
+                inserted += 1
+                storedOperations.append(SyncPulledOperation(
+                    serverSeq: cursor,
+                    opId: operation.opId,
+                    deviceId: deviceId,
+                    entityId: operation.entityId,
+                    kind: operation.kind,
+                    lamport: operation.lamport,
+                    ciphertext: operation.ciphertext,
+                    nonce: operation.nonce,
+                    createdAt: 0
+                ))
+            } else {
+                duplicates += 1
+            }
+        }
+        let pulled = storedOperations.filter { $0.serverSeq > request.cursor }
+        return SyncData(
+            push: SyncPushSummary(
+                received: request.push.count,
+                inserted: inserted,
+                duplicates: duplicates
+            ),
+            pull: pulled,
+            cursor: pulled.last?.serverSeq ?? request.cursor,
+            hasMore: false,
+            serverTime: 0
         )
-        guard envelope.ok else { throw SyncAPIError.decoding("成功响应中的 ok 不是 true") }
-        return envelope.data
     }
-}
-
-private struct StoreSyncSuccessEnvelope<Value: Decodable>: Decodable {
-    let ok: Bool
-    let data: Value
-}
-
-private struct StoreSyncFailureEnvelope: Decodable {
-    let error: ServerErrorPayload
 }

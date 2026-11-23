@@ -143,14 +143,6 @@ class SyncRuntimeTest {
             SyncFailurePolicy.describe(SyncApiException.Transport(IOException("offline")))
         assertTrue(transportFailure.retryable)
         assertEquals("同步服务暂时不可达，网络恢复后会自动重试", transportFailure.message)
-        val localTransportFailure = SyncFailurePolicy.describe(
-            SyncApiException.Transport(IOException("offline"), localNetwork = true),
-        )
-        assertTrue(localTransportFailure.retryable)
-        assertEquals(
-            "未发现已配对的 Mac；请确认两台设备处于同一网络且 Mac 上的 Woo Todo 正在运行，稍后会自动重试",
-            localTransportFailure.message,
-        )
         assertTrue(
             SyncFailurePolicy.describe(serverError(503)).retryable,
         )

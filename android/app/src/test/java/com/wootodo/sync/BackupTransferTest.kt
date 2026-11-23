@@ -232,6 +232,68 @@ class BackupTransferTest {
         assertEquals(0, credentialsStore.deleteCount)
     }
 
+    @Test
+    fun `旧备份地址不合法时只恢复任务并提示重新配对`() {
+        val database = FakeBackupDatabase()
+        val credentialsStore = FakeCredentialsStore()
+        val task = task("task-legacy-backup-1", WireTaskState.PENDING, null)
+        val legacyCredentials = BackupSyncCredentials(
+            endpoint = "http://192.168.1.10:48473",
+            vaultId = "vault-legacy",
+            deviceId = "device-legacy",
+            deviceToken = Base64Url.encode(ByteArray(32) { 3 }),
+            vaultKey = Base64Url.encode(ByteArray(32) { 4 }),
+        )
+
+        val result = BackupRestoreCoordinator(database, credentialsStore).restore(
+            BackupSnapshot(
+                exportedAt = 20_000,
+                tasks = listOf(task),
+                syncCredentials = legacyCredentials,
+            ),
+        )
+
+        assertEquals(1, result.restoredTaskCount)
+        assertFalse(result.syncCredentialsRestored)
+        assertTrue(result.requiresRePairing)
+        assertEquals(listOf(task), database.committedTasks)
+        assertTrue(database.baselineTasks.isEmpty())
+        assertNull(credentialsStore.stored)
+    }
+
+    @Test
+    fun `含旧同步地址的备份可解密但只恢复任务`() {
+        val database = FakeBackupDatabase()
+        val credentialsStore = FakeCredentialsStore()
+        val task = task("task-legacy-encrypted", WireTaskState.PENDING, null)
+        val passphrase = "这是一个满足长度要求的备份口令"
+        val legacyCredentials = BackupSyncCredentials(
+            endpoint = "http://192.168.1.10:48473",
+            vaultId = "vault-legacy",
+            deviceId = "device-legacy",
+            deviceToken = Base64Url.encode(ByteArray(32) { 5 }),
+            vaultKey = Base64Url.encode(ByteArray(32) { 6 }),
+        )
+        val backup = BackupPackageCodec.seal(
+            snapshot = BackupSnapshot(
+                exportedAt = 20_000,
+                tasks = listOf(task),
+                syncCredentials = legacyCredentials,
+            ),
+            passphrase = passphrase,
+        )
+
+        val result = BackupTransferService(database, credentialsStore)
+            .restoreEncryptedBackup(backup, passphrase)
+
+        assertEquals(1, result.restoredTaskCount)
+        assertFalse(result.syncCredentialsRestored)
+        assertTrue(result.requiresRePairing)
+        assertEquals(listOf(task), database.committedTasks)
+        assertTrue(database.baselineTasks.isEmpty())
+        assertNull(credentialsStore.stored)
+    }
+
     private fun task(
         id: String,
         state: WireTaskState,

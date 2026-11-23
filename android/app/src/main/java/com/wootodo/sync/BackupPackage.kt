@@ -60,6 +60,8 @@ data class BackupSyncCredentials(
     val deviceToken: String,
     val vaultKey: String,
 ) {
+    fun hasValidEndpoint(): Boolean = SyncEndpointPolicy.isValid(endpoint)
+
     fun credentials(): SyncCredentials {
         if (!endpoint.hasCodePointLength(1..2048) ||
             !vaultId.hasCodePointLength(1..128) ||

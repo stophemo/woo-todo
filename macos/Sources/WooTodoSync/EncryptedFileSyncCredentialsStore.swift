@@ -202,6 +202,9 @@ public final class EncryptedFileSyncCredentialsStore: SyncCredentialsStoring,
             )
             try credentials.validate()
             return credentials
+        } catch let error as CredentialsStoreError {
+            // 保留“地址已不被支持”等语义，供旧同步方式检测使用。
+            throw error
         } catch let error as EncryptedFileSyncCredentialsStoreError {
             throw error
         } catch {

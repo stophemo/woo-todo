@@ -4,28 +4,6 @@ import Testing
 
 @Suite("同步 API 客户端", .serialized)
 struct SyncAPIClientTests {
-    @Test("局域网 HTTP 绕过系统代理且远程 HTTPS 保持原路由")
-    func test局域网HTTP绕过系统代理且远程HTTPS保持原路由() throws {
-        for source in [
-            "http://woo-todo.local:48473",
-            "http://192.168.1.20:48473",
-            "http://127.0.0.1:48473",
-        ] {
-            let endpoint = try #require(URL(string: source))
-            let configuration = try #require(
-                SyncAPIClient.directSessionConfiguration(for: endpoint)
-            )
-            #expect(configuration.connectionProxyDictionary?.isEmpty == true)
-        }
-
-        #expect(SyncAPIClient.directSessionConfiguration(
-            for: try #require(URL(string: "https://sync.example.com"))
-        ) == nil)
-        #expect(SyncAPIClient.directSessionConfiguration(
-            for: try #require(URL(string: "https://192.168.1.20"))
-        ) == nil)
-    }
-
     @Test("创建空间只通过专用请求头发送邀请码")
     func test创建空间只通过专用请求头发送邀请码() async throws {
         defer { MockURLProtocol.handler = nil }
@@ -33,7 +11,7 @@ struct SyncAPIClientTests {
         MockURLProtocol.handler = { request in
             let body = MockURLProtocol.bodyData(for: request)
             let bodyText = body.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            guard request.url?.path == "/root/v1/vaults",
+            guard request.url?.path == "/v1/vaults",
                   request.httpMethod == "POST",
                   request.value(forHTTPHeaderField: "Authorization") == nil,
                   request.value(forHTTPHeaderField: "X-Woo-Todo-Invite-Code") == inviteCode,
@@ -106,7 +84,7 @@ struct SyncAPIClientTests {
             nonce: encrypted.nonce
         )
         MockURLProtocol.handler = { request in
-            guard request.url?.path == "/root/v1/sync",
+            guard request.url?.path == "/v1/sync",
                   request.httpMethod == "POST",
                   request.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)",
                   request.value(forHTTPHeaderField: "Content-Type") == "application/json",
@@ -156,7 +134,7 @@ struct SyncAPIClientTests {
     func testPairingResult将HTTP202视为正常状态() async throws {
         defer { MockURLProtocol.handler = nil }
         MockURLProtocol.handler = { request in
-            guard request.url?.path == "/root/v1/pairings/pair-1/result",
+            guard request.url?.path == "/v1/pairings/pair-1/result",
                   request.value(forHTTPHeaderField: "Authorization") == nil else {
                 throw MockError.requestMismatch("配对结果请求不一致")
             }
@@ -253,11 +231,115 @@ struct SyncAPIClientTests {
         #expect(result.devices.first?.platform == .windows)
     }
 
+    @Test("显示配对码使用五分钟短码接口")
+    func test显示配对码使用短码接口() async throws {
+        defer { MockURLProtocol.handler = nil }
+        let token = Base64URL.encode(Data(repeating: 1, count: 32))
+        let publicKey = Base64URL.encode(Data(repeating: 2, count: 32))
+        let secret = Base64URL.encode(Data(repeating: 3, count: 32))
+        MockURLProtocol.handler = { request in
+            guard request.url?.path == "/v1/pairings/code",
+                  request.httpMethod == "POST",
+                  request.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)",
+                  let body = MockURLProtocol.bodyData(for: request),
+                  let object = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  object["publicKey"] as? String == publicKey else {
+                throw MockError.requestMismatch("短码配对请求不一致")
+            }
+            return MockURLProtocol.response(
+                for: request,
+                status: 201,
+                json: """
+                {
+                  "ok": true,
+                  "data": {
+                    "pairingId": "pair-code-1",
+                    "pairingSecret": "\(secret)",
+                    "initiatorPublicKey": "\(publicKey)",
+                    "expiresAt": 300000,
+                    "serverTime": 0,
+                    "shortCode": "123456"
+                  },
+                  "requestId": "req-pair-code"
+                }
+                """
+            )
+        }
+
+        let result = try await makeClient().createPairingCode(
+            CreatePairingRequest(publicKey: publicKey),
+            deviceToken: token
+        )
+        #expect(result.shortCode == "123456")
+        #expect(result.pairingId == "pair-code-1")
+    }
+
+    @Test("解析六位码解码 serverTime，缺失时回退为 expiresAt")
+    func test解析六位码解码服务器时间() async throws {
+        defer { MockURLProtocol.handler = nil }
+        let secret = Base64URL.encode(Data(repeating: 3, count: 32))
+        let publicKey = Base64URL.encode(Data(repeating: 2, count: 32))
+        MockURLProtocol.handler = { request in
+            guard request.url?.path == "/v1/pairings/resolve" else {
+                throw MockError.requestMismatch("应调用 resolve 接口")
+            }
+            return MockURLProtocol.response(
+                for: request,
+                status: 200,
+                json: """
+                {
+                  "ok": true,
+                  "data": {
+                    "pairingId": "pair-resolve-1",
+                    "pairingSecret": "\(secret)",
+                    "initiatorPublicKey": "\(publicKey)",
+                    "vaultId": "vault-resolve",
+                    "expiresAt": 600000,
+                    "serverTime": 300000
+                  },
+                  "requestId": "req-resolve"
+                }
+                """
+            )
+        }
+        let decoded = try await makeClient().resolveShortCode(
+            ResolveShortCodeRequest(code: "123456")
+        )
+        #expect(decoded.serverTime == 300_000)
+
+        MockURLProtocol.handler = { request in
+            guard request.url?.path == "/v1/pairings/resolve" else {
+                throw MockError.requestMismatch("应调用 resolve 接口")
+            }
+            return MockURLProtocol.response(
+                for: request,
+                status: 200,
+                json: """
+                {
+                  "ok": true,
+                  "data": {
+                    "pairingId": "pair-resolve-1",
+                    "pairingSecret": "\(secret)",
+                    "initiatorPublicKey": "\(publicKey)",
+                    "vaultId": "vault-resolve",
+                    "expiresAt": 600000
+                  },
+                  "requestId": "req-resolve"
+                }
+                """
+            )
+        }
+        let legacy = try await makeClient().resolveShortCode(
+            ResolveShortCodeRequest(code: "123456")
+        )
+        #expect(legacy.serverTime == legacy.expiresAt)
+    }
+
     private func makeClient() throws -> SyncAPIClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         return try SyncAPIClient(
-            endpoint: URL(string: "https://sync.example.test/root")!,
+            endpoint: URL(string: "https://sync.example.test")!,
             session: URLSession(configuration: configuration)
         )
     }

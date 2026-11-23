@@ -27,8 +27,8 @@ class ShortCodePairingCodecTest {
     fun `解析六位码响应`() {
         val source = """
             {"ok":true,"data":{"pairingId":"pair-1","pairingSecret":"$secret",
-            "initiatorPublicKey":"$publicKey","vaultId":"vault-1","expiresAt":1000},
-            "requestId":"req-1"}
+            "initiatorPublicKey":"$publicKey","vaultId":"vault-1","expiresAt":1000,
+            "serverTime":400},"requestId":"req-1"}
         """.trimIndent()
 
         val data = SyncJsonCodec.decodeResolveShortCodeData(source)
@@ -37,6 +37,21 @@ class ShortCodePairingCodecTest {
         assertEquals(publicKey, data.initiatorPublicKey)
         assertEquals("vault-1", data.vaultId)
         assertEquals(1_000L, data.expiresAt)
+        assertEquals(400L, data.serverTime)
+    }
+
+    @Test
+    fun `旧服务端缺少serverTime时回退为expiresAt`() {
+        val source = """
+            {"ok":true,"data":{"pairingId":"pair-1","pairingSecret":"$secret",
+            "initiatorPublicKey":"$publicKey","vaultId":"vault-1","expiresAt":1000},
+            "requestId":"req-1"}
+        """.trimIndent()
+
+        val data = SyncJsonCodec.decodeResolveShortCodeData(source)
+
+        assertEquals(1_000L, data.expiresAt)
+        assertEquals(1_000L, data.serverTime)
     }
 
     @Test

@@ -5,8 +5,8 @@
 ## 安全边界
 
 - 每台设备持有独立的 32 字节随机 Bearer 令牌。服务端使用 `TOKEN_PEPPER` 做 HMAC-SHA-256 后再写入 D1，令牌明文只在创建或配对客户端本地存在。
-- vault 密钥由客户端产生。配对双方使用 X25519 建立会话，服务端仅暂存旧设备提交的加密密钥包。
-- 整个配对流程（认领、确认、领取结果）严格限制在 10 分钟内。6 位人工核对码属于客户端交互层，不能替代 32 字节配对密钥。
+- vault 密钥由客户端产生。配对双方使用 X25519 建立会话，服务端只暂存加密后的 vault 密钥信封，无法解密。
+- 六位配对短码在创建后 5 分钟内有效，且只能使用一次。旧版 `/v1/pairings` 二维码配对接口为兼容旧客户端保留 10 分钟有效期，新客户端不再使用。6 位人工核对码由两端本地计算，属于客户端交互层，不能替代 32 字节配对密钥。
 - HTTP 仍必须使用 Cloudflare 提供的 HTTPS。应用层密文不替代 TLS。
 - 任意已绑定设备都可撤销同 vault 的其他设备；撤销会阻止后续 API 访问，但无法远程删除目标设备已经下载的数据。
 - 创建 vault 必须提供部署者配置的邀请码。邀请码只通过专用 Header 传输并与 Worker secret 比较，不进入 JSON、日志或 D1；它只控制新空间创建，不是传统账号，也不参与已有设备同步和配对。
@@ -31,7 +31,7 @@ npx wrangler dev
 
 ## 面向个人的 Cloudflare 免费部署
 
-这是一条自托管的可选路径，使用第三方 WebDAV 或仅使用同一网络同步的用户不需要执行本节。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人多端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
+这是一条自托管的可选路径，不需要跨设备同步的单机用户不需要执行本节。macOS 与 Android 的跨设备同步都依赖本节部署的 Worker。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人多端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
 
 ### 1. 准备账号和工具
 
@@ -90,7 +90,7 @@ npx wrangler deploy
 
 #### 从旧版本升级已有部署
 
-升级到 `v0.1.16` 时，必须先在原 D1 上应用 `0005_windows_platform.sql`，再部署新版 Worker，Windows 才能创建同步空间或加入既有空间：
+发布 `v0.3.0` 客户端时，必须先在原 D1 上应用 `0006_cross_device_pairing.sql`，再部署新版 Worker。该迁移是 additive 的，只增加六位短码、反向加入请求、中继 epoch 与配对限流表，不改动既有 `change_log`、cursor 和容量语义：
 
 ```bash
 cd backend
@@ -98,7 +98,7 @@ npx wrangler d1 migrations apply woo-todo --remote
 npx wrangler deploy
 ```
 
-继续使用原来的真实 `database_id`、`TOKEN_PEPPER` 和 `VAULT_CREATION_INVITE_CODE`。尤其不要重建 D1 或更换 `TOKEN_PEPPER`，否则既有设备令牌将无法认证。执行前可在 Cloudflare Dashboard 导出 D1 备份；迁移完成后应先验证 `/health`，再让 Windows 客户端连接。
+更早的部署如果还没应用 `0005_windows_platform.sql`，同一条迁移命令会按顺序补齐。继续使用原来的真实 `database_id`、`TOKEN_PEPPER` 和 `VAULT_CREATION_INVITE_CODE`。尤其不要重建 D1 或更换 `TOKEN_PEPPER`，否则既有设备令牌将无法认证。执行前可在 Cloudflare Dashboard 导出 D1 备份；迁移完成后应先验证 `/health`，再让客户端连接。
 
 ### 5. 验证并连接多端
 
@@ -108,7 +108,13 @@ npx wrangler deploy
 curl -fsS 'https://woo-todo-sync.example.workers.dev/health'
 ```
 
-把示例地址替换为部署命令输出的实际 URL；响应应包含 `"ok": true`。随后可在 Mac 的“同步”页或 Windows 的“同步与备份”页填写 Worker 根地址和 `VAULT_CREATION_INVITE_CODE`，创建同步空间；再生成二维码，让 Android 用应用内扫码入口加入，逐位核对六位码后确认。邀请码只随创建请求发送，客户端不会保存；二维码和配对 secret 只通过自己的私密渠道传递。
+把示例地址替换为部署命令输出的实际 URL；响应应包含 `"ok": true`。随后在 Mac 或 Android 的“跨设备”页填写 Worker 根地址（如果构建时没有内置）和 `VAULT_CREATION_INVITE_CODE` 建立同步空间；之后其他设备输入六位配对码，或显示自己的六位码由已有设备批准。没有内置地址时，每台新设备首次配对前也要填写同一个 HTTPS 地址；只有内置了地址的构建才能仅凭六位码加入。邀请码只随创建请求发送，客户端不会保存；配对码 5 分钟内有效。
+
+建议把固定 Worker 地址写入两端构建配置，让首台设备无需手填地址：
+
+- macOS：`macos/Resources/Info.plist` 的 `WooTodoSyncEndpoint` 填入 Worker 根地址（不要附加 `/v1`）；留空时首台设备在设置页手填。
+- Android：构建时通过 Gradle 属性 `wooTodoSyncEndpoint` 或环境变量 `WOO_TODO_SYNC_ENDPOINT` 传入地址，构建脚本会写入 `BuildConfig.SYNC_WORKER_URL`；留空时首台设备在设置页手填。
+- 两端必须使用同一个 Worker 地址；配对后的设备沿用同步凭据中保存的地址。
 
 ### 免费层和数据边界
 
@@ -143,7 +149,7 @@ curl -fsS 'https://woo-todo-sync.example.workers.dev/health'
 }
 ```
 
-除健康检查、创建 vault、认领配对和领取配对结果外，其余接口均要求：
+健康检查、创建 vault、六位码解析，以及 `/v1/pairings/:id/claim`、`/v1/pairings/:id/result`、`/v1/pairings/join`、`/v1/pairings/join/:id/result`、`/v1/pairings/join/:id/cancel` 不需要 Bearer 令牌；其余接口均要求：
 
 ```http
 Authorization: Bearer <32字节无填充Base64URL设备令牌>
@@ -156,13 +162,22 @@ Content-Type: application/json
 |---|---:|---|
 | `GET /health` | 否 | Worker 与 D1 健康检查 |
 | `POST /v1/vaults` | 创建邀请码 | 创建 vault 与首台设备 |
-| `POST /v1/pairings` | 是 | 生成 10 分钟配对会话 |
+| `POST /v1/pairings` | 是 | 旧版 10 分钟配对会话（仅为兼容旧客户端保留） |
+| `POST /v1/pairings/code` | 是 | 已有设备生成 5 分钟六位配对码 |
+| `POST /v1/pairings/resolve` | 否 | 新设备用六位码解析配对会话 |
 | `POST /v1/pairings/:id/claim` | 否 | 新设备认领会话 |
 | `GET /v1/pairings/:id` | 是 | 发起设备查看认领状态 |
 | `POST /v1/pairings/:id/confirm` | 是 | 发起设备确认并提交 vault 密钥密文 |
 | `POST /v1/pairings/:id/result` | 否 | 新设备领取确认结果 |
+| `POST /v1/pairings/join` | 否 | 新设备创建反向加入请求并生成六位码 |
+| `POST /v1/pairings/join/resolve` | 是 | 已有设备解析新设备六位码 |
+| `POST /v1/pairings/join/:id/approve` | 是 | 已有设备批准加入并提交 vault 密钥密文 |
+| `POST /v1/pairings/join/:id/result` | 否 | 新设备查询批准结果 |
+| `POST /v1/pairings/join/:id/cancel` | 否 | 新设备取消加入请求 |
+| `GET /v1/relay`、`PUT /v1/relay` | 是 | 预留的 ntfy 通知中继配置；v0.3.0 客户端不使用，远程通知计划在后续版本实现 |
 | `POST /v1/sync` | 是 | 原子 push、ack 与 pull |
 | `GET /v1/devices` | 是 | 查看同 vault 设备 |
+| `POST /v1/devices/current/revoke` | 是 | 当前设备退出同步空间 |
 | `POST /v1/devices/:id/revoke` | 是 | 撤销另一台设备 |
 
 ### 创建 vault
@@ -188,14 +203,27 @@ Content-Type: application/json
 }
 ```
 
-响应中的 `device.token` 只返回一次，客户端必须立即保存到 macOS Keychain 或 Android Keystore 包裹的本地存储。
+响应中的 `device.token` 只返回一次，客户端必须立即保存到本机安全存储（macOS 为加密凭据文件，Android 为 Keystore 包裹的加密存储）。
 
 ### 配对顺序
 
-1. 旧设备调用 `POST /v1/pairings`，提交本次配对的临时 X25519 公钥；将返回的 `pairingId`、`pairingSecret`、公钥和服务地址编码为二维码。
-2. 新设备生成自己的临时 X25519 密钥与 32 字节 `deviceToken`，调用 `claim`。服务端只保存设备令牌散列。
-3. 旧设备轮询配对状态，向用户展示设备名与公钥指纹；用户确认后，客户端使用共享密钥加密 `vault_key` 并调用 `confirm`。
+新客户端只使用六位短码配对，有两条对称路径。
+
+**路径 A：已有设备显示码，新设备输入**
+
+1. 已有设备调用 `POST /v1/pairings/code`，提交本次配对的临时 X25519 公钥；服务端返回 `pairingId`、`pairingSecret`、`initiatorPublicKey`、`expiresAt` 和六位 `shortCode`，5 分钟内有效。
+2. 新设备调用 `POST /v1/pairings/resolve`，提交六位码，拿到配对环境与发起方公钥；随后生成自己的临时 X25519 密钥与 32 字节 `deviceToken`，调用 `claim`。服务端只保存设备令牌散列。
+3. 已有设备轮询 `GET /v1/pairings/:id`，向用户展示设备名与六位核对码；核对一致后，客户端使用共享密钥加密 `vault_key` 并调用 `confirm`。
 4. 新设备携带原 `pairingSecret` 与自己已保存的 `deviceToken` 调用 `result`。成功后该令牌即可用于正常 Bearer 鉴权。
+
+**路径 B：新设备显示码，已有设备批准**
+
+1. 新设备调用 `POST /v1/pairings/join`，提交临时公钥、设备令牌与设备信息；服务端预分配 `deviceId` 并返回六位 `shortCode`，5 分钟内有效。
+2. 已有设备调用 `POST /v1/pairings/join/resolve`，提交六位码和本机的临时公钥，核对设备名与六位核对码。
+3. 已有设备调用 `POST /v1/pairings/join/:id/approve`，提交以响应中的 `deviceId` 作为 AAD 加密的 `vaultKeyEnvelope`。
+4. 新设备轮询 `POST /v1/pairings/join/:id/result`：未批准时返回 202 与批准方公钥，批准后返回 200 与加密信封。新设备解封后保存凭据并开始同步；取消时调用 `POST /v1/pairings/join/:id/cancel`。
+
+旧版 `/v1/pairings` 二维码流程仅为兼容旧客户端保留，会话有效期 10 分钟；新客户端不再生成二维码或配对深链。
 
 ### 增量同步
 
@@ -233,7 +261,8 @@ D1 `batch()` 在同一事务内完成所有密文写入、设备 ack 更新和�
 - 单条操作密文：最多 32 KiB
 - AES-GCM nonce：固定 12 字节
 - 设备名：最多 80 个字符
-- 配对认领与确认：创建后 10 分钟内完成
+- 六位配对短码：创建后 5 分钟内完成，且只能使用一次
+- 旧版 `/v1/pairings` 配对会话：创建后 10 分钟内完成
 - 创建同步空间：必须携带有效的 `X-Woo-Todo-Invite-Code`
 - 创建同步空间：默认每个来源每小时 5 个、整个服务每天 100 个
 - 每个同步空间：最多 4 台未撤销设备

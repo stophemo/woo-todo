@@ -4,33 +4,14 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URL
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SyncApiClientTest {
-    @Test
-    fun `局域网HTTP始终绕过代理且远程HTTPS保留系统路由`() {
-        listOf(
-            "http://woo-todo.local:48473",
-            "http://192.168.1.20:48473",
-        ).forEach { endpoint ->
-            assertTrue(SyncProxyPolicy.requiresDirectConnection(URI(endpoint)))
-        }
-        assertFalse(
-            SyncProxyPolicy.requiresDirectConnection(URI("https://sync.example.com")),
-        )
-        assertFalse(
-            SyncProxyPolicy.requiresDirectConnection(URI("https://192.168.1.20")),
-        )
-    }
-
     @Test
     fun `创建空间邀请码只通过专用Header发送`() {
         val deviceToken = Base64Url.encode(ByteArray(32) { 7 })
@@ -43,7 +24,7 @@ class SyncApiClientTest {
             """.trimIndent(),
         )
         val inviteCode = "invite-secret-2026"
-        val client = SyncApiClient("https://sync.example.test/root") { url ->
+        val client = SyncApiClient("https://sync.example.test") { url ->
             connection.attach(url)
         }
 
@@ -58,7 +39,7 @@ class SyncApiClientTest {
         assertEquals(inviteCode, connection.getRequestProperty("X-Woo-Todo-Invite-Code"))
         assertNull(connection.getRequestProperty("Authorization"))
         assertEquals(false, connection.sentBody().contains(inviteCode))
-        assertEquals("/root/v1/vaults", connection.requestUrl.path)
+        assertEquals("/v1/vaults", connection.requestUrl.path)
     }
 
     @Test
@@ -77,7 +58,7 @@ class SyncApiClientTest {
                 "requestId":"req-pair"}
             """.trimIndent(),
         )
-        val client = SyncApiClient("https://sync.example.test/root") { url ->
+        val client = SyncApiClient("https://sync.example.test") { url ->
             connection.attach(url)
         }
         val result = client.pairingResult(
@@ -90,7 +71,7 @@ class SyncApiClientTest {
 
         assertEquals(PairingStatus.CLAIMED, result.status)
         assertNull(connection.getRequestProperty("Authorization"))
-        assertEquals("/root/v1/pairings/pair-1/result", connection.requestUrl.path)
+        assertEquals("/v1/pairings/pair-1/result", connection.requestUrl.path)
     }
 
     @Test

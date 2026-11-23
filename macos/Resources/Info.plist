@@ -19,9 +19,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.2.19</string>
+    <string>0.3.0</string>
     <key>CFBundleVersion</key>
-    <string>52</string>
+    <string>53</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
     <key>LSMinimumSystemVersion</key>
@@ -32,19 +32,10 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsLocalNetworking</key>
-        <true/>
-    </dict>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>用于让 Woo Todo 在同一网络内与 Android 安全同步任务。</string>
-    <key>NSBonjourServices</key>
-    <array>
-        <string>_wootodo._tcp</string>
-    </array>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>WooTodoSyncEndpoint</key>
+    <string></string>
     <key>SUFeedURL</key>
     <string>https://github.com/stophemo/woo-todo/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key>

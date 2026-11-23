@@ -82,7 +82,7 @@ public struct CreatePairingData: Codable, Equatable, Sendable {
     public let initiatorPublicKey: String
     public let expiresAt: Int64
     public let serverTime: Int64
-    /// 同一局域网配对时展示给另一台设备的六位会合码；Worker/WebDAV 不支持时为 nil。
+    /// 已有设备显示给新设备输入的六位配对码；服务端未返回时为 nil。
     public let shortCode: String?
 
     public init(
@@ -116,19 +116,49 @@ public struct ResolveShortCodeData: Codable, Equatable, Sendable {
     public let initiatorPublicKey: String
     public let vaultId: String
     public let expiresAt: Int64
+    /// 服务端时间；旧服务未返回时回退为 `expiresAt`（剩余时间按 0 处理，fail-closed）。
+    public let serverTime: Int64
 
     public init(
         pairingId: String,
         pairingSecret: String,
         initiatorPublicKey: String,
         vaultId: String,
-        expiresAt: Int64
+        expiresAt: Int64,
+        serverTime: Int64? = nil
     ) {
         self.pairingId = pairingId
         self.pairingSecret = pairingSecret
         self.initiatorPublicKey = initiatorPublicKey
         self.vaultId = vaultId
         self.expiresAt = expiresAt
+        self.serverTime = serverTime ?? expiresAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pairingId
+        case pairingSecret
+        case initiatorPublicKey
+        case vaultId
+        case expiresAt
+        case serverTime
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.pairingId = try container.decode(String.self, forKey: .pairingId)
+        self.pairingSecret = try container.decode(String.self, forKey: .pairingSecret)
+        self.initiatorPublicKey = try container.decode(
+            String.self,
+            forKey: .initiatorPublicKey
+        )
+        self.vaultId = try container.decode(String.self, forKey: .vaultId)
+        let expiresAt = try container.decode(Int64.self, forKey: .expiresAt)
+        self.expiresAt = expiresAt
+        self.serverTime = try container.decodeIfPresent(
+            Int64.self,
+            forKey: .serverTime
+        ) ?? expiresAt
     }
 }
 

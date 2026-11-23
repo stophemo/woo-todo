@@ -13,7 +13,7 @@
   <meta property="og:locale" content="zh_CN">
   <meta property="og:url" content="https://woo-todo.vercel.app/">
   <meta property="og:title" content="无我待办 | 本地优先的跨设备待办">
-  <meta property="og:description" content="写下要做的事，按需输入标签和起止日期。macOS 与 Android 均可本地使用，同一网络即可加密同步。">
+  <meta property="og:description" content="写下要做的事，按需输入标签和起止日期。macOS 与 Android 均可本地使用，并通过自建 Worker 同步空间端到端加密同步。">
   <meta property="og:image" content="https://woo-todo.vercel.app/assets/og-cover.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -34,11 +34,11 @@
       </a>
       <nav class="primary-nav" aria-label="主导航">
         <a href="#features">功能</a>
-        <a href="#sync">同一网络同步</a>
+        <a href="#sync">跨设备同步</a>
         <a href="#download">下载</a>
         <a href="https://github.com/stophemo/woo-todo" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
-      <a class="header-action" href="#download">下载 v0.2.17</a>
+      <a class="header-action" href="#download">下载 v0.3.0</a>
     </div>
   </header>
 
@@ -47,13 +47,13 @@
       <div class="hero-grid" aria-hidden="true"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="eyebrow">v0.2.17 · macOS / Android</p>
+          <p class="eyebrow">v0.3.0 · macOS / Android</p>
           <h1 id="hero-title">无我待办</h1>
           <p class="hero-tagline">写下要做的事，完成即止。</p>
           <p class="hero-summary">任务始终先留在本地。写下标题，按需输入标签和起止日期；没有日期的任务完成即止，不在时间流逝中被自动结算。</p>
           <div class="hero-actions" aria-label="正式版下载">
-            <a class="button button-light" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.17/Woo-Todo-v0.2.17-macos-arm64.zip">下载 macOS</a>
-            <a class="button button-outline" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.17/Woo-Todo-v0.2.17-android.apk">下载 Android</a>
+            <a class="button button-light" href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/Woo-Todo-v0.3.0-macos-arm64.zip">下载 macOS</a>
+            <a class="button button-outline" href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/Woo-Todo-v0.3.0-android.apk">下载 Android</a>
           </div>
           <p class="hero-note">本地优先 · 断网可用 · MIT 开源</p>
         </div>
@@ -141,11 +141,11 @@
         <div class="availability-inner">
           <div class="availability-item">
             <span>macOS</span>
-            <strong>v0.2.17 正式版</strong>
+            <strong>v0.3.0 正式版</strong>
           </div>
           <div class="availability-item">
             <span>Android</span>
-            <strong>v0.2.17 正式版</strong>
+            <strong>v0.3.0 正式版</strong>
           </div>
         </div>
       </div>
@@ -188,57 +188,57 @@
       <div class="section-inner">
         <header class="sync-heading">
           <div>
-            <p class="section-kicker">同一网络同步</p>
-            <h2 id="sync-title">两端按自己的信任边界同步</h2>
+            <p class="section-kicker">跨设备同步空间</p>
+            <h2 id="sync-title">一个同步空间，连接所有设备</h2>
           </div>
-          <p>不需要互联网、Woo Todo 账号或固定服务器地址。在 Mac 开启同步主机，Android 输入 Mac 显示的六位配对码即可加入。两端都支持显示和输入六位码；WebDAV 仍使用配置二维码或链接。同步全程自动进行。</p>
+          <p>macOS 与 Android 统一连接自行部署的 Cloudflare Worker + D1 同步空间：首台设备用邀请码建立空间，之后设备用六位配对码双向加入。没有内置 Worker 地址时，每台新设备首次配对前需填写同一个 HTTPS 地址；只有内置了地址的构建才能仅凭六位码加入。任意网络可用，任务正文端到端加密；旧版的局域网与 WebDAV 入口已停用，同步只保留 Worker 同步空间，已经配置好的 HTTPS Worker 身份可以继续使用。</p>
         </header>
 
-        <div class="sync-topology" aria-label="Mac 与 Android 同一网络加密同步">
+        <div class="sync-topology" aria-label="Mac 与 Android 通过 Worker 同步空间加密同步">
           <div class="device device-desktop">
             <div class="desktop-shape" aria-hidden="true"><span></span></div>
             <strong>Mac</strong>
-            <small>本地同步主机</small>
+            <small>本地任务库 · 六位码配对</small>
           </div>
           <div class="connection">
-            <span>同一网络 · AES-256-GCM</span>
+            <span>Worker 同步空间 · AES-256-GCM</span>
             <i aria-hidden="true"></i>
-            <b aria-hidden="true">↔</b>
+            <b aria-hidden="true">☁</b>
           </div>
           <div class="device device-phone">
             <div class="phone-shape" aria-hidden="true"><span></span></div>
             <strong>Android</strong>
-            <small>六位码配对</small>
+            <small>本地任务库 · 六位码配对</small>
           </div>
         </div>
 
-        <div class="network-options" aria-label="支持的网络连接方式">
+        <div class="network-options" aria-label="同步空间能力">
           <article>
             <span>01</span>
-            <h3>同一 Wi-Fi</h3>
-            <p>电脑和手机连接同一个路由器。</p>
+            <h3>任意网络</h3>
+            <p>不再要求同一 Wi-Fi 或本地网络权限，设备通过 HTTPS 访问同一个 Worker。</p>
           </article>
           <article>
             <span>02</span>
-            <h3>手机热点</h3>
-            <p>电脑连接手机开启的热点。</p>
+            <h3>端到端加密</h3>
+            <p>任务正文与标签以 AES-256-GCM 密文离开设备，服务端只保存密文与必要元数据。</p>
           </article>
           <article>
             <span>03</span>
-            <h3>电脑热点</h3>
-            <p>手机连接电脑开启的热点。</p>
+            <h3>设备管理</h3>
+            <p>查看设备列表、移除其他设备，或退出同步空间；本地任务始终保留。</p>
           </article>
         </div>
 
         <div class="sync-details">
           <ol>
-            <li><span>1</span>Mac 开启“同一网络同步”</li>
-            <li><span>2</span>Android 输入六位配对码</li>
-            <li><span>3</span>同网时自动同步任务、标签和历史</li>
+            <li><span>1</span>首台设备用邀请码建立同步空间</li>
+            <li><span>2</span>其他设备输入六位码，或显示六位码让对方批准</li>
+            <li><span>3</span>任意网络自动同步任务、标签和历史</li>
           </ol>
           <div>
-            <p>离开当前网络仍可正常编辑，重新连接后会自动补齐。</p>
-            <p>需要跨网络时，可改用第三方 WebDAV 或 <a href="https://github.com/stophemo/woo-todo/blob/main/backend/README.md">自建服务</a>。</p>
+            <p>配对码 5 分钟内有效；断网仍可正常编辑，重新联网后自动补齐。</p>
+            <p>自建 Worker 的部署步骤见 <a href="https://github.com/stophemo/woo-todo/blob/main/backend/README.md">后端说明</a>；局域网与 WebDAV 同步已停用。</p>
           </div>
         </div>
       </div>
@@ -248,10 +248,10 @@
       <div class="section-inner">
         <header class="download-heading">
           <div>
-            <p class="section-kicker">v0.2.17</p>
+            <p class="section-kicker">v0.3.0</p>
             <h2 id="download-title">下载正式版</h2>
           </div>
-          <p>macOS 与 Android 提供 v0.2.17 正式版，两者都支持应用内更新。</p>
+          <p>macOS 与 Android 提供 v0.3.0 正式版，两者都支持应用内更新。</p>
         </header>
 
         <div class="download-list">
@@ -261,7 +261,7 @@
               <div><strong>macOS</strong><small>macOS 15+ · Apple Silicon</small></div>
             </div>
             <p>独立主窗口、最近删除恢复、悬浮任务板、MCP 服务、统计与本机数据清理。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.17/Woo-Todo-v0.2.17-macos-arm64.zip">下载 ZIP</a>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/Woo-Todo-v0.3.0-macos-arm64.zip">下载 ZIP</a>
           </article>
           <article class="download-item">
             <div class="platform-name">
@@ -269,13 +269,13 @@
               <div><strong>Android</strong><small>Android 13+</small></div>
             </div>
             <p>统一任务列表、最近删除恢复、定时提醒、桌面 Widget、标签拖动排序与统计。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.2.17/Woo-Todo-v0.2.17-android.apk">下载 APK</a>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/Woo-Todo-v0.3.0-android.apk">下载 APK</a>
           </article>
         </div>
 
         <div class="release-links">
-          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.17">查看发布说明</a>
-          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.2.17/SHA256SUMS.txt">SHA-256 校验</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.3.0">查看发布说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/SHA256SUMS.txt">SHA-256 校验</a>
           <a href="https://github.com/stophemo/woo-todo">GitHub 源代码</a>
         </div>
       </div>

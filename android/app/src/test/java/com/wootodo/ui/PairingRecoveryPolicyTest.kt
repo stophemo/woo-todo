@@ -6,7 +6,7 @@ import org.junit.Test
 
 class PairingRecoveryPolicyTest {
     @Test
-    fun `进程丢失临时密钥时明确要求重新扫码`() {
+    fun `进程丢失临时密钥时明确要求重新配对`() {
         assertTrue(
             PairingRecoveryPolicy.requiresRescan(
                 wasPairingInSavedState = true,

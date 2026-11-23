@@ -169,6 +169,110 @@ class SyncCryptoTest {
     }
 
     @Test
+    fun `共享PairingJoin golden向量严格匹配`() {
+        val vector = fixture().getJSONObject("pairingJoin")
+        val joinRequestId = vector.getString("joinRequestId")
+        val deviceId = vector.getString("deviceId")
+        val creator = PairingKeyPair.fromPrivateKey(
+            Base64Url.decode(vector.getString("creatorPrivateKey")),
+        )
+        val approver = PairingKeyPair.fromPrivateKey(
+            Base64Url.decode(vector.getString("approverPrivateKey")),
+        )
+
+        assertEquals(vector.getString("creatorPublicKey"), creator.publicKeyBase64Url)
+        assertEquals(vector.getString("approverPublicKey"), approver.publicKeyBase64Url)
+        assertEquals(
+            vector.getString("sharedSecret"),
+            Base64Url.encode(creator.sharedSecret(approver.publicKey)),
+        )
+        assertEquals(
+            vector.getString("hkdfSaltUtf8"),
+            String(PairingJoinCrypto.hkdfSalt(joinRequestId), StandardCharsets.UTF_8),
+        )
+        assertEquals(
+            vector.getString("hkdfInfoUtf8"),
+            String(PairingJoinCrypto.hkdfInfo(joinRequestId), StandardCharsets.UTF_8),
+        )
+
+        val sessionKey = PairingJoinCrypto.sessionKey(
+            creator,
+            approver.publicKey,
+            joinRequestId,
+        )
+        assertEquals(vector.getString("sessionKey"), Base64Url.encode(sessionKey))
+        assertEquals(
+            vector.getString("verificationInputUtf8"),
+            String(
+                PairingJoinCrypto.verificationInput(
+                    joinRequestId,
+                    creator.publicKey,
+                    approver.publicKey,
+                ),
+                StandardCharsets.UTF_8,
+            ),
+        )
+        assertEquals(
+            vector.getString("verificationCode"),
+            PairingJoinCrypto.verificationCode(
+                sessionKey,
+                joinRequestId,
+                creator.publicKey,
+                approver.publicKey,
+            ),
+        )
+
+        val vaultKey = Base64Url.decode(vector.getString("vaultKey"))
+        val expectedEnvelope = vector.getJSONObject("vaultKeyEnvelope")
+        val envelope = PairingJoinCrypto.sealVaultKey(
+            vaultKey = vaultKey,
+            sessionKey = sessionKey,
+            joinRequestId = joinRequestId,
+            deviceId = deviceId,
+            nonce = Base64Url.decode(expectedEnvelope.getString("nonce")),
+        )
+        assertEquals(
+            vector.getString("envelopeAadUtf8"),
+            String(PairingJoinCrypto.aad(joinRequestId, deviceId), StandardCharsets.UTF_8),
+        )
+        assertEquals(expectedEnvelope.getString("ciphertext"), envelope.ciphertext)
+        assertEquals(expectedEnvelope.getString("nonce"), envelope.nonce)
+
+        val opened = PairingJoinCrypto.openVaultKey(
+            envelope = EncryptedEnvelope(
+                ciphertext = expectedEnvelope.getString("ciphertext"),
+                nonce = expectedEnvelope.getString("nonce"),
+            ),
+            sessionKey = sessionKey,
+            joinRequestId = joinRequestId,
+            deviceId = deviceId,
+        )
+        try {
+            assertArrayEquals(vaultKey, opened)
+        } finally {
+            opened.fill(0)
+            sessionKey.fill(0)
+        }
+
+        // Path B 的 AAD 必须绑定 deviceId，换设备 ID 无法解封。
+        assertThrows(SyncCryptoException::class.java) {
+            PairingJoinCrypto.openVaultKey(
+                envelope = EncryptedEnvelope(
+                    ciphertext = expectedEnvelope.getString("ciphertext"),
+                    nonce = expectedEnvelope.getString("nonce"),
+                ),
+                sessionKey = PairingJoinCrypto.sessionKey(
+                    creator,
+                    approver.publicKey,
+                    joinRequestId,
+                ),
+                joinRequestId = joinRequestId,
+                deviceId = "other-device",
+            )
+        }
+    }
+
+    @Test
     fun `Base64URL拒绝padding和非规范输入`() {
         assertThrows(SyncCryptoException::class.java) { Base64Url.decode("AA==") }
         assertThrows(SyncCryptoException::class.java) { Base64Url.decode("包含中文") }

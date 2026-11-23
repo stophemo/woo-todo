@@ -243,7 +243,9 @@ object SyncJsonCodec {
     private fun decodeResolveShortCodeDataObject(value: JSONObject): ResolveShortCodeData {
         value.requireKeys(
             setOf("pairingId", "pairingSecret", "initiatorPublicKey", "vaultId", "expiresAt"),
+            setOf("serverTime"),
         )
+        val expiresAt = value.nonNegativeLong("expiresAt")
         return ResolveShortCodeData(
             pairingId = value.string("pairingId"),
             pairingSecret = value.string("pairingSecret").also {
@@ -253,7 +255,13 @@ object SyncJsonCodec {
                 requireBase64Bytes(it, 32, "initiatorPublicKey")
             },
             vaultId = value.string("vaultId"),
-            expiresAt = value.nonNegativeLong("expiresAt"),
+            expiresAt = expiresAt,
+            // 旧服务端没有 serverTime：回退为 expiresAt，按剩余有效期 0 处理。
+            serverTime = if (value.has("serverTime") && !value.isNull("serverTime")) {
+                value.nonNegativeLong("serverTime")
+            } else {
+                expiresAt
+            },
         )
     }
 

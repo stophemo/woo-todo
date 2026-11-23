@@ -14,7 +14,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     init(
         syncSettingsStore: SyncSettingsStore,
-        webDavSettingsStore: WebDavSettingsStore,
         dayCounterStore: DayCounterStore,
         dailyDigestSettingsStore: DailyDigestSettingsStore,
         shortcutSettingsStore: ShortcutSettingsStore,
@@ -38,7 +37,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.setFrameAutosaveName("WooTodoSettingsWindow")
         window.contentView = NSHostingView(rootView: SettingsView(
             syncSettingsStore: syncSettingsStore,
-            webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
             dailyDigestSettingsStore: dailyDigestSettingsStore,
             shortcutSettingsStore: shortcutSettingsStore,

@@ -21,7 +21,12 @@ struct LocalDataManagerTests {
         try FileManager.default.createDirectory(at: savedState, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
         try Data("db".utf8).write(to: appData.appendingPathComponent("tasks.sqlite"))
-        try Data("secret".utf8).write(to: secure.appendingPathComponent("webdav.json"))
+        try Data("old".utf8).write(to: secure.appendingPathComponent("webdav-credentials.enc"))
+        try Data("old".utf8).write(to: secure.appendingPathComponent("webdav-local-key.json"))
+        try FileManager.default.createDirectory(
+            at: appData.appendingPathComponent("local-sync", isDirectory: true),
+            withIntermediateDirectories: true
+        )
         try Data("cache".utf8).write(to: caches.appendingPathComponent("cache.txt"))
         try Data("state".utf8).write(to: savedState.appendingPathComponent("state.txt"))
         try Data("keep".utf8).write(to: outside)
@@ -32,7 +37,6 @@ struct LocalDataManagerTests {
         defer { defaults.removePersistentDomain(forName: bundleIdentifier) }
         defaults.set("value", forKey: "kept-key")
         let syncStore = FakeSyncCredentialsStore()
-        let webDavStore = FakeWebDavCredentialsStore()
         let manager = LocalDataManager(
             bundleIdentifier: bundleIdentifier,
             bundleURL: bundle,
@@ -41,7 +45,6 @@ struct LocalDataManagerTests {
             savedStateURL: savedState,
             defaults: defaults,
             syncCredentialsStore: syncStore,
-            webDavCredentialsStore: webDavStore,
             allowsAppRemoval: false
         )
 
@@ -53,7 +56,9 @@ struct LocalDataManagerTests {
         #expect(FileManager.default.fileExists(atPath: outside.path))
         #expect(defaults.object(forKey: "kept-key") == nil)
         #expect(syncStore.deleted)
-        #expect(webDavStore.deleted)
+        #expect(!FileManager.default.fileExists(
+            atPath: secure.appendingPathComponent("webdav-credentials.enc").path
+        ))
 
         try manager.clearLocalData()
     }
@@ -88,7 +93,6 @@ struct LocalDataManagerTests {
             savedStateURL: root,
             defaults: UserDefaults(suiteName: "woo-todo.local-data-test")!,
             syncCredentialsStore: FakeSyncCredentialsStore(),
-            webDavCredentialsStore: FakeWebDavCredentialsStore(),
             allowsAppRemoval: allowsAppRemoval
         )
     }
@@ -99,13 +103,5 @@ private final class FakeSyncCredentialsStore: SyncCredentialsStoring, @unchecked
 
     func save(_ credentials: SyncCredentials) throws {}
     func load() throws -> SyncCredentials? { nil }
-    func delete() throws { deleted = true }
-}
-
-private final class FakeWebDavCredentialsStore: WebDavCredentialsStoring, @unchecked Sendable {
-    private(set) var deleted = false
-
-    func save(_ credentials: WebDavCredentials) throws {}
-    func load() throws -> WebDavCredentials? { nil }
     func delete() throws { deleted = true }
 }

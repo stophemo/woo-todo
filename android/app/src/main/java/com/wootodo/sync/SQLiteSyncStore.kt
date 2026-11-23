@@ -338,14 +338,14 @@ class SQLiteSyncStore(
     private val bindOnInit: Boolean = true,
     private val onDisplayConfigurationChanged: (DisplayConfigurationPayload) -> Unit = {},
     private val onTasksChanged: () -> Unit = {},
-) : OutboxStore, RemoteApplyStore, WebDavLocalApplying {
+) : OutboxStore, RemoteApplyStore {
     init {
         credentials.validate()
         if (bindOnInit) bindDeviceIdentity()
     }
 
     companion object {
-        /** sync_applied_operations / sync_webdav_applied_operations 保留的最近记录数。 */
+        /** sync_applied_operations 保留的最近记录数。 */
         const val APPLIED_RETENTION_WINDOW = 10_000L
 
         /** 清理旧同步空间的元数据，但保留任务与显示配置。 */
@@ -391,7 +391,6 @@ class SQLiteSyncStore(
             sqlite.delete(TABLE_VERSIONS, null, null)
             sqlite.delete(TABLE_TOMBSTONES, null, null)
             sqlite.delete(TABLE_APPLIED, null, null)
-            sqlite.delete(TABLE_WEBDAV_APPLIED, null, null)
             sqlite.delete(TABLE_DEFERRED_DELETIONS, null, null)
             sqlite.execSQL(
                 "UPDATE sync_state SET cursor = 0, lamport = 0, vault_id = '', device_id = '' " +
@@ -512,76 +511,6 @@ class SQLiteSyncStore(
             sqlite.execSQL(
                 "DELETE FROM $TABLE_APPLIED WHERE server_seq < ?",
                 arrayOf(advancingCursorTo - APPLIED_RETENTION_WINDOW),
-            )
-            sqlite.setTransactionSuccessful()
-        } finally {
-            sqlite.endTransaction()
-        }
-        if (tasksChanged) onTasksChanged()
-        displayConfiguration?.let(onDisplayConfigurationChanged)
-    }
-
-    @Synchronized
-    override fun pendingWebDavOperationIds(operationIds: List<String>): Set<String> {
-        val sqlite = database.readableDatabase
-        return operationIds.toSet().filterTo(mutableSetOf()) { operationId ->
-            !isWebDavOperationApplied(sqlite, operationId)
-        }
-    }
-
-    @Synchronized
-    override fun applyWebDavOperations(operations: List<WebDavOperation>) {
-        val sqlite = database.writableDatabase
-        var tasksChanged = false
-        var displayConfiguration: DisplayConfigurationPayload? = null
-        sqlite.beginTransaction()
-        try {
-            operations.forEach { operation ->
-                operation.validate()
-                require(operation.vaultId == credentials.vaultId) {
-                    "WebDAV 同步空间不匹配"
-                }
-                if (isWebDavOperationApplied(sqlite, operation.opId)) return@forEach
-                if (!isAlreadyApplied(sqlite, operation.opId)) {
-                    val plaintext = SyncPayloadCrypto.open(
-                        envelope = EncryptedEnvelope(operation.ciphertext, operation.nonce),
-                        vaultKey = credentials.vaultKey,
-                        vaultId = credentials.vaultId,
-                        metadata = operation.metadata(),
-                    )
-                    val payload = SyncJsonCodec.decodeTaskPayload(
-                        String(plaintext, StandardCharsets.UTF_8),
-                    )
-                    require(payload.id == operation.entityId) {
-                        "密文实体与外层 entityId 不一致"
-                    }
-                    val synthetic = SyncPulledOperation(
-                        serverSeq = 1,
-                        opId = operation.opId,
-                        deviceId = operation.deviceId,
-                        entityId = operation.entityId,
-                        kind = operation.kind,
-                        lamport = operation.lamport,
-                        ciphertext = operation.ciphertext,
-                        nonce = operation.nonce,
-                        createdAt = System.currentTimeMillis(),
-                    )
-                    val result = applyPayload(sqlite, synthetic, payload)
-                    tasksChanged = result.tasksChanged || tasksChanged
-                    displayConfiguration = result.displayConfiguration ?: displayConfiguration
-                    sqlite.execSQL(
-                        "UPDATE sync_state SET lamport = MAX(lamport, ?) WHERE id = 1",
-                        arrayOf(operation.lamport),
-                    )
-                }
-                rememberWebDavOperation(sqlite, operation.opId)
-            }
-            // WebDAV 无服务端序号，按应用时间保留最近窗口内的记录用于幂等去重。
-            sqlite.execSQL(
-                "DELETE FROM $TABLE_WEBDAV_APPLIED WHERE op_id NOT IN " +
-                    "(SELECT op_id FROM $TABLE_WEBDAV_APPLIED " +
-                    "ORDER BY applied_at DESC, op_id DESC LIMIT ?)",
-                arrayOf(APPLIED_RETENTION_WINDOW),
             )
             sqlite.setTransactionSuccessful()
         } finally {
@@ -922,20 +851,6 @@ class SQLiteSyncStore(
             arrayOf(opId),
         ).use(Cursor::moveToFirst)
 
-    private fun isWebDavOperationApplied(sqlite: SQLiteDatabase, opId: String): Boolean =
-        sqlite.rawQuery(
-            "SELECT 1 FROM $TABLE_WEBDAV_APPLIED WHERE op_id = ? LIMIT 1",
-            arrayOf(opId),
-        ).use(Cursor::moveToFirst)
-
-    private fun rememberWebDavOperation(sqlite: SQLiteDatabase, opId: String) {
-        val values = ContentValues(2).apply {
-            put("op_id", opId)
-            put("applied_at", System.currentTimeMillis())
-        }
-        sqlite.insertOrThrow(TABLE_WEBDAV_APPLIED, null, values)
-    }
-
     private data class PendingRow(
         val opId: String,
         val entityId: String,
@@ -1152,6 +1067,43 @@ private fun readCategories(database: SQLiteDatabase): List<TaskCategory> =
             }
         }
     }
+
+/**
+ * 配对成功后绑定本地数据库。显式替换旧身份时原子重绑；本机没有旧凭据
+ * 但数据库仍绑定旧身份（上次退出或写入中断）时同样自愈为替换，避免
+ * 永久停留在无法绑定、无法重新配对的状态。
+ */
+fun bindPairedSyncStore(
+    database: TaskDatabase,
+    credentials: SyncCredentials,
+    replacedExistingCredentials: Boolean,
+    onTasksChanged: () -> Unit = {},
+    onDisplayConfigurationChanged: (DisplayConfigurationPayload) -> Unit = {},
+): SQLiteSyncStore {
+    if (replacedExistingCredentials) {
+        return SQLiteSyncStore.replaceSyncBinding(
+            database = database,
+            credentials = credentials,
+            onTasksChanged = onTasksChanged,
+            onDisplayConfigurationChanged = onDisplayConfigurationChanged,
+        )
+    }
+    return try {
+        SQLiteSyncStore(
+            database = database,
+            credentials = credentials,
+            onTasksChanged = onTasksChanged,
+            onDisplayConfigurationChanged = onDisplayConfigurationChanged,
+        )
+    } catch (error: SyncBindingConflictException) {
+        SQLiteSyncStore.replaceSyncBinding(
+            database = database,
+            credentials = credentials,
+            onTasksChanged = onTasksChanged,
+            onDisplayConfigurationChanged = onDisplayConfigurationChanged,
+        )
+    }
+}
 
 fun readDisplayConfiguration(database: SQLiteDatabase): DisplayConfigurationPayload? =
     database.query(
@@ -1376,6 +1328,5 @@ private const val TABLE_OUTBOX = "sync_outbox"
 private const val TABLE_VERSIONS = "sync_entity_versions"
 private const val TABLE_TOMBSTONES = "sync_tombstones"
 private const val TABLE_APPLIED = "sync_applied_operations"
-private const val TABLE_WEBDAV_APPLIED = "sync_webdav_applied_operations"
 private const val TABLE_DEFERRED_DELETIONS = "sync_deferred_deletions"
 private const val TABLE_DISPLAY_CONFIGURATION = "display_configuration"

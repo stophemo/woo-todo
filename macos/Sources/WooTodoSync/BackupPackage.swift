@@ -174,6 +174,12 @@ public struct BackupSyncCredentials: Codable, Equatable, Sendable,
         return value
     }
 
+    /// 旧备份可能带有局域网/HTTP 地址；此类身份只能恢复任务，不能自动绑定。
+    public var hasSupportedEndpoint: Bool {
+        guard let endpoint = URL(string: endpoint) else { return false }
+        return SyncEndpointPolicy.isAllowed(endpoint)
+    }
+
     public var description: String {
         "BackupSyncCredentials(endpoint: \(endpoint), vaultId: <redacted>, deviceId: <redacted>, secrets: <redacted>)"
     }
@@ -227,7 +233,9 @@ public struct BackupSnapshot: Codable, Equatable, Sendable {
             BackupSyncCredentials.self,
             forKey: .syncCredentials
         )
-        try validate()
+        // 旧备份可能携带已停用的局域网/WebDAV 地址：先允许读取任务，
+        // 恢复流程再单独判断是否保存同步身份。
+        try validate(requiringSupportedSyncCredentials: false)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -246,6 +254,10 @@ public struct BackupSnapshot: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
+        try validate(requiringSupportedSyncCredentials: true)
+    }
+
+    private func validate(requiringSupportedSyncCredentials: Bool) throws {
         guard protocolVersion == BackupPackageCodec.protocolVersion else {
             throw BackupPackageError.unsupportedVersion(protocolVersion)
         }
@@ -270,7 +282,7 @@ public struct BackupSnapshot: Codable, Equatable, Sendable {
                 throw BackupPackageError.duplicateTaskID(tombstone.id)
             }
         }
-        if let syncCredentials {
+        if let syncCredentials, requiringSupportedSyncCredentials {
             _ = try syncCredentials.credentials()
         }
     }

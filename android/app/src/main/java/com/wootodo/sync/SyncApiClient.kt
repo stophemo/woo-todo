@@ -2,7 +2,6 @@ package com.wootodo.sync
 
 import java.io.IOException
 import java.net.HttpURLConnection
-import java.net.Proxy
 import java.net.URI
 import java.net.URLEncoder
 import java.net.URL
@@ -10,10 +9,7 @@ import java.nio.charset.StandardCharsets
 
 sealed class SyncApiException(message: String, cause: Throwable? = null) : Exception(message, cause) {
     class InvalidEndpoint : SyncApiException("同步服务地址无效")
-    class Transport(
-        cause: Throwable,
-        val localNetwork: Boolean = false,
-    ) : SyncApiException("网络请求失败", cause)
+    class Transport(cause: Throwable) : SyncApiException("网络请求失败", cause)
     class Decoding(cause: Throwable) : SyncApiException("响应解析失败", cause)
     class Server(
         val statusCode: Int,
@@ -31,11 +27,6 @@ interface PairingTransport {
     fun pairingResult(pairingId: String, request: PairingResultRequest): PairingResultData
 }
 
-internal object SyncProxyPolicy {
-    fun requiresDirectConnection(endpoint: URI): Boolean =
-        SyncEndpointPolicy.scope(endpoint) == SyncEndpointScope.LOCAL_NETWORK
-}
-
 class SyncApiClient(
     endpoint: String,
     private val connectTimeoutMillis: Int = 10_000,
@@ -51,17 +42,6 @@ class SyncApiClient(
         credential = null,
         decoder = SyncJsonCodec::decodeCreateVaultData,
         vaultCreationInviteCode = inviteCode,
-    )
-
-    fun createPairing(
-        request: CreatePairingRequest,
-        credential: BearerCredential,
-    ): CreatePairingData = send(
-        "POST",
-        listOf("v1", "pairings"),
-        SyncJsonCodec.encode(request),
-        credential,
-        SyncJsonCodec::decodeCreatePairingData,
     )
 
     fun createPairingCode(
@@ -259,10 +239,7 @@ class SyncApiClient(
                 }
             }
         } catch (error: IOException) {
-            throw SyncApiException.Transport(
-                error,
-                localNetwork = SyncProxyPolicy.requiresDirectConnection(endpoint),
-            )
+            throw SyncApiException.Transport(error)
         }
 
         try {
@@ -288,10 +265,7 @@ class SyncApiClient(
         } catch (error: SyncApiException) {
             throw error
         } catch (error: IOException) {
-            throw SyncApiException.Transport(
-                error,
-                localNetwork = SyncProxyPolicy.requiresDirectConnection(endpoint),
-            )
+            throw SyncApiException.Transport(error)
         } finally {
             connection.disconnect()
         }
@@ -299,12 +273,7 @@ class SyncApiClient(
 
     private fun openConnection(url: URL): HttpURLConnection {
         connectionFactory?.let { return it(url) }
-        val connection = if (SyncProxyPolicy.requiresDirectConnection(endpoint)) {
-            url.openConnection(Proxy.NO_PROXY)
-        } else {
-            url.openConnection()
-        }
-        return connection as HttpURLConnection
+        return url.openConnection() as HttpURLConnection
     }
 
     private fun readResponse(connection: HttpURLConnection, status: Int): String {

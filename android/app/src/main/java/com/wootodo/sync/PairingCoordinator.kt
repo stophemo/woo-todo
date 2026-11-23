@@ -1,9 +1,8 @@
 package com.wootodo.sync
 
-import java.net.URI
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.currentCoroutineContext
 
 sealed interface PairingProgress {
     data object Claiming : PairingProgress
@@ -24,16 +23,27 @@ data class PairingCompletion(
 
 sealed class PairingException(message: String) : Exception(message) {
     data object AlreadyPaired : PairingException("本机已经完成配对")
-    data object DifferentSyncSpace : PairingException(
-        "配对二维码属于另一个同步空间。为避免 Mac、Android 和 Windows 被拆成多套数据，本机没有切换同步身份。",
+    data object InvalidEndpoint : PairingException(
+        "同步服务地址无效，请填写部署好的 HTTPS Worker 地址",
     )
-    data object CurrentDeviceOnlyEndpoint : PairingException(
-        "这个二维码使用了 127.0.0.1/localhost，它在手机上只代表手机自己。请在 Mac 选择局域网同步重新生成二维码，或改用两台设备都能访问的 HTTPS 同步服务。",
-    )
+    data object InvalidCode : PairingException("请输入另一台设备显示的 6 位数字配对码")
+    data object InvalidResolve : PairingException("配对码无法解析，请确认输入的是另一台设备显示的 6 位码")
     data object InvalidClaim : PairingException("服务端返回了无效的配对认领结果")
     data object InvalidResult : PairingException("服务端返回了不一致的配对结果")
-    data object Expired : PairingException("配对二维码已过期，请在 Mac 上重新生成")
-    data object Canceled : PairingException("Mac 已取消本次配对，请重新扫码")
+    data object DifferentSyncSpace : PairingException(
+        "配对请求属于另一个同步空间，本机没有切换同步身份",
+    )
+    data object UnsupportedPairingCode : PairingException("当前同步服务不支持六位配对码，请更新服务端")
+    data object Expired : PairingException("配对码已过期（5 分钟有效），请重新生成")
+    data object Canceled : PairingException("对方已取消本次配对，请重新生成配对码")
+    data object JoinNotFound : PairingException("配对码无效或已过期（5 分钟有效），请重新输入")
+    data object JoinCodeUsed : PairingException("配对码已被其他设备使用，请让对方重新显示")
+    data object JoinNotReady : PairingException("配对请求尚未准备好确认，请稍后重试")
+    data object DeviceLimit : PairingException("同步空间最多 4 台设备，请先移除一台旧设备")
+    data object InvalidJoinResult : PairingException("服务端返回了无效的加入配对结果")
+    data object CredentialsOverwritten : PairingException(
+        "本机同步身份已被另一个配对流程更新，请返回后重新开始配对",
+    )
     data object LocalBindingFailed : PairingException(
         "本地任务库无法绑定到新设备，请先备份现有任务再处理本机同步状态",
     )
@@ -50,11 +60,9 @@ object PairingPollPolicy {
         ((expiresAt - nowMillis).coerceAtLeast(0L) + 999L) / 1_000L
 }
 
-/**
- * 新设备配对流程。临时私钥与设备令牌只在本次进程内存在；凭据完整解密并校验后才落盘。
- */
+/** 已有设备显示六位码时，新设备用固定 Worker 地址解析并认领配对。 */
 class PairingCoordinator(
-    private val transportFactory: (String) -> PairingTransport,
+    private val clientFactory: (String) -> SyncApiClient = { endpoint -> SyncApiClient(endpoint) },
     private val credentialsStore: SyncCredentialsStore,
     private val keyPairFactory: () -> PairingKeyPair = PairingKeyPair::generate,
     private val tokenFactory: () -> ByteArray = { SecureBytes.generate(DEVICE_TOKEN_BYTES) },
@@ -62,22 +70,21 @@ class PairingCoordinator(
     private val pause: suspend (Long) -> Unit = { delay(it) },
 ) {
     suspend fun pair(
-        link: PairingDeepLink,
+        endpoint: String,
+        shortCode: String,
         deviceName: String,
         replaceExistingCredentials: Boolean = false,
         onProgress: (PairingProgress) -> Unit = {},
     ): PairingCompletion {
-        val previousCredentials = credentialsStore.load()
+        val normalizedEndpoint = SyncEndpointPolicy.normalize(endpoint)
+            ?: throw PairingException.InvalidEndpoint
+        if (!SHORT_CODE.matches(shortCode)) throw PairingException.InvalidCode
+        val storedCredentials = credentialsStore.load()
+        val previousCredentials = storedCredentials
+            ?.takeIf { SyncEndpointPolicy.isValid(it.endpoint) }
+        // 旧版本保存的 LAN/WebDAV 地址视为未配对；重新配对会覆盖它们。
         if (previousCredentials != null && !replaceExistingCredentials) {
             throw PairingException.AlreadyPaired
-        }
-        if (previousCredentials != null && replaceExistingCredentials &&
-            link.vaultId != null && previousCredentials.vaultId != link.vaultId
-        ) {
-            throw PairingException.DifferentSyncSpace
-        }
-        if (!SyncEndpointPolicy.isCrossDevice(URI(link.endpoint))) {
-            throw PairingException.CurrentDeviceOnlyEndpoint
         }
         val normalizedDeviceName = normalizeDeviceName(deviceName)
         val keyPair = keyPairFactory()
@@ -86,54 +93,76 @@ class PairingCoordinator(
         }
         val deviceToken = Base64Url.encode(tokenBytes)
         var sessionKeyToDestroy: ByteArray? = null
+        var deviceClaimed = false
+        var credentialsSaved = false
+        var clientForRevoke: SyncApiClient? = null
 
         try {
             onProgress(PairingProgress.Claiming)
-            val established = claimOnReachableEndpoint(
-                link = link,
-                deviceName = normalizedDeviceName,
-                deviceToken = deviceToken,
-                keyPair = keyPair,
+            val client = clientFactory(normalizedEndpoint)
+            clientForRevoke = client
+            val resolved = client.resolveShortCode(ResolveShortCodeRequest(shortCode))
+            validateResolved(resolved)
+            if (previousCredentials != null && replaceExistingCredentials &&
+                previousCredentials.vaultId != resolved.vaultId
+            ) {
+                throw PairingException.DifferentSyncSpace
+            }
+            // 服务端绝对时间不能直接和本机时钟比较；换算成本机等待截止时间。
+            val deadline = clockMillis() +
+                maxOf(0L, resolved.expiresAt - resolved.serverTime)
+            val claim = client.claimPairing(
+                resolved.pairingId,
+                PairingClaimRequest(
+                    pairingSecret = resolved.pairingSecret,
+                    deviceToken = deviceToken,
+                    device = DeviceRegistration(
+                        name = normalizedDeviceName,
+                        platform = DevicePlatform.ANDROID,
+                        publicKey = keyPair.publicKeyBase64Url,
+                    ),
+                ),
             )
-            val transport = established.transport
-            val claim = established.claim
+            deviceClaimed = true
             currentCoroutineContext().ensureActive()
-            validateClaim(link, claim)
+            validateClaim(resolved, claim)
 
             val sessionKey = keyPair.sessionKey(
-                peerPublicKeyBase64Url = link.initiatorPublicKey,
-                pairingId = link.pairingId,
-                pairingSecretBase64Url = link.pairingSecret,
+                peerPublicKeyBase64Url = resolved.initiatorPublicKey,
+                pairingId = resolved.pairingId,
+                pairingSecretBase64Url = resolved.pairingSecret,
             )
             sessionKeyToDestroy = sessionKey
             val verificationCode = PairingSessionCrypto.verificationCode(
                 sessionKey = sessionKey,
-                initiatorPublicKey = Base64Url.decode(link.initiatorPublicKey),
+                initiatorPublicKey = Base64Url.decode(resolved.initiatorPublicKey),
                 claimPublicKey = keyPair.publicKey,
             )
             onProgress(
                 PairingProgress.AwaitingConfirmation(
                     verificationCode = verificationCode,
-                    expiresAt = claim.expiresAt,
+                    expiresAt = deadline,
                 ),
             )
 
             while (true) {
-                val result = transport.pairingResult(
-                    link.pairingId,
+                val result = client.pairingResult(
+                    resolved.pairingId,
                     PairingResultRequest(
-                        pairingSecret = link.pairingSecret,
+                        pairingSecret = resolved.pairingSecret,
                         deviceToken = deviceToken,
                     ),
                 )
                 currentCoroutineContext().ensureActive()
-                if (result.pairingId != link.pairingId || result.expiresAt != claim.expiresAt) {
+                if (result.pairingId != resolved.pairingId ||
+                    result.expiresAt != claim.expiresAt
+                ) {
                     throw PairingException.InvalidResult
                 }
                 when (result.status) {
                     PairingStatus.CLAIMED -> {
                         validatePendingResult(result)
-                        if (!PairingPollPolicy.canContinue(clockMillis(), result.expiresAt)) {
+                        if (!PairingPollPolicy.canContinue(clockMillis(), deadline)) {
                             throw PairingException.Expired
                         }
                         pause(PairingPollPolicy.INTERVAL_MILLIS)
@@ -146,8 +175,8 @@ class PairingCoordinator(
                             throw PairingException.DifferentSyncSpace
                         }
                         val credentials = openCredentials(
-                            link = link,
-                            endpoint = established.endpoint,
+                            resolved = resolved,
+                            endpoint = normalizedEndpoint,
                             claim = claim,
                             result = result,
                             deviceToken = deviceToken,
@@ -155,15 +184,16 @@ class PairingCoordinator(
                         )
                         currentCoroutineContext().ensureActive()
                         onProgress(PairingProgress.SavingCredentials)
-                        if (replaceExistingCredentials) {
+                        if (storedCredentials != null) {
                             credentialsStore.save(credentials)
                         } else if (!credentialsStore.saveIfAbsent(credentials)) {
                             throw PairingException.AlreadyPaired
                         }
+                        credentialsSaved = true
                         return PairingCompletion(
                             vaultId = credentials.vaultId,
                             deviceId = credentials.deviceId,
-                            replacedExistingCredentials = previousCredentials != null,
+                            replacedExistingCredentials = storedCredentials != null,
                         )
                     }
 
@@ -173,15 +203,33 @@ class PairingCoordinator(
                 }
             }
         } finally {
+            // 认领成功后若流程失败、取消或保存凭据失败，撤销服务端已创建的设备，
+            // 避免留下占用设备上限的幽灵设备；成功保存时保留新设备。
+            if (deviceClaimed && !credentialsSaved) {
+                clientForRevoke?.let { revokeTemporaryDevice(it, deviceToken) }
+            }
             tokenBytes.fill(0)
             sessionKeyToDestroy?.fill(0)
             keyPair.destroy()
         }
     }
 
-    private fun validateClaim(link: PairingDeepLink, claim: PairingClaimData) {
-        if (claim.pairingId != link.pairingId || claim.status != PairingStatus.CLAIMED ||
-            claim.deviceId.isBlank() || claim.expiresAt <= 0
+    private fun validateResolved(resolved: ResolveShortCodeData) {
+        if (!IDENTIFIER.matches(resolved.pairingId) ||
+            resolved.vaultId.isBlank() ||
+            resolved.expiresAt <= 0 ||
+            Base64Url.decode(resolved.pairingSecret).size != 32 ||
+            Base64Url.decode(resolved.initiatorPublicKey).size != 32
+        ) {
+            throw PairingException.InvalidResolve
+        }
+    }
+
+    private fun validateClaim(resolved: ResolveShortCodeData, claim: PairingClaimData) {
+        if (claim.pairingId != resolved.pairingId ||
+            claim.status != PairingStatus.CLAIMED ||
+            !IDENTIFIER.matches(claim.deviceId) ||
+            claim.expiresAt <= 0
         ) {
             throw PairingException.InvalidClaim
         }
@@ -195,51 +243,8 @@ class PairingCoordinator(
         }
     }
 
-    private class EstablishedPairing(
-        val transport: PairingTransport,
-        val claim: PairingClaimData,
-        val endpoint: String,
-    )
-
-    /**
-     * 按主地址、备选地址的顺序逐个尝试。热点或双网卡场景下第一个地址常常不可达，
-     * 只有传输层失败才换下一个；服务端返回的业务错误直接上抛，不重复消耗配对会话。
-     */
-    private suspend fun claimOnReachableEndpoint(
-        link: PairingDeepLink,
-        deviceName: String,
-        deviceToken: String,
-        keyPair: PairingKeyPair,
-    ): EstablishedPairing {
-        var lastFailure: SyncApiException? = null
-        for (candidate in link.endpointCandidates) {
-            currentCoroutineContext().ensureActive()
-            try {
-                val transport = transportFactory(candidate)
-                val claim = transport.claimPairing(
-                    link.pairingId,
-                    PairingClaimRequest(
-                        pairingSecret = link.pairingSecret,
-                        deviceToken = deviceToken,
-                        device = DeviceRegistration(
-                            name = deviceName,
-                            platform = DevicePlatform.ANDROID,
-                            publicKey = keyPair.publicKeyBase64Url,
-                        ),
-                    ),
-                )
-                return EstablishedPairing(transport, claim, candidate)
-            } catch (error: SyncApiException.Transport) {
-                lastFailure = error
-            } catch (error: SyncApiException.InvalidEndpoint) {
-                lastFailure = error
-            }
-        }
-        throw lastFailure ?: PairingException.InvalidResult
-    }
-
     private fun openCredentials(
-        link: PairingDeepLink,
+        resolved: ResolveShortCodeData,
         endpoint: String,
         claim: PairingClaimData,
         result: PairingResultData,
@@ -248,7 +253,7 @@ class PairingCoordinator(
     ): SyncCredentials {
         val vaultId = result.vaultId?.takeIf { it.isNotBlank() }
             ?: throw PairingException.InvalidResult
-        if (link.vaultId != null && vaultId != link.vaultId) {
+        if (vaultId != resolved.vaultId) {
             throw PairingException.DifferentSyncSpace
         }
         val deviceId = result.deviceId?.takeIf { it.isNotBlank() }
@@ -258,7 +263,7 @@ class PairingCoordinator(
         val envelope = result.vaultKeyEnvelope ?: throw PairingException.InvalidResult
         if (deviceId != claim.deviceId ||
             !Base64Url.decode(initiatorPublicKey)
-                .contentEquals(Base64Url.decode(link.initiatorPublicKey))
+                .contentEquals(Base64Url.decode(resolved.initiatorPublicKey))
         ) {
             throw PairingException.InvalidResult
         }
@@ -266,7 +271,7 @@ class PairingCoordinator(
         val vaultKey = PairingSessionCrypto.openVaultKey(
             envelope = envelope,
             sessionKey = sessionKey,
-            pairingId = link.pairingId,
+            pairingId = resolved.pairingId,
             claimedDeviceId = deviceId,
         )
         try {
@@ -293,5 +298,7 @@ class PairingCoordinator(
     private companion object {
         const val DEVICE_TOKEN_BYTES = 32
         const val MAXIMUM_DEVICE_NAME_LENGTH = 80
+        val SHORT_CODE = Regex("^[0-9]{6}$")
+        val IDENTIFIER = Regex("^[A-Za-z0-9._:-]{1,128}$")
     }
 }

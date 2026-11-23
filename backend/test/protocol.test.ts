@@ -7,8 +7,13 @@ import {
   isBase64UrlBytes,
   LIMITS,
   paginateOperations,
+  parseCreateJoinRequest,
   parseCreateVaultRequest,
+  parseJoinSecretRequest,
   parsePairingClaimRequest,
+  parseRelayUpdateRequest,
+  parseResolveJoinRequest,
+  parseShortCodeRequest,
   parseSyncRequest,
   ProtocolValidationError,
 } from "../src/protocol.ts";
@@ -212,4 +217,170 @@ test("不同用途的凭据散列彼此隔离且结果稳定", async () => {
     await hashCredential(secret, "pairing-secret", pepper),
   );
   assert.match(deviceHash, /^[a-f0-9]{64}$/u);
+});
+
+test("join 创建请求校验公钥、设备令牌、平台与未知字段", () => {
+  const input = parseCreateJoinRequest({
+    publicKey: encodedBytes(32, 1),
+    deviceToken: encodedBytes(32, 2),
+    device: { name: "  Windows 工作站  ", platform: "windows" },
+  });
+  assert.equal(input.publicKey, encodedBytes(32, 1));
+  assert.equal(input.deviceToken, encodedBytes(32, 2));
+  assert.equal(input.device.name, "Windows 工作站");
+  assert.equal(input.device.platform, "windows");
+  assert.equal(input.device.publicKey, undefined);
+
+  const withDevicePublicKey = parseCreateJoinRequest({
+    publicKey: encodedBytes(32, 3),
+    deviceToken: encodedBytes(32, 4),
+    device: {
+      name: "Pixel",
+      platform: "android",
+      publicKey: encodedBytes(32, 3),
+    },
+  });
+  assert.equal(withDevicePublicKey.device.publicKey, encodedBytes(32, 3));
+
+  assert.throws(
+    () =>
+      parseCreateJoinRequest({
+        deviceToken: encodedBytes(32),
+        device: { name: "Pixel", platform: "android" },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "publicKey",
+  );
+  assert.throws(
+    () =>
+      parseCreateJoinRequest({
+        publicKey: encodedBytes(31),
+        deviceToken: encodedBytes(32),
+        device: { name: "Pixel", platform: "android" },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "publicKey",
+  );
+  assert.throws(
+    () =>
+      parseCreateJoinRequest({
+        publicKey: encodedBytes(32),
+        deviceToken: encodedBytes(31),
+        device: { name: "Pixel", platform: "android" },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "deviceToken",
+  );
+  assert.throws(
+    () =>
+      parseCreateJoinRequest({
+        publicKey: encodedBytes(32),
+        deviceToken: encodedBytes(32),
+        device: { name: "Pixel", platform: "linux" },
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError &&
+      error.field === "device.platform",
+  );
+  assert.throws(
+    () =>
+      parseCreateJoinRequest({
+        publicKey: encodedBytes(32),
+        deviceToken: encodedBytes(32),
+        device: { name: "Pixel", platform: "android" },
+        deviceId: "不应由新设备指定",
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "body",
+  );
+});
+
+test("join 解析、取消与短码请求拒绝非法输入", () => {
+  const resolved = parseResolveJoinRequest({
+    code: "012345",
+    publicKey: encodedBytes(32, 5),
+  });
+  assert.equal(resolved.code, "012345");
+  assert.equal(resolved.publicKey, encodedBytes(32, 5));
+
+  for (const code of ["12345", "1234567", "12a456"]) {
+    assert.throws(
+      () =>
+        parseResolveJoinRequest({
+          code,
+          publicKey: encodedBytes(32),
+        }),
+      (error: unknown) =>
+        error instanceof ProtocolValidationError && error.field === "code",
+    );
+  }
+  assert.throws(
+    () => parseResolveJoinRequest({ code: "012345", publicKey: encodedBytes(31) }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "publicKey",
+  );
+  assert.throws(
+    () =>
+      parseResolveJoinRequest({
+        code: "012345",
+        publicKey: encodedBytes(32),
+        joinRequestId: "不应由解析方指定",
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "body",
+  );
+
+  const cancel = parseJoinSecretRequest({ joinSecret: encodedBytes(32, 6) });
+  assert.equal(cancel.joinSecret, encodedBytes(32, 6));
+  assert.throws(
+    () => parseJoinSecretRequest({ joinSecret: encodedBytes(31) }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "joinSecret",
+  );
+  assert.throws(
+    () =>
+      parseJoinSecretRequest({
+        joinSecret: encodedBytes(32),
+        deviceToken: encodedBytes(32),
+      }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "body",
+  );
+
+  const shortCode = parseShortCodeRequest({ code: "654321" });
+  assert.equal(shortCode.code, "654321");
+  assert.throws(
+    () => parseShortCodeRequest({ code: "65432a" }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "code",
+  );
+  assert.throws(
+    () => parseShortCodeRequest({ code: "654321", publicKey: encodedBytes(32) }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "body",
+  );
+});
+
+test("relay 更新仅接受合法 HTTPS 地址并去掉尾斜杠", () => {
+  assert.deepEqual(
+    parseRelayUpdateRequest({ relayUrl: "https://ntfy.example.test/" }),
+    { relayUrl: "https://ntfy.example.test" },
+  );
+  assert.deepEqual(
+    parseRelayUpdateRequest({ relayUrl: "  https://ntfy.example.test/custom/  " }),
+    { relayUrl: "https://ntfy.example.test/custom" },
+  );
+  for (const relayUrl of ["http://ntfy.example.test", "https://", "not a url"]) {
+    assert.throws(
+      () => parseRelayUpdateRequest({ relayUrl }),
+      (error: unknown) =>
+        error instanceof ProtocolValidationError && error.field === "relayUrl",
+      relayUrl,
+    );
+  }
+  assert.throws(
+    () => parseRelayUpdateRequest({ relayUrl: 42 }),
+    (error: unknown) =>
+      error instanceof ProtocolValidationError && error.field === "relayUrl",
+  );
 });

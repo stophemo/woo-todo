@@ -43,6 +43,8 @@ data class BackupTaskSnapshot(
 data class BackupRestoreResult(
     val restoredTaskCount: Int,
     val syncCredentialsRestored: Boolean,
+    /** 备份中的旧 endpoint 不属于新的 HTTPS Worker 空间，需要重新配对。 */
+    val requiresRePairing: Boolean = false,
 )
 
 sealed class BackupTransferException(message: String, cause: Throwable? = null) :
@@ -127,7 +129,11 @@ class BackupRestoreCoordinator(
     }
 
     fun restore(snapshot: BackupSnapshot): BackupRestoreResult {
-        val restoredCredentials = snapshot.syncCredentials?.credentials()
+        // 旧备份可能携带 LAN/WebDAV 地址：只恢复任务，不保存凭据也不绑定身份。
+        val rejectedCredentials = snapshot.syncCredentials?.takeIf { !it.hasValidEndpoint() }
+        val restoredCredentials = snapshot.syncCredentials
+            ?.takeIf { it.hasValidEndpoint() }
+            ?.credentials()
         var credentialsWriteAttempted = false
         var committed = false
         try {
@@ -151,6 +157,7 @@ class BackupRestoreCoordinator(
             return BackupRestoreResult(
                 restoredTaskCount = snapshot.tasks.size,
                 syncCredentialsRestored = restoredCredentials != null,
+                requiresRePairing = rejectedCredentials != null,
             )
         } catch (error: Exception) {
             if (credentialsWriteAttempted && !committed) {

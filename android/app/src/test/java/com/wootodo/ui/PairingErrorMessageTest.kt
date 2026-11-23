@@ -13,11 +13,14 @@ import org.junit.Test
 
 class PairingErrorMessageTest {
     @Test
-    fun `回环地址错误说明127在手机上的真实含义`() {
-        val message = PairingErrorMessage.from(PairingException.CurrentDeviceOnlyEndpoint)
+    fun `配对异常直接给出中文提示`() {
+        val notFound = PairingErrorMessage.from(PairingException.JoinNotFound)
+        val limit = PairingErrorMessage.from(PairingException.DeviceLimit)
 
-        assertTrue(message.contains("只代表手机自己"))
-        assertTrue(message.contains("选择局域网同步"))
+        assertTrue(notFound.contains("5 分钟"))
+        assertTrue(notFound.contains("重新输入"))
+        assertTrue(limit.contains("4 台"))
+        assertTrue(limit.contains("移除"))
     }
 
     @Test
@@ -32,10 +35,37 @@ class PairingErrorMessageTest {
             SyncApiException.Transport(SSLHandshakeException("测试证书错误")),
         )
 
-        assertTrue(unknownHost.contains("手机与 Mac 在同一网络"))
-        assertTrue(unknownHost.contains("服务地址可访问"))
+        assertTrue(unknownHost.contains("服务器地址"))
         assertTrue(timeout.contains("超时"))
         assertTrue(certificate.contains("HTTPS 证书"))
+        assertFalse(unknownHost.contains("Mac"))
+    }
+
+    @Test
+    fun `服务端配对错误映射为对应中文提示`() {
+        val expired = PairingErrorMessage.from(
+            SyncApiException.Server(
+                statusCode = 410,
+                payload = com.wootodo.sync.ServerErrorPayload(
+                    "PAIRING_EXPIRED",
+                    "配对请求已过期",
+                ),
+                requestId = "req",
+            ),
+        )
+        val capacity = PairingErrorMessage.from(
+            SyncApiException.Server(
+                statusCode = 409,
+                payload = com.wootodo.sync.ServerErrorPayload(
+                    "VAULT_DEVICE_LIMIT",
+                    "设备数量已达上限",
+                ),
+                requestId = "req",
+            ),
+        )
+
+        assertTrue(expired.contains("5 分钟"))
+        assertTrue(capacity.contains("4 台"))
     }
 
     @Test

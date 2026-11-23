@@ -7,7 +7,6 @@ import androidx.lifecycle.viewModelScope
 import com.wootodo.WooTodoApplication
 import com.wootodo.sync.PairingCompletion
 import com.wootodo.sync.PairingCoordinator
-import com.wootodo.sync.PairingDeepLink
 import com.wootodo.sync.PairingException
 import com.wootodo.sync.PairingProgress
 import com.wootodo.sync.SyncApiClient
@@ -15,6 +14,7 @@ import com.wootodo.sync.SyncApiException
 import com.wootodo.sync.SyncCredentialsStore
 import com.wootodo.sync.SyncCredentials
 import com.wootodo.sync.SyncCryptoException
+import com.wootodo.sync.SyncEndpointPolicy
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -78,7 +78,8 @@ class PairingViewModel(
     }
 
     fun begin(
-        link: PairingDeepLink,
+        endpoint: String,
+        shortCode: String,
         deviceName: String,
         replaceExistingCredentials: Boolean = false,
     ) {
@@ -88,13 +89,10 @@ class PairingViewModel(
             mutableState.value = PairingUiState.Claiming
             try {
                 val attempt = withContext(Dispatchers.IO) {
-                    val previousCredentials = if (replaceExistingCredentials) {
-                        credentialsStore.load()
-                    } else {
-                        null
-                    }
+                    val previousCredentials = credentialsStore.load()
                     val completion = coordinator.pair(
-                        link = link,
+                        endpoint = endpoint,
+                        shortCode = shortCode,
                         deviceName = deviceName,
                         replaceExistingCredentials = replaceExistingCredentials,
                     ) { progress ->
@@ -137,7 +135,7 @@ class PairingViewModel(
             val credentials = withContext(Dispatchers.IO) {
                 runCatching { credentialsStore.load() }.getOrNull()
             }
-            if (credentials == null) {
+            if (credentials == null || !SyncEndpointPolicy.isValid(credentials.endpoint)) {
                 if (sessionGeneration.isCurrent(generation)) {
                     mutableState.value = PairingUiState.Interrupted
                 }
@@ -199,14 +197,23 @@ class PairingViewModel(
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             val coordinator = PairingCoordinator(
-                transportFactory = { endpoint -> SyncApiClient(endpoint) },
+                clientFactory = { endpoint -> SyncApiClient(endpoint) },
                 credentialsStore = application.syncCredentialsStore,
             )
             return PairingViewModel(
                 coordinator,
                 application.syncCredentialsStore,
-                application::finalizePairing,
-            ) as T
+            ) { completion, previousCredentials ->
+                // 保存后可能已被另一配对流程覆盖；此时不能再进入回滚覆盖胜出方。
+                val stored = application.syncCredentialsStore.load()
+                if (stored == null ||
+                    stored.deviceId != completion.deviceId ||
+                    stored.vaultId != completion.vaultId
+                ) {
+                    throw PairingException.CredentialsOverwritten
+                }
+                application.finalizePairing(completion, previousCredentials)
+            } as T
         }
     }
 
@@ -221,39 +228,39 @@ private data class PairingAttempt(
 )
 
 internal object PairingErrorMessage {
-    fun from(error: Exception): String = when (error) {
-        PairingException.AlreadyPaired -> "本机已完成配对，无需再次扫码"
+    fun from(error: Throwable): String = when (error) {
+        PairingException.AlreadyPaired -> "本机已完成配对，无需再次配对"
         is PairingException -> requireNotNull(error.message)
         is SyncApiException.Transport -> when (error.cause) {
-            is UnknownHostException ->
-                "找不到同步服务。局域网同步请确认手机与 Mac 在同一网络且 Mac 同步已开启；远程同步请确认服务地址可访问。"
-
-            is ConnectException ->
-                "无法连接同步服务。请确认 Mac 与手机在同一网络并已开启同步，或检查远程同步服务是否在线。"
-
-            is SocketTimeoutException ->
-                "连接同步服务超时。请检查手机网络、Mac 局域网同步或远程同步服务状态，然后重试。"
-
-            is SSLException ->
-                "同步服务的 HTTPS 证书校验失败。请在 Mac 检查远程同步服务地址后重新生成二维码。"
-
-            else -> "无法连接同步服务。请确认手机与 Mac 在同一网络，或远程同步服务可以访问。"
+            is UnknownHostException -> "找不到同步服务，请检查网络和服务器地址"
+            is ConnectException -> "无法连接同步服务，请检查网络和服务器地址"
+            is SocketTimeoutException -> "连接同步服务超时，请检查网络后重试"
+            is SSLException -> "同步服务的 HTTPS 证书校验失败，请检查服务器地址"
+            else -> "无法连接同步服务，请检查网络和服务器地址"
         }
         is SyncApiException.Decoding -> "同步服务响应无法识别，请更新应用后重试"
-        is SyncApiException.InvalidEndpoint -> "配对链接中的同步服务地址无效"
-        is SyncApiException.Server -> when {
-            error.statusCode == 410 || error.payload.code == "PAIRING_EXPIRED" ->
-                "配对二维码已过期，请在 Mac 上重新生成"
-
-            error.statusCode == 409 -> "本次配对已被认领或状态已改变，请重新生成二维码"
-            error.statusCode == 404 -> "找不到本次配对，请在 Mac 上重新生成二维码"
-            else -> "同步服务暂时无法完成配对（${error.payload.code}）"
+        is SyncApiException.InvalidEndpoint -> "同步服务地址无效，请填写部署好的 HTTPS Worker 地址"
+        is SyncApiException.Server -> when (error.payload.code) {
+            "VAULT_DEVICE_LIMIT" -> "同步空间最多 4 台设备，请先移除一台旧设备"
+            "PAIRING_EXPIRED" -> "配对码已过期（5 分钟有效），请重新生成"
+            "PAIRING_NOT_FOUND" -> "配对码无效或已过期（5 分钟有效），请重新输入"
+            "PAIRING_CODE_USED" -> "配对码已被其他设备使用，请让对方重新显示"
+            "PAIRING_CANCELED" -> "对方已取消本次配对，请重新配对"
+            "PAIRING_NOT_READY", "PAIRING_APPROVE_FAILED" ->
+                "配对请求尚未准备好确认，请重新显示配对码"
+            else -> when {
+                error.statusCode == 401 || error.statusCode == 403 ->
+                    "设备授权已失效，请先退出同步空间后重新配对"
+                error.statusCode == 404 || error.statusCode == 410 ->
+                    "配对码无效或已过期（5 分钟有效），请重新输入"
+                error.statusCode == 409 -> "配对码已被使用或状态已改变，请重新配对"
+                else -> "同步服务暂时无法完成配对（${error.payload.code}）"
+            }
         }
-
-        is SyncCryptoException -> "配对密钥协商或校验失败，请更新 Woo Todo 后重新扫码"
+        is SyncCryptoException -> "配对密钥协商或校验失败，请更新 Woo Todo 后重试"
         else -> error.localizedMessage
             ?.takeIf(String::isNotBlank)
             ?.let { "配对未完成：$it" }
-            ?: "配对未完成，请确认 Mac 上仍显示同一组配对码后重试"
+            ?: "配对未完成，请确认两台设备显示同一组配对码后重试"
     }
 }

@@ -178,3 +178,127 @@ test("X25519 配对、核对码和 vaultKey envelope 与跨端向量一致", () 
   ]);
   assert.equal(ciphertext.toString("base64url"), vector.vaultKeyCiphertext);
 });
+
+test("join 配对、核对码和 vaultKey envelope 与跨端向量一致", () => {
+  const vector = vectors.pairingJoin;
+  const creatorPrivate = createPrivateKey({
+    format: "jwk",
+    key: {
+      kty: "OKP",
+      crv: "X25519",
+      x: vector.creatorPublicKey,
+      d: vector.creatorPrivateKey,
+    },
+  });
+  const approverPrivate = createPrivateKey({
+    format: "jwk",
+    key: {
+      kty: "OKP",
+      crv: "X25519",
+      x: vector.approverPublicKey,
+      d: vector.approverPrivateKey,
+    },
+  });
+  const creatorPublic = createPublicKey({
+    format: "jwk",
+    key: { kty: "OKP", crv: "X25519", x: vector.creatorPublicKey },
+  });
+  const approverPublic = createPublicKey({
+    format: "jwk",
+    key: { kty: "OKP", crv: "X25519", x: vector.approverPublicKey },
+  });
+
+  const creatorShared = diffieHellman({
+    privateKey: creatorPrivate,
+    publicKey: approverPublic,
+  });
+  const approverShared = diffieHellman({
+    privateKey: approverPrivate,
+    publicKey: creatorPublic,
+  });
+  assert.deepEqual(creatorShared, approverShared);
+  assert.equal(creatorShared.toString("base64url"), vector.sharedSecret);
+  assert.equal(
+    decodeBase64Url(vector.creatorPublicKey, "pairingJoin.creatorPublicKey")
+      .byteLength,
+    32,
+  );
+  assert.equal(
+    decodeBase64Url(vector.approverPublicKey, "pairingJoin.approverPublicKey")
+      .byteLength,
+    32,
+  );
+
+  assert.equal(
+    vector.hkdfSaltUtf8,
+    `woo-todo-pairing-join-v1|salt|${vector.joinRequestId}`,
+  );
+  assert.equal(
+    vector.hkdfInfoUtf8,
+    `woo-todo-pairing-join-v1|${vector.joinRequestId}`,
+  );
+  const salt = createHash("sha256")
+    .update(vector.hkdfSaltUtf8, "utf8")
+    .digest();
+  const sessionKey = Buffer.from(hkdfSync(
+    "sha256",
+    creatorShared,
+    salt,
+    Buffer.from(vector.hkdfInfoUtf8, "utf8"),
+    32,
+  ));
+  assert.equal(sessionKey.toString("base64url"), vector.sessionKey);
+
+  assert.equal(
+    vector.verificationInputUtf8,
+    `woo-todo-pairing-code-v1|join|${vector.joinRequestId}|${vector.creatorPublicKey}|${vector.approverPublicKey}`,
+  );
+  const verificationDigest = createHmac("sha256", sessionKey)
+    .update(vector.verificationInputUtf8, "utf8")
+    .digest();
+  const verificationCode = String(
+    verificationDigest.readUInt32BE(0) % 1_000_000,
+  ).padStart(6, "0");
+  assert.equal(verificationCode, vector.verificationCode);
+
+  assert.equal(
+    vector.envelopeAadUtf8,
+    `woo-todo-pair-v1|join|${vector.joinRequestId}|${vector.deviceId}`,
+  );
+  const nonce = decodeBase64Url(
+    vector.vaultKeyEnvelope.nonce,
+    "pairingJoin.vaultKeyEnvelope.nonce",
+  );
+  const vaultKey = decodeBase64Url(vector.vaultKey, "pairingJoin.vaultKey");
+  assert.equal(nonce.byteLength, 12);
+  assert.equal(vaultKey.byteLength, 32);
+
+  const cipher = createCipheriv("aes-256-gcm", sessionKey, nonce, {
+    authTagLength: 16,
+  });
+  cipher.setAAD(Buffer.from(vector.envelopeAadUtf8, "utf8"));
+  const ciphertext = Buffer.concat([
+    cipher.update(vaultKey),
+    cipher.final(),
+    cipher.getAuthTag(),
+  ]);
+  assert.equal(
+    ciphertext.toString("base64url"),
+    vector.vaultKeyEnvelope.ciphertext,
+  );
+
+  const envelopeCiphertext = decodeBase64Url(
+    vector.vaultKeyEnvelope.ciphertext,
+    "pairingJoin.vaultKeyEnvelope.ciphertext",
+  );
+  const decipher = createDecipheriv("aes-256-gcm", sessionKey, nonce, {
+    authTagLength: 16,
+  });
+  decipher.setAAD(Buffer.from(vector.envelopeAadUtf8, "utf8"));
+  decipher.setAuthTag(envelopeCiphertext.subarray(-16));
+  const decrypted = Buffer.concat([
+    decipher.update(envelopeCiphertext.subarray(0, -16)),
+    decipher.final(),
+  ]);
+  assert.deepEqual(decrypted, vaultKey);
+});

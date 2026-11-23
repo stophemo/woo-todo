@@ -23,7 +23,6 @@ final class LocalDataManager {
     private let savedStateURL: URL
     private let defaults: UserDefaults
     private let syncCredentialsStore: any SyncCredentialsStoring
-    private let webDavCredentialsStore: any WebDavCredentialsStoring
     private let allowsAppRemoval: Bool
 
     init(
@@ -35,7 +34,6 @@ final class LocalDataManager {
         savedStateURL: URL,
         defaults: UserDefaults,
         syncCredentialsStore: any SyncCredentialsStoring,
-        webDavCredentialsStore: any WebDavCredentialsStoring,
         allowsAppRemoval: Bool
     ) {
         self.fileManager = fileManager
@@ -46,7 +44,6 @@ final class LocalDataManager {
         self.savedStateURL = savedStateURL
         self.defaults = defaults
         self.syncCredentialsStore = syncCredentialsStore
-        self.webDavCredentialsStore = webDavCredentialsStore
         self.allowsAppRemoval = allowsAppRemoval
     }
 
@@ -70,7 +67,12 @@ final class LocalDataManager {
         }
 
         attempt { try syncCredentialsStore.delete() }
-        attempt { try webDavCredentialsStore.delete() }
+        // 0.3.0 起不再使用 WebDAV/局域网同步，但“清除本机数据”仍应覆盖旧凭据文件。
+        for legacyURL in SyncLegacyDetector.legacyFileURLs(
+            applicationSupportURL: appSupportURL
+        ) where fileManager.fileExists(atPath: legacyURL.path) {
+            attempt { try fileManager.removeItem(at: legacyURL) }
+        }
         for directory in [appSupportURL, cachesURL, savedStateURL] {
             if fileManager.fileExists(atPath: directory.path) {
                 attempt { try fileManager.removeItem(at: directory) }

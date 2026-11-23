@@ -3,6 +3,15 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val syncWorkerUrl = providers.gradleProperty("wooTodoSyncEndpoint")
+    .orElse(providers.gradleProperty("wootodoSyncEndpoint"))
+    .orElse(providers.environmentVariable("WOO_TODO_SYNC_ENDPOINT"))
+    .getOrElse("")
+    .trim()
+val quotedSyncWorkerUrl = "\"" + syncWorkerUrl
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"") + "\""
+
 val releaseStoreFile = providers.environmentVariable("ANDROID_SIGNING_STORE_FILE").orNull
 val releaseStorePassword = providers.environmentVariable("ANDROID_SIGNING_STORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("ANDROID_SIGNING_KEY_ALIAS").orNull
@@ -35,8 +44,11 @@ android {
         applicationId = "com.wootodo"
         minSdk = 33
         targetSdk = 36
-        versionCode = 52
-        versionName = "0.2.19"
+        versionCode = 53
+        versionName = "0.3.0"
+
+        // 部署后的 Worker 地址；为空时首台设备在设置页手动填写。
+        buildConfigField("String", "SYNC_WORKER_URL", quotedSyncWorkerUrl)
 
         testInstrumentationRunner = "com.wootodo.WooTodoTestRunner"
     }
@@ -102,7 +114,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0")
     implementation("androidx.recyclerview:recyclerview:1.1.0")
     implementation("com.google.android.material:material:1.12.0")
-    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.79")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

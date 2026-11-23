@@ -375,6 +375,25 @@ struct SQLiteTaskRepositoryTests {
         #expect(try reopened.displayConfiguration() == payload)
     }
 
+    @Test("升级会删除旧 WebDAV 应用表并提升 schema 版本")
+    func legacyWebDavTableDroppedOnUpgrade() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("woo-todo-schema-\(UUID().uuidString)", isDirectory: true)
+        let databaseURL = root.appendingPathComponent("tasks.sqlite")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        do {
+            let repository = try SQLiteTaskRepository(databaseURL: databaseURL)
+            #expect(try repository.schemaVersion() == 9)
+            try repository.recreateLegacyWebDavTableForTesting()
+            #expect(try repository.tableExists("sync_webdav_applied_operations"))
+        }
+
+        let reopened = try SQLiteTaskRepository(databaseURL: databaseURL)
+        #expect(try !reopened.tableExists("sync_webdav_applied_operations"))
+        #expect(try reopened.schemaVersion() == 9)
+    }
+
     private func legacyDefaultCategories() -> [TaskCategory] {
         TaskCategory.normalizeList(TaskCategory.defaults + [
             try! TaskCategory(id: "main", name: "主线", order: 1),

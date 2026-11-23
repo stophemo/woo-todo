@@ -4,7 +4,6 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import org.json.JSONObject
-import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -21,9 +20,12 @@ class SyncCredentials(
 ) {
     val vaultKey: ByteArray = vaultKey.copyOf()
 
+    /**
+     * 只校验身份本身。地址策略由同步入口单独执行，旧版本保存的 http 地址必须
+     * 仍能被读取出来，才能在升级后识别为 legacy 并提示重新配对。
+     */
     fun validate() {
-        val uri = runCatching { URI(endpoint) }.getOrNull()
-        require(uri != null && SyncEndpointPolicy.isAllowed(uri))
+        require(endpoint.isNotBlank())
         require(vaultId.isNotBlank() && deviceId.isNotBlank())
         require(Base64Url.decode(deviceToken).size == 32)
         require(vaultKey.size == Aes256Gcm.KEY_BYTES)

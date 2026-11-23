@@ -77,27 +77,8 @@ internal class AutomaticSyncRequestGate {
 
 object SyncFailurePolicy {
     fun describe(error: Exception): SyncFailureDescription = when (error) {
-        is WebDavException.Transport -> SyncFailureDescription("WebDAV 服务暂时不可达，网络恢复后会自动重试", true)
-        is WebDavException.Http -> {
-            val retryable = error.statusCode in setOf(408, 425, 429) || error.statusCode in 500..599
-            val message = if (error.statusCode == 401 || error.statusCode == 403) {
-                "WebDAV 账号、应用密码或访问令牌无效"
-            } else if (retryable) {
-                "WebDAV 服务暂时不可用，稍后会自动重试"
-            } else {
-                "WebDAV 服务拒绝了同步请求（HTTP ${error.statusCode}）"
-            }
-            SyncFailureDescription(message, retryable)
-        }
-        is WebDavException -> SyncFailureDescription(error.message ?: "WebDAV 同步数据校验失败", false)
-        is SyncApiException.Transport -> SyncFailureDescription(
-            if (error.localNetwork) {
-                "未发现已配对的 Mac；请确认两台设备处于同一网络且 Mac 上的 Woo Todo 正在运行，稍后会自动重试"
-            } else {
-                "同步服务暂时不可达，网络恢复后会自动重试"
-            },
-            true,
-        )
+        is SyncApiException.Transport ->
+            SyncFailureDescription("同步服务暂时不可达，网络恢复后会自动重试", true)
         is SyncApiException.Server -> {
             val capacityReached = error.payload.code == "VAULT_CAPACITY_REACHED"
             val retryable = !capacityReached && (

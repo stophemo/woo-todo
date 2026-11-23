@@ -20,7 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var repository: SQLiteTaskRepository?
     private var todayStore: TodayStore?
     private var syncSettingsStore: SyncSettingsStore?
-    private var webDavSettingsStore: WebDavSettingsStore?
     private var dayCounterStore: DayCounterStore?
     private var dailyDigestSettingsStore: DailyDigestSettingsStore?
     private var shortcutSettingsStore: ShortcutSettingsStore?
@@ -48,7 +47,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 savedStateURL: runtime.savedStateURL,
                 defaults: runtime.defaults,
                 syncCredentialsStore: runtime.syncCredentialsStore,
-                webDavCredentialsStore: runtime.webDavCredentialsStore,
                 allowsAppRemoval: runtime.allowsLocalDataRemoval
             )
             self.localDataManager = localDataManager
@@ -58,72 +56,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try UITestFixtureSeeder.seedIfNeeded(repository: repository)
             }
             let credentialsStore = runtime.syncCredentialsStore
-            let webDavCredentialsStore = runtime.webDavCredentialsStore
-            let activeCredentials: SyncCredentials?
-            let syncActivationError: Error?
-            var webDavCredentialsResult = Result<WebDavCredentials?, Error>.success(nil)
+            var storedCredentials: SyncCredentials?
+            var credentialsLoadError: Error?
             do {
-                let preferredBackend = runtime.defaults.string(
-                    forKey: SyncBackendSelection.defaultsKey
-                ).flatMap(SyncBackendSelection.init(rawValue:))
-                let workerOrLocalCredentials: SyncCredentials?
-                if preferredBackend == .webDav {
-                    let result = Result { try webDavCredentialsStore.load() }
-                    webDavCredentialsResult = result
-                    switch result {
-                    case .success(let stored) where stored == nil:
-                        // WebDAV 已被选中但凭据不存在时，允许从旧版本留下的本地身份恢复。
-                        workerOrLocalCredentials = try credentialsStore.load()
-                    case .success, .failure:
-                        // 当前 WebDAV 凭据存在或读取失败时，不访问闲置的旧 Keychain 项。
-                        workerOrLocalCredentials = nil
-                    }
-                } else {
-                    webDavCredentialsResult = Result { try webDavCredentialsStore.load() }
-                    workerOrLocalCredentials = try credentialsStore.load()
-                }
-                let hasWebDavCredentials = (try? webDavCredentialsResult.get()) != nil
-                let selectedBackend = SyncBackendSelection.resolve(
-                    defaults: runtime.defaults,
-                    hasWorkerOrLocalCredentials: workerOrLocalCredentials != nil,
-                    hasWebDavCredentials: hasWebDavCredentials
+                storedCredentials = try credentialsStore.load()
+            } catch {
+                credentialsLoadError = error
+                logger.error(
+                    "同步身份无法读取，本地模式继续启动：\(error.localizedDescription, privacy: .public)"
                 )
-                let credentials = selectedBackend == .workerOrLocal
-                    ? workerOrLocalCredentials
-                    : nil
-                if let selectedBackend {
-                    selectedBackend.persist(in: runtime.defaults)
-                }
-                if let credentials {
+            }
+            let startupDecision = SyncStartupActivationPolicy.evaluate(
+                storedCredentials: storedCredentials,
+                credentialsError: credentialsLoadError,
+                applicationSupportURL: runtime.appDataURL
+            )
+            let legacyDetection = startupDecision.legacyDetection
+            let hasStoredValidCredentials = startupDecision.hasStoredValidCredentials
+            // 旧文件只影响提示，不能否决已读取且合法的新凭据。
+            var activeCredentials = startupDecision.activeCredentials
+            var syncActivationError = startupDecision.activationError
+            if let credentials = activeCredentials {
+                do {
                     try repository.configureSync(SQLiteSyncConfiguration(
                         vaultId: credentials.vaultId,
                         deviceId: credentials.deviceId,
                         vaultKey: credentials.vaultKey
                     ))
+                } catch {
+                    activeCredentials = nil
+                    syncActivationError = error
+                    logger.error(
+                        "同步身份无法激活，本地模式继续启动：\(error.localizedDescription, privacy: .public)"
+                    )
                 }
-                activeCredentials = credentials
-                syncActivationError = nil
-            } catch let activationError {
-                activeCredentials = nil
-                syncActivationError = activationError
-                logger.error(
-                    "同步身份无法激活，本地模式继续启动：\(activationError.localizedDescription, privacy: .public)"
-                )
             }
             let syncSettingsStore = try SyncSettingsStore(
                 repository: repository,
                 credentialsStore: credentialsStore,
-                webDavCredentialsStore: webDavCredentialsStore,
                 credentials: activeCredentials,
+                defaultSyncEndpoint: runtime.defaultSyncEndpoint,
+                legacyDetection: legacyDetection,
+                hasStoredValidCredentials: hasStoredValidCredentials,
                 defaults: runtime.defaults
-            )
-            let webDavSettingsStore = WebDavSettingsStore(
-                repository: repository,
-                credentialsStore: webDavCredentialsStore,
-                workerCredentialsStore: credentialsStore,
-                workerSyncConfigured: activeCredentials != nil,
-                defaults: runtime.defaults,
-                initialCredentials: webDavCredentialsResult
             )
             let store = TodayStore(repository: repository)
             let mcpSettingsStore = MCPSettingsStore(
@@ -161,7 +136,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let self else { return }
                     self.mainWindowController?.reloadIfVisible()
                     self.syncSettingsStore?.requestSync(.localChange)
-                    self.webDavSettingsStore?.requestSync(.localChange)
                     self.refreshTaskNotifications()
                 }
             }
@@ -233,7 +207,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.repository = repository
             todayStore = store
             self.syncSettingsStore = syncSettingsStore
-            self.webDavSettingsStore = webDavSettingsStore
             self.dayCounterStore = dayCounterStore
             self.dailyDigestSettingsStore = dailyDigestSettingsStore
             self.shortcutSettingsStore = shortcutSettingsStore
@@ -273,7 +246,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             dayCounterStore.onLocalConfigurationChanged = { [weak self] in
                 self?.syncSettingsStore?.requestSync(.localChange)
-                self?.webDavSettingsStore?.requestSync(.localChange)
             }
             dayCounterStore.onDateChanged = { [weak self] in
                 self?.todayStore?.settleRecurringTasks()
@@ -299,36 +271,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.mainWindowController?.reloadIfVisible()
                 self?.refreshTaskNotifications()
             }
-            webDavSettingsStore.onRemoteChanges = { [weak self] in
-                self?.todayStore?.settleRecurringTasks()
-                self?.todayStore?.reload()
-                self?.dayCounterStore?.reloadFromRepository()
-                self?.mainWindowController?.reloadIfVisible()
-                self?.refreshTaskNotifications()
-            }
-            syncSettingsStore.onWillSwitchFromWebDav = { [weak webDavSettingsStore] in
-                await webDavSettingsStore?.prepareForReplacement()
-            }
-            syncSettingsStore.onDidSwitchFromWebDav = { [weak webDavSettingsStore] in
-                webDavSettingsStore?.finishReplacement()
-            }
-            syncSettingsStore.onSwitchFromWebDavFailed = { [weak webDavSettingsStore] in
-                webDavSettingsStore?.resumeAfterFailedReplacement()
-            }
-            webDavSettingsStore.onWillReplaceWorkerSync = { [weak syncSettingsStore] in
-                await syncSettingsStore?.prepareForReplacement()
-            }
-            webDavSettingsStore.onDidReplaceWorkerSync = { [weak syncSettingsStore] in
-                syncSettingsStore?.finishReplacement()
-            }
-            webDavSettingsStore.onReplaceWorkerSyncFailed = { [weak syncSettingsStore] in
-                syncSettingsStore?.resumeAfterFailedReplacement()
-            }
             mcpSettingsStore.startIfNeeded()
             store.settleRecurringTasks()
             if runtime.allowsExternalServices {
                 syncSettingsStore.start()
-                webDavSettingsStore.start()
                 refreshTaskNotifications()
             }
             switch runtime.initialScreen {
@@ -353,6 +299,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if let syncActivationError {
                 showSyncCredentialsWarning(syncActivationError)
+            }
+            if let legacyNotice = syncSettingsStore.legacyNotice {
+                showLegacySyncNotice(legacyNotice)
+                syncSettingsStore.acknowledgeLegacyNotice()
             }
             logger.info("Woo Todo 已启动，本地任务面板准备完成")
         } catch {
@@ -388,7 +338,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         appUpdateController?.stop()
         syncSettingsStore?.stop()
-        webDavSettingsStore?.stop()
         mcpSettingsStore?.stop()
     }
 
@@ -506,7 +455,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.onTasksChanged = { [weak self] in
             self?.todayStore?.reload()
             self?.syncSettingsStore?.requestSync(.localChange)
-            self?.webDavSettingsStore?.requestSync(.localChange)
             self?.refreshTaskNotifications()
         }
         let controller = MainWindowController(
@@ -532,7 +480,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard let syncSettingsStore,
-              let webDavSettingsStore,
               let dayCounterStore,
               let dailyDigestSettingsStore,
               let shortcutSettingsStore,
@@ -541,7 +488,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let controller = SettingsWindowController(
             syncSettingsStore: syncSettingsStore,
-            webDavSettingsStore: webDavSettingsStore,
             dayCounterStore: dayCounterStore,
             dailyDigestSettingsStore: dailyDigestSettingsStore,
             shortcutSettingsStore: shortcutSettingsStore,
@@ -631,6 +577,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = "Woo Todo 无法启动"
         alert.informativeText = error.localizedDescription
         alert.addButton(withTitle: "退出")
+        alert.runModal()
+    }
+
+    private func showLegacySyncNotice(_ message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "旧同步方式已停用"
+        alert.informativeText = message
+        alert.addButton(withTitle: "继续使用本地任务")
         alert.runModal()
     }
 

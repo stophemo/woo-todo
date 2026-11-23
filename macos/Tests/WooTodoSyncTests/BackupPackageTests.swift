@@ -217,6 +217,65 @@ struct BackupPackageTests {
         }
     }
 
+    @Test("旧 endpoint 备份可恢复任务但不能直接绑定同步身份")
+    func test旧endpoint备份只恢复任务() throws {
+        let passphrase = "correct horse battery staple"
+        let createdAt: Int64 = 1_700_000_000_000
+        let salt = Data(repeating: 1, count: 16)
+        let nonce = Data(repeating: 2, count: 12)
+        let snapshotObject: [String: Any] = [
+            "protocolVersion": BackupPackageCodec.protocolVersion,
+            "exportedAt": createdAt,
+            "tasks": [],
+            "tombstones": [],
+            "syncCredentials": [
+                "endpoint": "http://192.168.1.5:48473",
+                "vaultId": "vault-legacy",
+                "deviceId": "device-legacy",
+                "deviceToken": Base64URL.encode(Data(repeating: 3, count: 32)),
+                "vaultKey": Base64URL.encode(Data(repeating: 4, count: 32)),
+            ],
+        ]
+        let plaintext = try JSONSerialization.data(
+            withJSONObject: snapshotObject,
+            options: [.sortedKeys]
+        )
+        let kdf = BackupKDFParameters(
+            iterations: BackupPackageCodec.defaultIterations,
+            salt: Base64URL.encode(salt)
+        )
+        let key = try BackupKeyDerivation.deriveKey(
+            passphrase: passphrase,
+            salt: salt,
+            iterations: kdf.iterations
+        )
+        let envelope = try AES256GCM.seal(
+            plaintext,
+            key: key,
+            nonce: nonce,
+            authenticating: BackupPackageCodec.additionalAuthenticatedData(
+                createdAt: createdAt,
+                kdf: kdf
+            )
+        )
+        let file = EncryptedBackupFile(
+            createdAt: createdAt,
+            kdf: kdf,
+            cipher: BackupCipherPayload(
+                nonce: envelope.nonce,
+                ciphertext: envelope.ciphertext
+            )
+        )
+        let data = try JSONEncoder().encode(file)
+
+        let snapshot = try BackupPackageCodec.open(data, passphrase: passphrase)
+        #expect(snapshot.syncCredentials?.hasSupportedEndpoint == false)
+        // 导出/重新加密仍然拒绝已停用的地址。
+        #expect(throws: BackupPackageError.self) {
+            _ = try BackupPackageCodec.seal(snapshot, passphrase: passphrase)
+        }
+    }
+
     private func loadFixture() throws -> BackupFixture {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

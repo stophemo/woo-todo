@@ -58,7 +58,7 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
     private let session: URLSession
 
     public convenience init(endpoint: URL) throws {
-        try self.init(endpoint: endpoint, session: Self.defaultSession(for: endpoint))
+        try self.init(endpoint: endpoint, session: .shared)
     }
 
     public init(endpoint: URL, session: URLSession) throws {
@@ -67,22 +67,6 @@ public final class SyncAPIClient: SyncTransport, @unchecked Sendable {
         }
         self.endpoint = endpoint
         self.session = session
-    }
-
-    static func directSessionConfiguration(for endpoint: URL) -> URLSessionConfiguration? {
-        guard [.localNetwork, .currentDeviceOnly].contains(
-            SyncEndpointPolicy.scope(of: endpoint)
-        ) else { return nil }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.connectionProxyDictionary = [:]
-        return configuration
-    }
-
-    private static func defaultSession(for endpoint: URL) -> URLSession {
-        guard let configuration = directSessionConfiguration(for: endpoint) else {
-            return .shared
-        }
-        return URLSession(configuration: configuration)
     }
 
     public func createVault(

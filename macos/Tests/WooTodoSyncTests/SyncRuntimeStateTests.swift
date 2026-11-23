@@ -54,7 +54,7 @@ struct SyncRuntimeStateTests {
 
 @Suite("Mac 发起端配对状态机")
 struct InitiatorPairingStateTests {
-    @Test("二维码、认领、核对和确认按顺序推进")
+    @Test("配对码、认领、核对和确认按顺序推进")
     func completesPairing() throws {
         var machine = InitiatorPairingStateMachine()
         try machine.beginCreation()

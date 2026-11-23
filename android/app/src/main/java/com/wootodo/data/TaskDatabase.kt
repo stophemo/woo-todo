@@ -27,9 +27,6 @@ class TaskDatabase(context: Context) :
         if (oldVersion < 5 && !columnExists(database, "tasks", "reminder_time")) {
             database.execSQL("ALTER TABLE tasks ADD COLUMN reminder_time TEXT")
         }
-        if (oldVersion < 6) {
-            createWebDavAppliedSchema(database)
-        }
         if (oldVersion < 7) {
             createDisplayConfigurationSchema(database)
         }
@@ -54,6 +51,10 @@ class TaskDatabase(context: Context) :
         createTrashSchema(database)
         if (oldVersion < 11) {
             removeUnusedLegacyCategories(database)
+        }
+        if (oldVersion < 13) {
+            // v0.3.0 移除 WebDAV；旧同步记录不再使用，只保留任务与显示设置。
+            database.execSQL("DROP TABLE IF EXISTS sync_webdav_applied_operations")
         }
     }
 
@@ -275,20 +276,8 @@ class TaskDatabase(context: Context) :
             )
             """.trimIndent(),
         )
-        createWebDavAppliedSchema(database)
         createDeferredDeletionSchema(database)
         createDisplayConfigurationSchema(database)
-    }
-
-    private fun createWebDavAppliedSchema(database: SQLiteDatabase) {
-        database.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS sync_webdav_applied_operations (
-                op_id TEXT NOT NULL PRIMARY KEY,
-                applied_at INTEGER NOT NULL CHECK(applied_at >= 0)
-            )
-            """.trimIndent(),
-        )
     }
 
     private fun createDeferredDeletionSchema(database: SQLiteDatabase) {
@@ -505,6 +494,6 @@ class TaskDatabase(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 12
+        const val DATABASE_VERSION = 13
     }
 }

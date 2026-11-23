@@ -1,29 +1,21 @@
 import AppKit
-import CoreImage
 import SwiftUI
 import WooTodoSync
 
-private enum SyncSwitchTarget {
-    case localNetwork
-    case webDav
-}
-
 struct SyncSettingsView: View {
     @ObservedObject var store: SyncSettingsStore
-    @ObservedObject var webDavStore: WebDavSettingsStore
-    @State private var pairingLinkCopied = false
-    @State private var shortCodeInput = ""
-    @State private var webDavSetupLinkCopied = false
-    @State private var webDavSetupLinkRevealed = false
+    @State private var claimCodeInput = ""
+    @State private var joinCodeInput = ""
     @State private var vaultCreationInviteCode = ""
-    @State private var syncSwitchTarget: SyncSwitchTarget?
+    @State private var devicePendingRemoval: DeviceInfo?
+    @State private var showsExitConfirmation = false
 
     var body: some View {
         Group {
             if let connection = store.connection {
                 configuredContent(connection)
             } else {
-                setupContent
+                unpairedContent
             }
         }
         .textSelection(.enabled)
@@ -32,132 +24,322 @@ struct SyncSettingsView: View {
                 await store.refreshDevices()
             }
         }
-        .onDisappear {
-            webDavSetupLinkRevealed = false
-            webDavSetupLinkCopied = false
+        .confirmationDialog(
+            "退出此同步空间？",
+            isPresented: $showsExitConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("退出同步空间", role: .destructive) {
+                Task { await store.exitSpace() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("本机会删除同步凭据并停止同步，本地任务会保留；其他设备不受影响。")
         }
         .confirmationDialog(
-            "确认切换同步方式？",
+            devicePendingRemoval.map { "移除「\($0.name)」？" } ?? "移除设备？",
             isPresented: Binding(
-                get: { syncSwitchTarget != nil },
-                set: { if !$0 { syncSwitchTarget = nil } }
+                get: { devicePendingRemoval != nil },
+                set: { if !$0 { devicePendingRemoval = nil } }
             ),
             titleVisibility: .visible
         ) {
-            switch syncSwitchTarget {
-            case .localNetwork:
-                Button("切换到同一网络同步") {
-                    syncSwitchTarget = nil
-                    Task { await store.enableLocalNetworkSync(replacingWebDav: true) }
-                }
-            case .webDav:
-                Button("切换到第三方 WebDAV") {
-                    syncSwitchTarget = nil
-                    Task { await webDavStore.configure(replacingWorkerSync: true) }
-                }
-            case nil:
-                EmptyView()
+            Button("移除设备", role: .destructive) {
+                guard let device = devicePendingRemoval else { return }
+                devicePendingRemoval = nil
+                Task { await store.removeDevice(device) }
             }
             Button("取消", role: .cancel) {
-                syncSwitchTarget = nil
+                devicePendingRemoval = nil
             }
         } message: {
-            Text("本地任务和显示配置会保留并重新同步；旧方式的加密凭据与设备绑定会保留，之后可直接切回。")
+            Text("该设备将停止同步，不会再收到后续变更；设备上的本地任务不会被删除。")
         }
     }
 
-    private var setupContent: some View {
+    // MARK: - 未配对
+
+    private var unpairedContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("同步方式")
-                        .font(.title2.weight(.semibold))
-                    Text("任务始终先写入本地数据库。无互联网时可在同一网络同步；联网时可使用第三方 WebDAV 或自建服务。")
-                        .foregroundStyle(.secondary)
+                pageHeader(
+                    "跨设备",
+                    "任务在设备间端到端加密同步。已有空间只需输入另一台设备的六位配对码；建立新空间需要部署者邀请码。配对码 5 分钟内有效。"
+                )
+
+                if let notice = store.legacyNotice {
+                    legacyNotice(notice)
                 }
 
-                localNetworkCard
-                webDavCard
-
-                if webDavStore.connection == nil {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("同步服务地址")
-                            .font(.headline)
-                        TextField("https://你的-worker.workers.dev", text: $store.endpointText)
-                            .textFieldStyle(.roundedBorder)
-                        endpointGuidance
-                        Text("这里需要填写已部署的 Cloudflare Worker 根地址。Vercel 产品主页和夸克网盘都不是同步服务。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("创建邀请码")
-                            .font(.headline)
-                        SecureField("部署同步服务时设置的邀请码", text: $vaultCreationInviteCode)
-                            .textFieldStyle(.roundedBorder)
-                        Text("邀请码须为 16–256 个无空格可打印 ASCII 字符。它仅在首次创建空间时随本次请求发送，不会保存到 UserDefaults、Keychain 或日志。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Button {
-                        let submittedInviteCode = vaultCreationInviteCode
-                        Task {
-                            await store.createVault(inviteCode: submittedInviteCode)
-                            if store.connection != nil {
-                                vaultCreationInviteCode = ""
-                            }
-                        }
-                    } label: {
-                        if store.isCreatingVault {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Label("创建同步空间", systemImage: "lock.shield")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(
-                        store.isCreatingVault
-                            || webDavStore.isSaving
-                            || store.localNetworkHostState == .starting
-                            || !store.canCreateVault
-                            || vaultCreationInviteCode
-                                .trimmingCharacters(in: .whitespacesAndNewlines)
-                                .isEmpty
-                    )
-
-                    Text("空间创建成功后，Android 无需再输入服务地址；配对二维码会带上同一个地址和一次性配对材料。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
+                serverCard
+                claimCodeCard
+                joinCreatorCard
+                createVaultCard
                 privacyNote
-                actionError
+                feedback
             }
             .padding(24)
-            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: 700, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
+    private var serverCard: some View {
+        SettingsCard(title: "同步服务器", systemImage: "server.rack") {
+            if store.hasBundledEndpoint {
+                LabeledContent("服务器地址", value: store.endpointText)
+                Text("地址由应用构建时配置，所有设备使用同一个 Worker。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                TextField("https://你的-worker.workers.dev", text: $store.endpointText)
+                    .textFieldStyle(.roundedBorder)
+                endpointGuidance
+                HStack {
+                    Button("保存服务器地址") {
+                        store.saveManualEndpoint()
+                    }
+                    .disabled(store.endpointText.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    ).isEmpty)
+                    Text("只需在第一台设备建立空间时填写一次。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var claimCodeCard: some View {
+        SettingsCard(title: "输入配对码", systemImage: "rectangle.and.pencil.and.ellipsis") {
+            switch store.shortCodeClaimPhase {
+            case .idle:
+                VStack(spacing: 14) {
+                    Text("在另一台已同步设备上选择「显示配对码」，然后输入它显示的六位数字。")
+                        .foregroundStyle(.secondary)
+                    SixDigitCodeField(code: $claimCodeInput) {
+                        submitClaimCode()
+                    }
+                    HStack(spacing: 12) {
+                        Button {
+                            paste(into: $claimCodeInput)
+                        } label: {
+                            Label("粘贴", systemImage: "doc.on.clipboard")
+                        }
+                        .buttonStyle(.bordered)
+                        Button("配对") {
+                            submitClaimCode()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(claimCodeInput.count != 6)
+                    }
+                    Text("配对码 5 分钟内有效，使用一次后失效。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+            case .claiming:
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在读取配对码并认领设备…")
+                }
+            case let .awaitingConfirmation(code, deviceName, deadline):
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("\(deviceName) 已认领配对", systemImage: "laptopcomputer.and.iphone")
+                    SixDigitCodeDisplay(code: code)
+                    Text("请与另一台设备核对六位核对码完全一致；对方确认后本机自动加入。")
+                        .foregroundStyle(.secondary)
+                    expiryText(deadline)
+                    Button("取消", role: .cancel) {
+                        store.cancelShortCodeClaim()
+                    }
+                }
+            case .confirmed:
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("已通过六位码加入同步空间", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("本地任务会保留并重新同步到新空间。")
+                        .foregroundStyle(.secondary)
+                    Button("完成") {
+                        store.cancelShortCodeClaim()
+                    }
+                }
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Button("重试") {
+                        store.cancelShortCodeClaim()
+                    }
+                }
+            }
+        }
+    }
+
+    private var joinCreatorCard: some View {
+        SettingsCard(title: "显示我的配对码", systemImage: "number.square") {
+            switch store.joinCreatorPhase {
+            case .idle:
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("本机显示六位配对码，在另一台已同步设备上选择「输入新设备的配对码」并批准。")
+                        .foregroundStyle(.secondary)
+                    Button("生成配对码") {
+                        Task { await store.createJoinRequest() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            case .creating:
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在创建 5 分钟配对请求…")
+                }
+            case .waitingApproval(let invitation):
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("六位配对码")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SixDigitCodeDisplay(code: invitation.shortCode)
+                    Text("在另一台已同步设备上输入这 6 位数字。")
+                        .foregroundStyle(.secondary)
+                    expiryText(invitation.expiresAt)
+                    Button("取消", role: .cancel) {
+                        Task { await store.cancelJoinCreation() }
+                    }
+                }
+            case .awaitingConfirmation(let verification):
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("核对码", systemImage: "checkmark.shield")
+                    SixDigitCodeDisplay(code: verification.code)
+                    if store.joinCreatorApprovalPending {
+                        Text("对方已批准。请确认另一台设备显示相同的六位核对码后加入同步空间。")
+                            .foregroundStyle(.secondary)
+                        Button("核对一致，加入同步空间") {
+                            Task { await store.confirmJoinCreation() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        Text("请与另一台设备核对六位核对码完全一致，等待对方批准。")
+                            .foregroundStyle(.secondary)
+                    }
+                    expiryText(verification.expiresAt)
+                    Button("取消", role: .cancel) {
+                        Task { await store.cancelJoinCreation() }
+                    }
+                }
+            case .approved(let vaultId, _):
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("已加入同步空间", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("空间 \(shortened(vaultId))。其他设备会陆续看到新任务。")
+                        .foregroundStyle(.secondary)
+                    Button("完成") {
+                        store.resetJoinCreation()
+                    }
+                }
+            case .expired:
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("配对码已失效", systemImage: "clock.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Button("重新生成") {
+                        store.resetJoinCreation()
+                        Task { await store.createJoinRequest() }
+                    }
+                }
+            case .canceled:
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("配对已取消，配对码将在 5 分钟后失效。")
+                        .foregroundStyle(.secondary)
+                    Button("重新生成") {
+                        store.resetJoinCreation()
+                        Task { await store.createJoinRequest() }
+                    }
+                }
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Button("重试") {
+                        store.resetJoinCreation()
+                        Task { await store.createJoinRequest() }
+                    }
+                }
+            }
+        }
+    }
+
+    private var createVaultCard: some View {
+        SettingsCard(title: "建立同步空间", systemImage: "lock.shield") {
+            Text("第一台设备用部署者提供的邀请码创建同步空间；之后所有设备只需要六位配对码。")
+                .foregroundStyle(.secondary)
+            SecureField("部署同步服务时设置的邀请码", text: $vaultCreationInviteCode)
+                .textFieldStyle(.roundedBorder)
+            Text("邀请码须为 16–256 个无空格可打印 ASCII 字符，且只随本次请求发送、不会保存。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button {
+                let submitted = vaultCreationInviteCode
+                Task {
+                    await store.createVault(inviteCode: submitted)
+                    if store.connection != nil {
+                        vaultCreationInviteCode = ""
+                    }
+                }
+            } label: {
+                if store.isCreatingVault {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("建立同步空间", systemImage: "lock.shield")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(
+                store.isCreatingVault
+                    || !store.canCreateVault
+                    || vaultCreationInviteCode
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .isEmpty
+            )
+        }
+    }
+
+    private func legacyNotice(_ notice: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(notice)
+                Button("知道了") {
+                    store.acknowledgeLegacyNotice()
+                }
+                .buttonStyle(.link)
+            }
+        }
+        .font(.callout)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.orange.opacity(0.10),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+    }
+
+    // MARK: - 已配对
+
     private func configuredContent(_ connection: SyncConnectionSummary) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                connectionCard(connection)
-                if store.isLocalNetworkConnection {
-                    localNetworkCard
-                }
-                webDavCard
-                runtimeCard
-                pairingCard
-                if store.isLocalNetworkConnection || store.localNetworkHostState != .disabled {
-                    shortCodeClaimCard
-                }
+                pageHeader(
+                    "跨设备",
+                    "任务在设备间端到端加密同步。添加设备时两端会显示同一个六位核对码，核对一致后再批准。配对码 5 分钟内有效。"
+                )
+                spaceCard(connection)
+                pathAPairingCard
+                pathBApproverCard
                 devicesCard
                 privacyNote
-                actionError
+                feedback
             }
             .padding(24)
             .frame(maxWidth: 760, alignment: .leading)
@@ -165,265 +347,11 @@ struct SyncSettingsView: View {
         }
     }
 
-    private var localNetworkCard: some View {
-        SettingsCard(title: "同一网络同步", systemImage: "wifi") {
-            Text("Mac 作为本地同步主机。手机与 Mac 连接同一网络后输入六位配对码即可加入，无需填写服务地址或同步空间；离开网络仍可编辑，重新连上后自动补齐。")
-                .foregroundStyle(.secondary)
-
-            switch store.localNetworkHostState {
-            case .disabled:
-                if webDavStore.connection != nil {
-                    Label("当前正在使用第三方 WebDAV。切换后会保留本地任务，并用新的局域网空间重新同步。", systemImage: "arrow.left.arrow.right")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    Button {
-                        syncSwitchTarget = .localNetwork
-                    } label: {
-                        Label("切换到同一网络同步", systemImage: "wifi")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(webDavStore.isSaving || store.isCreatingVault)
-                } else if store.connection == nil {
-                    Button {
-                        Task { await store.enableLocalNetworkSync() }
-                    } label: {
-                        Label("开启同一网络同步", systemImage: "wifi")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(webDavStore.isSaving || store.isCreatingVault)
-                } else {
-                    Label("当前任务库正在使用其他同步方式", systemImage: "info.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            case .starting:
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("正在启动 Mac 局域网同步服务…")
-                }
-            case .ready(let endpoint):
-                Label("局域网同步已开启", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                LabeledContent("手机访问地址", value: endpoint.absoluteString)
-                Text("地址由应用自动维护，只用于同一网络内连接，无需手动填写。下方可生成六位配对码。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            case .failed(let message):
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                if store.isLocalNetworkConnection {
-                    Button {
-                        Task { await store.retryLocalNetworkHost() }
-                    } label: {
-                        Label("重新启动局域网同步", systemImage: "arrow.clockwise")
-                    }
-                } else if webDavStore.connection == nil {
-                    Button {
-                        Task { await store.enableLocalNetworkSync() }
-                    } label: {
-                        Label("重试开启", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(webDavStore.isSaving || store.isCreatingVault)
-                }
-            }
-
-            Text("首次开启时 macOS 会询问是否允许访问本地网络；需要选择允许。任务正文仍使用 AES-256-GCM 端到端加密。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var webDavCard: some View {
-        SettingsCard(title: "第三方 WebDAV", systemImage: "externaldrive.connected.to.line.below") {
-            if store.isCreatingVault
-                || store.localNetworkHostState == .starting {
-                Label(
-                    "另一种同步方式正在配置，请稍候。",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.caption)
-                .foregroundStyle(.orange)
-            } else {
-                if hasWorkerOrLocalSync {
-                    Label(
-                        "当前正在使用\(store.isLocalNetworkConnection ? "同一网络" : "自建服务")同步。填写 WebDAV 配置后可以直接切换。",
-                        systemImage: "arrow.left.arrow.right"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                }
-                TextField(
-                    "https://服务商提供的 WebDAV 根目录",
-                    text: $webDavStore.endpointText
-                )
-                    .textFieldStyle(.roundedBorder)
-                Text("填写服务商提供的 WebDAV 根目录，不要填写产品首页或文件浏览网页。为避免认证凭据外送，只接受 HTTPS 地址。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("WebDAV 账号", text: $webDavStore.username)
-                    .textFieldStyle(.roundedBorder)
-                SecureField("应用密码或访问令牌", text: $webDavStore.appPassword)
-                    .textFieldStyle(.roundedBorder)
-
-                if let connection = webDavStore.connection {
-                    LabeledContent("同步空间", value: connection.vaultId)
-                    HStack(spacing: 8) {
-                        Text("同步密钥")
-                        Text(webDavStore.vaultKeyText)
-                            .font(.system(.caption, design: .monospaced))
-                            .lineLimit(1)
-                            .textSelection(.enabled)
-                        Spacer()
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(
-                                webDavStore.vaultKeyText,
-                                forType: .string
-                            )
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .help("复制同步密钥")
-                    }
-                    if let setupLink = webDavStore.setupLinkURL {
-                        if webDavSetupLinkRevealed {
-                            HStack(alignment: .top, spacing: 16) {
-                                QRCodeView(
-                                    payload: setupLink.absoluteString,
-                                    accessibilityLabel: "WebDAV 配置二维码"
-                                )
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("在 Android 扫码加入")
-                                        .font(.headline)
-                                    Text("二维码和配置链接包含 WebDAV 地址、认证凭据与 Woo Todo 同步密钥，等同完整敏感配置；不含设备身份。Android 打开时请确认目标应用是 Woo Todo。")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Button {
-                                        copyWebDavSetupLink(setupLink)
-                                    } label: {
-                                        Label("复制完整配置链接", systemImage: "doc.on.doc")
-                                    }
-                                    Text("复制会把完整凭据放入剪贴板；使用后请复制其他内容覆盖。")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    if webDavSetupLinkCopied {
-                                        Label("配置链接已复制，请仅通过私密渠道传递。", systemImage: "checkmark.circle")
-                                            .font(.caption)
-                                            .foregroundStyle(.green)
-                                    }
-                                    Button("隐藏二维码") {
-                                        webDavSetupLinkRevealed = false
-                                        webDavSetupLinkCopied = false
-                                    }
-                                }
-                            }
-                        } else {
-                            Button {
-                                webDavSetupLinkRevealed = true
-                                webDavSetupLinkCopied = false
-                            } label: {
-                                Label("显示 Android 配置二维码", systemImage: "qrcode")
-                            }
-                            Text("二维码含 WebDAV 认证凭据和同步密钥，仅在两台设备旁临时显示。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    HStack {
-                        if webDavStore.runtimeSnapshot.isRunning {
-                            ProgressView().controlSize(.small)
-                            Text("正在同步")
-                        } else if let error = webDavStore.runtimeSnapshot.lastErrorMessage {
-                            Label(error, systemImage: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                        } else {
-                            Label("WebDAV 已连接", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                        }
-                    }
-                    Button("更新服务地址或认证凭据") {
-                        webDavSetupLinkRevealed = false
-                        webDavSetupLinkCopied = false
-                        Task { await webDavStore.configure() }
-                    }
-                    .disabled(
-                        webDavStore.isSaving
-                            || webDavStore.endpointText.isEmpty
-                            || webDavStore.appPassword.isEmpty
-                    )
-                } else {
-                    TextField("同步空间名（两端完全相同）", text: $webDavStore.vaultId)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("同步密钥（两端完全相同）", text: $webDavStore.vaultKeyText)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-                    Button {
-                        if hasWorkerOrLocalSync {
-                            syncSwitchTarget = .webDav
-                        } else {
-                            Task { await webDavStore.configure() }
-                        }
-                    } label: {
-                        if webDavStore.isSaving {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Label(
-                                hasWorkerOrLocalSync ? "切换到第三方 WebDAV" : "保存并连接",
-                                systemImage: hasWorkerOrLocalSync ? "arrow.left.arrow.right" : "link"
-                            )
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(
-                        webDavStore.isSaving
-                            || webDavStore.endpointText.isEmpty
-                            || webDavStore.username.isEmpty
-                            || webDavStore.appPassword.isEmpty
-                            || webDavStore.vaultId.isEmpty
-                            || webDavStore.vaultKeyText.isEmpty
-                    )
-                }
-
-                Text("请向服务商获取专用 WebDAV HTTPS 根目录和应用密码。Woo Todo 直接连接该目录，只保存 AES-256-GCM 密文；服务地址不能包含账号、查询参数或片段。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let error = webDavStore.actionErrorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
-        }
-    }
-
-    private var hasWorkerOrLocalSync: Bool {
-        webDavStore.workerSyncConfigured || store.connection != nil
-    }
-
-    private func connectionCard(_ connection: SyncConnectionSummary) -> some View {
-        SettingsCard(title: "同步连接", systemImage: "lock.shield.fill") {
-            LabeledContent("服务地址", value: connection.endpoint.absoluteString)
-            if !store.isLocalNetworkConnection {
-                LabeledContent("同步空间", value: shortened(connection.vaultId))
-            }
-            LabeledContent("当前设备", value: shortened(connection.deviceId))
-            if SyncEndpointPolicy.scope(of: connection.endpoint) == .currentDeviceOnly {
-                Label(
-                    "此连接使用回环地址，只能在当前 Mac 调试，Android 无法加入。127.0.0.1 在手机上代表手机自己。",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.caption)
-                .foregroundStyle(.orange)
-            }
-            if store.isLocalNetworkConnection {
-                Label("同一网络同步 · Mac 作为主机", systemImage: "wifi")
-                    .foregroundStyle(.green)
-            }
-        }
-    }
-
-    private var runtimeCard: some View {
-        SettingsCard(title: "同步状态", systemImage: "arrow.triangle.2.circlepath") {
+    private func spaceCard(_ connection: SyncConnectionSummary) -> some View {
+        SettingsCard(title: "同步空间", systemImage: "lock.shield.fill") {
+            LabeledContent("空间", value: shortened(connection.vaultId))
+            LabeledContent("当前设备", value: currentDeviceLabel(connection))
+            LabeledContent("服务器", value: connection.endpoint.absoluteString)
             HStack(spacing: 10) {
                 statusSymbol
                 VStack(alignment: .leading, spacing: 3) {
@@ -434,7 +362,6 @@ struct SyncSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
             if let summary = store.lastRunSummary {
                 Divider()
                 HStack(spacing: 18) {
@@ -445,20 +372,32 @@ struct SyncSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+            Button {
+                store.requestSync(.manual)
+            } label: {
+                if store.runtimeSnapshot.isRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("立即同步", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(store.runtimeSnapshot.isRunning)
         }
     }
 
-    @ViewBuilder
     private var statusSymbol: some View {
-        if store.runtimeSnapshot.isRunning {
-            ProgressView()
-                .controlSize(.small)
-        } else if store.runtimeSnapshot.lastErrorMessage != nil {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-        } else {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+        Group {
+            if store.runtimeSnapshot.isRunning {
+                ProgressView()
+                    .controlSize(.small)
+            } else if store.runtimeSnapshot.lastErrorMessage != nil {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            }
         }
     }
 
@@ -482,240 +421,185 @@ struct SyncSettingsView: View {
         return "网络失败不会阻塞本地任务操作。"
     }
 
-    private var pairingCard: some View {
-        SettingsCard(title: "添加 Android 设备", systemImage: "qrcode") {
-            pairingContent
-        }
-    }
-
-    @ViewBuilder
-    private var pairingContent: some View {
-        switch store.pairingPhase {
-        case .idle:
-            Text("Android 不需要创建空间或手动填写服务器地址。按下面步骤加入当前同步：")
-                .foregroundStyle(.secondary)
-            androidJoinSteps
-            Button("生成六位配对码") {
-                pairingLinkCopied = false
-                Task { await store.createPairing() }
-            }
-            .buttonStyle(.borderedProminent)
-        case .creating:
-            HStack(spacing: 10) {
-                ProgressView()
-                Text("正在创建 10 分钟配对会话…")
-            }
-        case .awaitingClaim(let invitation):
-            if store.isLocalNetworkConnection {
-                VStack(alignment: .leading, spacing: 12) {
+    private var pathAPairingCard: some View {
+        SettingsCard(title: "显示配对码（本机等待新设备）", systemImage: "number.square") {
+            switch store.pairingPhase {
+            case .idle:
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("本机显示六位配对码；在新设备上选择「输入配对码」，两端核对一致后由本机确认绑定。")
+                        .foregroundStyle(.secondary)
+                    Button("显示配对码") {
+                        Task { await store.createPairing() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            case .creating:
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在生成 5 分钟配对码…")
+                }
+            case .awaitingClaim(let invitation):
+                VStack(alignment: .leading, spacing: 10) {
                     if let shortCode = store.pairingShortCode {
                         Text("六位配对码")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         SixDigitCodeDisplay(code: shortCode)
-                        Text("在 Android 选择“配对设备 → 输入六位配对码”，输入这 6 位数字。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                    Text("等待手机加入")
+                    Text("等待另一台设备输入配对码")
                         .font(.headline)
-                    Text("接入后，两端都会显示同一个六位核对码；暂时不要关闭任一端。")
+                    Text("接入后两端都会显示同一个六位核对码；暂时不要关闭任一端。")
                         .foregroundStyle(.secondary)
-                    Text("有效至 \(formattedMilliseconds(invitation.expiresAt))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    expiryText(invitation.expiresAt)
                     Button("取消显示", role: .cancel) {
                         store.resetPairing()
                     }
                 }
-            } else if let payload = store.pairingQRCodePayload {
-                HStack(alignment: .top, spacing: 22) {
-                    QRCodeView(payload: payload, accessibilityLabel: "设备配对二维码")
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("等待手机扫描")
-                            .font(.headline)
-                        Text("等待手机使用扫码或配对链接加入。")
-                            .foregroundStyle(.secondary)
-                        Text("接入后，两端都会显示同一个六位核对码；暂时不要关闭任一端。")
-                            .foregroundStyle(.secondary)
-                        Text("有效至 \(formattedMilliseconds(invitation.expiresAt))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Button("复制配对链接（备用）") {
-                                copyPairingLink(payload)
-                            }
-                            Button("取消显示", role: .cancel) {
-                                store.resetPairing()
-                            }
+            case .awaitingVerification(let verification):
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(
+                        "\(verification.deviceName) 已输入配对码",
+                        systemImage: verification.platform == .android
+                            ? "smartphone"
+                            : "laptopcomputer"
+                    )
+                    SixDigitCodeDisplay(code: verification.code)
+                    Text("请核对两端显示的六位核对码完全一致。只有一致时才允许传递同步密钥。")
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("核对一致，确认绑定") {
+                            Task { await store.confirmPairing() }
                         }
-                        if pairingLinkCopied {
-                            Label("已复制。可通过自己的私密渠道发到手机后点击打开。", systemImage: "checkmark.circle")
-                                .font(.caption)
-                                .foregroundStyle(.green)
+                        .buttonStyle(.borderedProminent)
+                        Button("取消", role: .cancel) {
+                            store.resetPairing()
                         }
-                        Text("配对链接含 10 分钟有效的一次性 secret，请勿发送到群聊或公开位置。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
-            }
-        case .awaitingVerification(let verification):
-            VStack(alignment: .leading, spacing: 12) {
-                Label(
-                    "\(verification.deviceName) 已扫描",
-                    systemImage: verification.platform == .android ? "smartphone" : "laptopcomputer"
-                )
-                SixDigitCodeDisplay(code: verification.code)
-                Text("请核对两端显示的六位核对码完全一致。只有一致时才允许传递同步密钥。")
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Button("核对一致，确认绑定") {
-                        Task { await store.confirmPairing() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    Button("取消", role: .cancel) {
+            case .confirming:
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在加密传递同步密钥…")
+                }
+            case .confirmed:
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("设备绑定成功", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("新设备会自动执行首次同步。")
+                        .foregroundStyle(.secondary)
+                    Button("继续添加设备") {
                         store.resetPairing()
                     }
                 }
-            }
-        case .confirming:
-            HStack(spacing: 10) {
-                ProgressView()
-                Text("正在加密传递同步密钥…")
-            }
-        case .confirmed:
-            VStack(alignment: .leading, spacing: 10) {
-                Label("设备绑定成功", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text("手机会自动执行首次同步。回到 Android 首页，看到“同步完成”后即可在任一端新增测试任务。")
-                    .foregroundStyle(.secondary)
-                Button("继续添加设备") {
-                    store.resetPairing()
+            case .expired:
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("配对码已失效", systemImage: "clock.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Button("重新生成") {
+                        store.resetPairing()
+                        Task { await store.createPairing() }
+                    }
                 }
-            }
-        case .expired:
-            VStack(alignment: .leading, spacing: 10) {
-                Label(
-                    store.isLocalNetworkConnection ? "配对码已失效" : "二维码已失效",
-                    systemImage: "clock.badge.exclamationmark"
-                )
-                    .foregroundStyle(.orange)
-                Button("重新生成") {
-                    store.resetPairing()
-                    Task { await store.createPairing() }
-                }
-            }
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 10) {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Button("重试") {
-                    store.resetPairing()
-                    Task { await store.createPairing() }
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Button("重试") {
+                        store.resetPairing()
+                        Task { await store.createPairing() }
+                    }
                 }
             }
         }
     }
 
-    private var shortCodeClaimCard: some View {
-        SettingsCard(title: "输入另一台设备的六位码", systemImage: "number.square") {
-            shortCodeClaimContent
-        }
-    }
-
-    @ViewBuilder
-    private var shortCodeClaimContent: some View {
-        switch store.shortCodeClaimPhase {
-        case .idle:
-            VStack(spacing: 14) {
-                VStack(spacing: 4) {
-                    Text("输入另一台设备的六位码")
-                        .font(.headline)
-                    Text("在另一台设备上打开 Woo Todo → 配对设备 → 显示六位配对码")
+    private var pathBApproverCard: some View {
+        SettingsCard(title: "输入新设备的配对码", systemImage: "rectangle.and.pencil.and.ellipsis") {
+            switch store.joinApproverPhase {
+            case .idle:
+                VStack(spacing: 14) {
+                    Text("在新设备上选择「显示我的配对码」，然后输入它显示的六位数字。")
+                        .foregroundStyle(.secondary)
+                    SixDigitCodeField(code: $joinCodeInput) {
+                        submitJoinCode()
+                    }
+                    HStack(spacing: 12) {
+                        Button {
+                            paste(into: $joinCodeInput)
+                        } label: {
+                            Label("粘贴", systemImage: "doc.on.clipboard")
+                        }
+                        .buttonStyle(.bordered)
+                        Button("核对") {
+                            submitJoinCode()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(joinCodeInput.count != 6)
+                    }
+                    Text("配对码 5 分钟内有效，使用一次后失效。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .multilineTextAlignment(.center)
-                SixDigitCodeField(code: $shortCodeInput) {
-                    submitShortCode()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+            case .resolving:
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在解析新设备配对码…")
                 }
-                HStack(spacing: 12) {
-                    Button {
-                        pasteShortCode()
-                    } label: {
-                        Label("粘贴", systemImage: "doc.on.clipboard")
+            case .awaitingConfirmation(let verification):
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(
+                        "\(verification.deviceName) · \(platformName(verification.platform))",
+                        systemImage: verification.platform == .android
+                            ? "smartphone"
+                            : "laptopcomputer"
+                    )
+                    SixDigitCodeDisplay(code: verification.code)
+                    Text("请与新设备核对六位核对码完全一致，再批准加入。")
+                        .foregroundStyle(.secondary)
+                    expiryText(verification.expiresAt)
+                    HStack {
+                        Button("核对一致，批准加入") {
+                            Task { await store.approveJoin() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button("取消", role: .cancel) {
+                            store.cancelJoinApproval()
+                        }
                     }
-                    .buttonStyle(.bordered)
-                    Button("配对") {
-                        submitShortCode()
+                }
+            case .approving:
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在加密传递同步密钥…")
+                }
+            case .done:
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("已批准新设备加入", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text("新设备会自动执行首次同步，设备列表已刷新。")
+                        .foregroundStyle(.secondary)
+                    Button("继续") {
+                        store.resetJoinApprover()
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(shortCodeInput.count != 6)
                 }
-                Text("仅支持同一局域网；配对码 10 分钟内有效，使用一次后失效。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-        case .claiming:
-            HStack(spacing: 10) {
-                ProgressView()
-                Text("正在读取配对码并认领设备…")
-            }
-        case let .awaitingConfirmation(code, deviceName, deadline):
-            VStack(alignment: .leading, spacing: 10) {
-                Label("\(deviceName) 已认领配对", systemImage: "laptopcomputer.and.iphone")
-                SixDigitCodeDisplay(code: code)
-                Text("请在另一台设备上核对同一个六位核对码，并在那台设备上点击确认。")
-                    .foregroundStyle(.secondary)
-                Text("有效至 \(deadline.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("取消", role: .cancel) {
-                    store.cancelShortCodeClaim()
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 10) {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Button("重试") {
+                        store.resetJoinApprover()
+                    }
                 }
             }
-        case .confirmed:
-            VStack(alignment: .leading, spacing: 10) {
-                Label("已通过六位码加入同步空间", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text("当前 Mac 已换成新的设备身份，本地任务会保留并重新同步。")
-                    .foregroundStyle(.secondary)
-                Button("完成") {
-                    store.cancelShortCodeClaim()
-                }
-            }
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 10) {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Button("重试") {
-                    store.cancelShortCodeClaim()
-                }
-            }
-        }
-    }
-
-    private func submitShortCode() {
-        let code = shortCodeInput.filter(\.isNumber)
-        guard code.count == 6 else { return }
-        store.claimByShortCode(code)
-    }
-
-    private func pasteShortCode() {
-        guard let value = NSPasteboard.general.string(forType: .string) else { return }
-        let digits = String(value.filter(\.isNumber).prefix(6))
-        if !digits.isEmpty {
-            shortCodeInput = digits
         }
     }
 
     private var devicesCard: some View {
-        SettingsCard(title: "已绑定设备", systemImage: "laptopcomputer.and.iphone") {
+        SettingsCard(title: "设备", systemImage: "laptopcomputer.and.iphone") {
             HStack {
-                Text("清理会立即移除设备绑定；设备上的本地任务不会被删除。")
+                Text("移除会立即停止该设备的同步；设备上的本地任务不会被删除。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -739,7 +623,9 @@ struct SyncSettingsView: View {
                 ForEach(store.devices, id: \.id) { device in
                     Divider()
                     HStack(spacing: 12) {
-                        Image(systemName: device.platform == .macos ? "laptopcomputer" : "smartphone")
+                        Image(systemName: device.platform == .macos
+                            ? "laptopcomputer"
+                            : "smartphone")
                             .frame(width: 24)
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 6) {
@@ -758,20 +644,32 @@ struct SyncSettingsView: View {
                         }
                         Spacer()
                         if !isCurrentDevice(device) {
-                            Button("清理", role: .destructive) {
-                                Task { await store.cleanDevice(device) }
+                            Button("移除", role: .destructive) {
+                                devicePendingRemoval = device
                             }
                             .disabled(store.cleaningDeviceIDs.contains(device.id))
                         }
                     }
                 }
             }
+
+            Divider()
+            HStack {
+                Text("退出后本机停止同步，本地任务保留。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("退出此同步空间", role: .destructive) {
+                    showsExitConfirmation = true
+                }
+                .disabled(store.isExitingSpace)
+            }
         }
     }
 
     private var privacyNote: some View {
         Label(
-            "自建服务和同一网络的 vault key、设备令牌保存在本机 Keychain；WebDAV 完整配置以本机加密文件保存。服务端无法读取任务明文。",
+            "同步密钥与设备令牌保存在本机加密凭据文件中；服务端只能看到端到端加密的任务密文。",
             systemImage: "key.fill"
         )
         .font(.caption)
@@ -779,53 +677,12 @@ struct SyncSettingsView: View {
     }
 
     @ViewBuilder
-    private var endpointGuidance: some View {
-        switch store.endpointSetupAssessment {
-        case .empty:
-            Label("请输入 Mac 与 Android 都能访问的 HTTPS Worker 根地址。", systemImage: "info.circle")
-                .foregroundStyle(.secondary)
-        case .invalid:
-            Label("地址格式无效；必须以 https:// 开头，且不能包含账号、查询参数或 #片段。", systemImage: "xmark.circle.fill")
-                .foregroundStyle(.red)
-        case .currentDeviceOnly:
-            Label(
-                "127.0.0.1/localhost 只指向当前设备，手机扫码后会连接手机自己，不能用于双端同步。",
-                systemImage: "exclamationmark.triangle.fill"
-            )
-            .foregroundStyle(.orange)
-        case .includesAPIVersion:
-            Label("请删除末尾的 /v1，只填写 Worker 根地址。", systemImage: "xmark.circle.fill")
-                .foregroundStyle(.red)
-        case .ready(let endpoint):
-            Label(
-                "地址格式正确：\(endpoint.host ?? endpoint.absoluteString)。创建前请确认 Worker 已实际部署。",
-                systemImage: "checkmark.circle.fill"
-            )
-            .foregroundStyle(.green)
+    private var feedback: some View {
+        if let message = store.statusMessage {
+            Label(message, systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(.green)
         }
-    }
-
-    private var androidJoinSteps: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if store.isLocalNetworkConnection {
-                Text("1. 确认 Mac 与手机连接同一个 Wi-Fi 或有线局域网。")
-                Text("2. 在 Mac 点击“生成六位配对码”。")
-                Text("3. 在 Android 选择“配对设备 → 输入六位配对码”，输入 Mac 上显示的 6 位数字。")
-                Text("4. 两端会再显示一个六位核对码；确认完全一致后，在 Mac 点击“确认绑定”。")
-                Text("5. 手机会自动首次同步；任务明文不会上传到服务端。")
-            } else {
-                Text("1. 确认 Mac 与手机均可联网，且上方服务地址是 HTTPS Worker。")
-                Text("2. 在 Mac 点击“生成配对二维码”。")
-                Text("3. 在 Android 使用扫码或配对链接加入。")
-                Text("4. 核对两端六位核对码完全相同，再回到 Mac 点击“确认绑定”。")
-                Text("5. 手机保存密钥后会自动首次同步；任务明文不会上传到服务端。")
-            }
-        }
-        .font(.callout)
-    }
-
-    @ViewBuilder
-    private var actionError: some View {
         if let message = store.actionErrorMessage {
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .font(.caption)
@@ -833,39 +690,107 @@ struct SyncSettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private var endpointGuidance: some View {
+        switch store.endpointSetupAssessment {
+        case .empty:
+            Label("请输入所有设备都能访问的 HTTPS Worker 根地址。", systemImage: "info.circle")
+                .foregroundStyle(.secondary)
+        case .invalid:
+            Label(
+                "地址格式无效；必须使用 https://，不能包含账号、查询参数、路径或 #片段，也不能是局域网或回环地址。",
+                systemImage: "xmark.circle.fill"
+            )
+            .foregroundStyle(.red)
+        case .includesAPIVersion:
+            Label("请删除末尾的 /v1，只填写 Worker 根地址。", systemImage: "xmark.circle.fill")
+                .foregroundStyle(.red)
+        case .ready(let endpoint):
+            Label(
+                "地址格式正确：\(endpoint.host ?? endpoint.absoluteString)。保存前请确认 Worker 已实际部署。",
+                systemImage: "checkmark.circle.fill"
+            )
+            .foregroundStyle(.green)
+        }
+    }
+
+    private func pageHeader(_ title: String, _ subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.title2.weight(.semibold))
+            Text(subtitle)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func expiryText(_ deadline: Date) -> some View {
+        Text("有效至 \(deadline.formatted(date: .omitted, time: .shortened))")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func expiryText(_ milliseconds: Int64) -> some View {
+        expiryText(Date(timeIntervalSince1970: Double(milliseconds) / 1_000))
+    }
+
     private func shortened(_ value: String) -> String {
         guard value.count > 18 else { return value }
         return "\(value.prefix(8))…\(value.suffix(8))"
     }
 
-    private func formattedMilliseconds(_ value: Int64) -> String {
-        Date(timeIntervalSince1970: Double(value) / 1_000)
-            .formatted(date: .omitted, time: .shortened)
+    private func platformName(_ platform: DevicePlatform) -> String {
+        switch platform {
+        case .macos: "macOS"
+        case .android: "Android"
+        case .windows: "Windows"
+        }
     }
 
     private func deviceDetail(_ device: DeviceInfo) -> String {
-        let platform = device.platform == .macos ? "macOS" : "Android"
-        guard let lastSeenAt = device.lastSeenAt else { return platform }
-        let seen = formattedMilliseconds(lastSeenAt)
-        return "\(platform) · 最近在线 \(seen)"
+        var parts = [platformName(device.platform)]
+        if let lastSeenAt = device.lastSeenAt {
+            parts.append("最近在线 \(formattedMilliseconds(lastSeenAt))")
+        } else {
+            parts.append("创建于 \(formattedMilliseconds(device.createdAt))")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func currentDeviceLabel(_ connection: SyncConnectionSummary) -> String {
+        if let current = store.devices.first(where: { isCurrentDevice($0) }) {
+            return "\(current.name) · macOS"
+        }
+        return "macOS · \(shortened(connection.deviceId))"
+    }
+
+    private func formattedMilliseconds(_ value: Int64) -> String {
+        Date(timeIntervalSince1970: Double(value) / 1_000)
+            .formatted(date: .abbreviated, time: .shortened)
     }
 
     private func isCurrentDevice(_ device: DeviceInfo) -> Bool {
         device.isCurrent || device.id == store.connection?.deviceId
     }
 
-    private func copyPairingLink(_ payload: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pairingLinkCopied = pasteboard.setString(payload, forType: .string)
+    private func submitClaimCode() {
+        let code = claimCodeInput.filter(\.isNumber)
+        guard code.count == 6 else { return }
+        store.claimByShortCode(code)
     }
 
-    private func copyWebDavSetupLink(_ url: URL) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        webDavSetupLinkCopied = pasteboard.setString(url.absoluteString, forType: .string)
+    private func submitJoinCode() {
+        let code = joinCodeInput.filter(\.isNumber)
+        guard code.count == 6 else { return }
+        Task { await store.resolveJoinCode(code) }
     }
 
+    private func paste(into binding: Binding<String>) {
+        guard let value = NSPasteboard.general.string(forType: .string) else { return }
+        let digits = String(value.filter(\.isNumber).prefix(6))
+        if !digits.isEmpty {
+            binding.wrappedValue = digits
+        }
+    }
 }
 
 private struct SettingsCard<Content: View>: View {
@@ -892,82 +817,5 @@ private struct SettingsCard<Content: View>: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 14))
-    }
-}
-
-private struct QRCodeView: View {
-    let payload: String
-    let accessibilityLabel: String
-
-    var body: some View {
-        Group {
-            if let rendered = QRCodeRenderer.render(payload) {
-                // 必须按整数倍显示：非整数缩放会让模块边界丢行或重行，扫码器直接解不出来。
-                Image(nsImage: rendered.image)
-                    .interpolation(.none)
-                    .resizable()
-                    .frame(width: rendered.pointSide, height: rendered.pointSide)
-            } else {
-                Image(systemName: "qrcode")
-                    .font(.system(size: 80))
-                    .frame(width: 240, height: 240)
-            }
-        }
-        .padding(8)
-        .background(.white, in: RoundedRectangle(cornerRadius: 10))
-        .accessibilityLabel(accessibilityLabel)
-    }
-}
-
-enum QRCodeRenderer {
-    // 静默区取 2 个模块足够识别，4 个会显得白边很重。
-    private static let quietZoneModules = 2
-    private static let targetPointSide = 240
-
-    struct Rendered {
-        let image: NSImage
-        /// QR 模块数（含静默区）。
-        let modules: Int
-        /// 以点为单位，且是模块数的整数倍。
-        let pointSide: CGFloat
-    }
-
-    /// 每个模块占多少点。只取整数，避免非整数缩放让模块边界丢行或重行。
-    private static func pointsPerModule(modules: Int) -> Int {
-        max(3, targetPointSide / max(1, modules))
-    }
-
-    static func render(_ payload: String) -> Rendered? {
-        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
-        filter.setValue(Data(payload.utf8), forKey: "inputMessage")
-        // 配对串随备选地址变长，纠错等级越高模块越密。白底黑码且尺寸足够时
-        // L 级已经够用，换来更大的模块更容易扫中。
-        filter.setValue(payload.utf8.count > 160 ? "L" : "M", forKey: "inputCorrectionLevel")
-        guard let output = filter.outputImage else { return nil }
-
-        let extent = output.extent.integral
-        let modules = Int(extent.width) + quietZoneModules * 2
-        let perModule = pointsPerModule(modules: modules)
-        let paddedExtent = CGRect(
-            x: 0,
-            y: 0,
-            width: extent.width + CGFloat(quietZoneModules * 2),
-            height: extent.height + CGFloat(quietZoneModules * 2)
-        )
-        let positioned = output.transformed(
-            by: CGAffineTransform(
-                translationX: CGFloat(quietZoneModules) - extent.minX,
-                y: CGFloat(quietZoneModules) - extent.minY
-            )
-        )
-        let whiteBackground = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: paddedExtent)
-        let padded = positioned.composited(over: whiteBackground)
-        // 位图按「每模块点数的两倍」放大，Retina 下正好一像素对一像素。
-        let pixelScale = CGFloat(perModule * 2)
-        let scaled = padded.transformed(by: CGAffineTransform(scaleX: pixelScale, y: pixelScale))
-        let representation = NSCIImageRep(ciImage: scaled)
-        let image = NSImage(size: representation.size)
-        image.addRepresentation(representation)
-        return Rendered(image: image, modules: modules, pointSide: CGFloat(modules * perModule))
     }
 }

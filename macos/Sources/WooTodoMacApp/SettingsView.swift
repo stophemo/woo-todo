@@ -16,7 +16,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .display: "显示"
         case .reminders: "提醒"
         case .shortcuts: "快捷键"
-        case .sync: "同步"
+        case .sync: "跨设备"
         case .mcp: "MCP 服务"
         case .localData: "本机数据"
         }
@@ -27,7 +27,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .display: "textformat"
         case .reminders: "bell"
         case .shortcuts: "command"
-        case .sync: "arrow.triangle.2.circlepath"
+        case .sync: "laptopcomputer.and.iphone"
         case .mcp: "link"
         case .localData: "externaldrive"
         }
@@ -45,7 +45,6 @@ final class SettingsNavigation: ObservableObject {
 
 struct SettingsView: View {
     @ObservedObject var syncSettingsStore: SyncSettingsStore
-    @ObservedObject var webDavSettingsStore: WebDavSettingsStore
     @ObservedObject var dayCounterStore: DayCounterStore
     @ObservedObject var dailyDigestSettingsStore: DailyDigestSettingsStore
     @ObservedObject var shortcutSettingsStore: ShortcutSettingsStore
@@ -117,7 +116,7 @@ struct SettingsView: View {
         case .shortcuts:
             ShortcutSettingsView(store: shortcutSettingsStore)
         case .sync:
-            SyncSettingsView(store: syncSettingsStore, webDavStore: webDavSettingsStore)
+            SyncSettingsView(store: syncSettingsStore)
         case .mcp:
             MCPSettingsView(store: mcpSettingsStore)
         case .localData:

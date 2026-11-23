@@ -13,6 +13,7 @@ import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -62,6 +63,40 @@ class TaskDatabaseInstrumentedTest {
             database.onDowngrade(database.writableDatabase, 10, 9)
         }
 
+        assertEquals(task, store.getById(task.id))
+    }
+
+    @Test
+    fun `升级到十三版会删除旧WebDAV应用表并保留任务`() = runBlocking {
+        val store = SQLiteTaskStore(database)
+        val task = TaskEntity(
+            id = "task-db-upgrade-13",
+            seriesId = "task-db-upgrade-13",
+            title = "升级保留",
+            categoryId = "main",
+            startDate = LocalDate.of(2026, 7, 17),
+            endDate = LocalDate.of(2026, 7, 17),
+            status = TaskStatus.PENDING,
+            sortOrder = 0,
+            createdAt = 1_000,
+            updatedAt = 1_000,
+            settledAt = null,
+        )
+        store.insert(task)
+        val sqlite = database.writableDatabase
+        sqlite.execSQL(
+            "CREATE TABLE IF NOT EXISTS sync_webdav_applied_operations (" +
+                "op_id TEXT NOT NULL PRIMARY KEY, applied_at INTEGER NOT NULL)",
+        )
+
+        database.onUpgrade(sqlite, 12, 13)
+
+        val legacyTableExists = sqlite.rawQuery(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' " +
+                "AND name = 'sync_webdav_applied_operations' LIMIT 1",
+            null,
+        ).use { it.moveToFirst() }
+        assertFalse(legacyTableExists)
         assertEquals(task, store.getById(task.id))
     }
 

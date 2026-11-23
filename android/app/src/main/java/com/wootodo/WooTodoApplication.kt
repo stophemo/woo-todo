@@ -1,10 +1,12 @@
 package com.wootodo
 
 import android.app.Application
+import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import com.wootodo.data.LegacyTaskDateMigration
 import com.wootodo.data.SQLiteTaskStore
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskRepository
@@ -450,10 +452,38 @@ class WooTodoApplication : Application() {
         }
     }
 
+    private fun migrateLegacyTaskDatesIfNeeded() {
+        val preferences = getSharedPreferences(
+            LegacyTaskDateMigration.PREFERENCES,
+            Context.MODE_PRIVATE,
+        )
+        if (preferences.getBoolean(LegacyTaskDateMigration.KEY, false)) return
+        applicationScope.launch {
+            runCatching {
+                val planned = LegacyTaskDateMigration.plan(taskRepository.allTasks())
+                planned.forEach { task ->
+                    taskRepository.update(
+                        task.id,
+                        LegacyTaskDateMigration.draft(task),
+                    )
+                }
+                preferences.edit()
+                    .putBoolean(LegacyTaskDateMigration.KEY, true)
+                    .apply()
+                if (planned.isNotEmpty()) {
+                    TodayWidgetUpdater.updateAll(this@WooTodoApplication)
+                    TaskReminderScheduler.scheduleAll(this@WooTodoApplication)
+                    notifyLocalMutation()
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         NotificationHelper.createChannel(this)
         ReminderScheduler.schedule(this)
+        migrateLegacyTaskDatesIfNeeded()
         getSystemService(ConnectivityManager::class.java)
             ?.registerNetworkCallback(
                 NetworkRequest.Builder()

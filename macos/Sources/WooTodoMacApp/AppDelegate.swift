@@ -140,6 +140,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let taskNotificationScheduler: TaskNotificationScheduler? = runtime.allowsExternalServices
                 ? TaskNotificationScheduler()
                 : nil
+            do {
+                let migrated = try LegacyTaskDateMigration.run(
+                    repository: repository,
+                    defaults: runtime.defaults
+                )
+                if migrated > 0 {
+                    logger.notice("已将 \(migrated) 条旧任务的一天区间折算为任务日期")
+                }
+            } catch {
+                logger.error(
+                    "旧任务日期折算失败：\(error.localizedDescription, privacy: .public)"
+                )
+            }
             store.reload()
             store.onTasksChanged = { [weak self] in
                 // 先让本地列表完成渲染，再启动同步和通知调度；网络不可成为勾选反馈的前置条件。

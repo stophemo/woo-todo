@@ -123,8 +123,9 @@ class SixDigitCodeView @JvmOverloads constructor(
         } else {
             context.getString(R.string.pairing_six_digit_code_description, characters)
         }
-        val ink = ContextCompat.getColor(context, R.color.ink)
-        val placeholder = ContextCompat.getColor(context, R.color.line)
+        // 深色模式下 ink 与 app_background 同为深色，数字必须用 task_text 才能看清。
+        val ink = ContextCompat.getColor(context, R.color.task_text)
+        val placeholder = ContextCompat.getColor(context, R.color.muted)
         val line = ContextCompat.getColor(context, R.color.line)
         val primary = ContextCompat.getColor(context, R.color.primary)
         val error = ContextCompat.getColor(context, R.color.orange)

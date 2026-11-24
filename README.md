@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://woo-todo.vercel.app/">产品主页</a> ·
-  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.20">下载 v0.2.20</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.21">下载 v0.2.21</a> ·
   <a href="#装好以后从这里开始">安装指南</a> ·
   <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
 </p>
@@ -70,22 +70,22 @@
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.2.20`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.20)，只提供 macOS 与 Android 两个正式版本。
+当前稳定版是 [`v0.2.21`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.21)，只提供 macOS 与 Android 两个正式版本。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、独立主窗口与设置、最近删除恢复、统计与本机数据清理 | `v0.2.20` 正式版 |
-| Android 13+ | 统一任务列表、最近删除恢复、任务提醒、今日 Widget、统计与应用内更新 | `v0.2.20` 正式版 |
+| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、独立主窗口与设置、最近删除恢复、统计与本机数据清理 | `v0.2.21` 正式版 |
+| Android 13+ | 统一任务列表、最近删除恢复、任务提醒、今日 Widget、统计与应用内更新 | `v0.2.21` 正式版 |
 
-## 下载 v0.2.20
+## 下载 v0.2.21
 
 | 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.2.20-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.2.20/Woo-Todo-v0.2.20-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
-| Android | [Woo-Todo-v0.2.20-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.20/Woo-Todo-v0.2.20-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.20/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
+| macOS | [Woo-Todo-v0.2.21-macos-arm64.dmg](https://github.com/stophemo/woo-todo/releases/download/v0.2.21/Woo-Todo-v0.2.21-macos-arm64.dmg) | 打开 DMG，把 `Woo Todo.app` 拖到“应用程序”。同页的 ZIP 仅用于 Sparkle 自动更新，手动安装请用 DMG。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.2.21-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.21/Woo-Todo-v0.2.21-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.21/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
 
-`v0.2.20` 将 macOS 与 Android 的跨设备同步统一为 WebDAV：坚果云、Nextcloud、群晖或自定义 HTTPS WebDAV 服务都可以。每台设备先配置同一个 WebDAV 账号与目录，之后新增设备只用六位配对码双向加入，两端核对六位核对码后完成绑定。配对码 5 分钟内有效；任务正文端到端加密，WebDAV 供应商只能看到密文。旧 Worker 与局域网同步已停用，凭据保留但不启用，本地任务不受影响；旧版 0.2.x 的 WebDAV 凭据会自动迁移并继续使用。
+`v0.2.21` 将 macOS 与 Android 的跨设备同步统一为 WebDAV：坚果云、Nextcloud、群晖或自定义 HTTPS WebDAV 服务都可以。每台设备先配置同一个 WebDAV 账号与目录，之后新增设备只用六位配对码双向加入，两端核对六位核对码后完成绑定。配对码 5 分钟内有效；任务正文端到端加密，WebDAV 供应商只能看到密文。旧 Worker 与局域网同步已停用，凭据保留但不启用，本地任务不受影响；旧版 0.2.x 的 WebDAV 凭据会自动迁移并继续使用。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名；同步凭据以本机 AES-256-GCM 加密文件保存，首次从旧版本迁移时会读取一次旧 Keychain 项或旧 WebDAV 凭据文件，之后更新不再反复请求 Keychain 授权。Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -93,11 +93,12 @@
 
 ### macOS
 
-1. 启动后在菜单栏找到 Woo Todo；它不会占用 Dock 位置。
-2. 从菜单栏“打开 Woo Todo”或按 `⌘0` 打开独立主窗口。主窗口包含今天、全部任务、历史、统计和最近删除；设置是单独窗口，通过主窗口左下角“设置…”或 `⌘,` 打开。`⌘W` 收起主窗口，菜单栏可再次打开；主窗口显示时会临时出现 Dock 图标，全部收起后回到菜单栏应用。
-3. 任务板默认以桌面小组件模式停留在桌面层；菜单栏可切换为普通或始终置顶，右下角可拖动调整小组件宽高。桌面小组件位于 Finder 图标下方，新增桌面文件不会被遮住；指针移入面板时会临时抬到图标上方以保持可点击。用“快速新增任务”或完整任务窗口新增待办，标题下方可直接输入标签；需要安排时展开“日期与提醒”，设置任务日期、可选的结束日期和当天提醒时间。快捷新增面板在点击其他区域后会自动收起，设置窗口可按 `⌘W` 关闭。任务页右上角“管理标签”可调整标签优先级。双击编辑，右键完成、放弃或删除；删除的任务会先进入“最近删除”，可随时恢复，恢复后会像新增任务一样同步到其他设备。“设置 → 跨设备”先填写同一个 WebDAV 账号，第一台设备建立同步空间，其他设备用六位配对码加入，也可以反向输入新设备显示的六位码并批准。
-4. 需要彻底清理时，打开“设置 → 本机数据”，选择“清除全部本机数据”或“卸载并清除”。直接拖拽卸载 `.app` 不会自动删除 Application Support、Keychain 和偏好设置。
-5. 如果想让本机 MCP 客户端直接把计划写入待办，打开“设置 → MCP 服务”，开启“开放 MCP 服务”并复制对应 Agent 的命令；服务只监听 `127.0.0.1`，需要携带令牌，Woo Todo 退出后停止。
+1. 打开下载的 DMG，把 `Woo Todo.app` 拖到“应用程序”，再从“应用程序”启动。首次打开如果提示“无法验证开发者”，到“系统设置 → 隐私与安全性”点“仍要打开”，或右键应用选择“打开”。DMG 与 ZIP 的首次打开提示相同；ZIP 只用于 Sparkle 自动更新。
+2. 启动后在菜单栏找到 Woo Todo；它不会占用 Dock 位置。
+3. 从菜单栏“打开 Woo Todo”或按 `⌘0` 打开独立主窗口。主窗口包含今天、全部任务、历史、统计和最近删除；设置是单独窗口，通过主窗口左下角“设置…”或 `⌘,` 打开。`⌘W` 收起主窗口，菜单栏可再次打开；主窗口显示时会临时出现 Dock 图标，全部收起后回到菜单栏应用。
+4. 任务板默认以桌面小组件模式停留在桌面层；菜单栏可切换为普通或始终置顶，右下角可拖动调整小组件宽高。桌面小组件位于 Finder 图标下方，新增桌面文件不会被遮住；指针移入面板时会临时抬到图标上方以保持可点击。用“快速新增任务”或完整任务窗口新增待办，标题下方可直接输入标签；需要安排时展开“日期与提醒”，设置任务日期、可选的结束日期和当天提醒时间。快捷新增面板在点击其他区域后会自动收起，设置窗口可按 `⌘W` 关闭。任务页右上角“管理标签”可调整标签优先级。双击编辑，右键完成、放弃或删除；删除的任务会先进入“最近删除”，可随时恢复，恢复后会像新增任务一样同步到其他设备。“设置 → 跨设备”先填写同一个 WebDAV 账号，第一台设备建立同步空间，其他设备用六位配对码加入，也可以反向输入新设备显示的六位码并批准。
+5. 需要彻底清理时，打开“设置 → 本机数据”，选择“清除全部本机数据”或“卸载并清除”。直接拖拽卸载 `.app` 不会自动删除 Application Support、Keychain 和偏好设置。
+6. 如果想让本机 MCP 客户端直接把计划写入待办，打开“设置 → MCP 服务”，开启“开放 MCP 服务”并复制对应 Agent 的命令；服务只监听 `127.0.0.1`，需要携带令牌，Woo Todo 退出后停止。
 
 ### Android
 
@@ -120,7 +121,7 @@ Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；�
 
 同步不会成为本地操作的前置条件：断网时仍可新增、编辑、完成和删除，WebDAV 恢复可达后自动补齐。供应商的请求频率和流量限制可能影响同步速度。
 
-> **版本要求**：`v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7` 至 `v0.2.20` 的 WebDAV 客户端可以互相同步；`v0.2.6` 及更早客户端不保留“未分类”的自定义排序位置，建议两端同时升级。
+> **版本要求**：`v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7` 至 `v0.2.21` 的 WebDAV 客户端可以互相同步；`v0.2.6` 及更早客户端不保留“未分类”的自定义排序位置，建议两端同时升级。
 
 ## 让本机 Agent 通过 MCP 直接写入计划
 

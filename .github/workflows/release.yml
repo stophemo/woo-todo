@@ -143,7 +143,7 @@ jobs:
         run: rm -f "$ANDROID_SIGNING_STORE_FILE"
 
   macos:
-    name: 构建 macOS Apple Silicon ZIP
+    name: 构建 macOS Apple Silicon DMG/ZIP
     needs: validate-tag
     runs-on: macos-15
     timeout-minutes: 30
@@ -200,22 +200,33 @@ jobs:
           fi
           VERSION="$SOURCE_VERSION"
           MARKETING_VERSION="$VERSION" BUILD_NUMBER="$GITHUB_RUN_NUMBER" \
-            ./macos/scripts/package-app.sh --zip
+            ./macos/scripts/package-app.sh --zip --dmg
           APP="macos/dist/Woo Todo.app"
           ZIP="macos/dist/Woo Todo-$VERSION-macos.zip"
+          DMG="macos/dist/Woo Todo-$VERSION-macos.dmg"
           test -d "$APP"
           test -f "$ZIP"
+          test -f "$DMG"
           test "$(lipo -archs "$APP/Contents/MacOS/woo-todo-mac")" = "arm64"
           otool -l "$APP/Contents/MacOS/woo-todo-mac" | \
             awk '$1 == "cmd" && $2 == "LC_RPATH" { reading = 1; next } reading && $1 == "path" { print $2; reading = 0 }' | \
             grep -Fx '@executable_path/../Frameworks'
           test -f "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
           codesign --verify --deep --strict --verbose=2 "$APP"
+          hdiutil verify "$DMG"
+          DMG_MOUNT="$RUNNER_TEMP/woo-todo-dmg"
+          mkdir -p "$DMG_MOUNT"
+          hdiutil attach "$DMG" -readonly -nobrowse -mountpoint "$DMG_MOUNT" >/dev/null
+          test -d "$DMG_MOUNT/Woo Todo.app"
+          test -L "$DMG_MOUNT/Applications"
+          hdiutil detach "$DMG_MOUNT" >/dev/null
           mkdir -p release
           if [[ "${{ github.event_name }}" == "push" ]]; then
             mv "$ZIP" "release/Woo-Todo-${GITHUB_REF_NAME}-macos-arm64.zip"
+            mv "$DMG" "release/Woo-Todo-${GITHUB_REF_NAME}-macos-arm64.dmg"
           else
             mv "$ZIP" "release/Woo-Todo-macos-arm64.zip"
+            mv "$DMG" "release/Woo-Todo-macos-arm64.dmg"
           fi
 
       - name: 生成并校验 Sparkle 更新源
@@ -247,6 +258,7 @@ jobs:
           name: macos-release
           path: |
             release/*.zip
+            release/*.dmg
             release/appcast.xml
           if-no-files-found: error
           retention-days: 7
@@ -376,6 +388,7 @@ jobs:
           cd release
           test "$(find . -maxdepth 1 -type f -name '*.apk' | wc -l | tr -d ' ')" = "1"
           test "$(find . -maxdepth 1 -type f -name '*macos-arm64.zip' | wc -l | tr -d ' ')" = "1"
+          test "$(find . -maxdepth 1 -type f -name '*macos-arm64.dmg' | wc -l | tr -d ' ')" = "1"
           WINDOWS_ZIPS="$(find . -maxdepth 1 -type f -name '*windows-x64.zip' | wc -l | tr -d ' ')"
           if [[ "${{ vars.RELEASE_INCLUDE_WINDOWS }}" == "true" ]]; then
             test "$WINDOWS_ZIPS" = "1"
@@ -384,7 +397,7 @@ jobs:
           fi
           test "$(find . -maxdepth 1 -type f -name '*.zip' | wc -l | tr -d ' ')" = "$((1 + WINDOWS_ZIPS))"
           test -z "$(find . -maxdepth 1 -type f \( -iname '*preview*' -o -iname '*experimental*' \) -print -quit)"
-          shasum -a 256 ./*.apk ./*.zip > SHA256SUMS.txt
+          shasum -a 256 ./*.apk ./*.zip ./*.dmg > SHA256SUMS.txt
 
       - name: 发布产物
         env:

@@ -4,19 +4,20 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-用法：package-app.sh [--zip]
+用法：package-app.sh [--zip] [--dmg]
 
 构建 Release SwiftPM 可执行文件，组装并签名：
   dist/Woo Todo.app
 
 选项：
-  --zip    同时生成便于传输的 zip 包
+  --zip    同时生成便于 Sparkle 自动更新的 zip 包
+  --dmg    同时生成可拖拽安装的 dmg 磁盘映像
   --help   显示本帮助
 
 可选环境变量：
   BUNDLE_ID          Bundle Identifier，默认 io.github.stophemo.woo-todo
-  MARKETING_VERSION  显示版本，默认 0.2.20
-  BUILD_NUMBER       构建号，仅允许数字，默认 54
+  MARKETING_VERSION  显示版本，默认 0.2.21
+  BUILD_NUMBER       构建号，仅允许数字，默认 56
   CODE_SIGN_IDENTITY 签名身份；默认 -（ad-hoc），正式 Developer ID 可保持 Keychain 授权
 EOF
 }
@@ -40,10 +41,14 @@ has_framework_rpath() {
 }
 
 CREATE_ZIP=0
+CREATE_DMG=0
 while (( $# > 0 )); do
     case "$1" in
         --zip)
             CREATE_ZIP=1
+            ;;
+        --dmg)
+            CREATE_DMG=1
             ;;
         --help|-h)
             usage
@@ -67,8 +72,8 @@ EXECUTABLE_NAME="woo-todo-mac"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 
 BUNDLE_ID="${BUNDLE_ID:-io.github.stophemo.woo-todo}"
-MARKETING_VERSION="${MARKETING_VERSION:-0.2.20}"
-BUILD_NUMBER="${BUILD_NUMBER:-55}"
+MARKETING_VERSION="${MARKETING_VERSION:-0.2.21}"
+BUILD_NUMBER="${BUILD_NUMBER:-56}"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 
 [[ "$BUNDLE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] \
@@ -82,6 +87,7 @@ require_command swift
 require_command /usr/bin/codesign
 require_command /usr/bin/ditto
 require_command /usr/bin/iconutil
+require_command /usr/bin/hdiutil
 require_command /usr/bin/install_name_tool
 require_command /usr/bin/plutil
 require_command /usr/bin/otool
@@ -215,6 +221,24 @@ if (( CREATE_ZIP == 1 )); then
         "$APP_BUNDLE" \
         "$ZIP_PATH"
     printf 'zip 已生成：%s\n' "$ZIP_PATH"
+fi
+
+if (( CREATE_DMG == 1 )); then
+    DMG_PATH="$DIST_DIR/$APP_NAME-$MARKETING_VERSION-macos.dmg"
+    DMG_STAGING="$STAGING_DIR/dmg"
+    mkdir -p -- "$DMG_STAGING"
+    /usr/bin/ditto "$APP_BUNDLE" "$DMG_STAGING/$APP_NAME.app"
+    ln -s /Applications "$DMG_STAGING/Applications"
+    rm -f -- "$DMG_PATH"
+    printf '正在生成 dmg…\n'
+    /usr/bin/hdiutil create \
+        -volname "$APP_NAME" \
+        -srcfolder "$DMG_STAGING" \
+        -ov \
+        -format UDZO \
+        "$DMG_PATH"
+    /usr/bin/hdiutil verify "$DMG_PATH"
+    printf 'dmg 已生成：%s\n' "$DMG_PATH"
 fi
 
 printf '完成。首次启动若被系统拦截，请在“系统设置 → 隐私与安全性”中手动允许。\n'

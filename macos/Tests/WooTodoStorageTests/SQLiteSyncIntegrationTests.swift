@@ -1738,6 +1738,92 @@ struct SQLiteSyncIntegrationTests {
         #expect(try repository.fetchAll().filter { $0.title == "同批好操作" }.count == 1)
     }
 
+    @Test("清空本地任务与同步状态保留显示偏好并可绑定新身份")
+    func clearAllLocalTasksAndSyncStateKeepsPreferencesAndAllowsNewIdentity() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let preferences = try displayConfiguration(header: "{dateLong} · 保留偏好")
+        try repository.saveDisplayConfiguration(preferences)
+        let work = try TaskCategory(id: "work", name: "工作", order: 4)
+        try repository.saveCategories(
+            TaskCategory.normalizeList(TaskCategory.defaults + [work])
+        )
+        let now = date("2026-07-15T08:00:00+08:00")
+        let kept = try makeTask(title: "清空任务", createdAt: now)
+        let trashed = try makeTask(
+            title: "清空回收站",
+            createdAt: now.addingTimeInterval(1)
+        )
+        try repository.save([kept, trashed])
+        try repository.delete(id: trashed.id)
+        let remoteTask = try makeTask(
+            title: "远端任务",
+            createdAt: now.addingTimeInterval(2)
+        )
+        try await repository.applyRemoteOperations([
+            try remoteTaskOperation(
+                remoteTask,
+                kind: .upsert,
+                lamport: 5,
+                serverSequence: 1,
+                deviceID: "device-other",
+                configuration: configuration
+            ),
+        ], advancingCursorTo: 1)
+        let webDavTask = try makeTask(
+            title: "WebDAV 远端",
+            createdAt: now.addingTimeInterval(3)
+        )
+        let webDav = try webDavOperation(
+            from: remoteTaskOperation(
+                webDavTask,
+                kind: .upsert,
+                lamport: 6,
+                serverSequence: 2,
+                deviceID: "device-other",
+                configuration: configuration
+            ),
+            configuration: configuration
+        )
+        try await repository.applyWebDavOperations([webDav])
+
+        let initialPending = try await repository.pendingOperations(limit: 50)
+        #expect(!initialPending.isEmpty)
+        #expect(try repository.syncAppliedOperationCount() == 1)
+        #expect(try repository.webDavAppliedOperationCount() == 1)
+        #expect(!(try repository.deletedTaskIDs()).isEmpty)
+
+        try repository.clearAllLocalTasksAndSyncState()
+
+        #expect(try repository.fetchAll().isEmpty)
+        #expect(try repository.fetchTrash().isEmpty)
+        #expect(try repository.fetchCategories() == TaskCategory.defaults)
+        #expect(try repository.displayConfiguration() == preferences)
+        #expect(try repository.deletedTaskIDs().isEmpty)
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+        #expect(try repository.syncAppliedOperationCount() == 0)
+        #expect(try repository.webDavAppliedOperationCount() == 0)
+
+        let newConfiguration = SQLiteSyncConfiguration(
+            vaultId: "vault-new",
+            deviceId: "device-new",
+            vaultKey: Data(repeating: 8, count: 32)
+        )
+        try repository.configureSync(newConfiguration)
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+        let newTask = try makeTask(
+            title: "新空间任务",
+            createdAt: now.addingTimeInterval(4)
+        )
+        try repository.save(newTask)
+        let pending = try await repository.pendingOperations(limit: 50)
+        #expect(pending.map(\.entityId) == [newTask.id.uuidString.lowercased()])
+        #expect(try repository.fetchAll().map(\.title) == ["新空间任务"])
+    }
+
     @Test("WebDAV applied 记录裁剪到最近 10000 条且重放不增长")
     func webDavAppliedTableIsBounded() async throws {
         let configuration = syncConfiguration()

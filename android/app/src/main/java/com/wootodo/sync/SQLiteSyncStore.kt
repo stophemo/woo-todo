@@ -373,6 +373,37 @@ class SQLiteSyncStore(
             }
         }
 
+        /**
+         * 加入其他空间前清空任务、回收站、分类与全部同步状态；
+         * 保留数据库文件、显示配置与 WebDAV 账号，并恢复默认分类。
+         */
+        fun clearAllLocalTasks(database: TaskDatabase) {
+            val sqlite = database.writableDatabase
+            sqlite.beginTransaction()
+            try {
+                sqlite.delete(TABLE_TASKS, null, null)
+                sqlite.delete(SQLiteTrashTable.TABLE, null, null)
+                sqlite.delete(TABLE_CATEGORIES, null, null)
+                val now = System.currentTimeMillis()
+                TaskCategories.defaults.forEach { category ->
+                    sqlite.insertOrThrow(
+                        TABLE_CATEGORIES,
+                        null,
+                        ContentValues(4).apply {
+                            put("id", category.id)
+                            put("name", category.name)
+                            put("sort_order", category.order)
+                            put("updated_at", now)
+                        },
+                    )
+                }
+                resetSyncMetadata(sqlite)
+                sqlite.setTransactionSuccessful()
+            } finally {
+                sqlite.endTransaction()
+            }
+        }
+
         /** 原子清理旧空间、绑定新空间，并把保留的本地数据重新写入 outbox。 */
         fun replaceSyncBinding(
             database: TaskDatabase,

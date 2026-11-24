@@ -11,7 +11,7 @@ struct WebDavPairingTests {
     )
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    @Test("Path A：offer → claim → approval，核对码一致且 vaultKey 解封")
+    @Test("Path A：offer → claim → approval，核对码一致并自动解封 vaultKey")
     func pathAEndToEnd() async throws {
         let transport = InMemoryPairingTransport()
         let show = try await WebDavPathAShowSession.start(
@@ -47,22 +47,16 @@ struct WebDavPairingTests {
 
         try await show.approve(now: now.addingTimeInterval(3))
 
-        let pending = try await claim.poll(now: now.addingTimeInterval(4))
-        guard case let .awaitingConfirmation(
-            peerName,
-            peerPlatform,
-            peerVaultId,
-            pendingCode
-        ) = pending else {
-            Issue.record("新设备应等待本机人工确认，而不是自动解封")
+        let approved = try await claim.poll(now: now.addingTimeInterval(4))
+        guard case let .approved(pendingIdentity) = approved else {
+            Issue.record("approval 到达后应直接返回可保存身份")
             return
         }
-        #expect(peerName == "Mac A")
-        #expect(peerPlatform == .macos)
-        #expect(peerVaultId == identity.vaultId)
-        #expect(pendingCode == claim.verificationCode)
+        #expect(pendingIdentity.vaultId == identity.vaultId)
+        #expect(pendingIdentity.deviceId == claim.deviceId)
+        #expect(pendingIdentity.vaultKey == identity.vaultKey)
         #expect(claim.awaitingIdentity?.vaultId == identity.vaultId)
-        // 未确认前不删除配对文件。
+        // 返回身份时还未保存；调用方确认后才会删除配对文件。
         #expect(!(await transport.fileNames().isEmpty))
 
         let newIdentity = try await claim.confirm(now: now.addingTimeInterval(5))
@@ -70,6 +64,34 @@ struct WebDavPairingTests {
         #expect(newIdentity.deviceId == claim.deviceId)
         #expect(newIdentity.vaultKey == identity.vaultKey)
         #expect(await transport.fileNames().isEmpty)
+    }
+
+    @Test("Path A：预览 offer 只读，不写入 claim")
+    func pathAPreviewDoesNotClaim() async throws {
+        let transport = InMemoryPairingTransport()
+        let show = try await WebDavPathAShowSession.start(
+            transport: transport,
+            identity: identity,
+            deviceName: "Mac A",
+            now: now
+        )
+
+        let preview = try await WebDavPathAClaimSession.previewOffer(
+            transport: transport,
+            code: show.code,
+            now: now.addingTimeInterval(1)
+        )
+
+        #expect(preview.deviceName == "Mac A")
+        #expect(preview.platform == .macos)
+        #expect(preview.vaultId == identity.vaultId)
+        #expect(await transport.fileNames() == [
+            WebDavPairingFileName(
+                kind: .offer,
+                code: show.code,
+                pairingId: show.pairingId
+            ).string,
+        ])
     }
 
     @Test("Path A：同一配对码已有 claim 时第二台设备冲突")
@@ -295,7 +317,7 @@ struct WebDavPairingTests {
         }
     }
 
-    @Test("Path B：join → resolve → approval，核对码一致且 vaultKey 解封")
+    @Test("Path B：join → resolve → approval，核对码一致并自动解封 vaultKey")
     func pathBEndToEnd() async throws {
         let transport = InMemoryPairingTransport()
         let create = try await WebDavPathBCreateSession.start(
@@ -324,16 +346,16 @@ struct WebDavPairingTests {
 
         try await approve.approve(now: now.addingTimeInterval(3))
 
-        let pending = try await create.poll(now: now.addingTimeInterval(4))
-        guard case let .awaitingConfirmation(peerName, pendingCode, vaultId) = pending else {
-            Issue.record("新设备应等待本机人工确认，而不是自动解封")
+        let approved = try await create.poll(now: now.addingTimeInterval(4))
+        guard case let .approved(pendingIdentity) = approved else {
+            Issue.record("approval 到达后应直接返回可保存身份")
             return
         }
-        #expect(peerName == "Mac A")
-        #expect(pendingCode == approve.verificationCode)
-        #expect(vaultId == identity.vaultId)
+        #expect(pendingIdentity.vaultId == identity.vaultId)
+        #expect(pendingIdentity.deviceId == create.deviceId)
+        #expect(pendingIdentity.vaultKey == identity.vaultKey)
         #expect(create.awaitingIdentity?.vaultId == identity.vaultId)
-        // 未确认前不删除配对文件。
+        // 返回身份时还未保存；调用方确认后才会删除配对文件。
         #expect(!(await transport.fileNames().isEmpty))
 
         let newIdentity = try await create.confirm(now: now.addingTimeInterval(5))
@@ -582,13 +604,12 @@ struct WebDavPairingTests {
         )
         try await approve.approve(now: now.addingTimeInterval(1))
 
-        let pending = try await create.poll(now: now.addingTimeInterval(2))
-        guard case let .awaitingConfirmation(_, code, vaultId) = pending else {
+        let approved = try await create.poll(now: now.addingTimeInterval(2))
+        guard case let .approved(pendingIdentity) = approved else {
             Issue.record("时钟偏移不应阻止配对")
             return
         }
-        #expect(code == approve.verificationCode)
-        #expect(vaultId == identity.vaultId)
+        #expect(pendingIdentity.vaultId == identity.vaultId)
         #expect(try await create.confirm(now: now.addingTimeInterval(3)).vaultId == identity.vaultId)
     }
 
@@ -611,11 +632,12 @@ struct WebDavPairingTests {
         // 已有设备使用自己（落后一小时）的时钟写入 approval。
         try await show.approve(now: now.addingTimeInterval(-3_598))
 
-        let pending = try await claim.poll(now: now.addingTimeInterval(1))
-        guard case .awaitingConfirmation = pending else {
+        let approved = try await claim.poll(now: now.addingTimeInterval(1))
+        guard case let .approved(pendingIdentity) = approved else {
             Issue.record("时钟偏移不应阻止读取 approval")
             return
         }
+        #expect(pendingIdentity.vaultId == identity.vaultId)
         #expect(try await claim.confirm(now: now.addingTimeInterval(2)).vaultId == identity.vaultId)
     }
 

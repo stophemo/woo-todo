@@ -71,6 +71,9 @@ sealed class WebDavPairingException(message: String) : Exception(message) {
 
     data object LocalBindingFailed :
         WebDavPairingException("本地任务库无法绑定到新设备，请先备份现有任务再处理本机同步状态")
+
+    data object IdentityNotRemoved :
+        WebDavPairingException("旧同步身份未能删除，本机任务与同步状态均未改变，请重试")
 }
 
 class WebDavOfferSession internal constructor(
@@ -105,8 +108,6 @@ class WebDavClaimSession internal constructor(
     val deviceId: String,
     val vaultId: String,
     val verificationCode: String,
-    val peerDeviceName: String,
-    val peerPlatform: DevicePlatform,
     val deadline: Long,
     internal val offerPublicKey: ByteArray,
     internal val sessionKey: ByteArray,
@@ -116,14 +117,6 @@ class WebDavClaimSession internal constructor(
         sessionKey.fill(0)
     }
 }
-
-/** 新设备在保存身份前必须人工确认的配对信息。 */
-class WebDavPairingConfirmation(
-    val verificationCode: String,
-    val peerDeviceName: String?,
-    val peerPlatform: DevicePlatform?,
-    val vaultId: String,
-)
 
 class WebDavJoinResolution(
     val verificationCode: String,
@@ -300,8 +293,6 @@ class WebDavPairingCoordinator(
                         initiatorPublicKey = Base64Url.decode(offer.publicKey),
                         claimPublicKey = keyPair.publicKey,
                     ),
-                    peerDeviceName = offer.deviceName,
-                    peerPlatform = offer.platform,
                     deadline = deadline,
                     offerPublicKey = Base64Url.decode(offer.publicKey),
                     sessionKey = sessionKey,
@@ -423,14 +414,8 @@ class WebDavPairingCoordinator(
         session.destroy()
     }
 
-    /**
-     * 等待已有设备批准。解封 vaultKey 后先调用 [confirm] 等待本机人工核对，
-     * 只有确认通过才删除配对文件并返回身份；轮询本身不会自动采纳身份。
-     */
-    suspend fun awaitOfferApproval(
-        session: WebDavClaimSession,
-        confirm: suspend (WebDavPairingConfirmation) -> Unit,
-    ): WebDavIdentity {
+    /** 等待已有设备批准；approval 解封成功后删除配对文件并直接返回身份。 */
+    suspend fun awaitOfferApproval(session: WebDavClaimSession): WebDavIdentity {
         while (true) {
             currentCoroutineContext().ensureActive()
             if (!PairingTimePolicy.canContinue(clockMillis(), session.deadline)) {
@@ -471,19 +456,6 @@ class WebDavPairingCoordinator(
                 ).also(WebDavIdentity::validate)
             } finally {
                 vaultKey.fill(0)
-            }
-            try {
-                confirm(
-                    WebDavPairingConfirmation(
-                        verificationCode = session.verificationCode,
-                        peerDeviceName = session.peerDeviceName,
-                        peerPlatform = session.peerPlatform,
-                        vaultId = session.vaultId,
-                    ),
-                )
-            } catch (error: Throwable) {
-                identity.vaultKey.fill(0)
-                throw error
             }
             deletePairingFiles(session.pairingId)
             session.destroy()
@@ -575,16 +547,13 @@ class WebDavPairingCoordinator(
 
     /**
      * 等待已有设备 resolve + approval。必须先看到 resolve 的 approverPublicKey
-     * 才处理 approval；解封 vaultKey 后仍需 [confirm] 完成本机人工核对，
-     * 确认通过才返回身份。
+     * 才处理 approval；approval 解封成功后删除配对文件并直接返回身份。
      */
     suspend fun awaitJoinCompletion(
         session: WebDavJoinSession,
         onResolution: (WebDavJoinResolution) -> Unit = {},
-        confirm: suspend (WebDavPairingConfirmation) -> Unit,
     ): WebDavIdentity {
         var approverPublicKey: ByteArray? = null
-        var approverName: String? = null
         var verificationCode: String? = null
         var sessionKey: ByteArray? = null
         try {
@@ -621,7 +590,6 @@ class WebDavPairingCoordinator(
                         }
                         if (known == null) {
                             approverPublicKey = publicKey
-                            approverName = resolve.approverName
                             sessionKey?.fill(0)
                             sessionKey = PairingJoinCrypto.sessionKey(
                                 keyPair = session.keyPair,
@@ -689,19 +657,6 @@ class WebDavPairingCoordinator(
                     ).also(WebDavIdentity::validate)
                 } finally {
                     vaultKey.fill(0)
-                }
-                try {
-                    confirm(
-                        WebDavPairingConfirmation(
-                            verificationCode = checkNotNull(verificationCode),
-                            peerDeviceName = approverName,
-                            peerPlatform = null,
-                            vaultId = approval.vaultId,
-                        ),
-                    )
-                } catch (error: Throwable) {
-                    identity.vaultKey.fill(0)
-                    throw error
                 }
                 deletePairingFiles(session.pairingId)
                 session.destroy()

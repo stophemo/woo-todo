@@ -46,14 +46,8 @@ enum PathAShowPhase: Equatable {
 enum PathAClaimPhase: Equatable {
     case idle
     case claiming
+    case awaitingDecision
     case awaitingApproval(code: String, deadline: Date)
-    case awaitingConfirmation(
-        deviceName: String,
-        platform: DevicePlatform,
-        verificationCode: String,
-        vaultId: String,
-        deadline: Date
-    )
     case confirmed
     case failed(String)
 }
@@ -61,22 +55,45 @@ enum PathAClaimPhase: Equatable {
 enum PathBCreatePhase: Equatable {
     case idle
     case creating
+    case awaitingDecision
     case waiting(code: String, deadline: Date)
     case awaitingApproval(
         verificationCode: String,
         deviceName: String,
         deadline: Date
     )
-    case awaitingConfirmation(
-        verificationCode: String,
-        deviceName: String,
-        vaultId: String,
-        deadline: Date
-    )
     case approved
     case expired
     case canceled
     case failed(String)
+}
+
+/// 加入其他空间前需要用户选择的数据基准。
+enum JoinPolicyPrompt: Equatable {
+    case clearLocalData(JoinLocalDataSummary)
+    case chooseSpace(
+        localVaultId: String,
+        lastSyncedAt: Date?,
+        peerDeviceName: String,
+        peerPlatform: DevicePlatform
+    )
+}
+
+private enum JoinLocalDataClearError: LocalizedError {
+    case identityDeletionFailed(String)
+    case identityStillPresent
+    case localDataClearFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .identityDeletionFailed(message):
+            return "本机同步身份删除失败，已中止加入并保留本机数据：\(message)"
+        case .identityStillPresent:
+            return "本机同步身份删除后仍然存在，已中止加入并保留本机数据。"
+        case let .localDataClearFailed(message):
+            return "本机任务清空失败，已停止同步并进入未配对状态：\(message)"
+        }
+    }
 }
 
 enum PathBApprovePhase: Equatable {
@@ -117,6 +134,7 @@ final class SyncSettingsStore: ObservableObject {
     @Published private(set) var pathBCreatePhase: PathBCreatePhase = .idle
     @Published private(set) var pathBCreateCode: String?
     @Published private(set) var pathBApprovePhase: PathBApprovePhase = .idle
+    @Published private(set) var joinPolicyPrompt: JoinPolicyPrompt?
     @Published private(set) var actionErrorMessage: String?
     @Published private(set) var statusMessage: String?
     @Published private(set) var legacyNotice: String?
@@ -151,12 +169,16 @@ final class SyncSettingsStore: ObservableObject {
     private let defaults: UserDefaults
     private let clientFactory: ClientFactory
     private let pollInterval: TimeInterval
+    private let now: () -> Date
     private var runner: WebDavSyncRunner?
     private var runtimeMachine: SyncRuntimeStateMachine
     private var pathAShowSession: WebDavPathAShowSession?
     private var pathAClaimSession: WebDavPathAClaimSession?
     private var pathBCreateSession: WebDavPathBCreateSession?
     private var pathBApproveSession: WebDavPathBApproveSession?
+    private var pendingJoinStart: PendingJoinStart?
+    /// 用户已选择“以对方为准”：等 approval 到达、准备保存新身份前再清空本机数据。
+    private var pendingJoinClearsLocalData = false
     private var pendingStartupBinding: (account: WebDavAccount, identity: WebDavIdentity)?
     private var bootstrapTask: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
@@ -185,13 +207,15 @@ final class SyncSettingsStore: ObservableObject {
         pollInterval: TimeInterval = WebDavPairingProtocol.pollIntervalSeconds,
         clientFactory: @escaping ClientFactory = { account, identity in
             try WebDavClient(account: account, identity: identity)
-        }
+        },
+        now: @escaping () -> Date = { Date() }
     ) {
         self.repository = repository
         self.credentialsStore = credentialsStore
         self.defaults = defaults
         self.clientFactory = clientFactory
         self.pollInterval = pollInterval
+        self.now = now
         let savedSuccess = defaults.object(
             forKey: Self.lastSuccessfulDefaultsKey
         ) as? Double
@@ -273,6 +297,8 @@ final class SyncSettingsStore: ObservableObject {
         bootstrapTask?.cancel()
         bootstrapTask = nil
         cancelAllPairingTasks()
+        pendingJoinStart = nil
+        joinPolicyPrompt = nil
         fallbackTimer?.invalidate()
         fallbackTimer = nil
         pathMonitor?.cancel()
@@ -407,6 +433,8 @@ final class SyncSettingsStore: ObservableObject {
         pendingStartupBinding = nil
         runner = nil
         cancelAllPairingTasks()
+        pendingJoinStart = nil
+        joinPolicyPrompt = nil
 
         // 尽力删除自己的设备心跳；WebDAV 没有服务端设备表，失败不影响本地退出。
         if let account {
@@ -438,6 +466,157 @@ final class SyncSettingsStore: ObservableObject {
         statusMessage = deleteError == nil
             ? "已退出同步空间。WebDAV 账号与本地任务已保留。"
             : "已停止同步并保留本地任务，但本机同步身份删除失败：\(deleteError!.localizedDescription)"
+    }
+
+    // MARK: - 加入其他空间的数据基准
+
+    /// 加入方在 claim/join 前检查本机数据；需要用户确认时只设置提示，不写配对文件。
+    private func makeJoinPolicyPrompt(
+        peerDeviceName: String?,
+        peerPlatform: DevicePlatform?
+    ) throws -> JoinPolicyPrompt? {
+        if let identity {
+            guard let peerDeviceName, let peerPlatform else {
+                throw WebDavPairingError.responseMismatch
+            }
+            return .chooseSpace(
+                localVaultId: identity.vaultId,
+                lastSyncedAt: runtimeSnapshot.lastSuccessfulAt,
+                peerDeviceName: peerDeviceName,
+                peerPlatform: peerPlatform
+            )
+        }
+        let summary = try repository.joinLocalDataSummary()
+        return summary.hasAnyData ? .clearLocalData(summary) : nil
+    }
+
+    /// 用户确认清空本机数据后继续加入；真正清空推迟到对方批准之后。
+    func continueJoinClearingLocalTasks() async {
+        guard case .clearLocalData = joinPolicyPrompt else { return }
+        joinPolicyPrompt = nil
+        pendingJoinClearsLocalData = true
+        await startPendingJoin()
+    }
+
+    /// 用户选择以对方设备的数据为准：登记批准后清空本机数据，然后继续加入。
+    func joinUsingPeerData() async {
+        guard case .chooseSpace = joinPolicyPrompt else { return }
+        joinPolicyPrompt = nil
+        pendingJoinClearsLocalData = true
+        await startPendingJoin()
+    }
+
+    /// 用户选择以本机设备为准：取消本次加入，不清空任何数据。
+    func joinUsingLocalData() {
+        guard case .chooseSpace = joinPolicyPrompt else { return }
+        cancelPendingJoin(
+            message: "已取消本次加入。请在本机点击「显示配对码」，再到对方设备输入本机配对码。"
+        )
+    }
+
+    func cancelJoinPolicyPrompt() {
+        cancelPendingJoin(message: "已取消加入，本机任务与同步身份均未改变。")
+    }
+
+    /// 清空本地任务、回收站、分类与同步状态；保留数据库文件、WebDAV 账号与显示偏好。
+    /// 先删除并确认同步身份，成功后才停止同步并清空任务；任一步失败都不会保存新身份。
+    /// 不触碰正在进行的配对会话，调用方在收到 approval、保存新身份前调用。
+    func clearLocalDataForJoin() async throws {
+        actionErrorMessage = nil
+        statusMessage = nil
+
+        // 身份删除失败时立即中止，任务、runner 与连接保持原样。
+        do {
+            try credentialsStore.deleteIdentity()
+        } catch {
+            throw JoinLocalDataClearError.identityDeletionFailed(
+                error.localizedDescription
+            )
+        }
+        let remainingIdentity: WebDavIdentity?
+        do {
+            remainingIdentity = try credentialsStore.loadIdentity()
+        } catch {
+            throw JoinLocalDataClearError.identityDeletionFailed(
+                error.localizedDescription
+            )
+        }
+        guard remainingIdentity == nil else {
+            throw JoinLocalDataClearError.identityStillPresent
+        }
+
+        syncTask?.cancel()
+        syncTask = nil
+        bootstrapTask?.cancel()
+        bootstrapTask = nil
+        pendingStartupBinding = nil
+        runner = nil
+
+        if let account, let previousIdentity = identity {
+            await deleteDeviceHeartbeatBestEffort(
+                account: account,
+                identity: previousIdentity
+            )
+        }
+
+        do {
+            try repository.clearAllLocalTasksAndSyncState()
+        } catch {
+            // 任务清空在事务中回滚，本地任务保留；身份已删除，必须进入未配对状态。
+            enterUnpairedState()
+            onRemoteChanges?()
+            throw JoinLocalDataClearError.localDataClearFailed(
+                error.localizedDescription
+            )
+        }
+
+        enterUnpairedState()
+        onRemoteChanges?()
+    }
+
+    /// 身份已删除或清空失败后，确保 UI 不再显示已配对，也不保留可用的 runner。
+    private func enterUnpairedState() {
+        runner = nil
+        identity = nil
+        connection = nil
+        devices = []
+        devicesErrorMessage = nil
+        runtimeMachine.setConfigured(false)
+        publishRuntimeState()
+    }
+
+    private func startPendingJoin() async {
+        guard let action = pendingJoinStart else { return }
+        pendingJoinStart = nil
+        switch action {
+        case .shortCodeClaim(let code):
+            pathAClaimPhase = .claiming
+            pathAClaimPollTask?.cancel()
+            pathAClaimPollTask = Task { [weak self] in
+                await self?.performShortCodeClaim(code: code)
+            }
+        case .createJoinRequest:
+            await performCreateJoinRequest()
+        }
+    }
+
+    private func cancelPendingJoin(message: String) {
+        pendingJoinStart = nil
+        pendingJoinClearsLocalData = false
+        joinPolicyPrompt = nil
+        if case .awaitingDecision = pathAClaimPhase {
+            pathAClaimPhase = .idle
+        }
+        if case .awaitingDecision = pathBCreatePhase {
+            pathBCreatePhase = .idle
+        }
+        actionErrorMessage = nil
+        statusMessage = message
+    }
+
+    private func shortVaultId(_ vaultId: String) -> String {
+        guard vaultId.count > 18 else { return vaultId }
+        return "\(vaultId.prefix(8))…\(vaultId.suffix(8))"
     }
 
     // MARK: - 同步
@@ -732,23 +911,60 @@ final class SyncSettingsStore: ObservableObject {
     // MARK: - Path A：新设备输入码
 
     func claimByShortCode(_ rawCode: String) {
-        guard identity == nil, account != nil else { return }
+        guard account != nil else { return }
         let code = rawCode.filter(\.isNumber)
         guard code.count == 6 else {
             pathAClaimPhase = .failed("请输入另一台设备显示的 6 位数字配对码")
             return
         }
+        pendingJoinClearsLocalData = false
         cancelPairingFlows(except: .pathAClaim)
         actionErrorMessage = nil
         statusMessage = nil
+        joinPolicyPrompt = nil
+        pendingJoinStart = nil
         pathAClaimPhase = .claiming
         pathAClaimPollTask?.cancel()
         pathAClaimPollTask = Task { [weak self] in
-            await self?.performShortCodeClaim(code: code)
+            await self?.beginShortCodeClaim(code: code)
+        }
+    }
+
+    /// 先只读取 offer 判断数据基准，用户确认后才写入 claim。
+    private func beginShortCodeClaim(code: String) async {
+        do {
+            guard let account else {
+                throw WebDavError.invalidCredentials
+            }
+            let client = try clientFactory(account, nil)
+            let preview = try await WebDavPathAClaimSession.previewOffer(
+                transport: client,
+                code: code
+            )
+            if let prompt = try makeJoinPolicyPrompt(
+                peerDeviceName: preview.deviceName,
+                peerPlatform: preview.platform
+            ) {
+                pendingJoinStart = .shortCodeClaim(code: code)
+                joinPolicyPrompt = prompt
+                pathAClaimPhase = .awaitingDecision
+                return
+            }
+            await performShortCodeClaim(code: code)
+        } catch is CancellationError {
+            // 用户主动取消。
+        } catch {
+            guard !Task.isCancelled else { return }
+            pathAClaimPhase = .failed(friendlyMessage(for: error))
+            pathAClaimSession = nil
+            logger.error(
+                "六位码加入 WebDAV 空间失败：\(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
     private func performShortCodeClaim(code: String) async {
+        pathAClaimPhase = .claiming
         do {
             guard let account else {
                 throw WebDavError.invalidCredentials
@@ -771,23 +987,21 @@ final class SyncSettingsStore: ObservableObject {
                     switch state {
                     case .waiting:
                         actionErrorMessage = nil
-                    case let .awaitingConfirmation(deviceName, platform, vaultId, code):
-                        // 已解封但不自动保存身份：等待用户在本机核对后确认加入。
-                        pathAClaimPhase = .awaitingConfirmation(
-                            deviceName: deviceName,
-                            platform: platform,
-                            verificationCode: code,
-                            vaultId: vaultId,
-                            deadline: session.deadline
+                    case let .approved(pendingIdentity):
+                        // approval 到达后自动保存身份，不再要求本机确认。
+                        await completeShortCodeClaim(
+                            session: session,
+                            identity: pendingIdentity
                         )
-                        actionErrorMessage = nil
                         return
                     case .expired:
+                        pendingJoinClearsLocalData = false
                         pathAClaimPhase = .failed("配对码已过期，请在另一台设备重新生成。")
                         pathAClaimSession = nil
                         return
                     }
                 } catch WebDavPairingError.responseMismatch {
+                    pendingJoinClearsLocalData = false
                     pathAClaimPhase = .failed(
                         "配对文件与当前会话不一致，已停止配对。请重新生成配对码。"
                     )
@@ -796,6 +1010,7 @@ final class SyncSettingsStore: ObservableObject {
                 } catch {
                     // 429/5xx/网络错误在配对码有效期内继续重试。
                     if Date() >= session.deadline {
+                        pendingJoinClearsLocalData = false
                         pathAClaimPhase = .failed("配对码已过期，请在另一台设备重新生成。")
                         pathAClaimSession = nil
                         return
@@ -812,6 +1027,7 @@ final class SyncSettingsStore: ObservableObject {
             // 用户主动取消。
         } catch {
             guard !Task.isCancelled else { return }
+            pendingJoinClearsLocalData = false
             pathAClaimPhase = .failed(friendlyMessage(for: error))
             pathAClaimSession = nil
             logger.error(
@@ -820,30 +1036,29 @@ final class SyncSettingsStore: ObservableObject {
         }
     }
 
-    /// 用户核对六位核对码一致后完成加入：先取远端 Lamport 水位，再保存身份并绑定。
-    func confirmShortCodeClaim() async {
-        guard case .awaitingConfirmation(_, _, _, _, _) = pathAClaimPhase,
-              let session = pathAClaimSession,
-              let account,
-              let pendingIdentity = session.awaitingIdentity else {
+    /// approval 到达后自动完成加入：先取远端 Lamport 水位，再保存身份并绑定。
+    /// 用户选择了“以对方为准”时，在本机身份被替换前清空旧内容；清空失败则不保存新身份。
+    private func completeShortCodeClaim(
+        session: WebDavPathAClaimSession,
+        identity pendingIdentity: WebDavIdentity
+    ) async {
+        guard let account else {
+            pendingJoinClearsLocalData = false
+            pathAClaimPhase = .failed(friendlyMessage(for: WebDavError.invalidCredentials))
+            pathAClaimSession = nil
             return
         }
         actionErrorMessage = nil
-        let floor: Int64
         do {
-            floor = try await remoteLamportFloor(
+            let floor = try await remoteLamportFloor(
                 account: account,
                 identity: pendingIdentity
             )
-        } catch {
-            actionErrorMessage = friendlyMessage(for: error)
-            logger.error(
-                "读取远端 Lamport 水位失败：\(error.localizedDescription, privacy: .public)"
-            )
-            return
-        }
-        do {
             let newIdentity = try await session.confirm()
+            if pendingJoinClearsLocalData {
+                pendingJoinClearsLocalData = false
+                try await clearLocalDataForJoin()
+            }
             try credentialsStore.saveIdentity(newIdentity)
             do {
                 try applyBinding(newIdentity, remoteLamportFloor: floor)
@@ -856,13 +1071,16 @@ final class SyncSettingsStore: ObservableObject {
             publishRuntimeState()
             pathAClaimPhase = .confirmed
             pathAClaimSession = nil
-            statusMessage = "已通过配对码加入同步空间，正在执行首次同步。"
+            statusMessage = "已加入同步空间 \(shortVaultId(newIdentity.vaultId))，正在执行首次同步；如果与对方显示的核对码不一致，请立即退出空间。"
             requestSync(.manual)
+        } catch is CancellationError {
+            // 用户主动取消。
         } catch {
+            pendingJoinClearsLocalData = false
             pathAClaimPhase = .failed(friendlyMessage(for: error))
             pathAClaimSession = nil
             logger.error(
-                "确认加入 WebDAV 空间失败：\(error.localizedDescription, privacy: .public)"
+                "自动保存加入身份失败：\(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -870,10 +1088,15 @@ final class SyncSettingsStore: ObservableObject {
     func cancelShortCodeClaim() {
         pathAClaimPollTask?.cancel()
         pathAClaimPollTask = nil
+        pendingJoinClearsLocalData = false
         let session = pathAClaimSession
         pathAClaimSession = nil
         pathAClaimPhase = .idle
         actionErrorMessage = nil
+        if case .shortCodeClaim? = pendingJoinStart {
+            pendingJoinStart = nil
+            joinPolicyPrompt = nil
+        }
         if let session {
             Task { await session.cancel() }
         }
@@ -883,11 +1106,31 @@ final class SyncSettingsStore: ObservableObject {
 
     func createJoinRequest() async {
         guard identity == nil, account != nil, pathBCreatePhase.canStart else { return }
+        pendingJoinClearsLocalData = false
         cancelPairingFlows(except: .pathBCreate)
         actionErrorMessage = nil
         statusMessage = nil
-        pathBCreatePhase = .creating
+        joinPolicyPrompt = nil
+        pendingJoinStart = nil
+        do {
+            if let prompt = try makeJoinPolicyPrompt(
+                peerDeviceName: nil,
+                peerPlatform: nil
+            ) {
+                pendingJoinStart = .createJoinRequest
+                joinPolicyPrompt = prompt
+                pathBCreatePhase = .awaitingDecision
+                return
+            }
+        } catch {
+            pathBCreatePhase = .failed(friendlyMessage(for: error))
+            return
+        }
+        await performCreateJoinRequest()
+    }
 
+    private func performCreateJoinRequest() async {
+        pathBCreatePhase = .creating
         do {
             guard let account else {
                 throw WebDavError.invalidCredentials
@@ -902,6 +1145,7 @@ final class SyncSettingsStore: ObservableObject {
             pathBCreatePhase = .waiting(code: session.code, deadline: session.deadline)
             startPathBCreatePolling()
         } catch {
+            pendingJoinClearsLocalData = false
             pathBCreatePhase = .failed(friendlyMessage(for: error))
             pathBCreateSession = nil
             pathBCreateCode = nil
@@ -918,7 +1162,7 @@ final class SyncSettingsStore: ObservableObject {
             while !Task.isCancelled {
                 guard let session = self.pathBCreateSession else { return }
                 do {
-                    let state = try await session.poll()
+                    let state = try await session.poll(now: self.now())
                     switch state {
                     case .waiting:
                         break
@@ -929,23 +1173,22 @@ final class SyncSettingsStore: ObservableObject {
                             deadline: session.deadline
                         )
                         self.actionErrorMessage = nil
-                    case let .awaitingConfirmation(deviceName, code, vaultId):
-                        // 已解封但不自动保存身份：等待用户在本机核对后确认加入。
-                        self.pathBCreatePhase = .awaitingConfirmation(
-                            verificationCode: code,
-                            deviceName: deviceName,
-                            vaultId: vaultId,
-                            deadline: session.deadline
+                    case let .approved(pendingIdentity):
+                        // approval 到达后自动保存身份，不再要求本机确认。
+                        await self.completeJoinCreation(
+                            session: session,
+                            identity: pendingIdentity
                         )
-                        self.actionErrorMessage = nil
                         return
                     case .expired:
+                        self.pendingJoinClearsLocalData = false
                         self.pathBCreatePhase = .expired
                         self.pathBCreateCode = nil
                         self.pathBCreateSession = nil
                         return
                     }
                 } catch WebDavPairingError.responseMismatch {
+                    self.pendingJoinClearsLocalData = false
                     self.pathBCreatePhase = .failed(
                         "配对文件与当前会话不一致，已停止配对。请重新生成配对码。"
                     )
@@ -953,7 +1196,8 @@ final class SyncSettingsStore: ObservableObject {
                     self.pathBCreateSession = nil
                     return
                 } catch {
-                    if Date() >= session.deadline {
+                    if self.now() >= session.deadline {
+                        self.pendingJoinClearsLocalData = false
                         self.pathBCreatePhase = .expired
                         self.pathBCreateCode = nil
                         self.pathBCreateSession = nil
@@ -970,30 +1214,29 @@ final class SyncSettingsStore: ObservableObject {
         }
     }
 
-    /// 用户核对六位核对码一致后完成加入：先取远端 Lamport 水位，再保存身份并绑定。
-    func confirmJoinCreation() async {
-        guard case .awaitingConfirmation(_, _, _, _) = pathBCreatePhase,
-              let session = pathBCreateSession,
-              let account,
-              let pendingIdentity = session.awaitingIdentity else {
+    /// approval 到达后自动完成加入：先取远端 Lamport 水位，再保存身份并绑定。
+    /// 用户选择了“以对方为准”时，在本机身份被替换前清空旧内容；清空失败则不保存新身份。
+    private func completeJoinCreation(
+        session: WebDavPathBCreateSession,
+        identity pendingIdentity: WebDavIdentity
+    ) async {
+        guard let account else {
+            pendingJoinClearsLocalData = false
+            pathBCreatePhase = .failed(friendlyMessage(for: WebDavError.invalidCredentials))
+            pathBCreateSession = nil
             return
         }
         actionErrorMessage = nil
-        let floor: Int64
         do {
-            floor = try await remoteLamportFloor(
+            let floor = try await remoteLamportFloor(
                 account: account,
                 identity: pendingIdentity
             )
-        } catch {
-            actionErrorMessage = friendlyMessage(for: error)
-            logger.error(
-                "读取远端 Lamport 水位失败：\(error.localizedDescription, privacy: .public)"
-            )
-            return
-        }
-        do {
-            let newIdentity = try await session.confirm()
+            let newIdentity = try await session.confirm(now: now())
+            if pendingJoinClearsLocalData {
+                pendingJoinClearsLocalData = false
+                try await clearLocalDataForJoin()
+            }
             try credentialsStore.saveIdentity(newIdentity)
             do {
                 try applyBinding(newIdentity, remoteLamportFloor: floor)
@@ -1007,13 +1250,16 @@ final class SyncSettingsStore: ObservableObject {
             pathBCreatePhase = .approved
             pathBCreateCode = nil
             pathBCreateSession = nil
-            statusMessage = "已加入同步空间，正在执行首次同步。"
+            statusMessage = "已加入同步空间 \(shortVaultId(newIdentity.vaultId))，正在执行首次同步；如果与对方显示的核对码不一致，请立即退出空间。"
             requestSync(.manual)
+        } catch is CancellationError {
+            // 用户主动取消。
         } catch {
+            pendingJoinClearsLocalData = false
             pathBCreatePhase = .failed(friendlyMessage(for: error))
             pathBCreateSession = nil
             logger.error(
-                "确认加入 WebDAV 同步空间失败：\(error.localizedDescription, privacy: .public)"
+                "自动保存加入身份失败：\(error.localizedDescription, privacy: .public)"
             )
         }
     }
@@ -1021,10 +1267,15 @@ final class SyncSettingsStore: ObservableObject {
     func cancelJoinCreation() async {
         pathBCreatePollTask?.cancel()
         pathBCreatePollTask = nil
+        pendingJoinClearsLocalData = false
         let session = pathBCreateSession
         pathBCreateSession = nil
         pathBCreateCode = nil
         pathBCreatePhase = .canceled
+        if case .createJoinRequest? = pendingJoinStart {
+            pendingJoinStart = nil
+            joinPolicyPrompt = nil
+        }
         if let session {
             await session.cancel()
         }
@@ -1034,10 +1285,15 @@ final class SyncSettingsStore: ObservableObject {
     func resetJoinCreation() {
         pathBCreatePollTask?.cancel()
         pathBCreatePollTask = nil
+        pendingJoinClearsLocalData = false
         pathBCreateSession = nil
         pathBCreateCode = nil
         pathBCreatePhase = .idle
         actionErrorMessage = nil
+        if case .createJoinRequest? = pendingJoinStart {
+            pendingJoinStart = nil
+            joinPolicyPrompt = nil
+        }
     }
 
     // MARK: - Path B：已有设备批准
@@ -1200,6 +1456,14 @@ final class SyncSettingsStore: ObservableObject {
         pathAClaimSession = nil
         pathBCreateSession = nil
         pathBApproveSession = nil
+        pendingJoinStart = nil
+        pendingJoinClearsLocalData = false
+        joinPolicyPrompt = nil
+    }
+
+    private enum PendingJoinStart {
+        case shortCodeClaim(code: String)
+        case createJoinRequest
     }
 
     private enum PairingFlow {
@@ -1224,9 +1488,14 @@ final class SyncSettingsStore: ObservableObject {
         if exception != .pathAClaim {
             pathAClaimPollTask?.cancel()
             pathAClaimPollTask = nil
+            pendingJoinClearsLocalData = false
             let session = pathAClaimSession
             pathAClaimSession = nil
             pathAClaimPhase = .idle
+            if case .shortCodeClaim? = pendingJoinStart {
+                pendingJoinStart = nil
+                joinPolicyPrompt = nil
+            }
             if let session {
                 Task { await session.cancel() }
             }
@@ -1234,10 +1503,15 @@ final class SyncSettingsStore: ObservableObject {
         if exception != .pathBCreate {
             pathBCreatePollTask?.cancel()
             pathBCreatePollTask = nil
+            pendingJoinClearsLocalData = false
             let session = pathBCreateSession
             pathBCreateSession = nil
             pathBCreateCode = nil
             pathBCreatePhase = .idle
+            if case .createJoinRequest? = pendingJoinStart {
+                pendingJoinStart = nil
+                joinPolicyPrompt = nil
+            }
             if let session {
                 Task { await session.cancel() }
             }

@@ -33,6 +33,14 @@ class PairingErrorMessageTest {
     }
 
     @Test
+    fun `旧身份未删除时提示任务与同步状态未改变`() {
+        val message = PairingErrorMessage.from(WebDavPairingException.IdentityNotRemoved)
+
+        assertTrue(message.contains("未能删除"))
+        assertTrue(message.contains("未改变"))
+    }
+
+    @Test
     fun `密钥协商错误不向用户暴露英文实现细节`() {
         val message = PairingErrorMessage.from(
             SyncCryptoException("当前系统无法生成 X25519 临时密钥"),

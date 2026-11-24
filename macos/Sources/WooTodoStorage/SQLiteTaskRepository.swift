@@ -30,6 +30,53 @@ public enum SQLiteRepositoryError: LocalizedError {
     }
 }
 
+/// 加入其他同步空间前，本机会被清空的数据摘要。
+/// 不包含 WebDAV 账号与显示偏好，这两项会保留。
+public struct JoinLocalDataSummary: Equatable, Sendable {
+    public let taskCount: Int
+    public let trashCount: Int
+    public let customCategoryCount: Int
+    /// sync_deferred_upserts + sync_deferred_deletions 的行数。
+    public let deferredChangeCount: Int
+
+    public init(
+        taskCount: Int,
+        trashCount: Int,
+        customCategoryCount: Int,
+        deferredChangeCount: Int
+    ) {
+        self.taskCount = taskCount
+        self.trashCount = trashCount
+        self.customCategoryCount = customCategoryCount
+        self.deferredChangeCount = deferredChangeCount
+    }
+
+    public var hasAnyData: Bool {
+        taskCount > 0
+            || trashCount > 0
+            || customCategoryCount > 0
+            || deferredChangeCount > 0
+    }
+
+    /// 例如：“2 条任务、1 条回收站记录、1 个自定义标签”。
+    public var summaryDescription: String {
+        var parts: [String] = []
+        if taskCount > 0 {
+            parts.append("\(taskCount) 条任务")
+        }
+        if trashCount > 0 {
+            parts.append("\(trashCount) 条回收站记录")
+        }
+        if customCategoryCount > 0 {
+            parts.append("\(customCategoryCount) 个自定义标签")
+        }
+        if deferredChangeCount > 0 {
+            parts.append("\(deferredChangeCount) 条待同步变更")
+        }
+        return parts.isEmpty ? "无本地数据" : parts.joined(separator: "、")
+    }
+}
+
 /// SQLite 不持久化 vault key；应用启动后应从 Keychain 读取并传入。
 public struct SQLiteSyncConfiguration: Sendable {
     public let vaultId: String
@@ -1024,6 +1071,50 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
+    /// 统计加入其他同步空间时会被清空的本地数据。
+    /// 覆盖活动任务、回收站、非默认标签，以及首次绑定时会转成基线的 deferred 变更。
+    public func joinLocalDataSummary() throws -> JoinLocalDataSummary {
+        try withLock {
+            let defaultCategories = Set(TaskCategory.defaults)
+            let customCategoryCount = TaskCategory
+                .normalizeList(try queryCategories())
+                .filter { !defaultCategories.contains($0) }
+                .count
+            let deferredUpserts = try scalarCount(
+                "SELECT COUNT(*) FROM sync_deferred_upserts"
+            )
+            let deferredDeletions = try scalarCount(
+                "SELECT COUNT(*) FROM sync_deferred_deletions"
+            )
+            return JoinLocalDataSummary(
+                taskCount: try scalarCount("SELECT COUNT(*) FROM tasks"),
+                trashCount: try scalarCount("SELECT COUNT(*) FROM trash_tasks"),
+                customCategoryCount: customCategoryCount,
+                deferredChangeCount: deferredUpserts + deferredDeletions
+            )
+        }
+    }
+
+    /// 加入其他同步空间前清空本机任务与同步状态，保留数据库文件、显示偏好与 WebDAV 账号。
+    /// 调用方需要在成功后同时删除本机同步身份，然后才能绑定新空间。
+    public func clearAllLocalTasksAndSyncState() throws {
+        try withLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try execute("DELETE FROM tasks")
+                try execute("DELETE FROM trash_tasks")
+                try execute("DELETE FROM task_categories")
+                try resetSyncMetadata()
+                try execute("COMMIT")
+                syncConfiguration = nil
+                hasPersistedSyncIdentity = false
+            } catch {
+                try? execute("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
     /// 切换同步方式时在同一事务中清理旧空间并绑定新空间，避免留下半重置状态。
     public func replaceSyncBinding(
         with configuration: SQLiteSyncConfiguration,
@@ -1435,6 +1526,21 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
     internal func dropWebDavTableForTesting() throws {
         try withLock {
             try execute("DROP TABLE IF EXISTS sync_webdav_applied_operations")
+        }
+    }
+
+    /// 测试用：让清空本地任务的事务在删除 tasks 时失败，验证回滚与未配对状态。
+    internal func installClearLocalDataFailureTriggerForTesting() throws {
+        try withLock {
+            try execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS fail_clear_local_data
+                BEFORE DELETE ON tasks
+                BEGIN
+                    SELECT RAISE(ABORT, '模拟清空本地任务失败');
+                END
+                """
+            )
         }
     }
 

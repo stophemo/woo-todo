@@ -3,6 +3,7 @@ package com.wootodo.data
 import android.content.ContentValues
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import com.wootodo.domain.TaskCategories
 import com.wootodo.domain.TaskCategory
 import com.wootodo.domain.TaskRecurrence
 import com.wootodo.domain.TaskStatus
@@ -21,6 +22,25 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 
+/**
+ * 加入其他同步空间前，本机会被清空或重新入队的数据摘要。
+ * Android 没有 deferred upsert 表，已进入 outbox 的基线操作计入
+ * [pendingOutboxCount]；[deferredDeletionCount] 对应 sync_deferred_deletions。
+ */
+data class LocalJoinDataSummary(
+    val activeTaskCount: Int = 0,
+    val trashedTaskCount: Int = 0,
+    val customCategoryCount: Int = 0,
+    val pendingOutboxCount: Int = 0,
+    val deferredDeletionCount: Int = 0,
+) {
+    val totalCount: Int
+        get() = activeTaskCount + trashedTaskCount + customCategoryCount +
+            pendingOutboxCount + deferredDeletionCount
+
+    val hasLocalData: Boolean get() = totalCount > 0
+}
+
 interface TaskStore {
     fun observeAll(): Flow<List<TaskEntity>>
 
@@ -33,6 +53,9 @@ interface TaskStore {
     suspend fun replaceCategories(categories: List<TaskCategory>, updatedAt: Long)
 
     suspend fun getById(id: String): TaskEntity?
+
+    /** 加入其他空间前本机是否还有会被清空或重新入队的数据。 */
+    suspend fun localJoinDataSummary(): LocalJoinDataSummary = LocalJoinDataSummary()
 
     suspend fun deletedTaskIds(): Set<String> = emptySet()
 
@@ -123,6 +146,19 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
     override suspend fun getById(id: String): TaskEntity? = withContext(Dispatchers.IO) {
         getById(database.readableDatabase, id)
     }
+
+    override suspend fun localJoinDataSummary(): LocalJoinDataSummary =
+        withContext(Dispatchers.IO) {
+            val sqlite = database.readableDatabase
+            val categories = queryCategories()
+            LocalJoinDataSummary(
+                activeTaskCount = sqlite.countRows(TABLE_TASKS),
+                trashedTaskCount = sqlite.countRows(SQLiteTrashTable.TABLE),
+                customCategoryCount = categories.count { it !in TaskCategories.defaults },
+                pendingOutboxCount = sqlite.countRows(TABLE_SYNC_OUTBOX),
+                deferredDeletionCount = sqlite.countRows(TABLE_DEFERRED_DELETIONS),
+            )
+        }
 
     override suspend fun insert(task: TaskEntity): Unit = withContext(Dispatchers.IO) {
         val sqlite = database.writableDatabase
@@ -629,8 +665,17 @@ class SQLiteTaskStore(private val database: TaskDatabase) : TaskStore {
         )
     }
 
+    private fun SQLiteDatabase.countRows(table: String): Int = rawQuery(
+        "SELECT COUNT(*) FROM $table",
+        null,
+    ).use { cursor ->
+        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+    }
+
     private companion object {
         const val TABLE_TASKS = "tasks"
         const val TABLE_CATEGORIES = "task_categories"
+        const val TABLE_SYNC_OUTBOX = "sync_outbox"
+        const val TABLE_DEFERRED_DELETIONS = "sync_deferred_deletions"
     }
 }

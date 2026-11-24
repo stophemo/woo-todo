@@ -40,42 +40,16 @@ class WebDavPairingTest {
         val claimInfo = creator.awaitOfferClaim(offer)
 
         assertEquals(claim.verificationCode, claimInfo.verificationCode)
+        // 持有空间方显示加入方设备名/平台与核对码，用于唯一一次“批准加入”。
+        assertEquals("Pixel", claimInfo.deviceName)
+        assertEquals(DevicePlatform.ANDROID, claimInfo.platform)
         creator.approveOffer(offer, claimInfo, identity)
-        var confirmation: WebDavPairingConfirmation? = null
-        val result = joiner.awaitOfferApproval(claim) { confirmation = it }
+        val result = joiner.awaitOfferApproval(claim)
 
-        assertEquals(claim.verificationCode, confirmation!!.verificationCode)
-        assertEquals("MacBook", confirmation!!.peerDeviceName)
-        assertEquals(identity.vaultId, confirmation!!.vaultId)
         assertEquals(identity.vaultId, result.vaultId)
         assertEquals("device-android-0001", result.deviceId)
         assertArrayEquals(identity.vaultKey, result.vaultKey)
         assertTrue(store.files.isEmpty())
-    }
-
-    @Test
-    fun `PathA新设备必须本地确认后才返回身份`() = runBlocking {
-        val store = MemoryPairingStore()
-        val creator = coordinator(store, code = "123456", pairingId = "pairing-confirm-a")
-        val offer = creator.createOffer(identity, "MacBook")
-        val joiner = coordinator(store, code = "654321", pairingId = "pairing-confirm-a-claim")
-        val claim = joiner.claimOffer(
-            joiner.findOffer("123456"),
-            "Pixel",
-            deviceId = "device-android-confirm",
-        )
-        val info = creator.awaitOfferClaim(offer)
-        creator.approveOffer(offer, info, identity)
-
-        assertThrows(IllegalStateException::class.java) {
-            runBlocking {
-                joiner.awaitOfferApproval(claim) {
-                    throw IllegalStateException("用户未确认核对码")
-                }
-            }
-        }
-        // 未确认时不会删除 approval，身份也未返回给调用方。
-        assertNotNull(store.files[PairingFileNames.approval(offer.pairingId)])
     }
 
     @Test
@@ -116,19 +90,14 @@ class WebDavPairingTest {
         approver.approveJoin(target, identity)
 
         var resolution: WebDavJoinResolution? = null
-        var confirmation: WebDavPairingConfirmation? = null
         val result = creator.awaitJoinCompletion(
             join,
             onResolution = { resolution = it },
-            confirm = { confirmation = it },
         )
 
         assertNotNull(resolution)
         assertEquals(target.verificationCode, resolution!!.verificationCode)
         assertEquals("MacBook", resolution!!.approverName)
-        assertEquals(target.verificationCode, confirmation!!.verificationCode)
-        assertEquals("MacBook", confirmation!!.peerDeviceName)
-        assertEquals(identity.vaultId, confirmation!!.vaultId)
         assertEquals(identity.vaultId, result.vaultId)
         assertEquals("device-android-0001", result.deviceId)
         assertArrayEquals(identity.vaultKey, result.vaultKey)
@@ -155,21 +124,16 @@ class WebDavPairingTest {
                 if (polls > 2) throw StopPolling()
             },
         )
-        var confirmed = false
         assertThrows(StopPolling::class.java) {
             runBlocking {
-                gated.awaitJoinCompletion(
-                    join,
-                    onResolution = {},
-                    confirm = { confirmed = true },
-                )
+                gated.awaitJoinCompletion(join, onResolution = {})
             }
         }
-        assertFalse(confirmed)
+        assertNotNull(store.files[PairingFileNames.approval(join.pairingId)])
     }
 
     @Test
-    fun `PathB先收到approval时等resolve到达后才处理并需要本地确认`() = runBlocking {
+    fun `PathB先收到approval时等resolve到达后才处理并自动采纳身份`() = runBlocking {
         val store = MemoryPairingStore()
         val creator = coordinator(store, code = "654321", pairingId = "pairing-b-late-resolve")
         val join = creator.createJoin("Pixel", deviceId = "device-android-late")
@@ -190,36 +154,14 @@ class WebDavPairingTest {
             },
         )
         var resolution: WebDavJoinResolution? = null
-        var confirmation: WebDavPairingConfirmation? = null
         val result = gated.awaitJoinCompletion(
             join,
             onResolution = { resolution = it },
-            confirm = { confirmation = it },
         )
 
         assertEquals(target.verificationCode, resolution!!.verificationCode)
-        assertEquals(target.verificationCode, confirmation!!.verificationCode)
         assertArrayEquals(identity.vaultKey, result.vaultKey)
-    }
-
-    @Test
-    fun `PathB本地未确认核对码时不会返回身份`() = runBlocking {
-        val store = MemoryPairingStore()
-        val creator = coordinator(store, code = "654321", pairingId = "pairing-b-decline")
-        val join = creator.createJoin("Pixel", deviceId = "device-android-decline")
-        val approver = coordinator(store, code = "111111", pairingId = "pairing-b-decline-app")
-        val target = approver.resolveJoin(approver.findJoin("654321"), identity, "MacBook")
-        approver.approveJoin(target, identity)
-
-        assertThrows(IllegalStateException::class.java) {
-            runBlocking {
-                creator.awaitJoinCompletion(
-                    join,
-                    confirm = { throw IllegalStateException("用户未确认核对码") },
-                )
-            }
-        }
-        assertNotNull(store.files[PairingFileNames.approval(join.pairingId)])
+        assertTrue(store.files.isEmpty())
     }
 
     @Test
@@ -242,9 +184,11 @@ class WebDavPairingTest {
 
         assertThrows(WebDavPairingException.InvalidApproval::class.java) {
             runBlocking {
-                creator.awaitJoinCompletion(join, confirm = {})
+                creator.awaitJoinCompletion(join)
             }
         }
+        // 校验失败不会自动删除 approval，也不会返回身份。
+        assertNotNull(store.files[approvalName])
         }
     }
 
@@ -326,7 +270,7 @@ class WebDavPairingTest {
         assertEquals(claim.verificationCode, info.verificationCode)
         creator.approveOffer(offerSession, info, identity)
 
-        val result = joiner.awaitOfferApproval(claim) {}
+        val result = joiner.awaitOfferApproval(claim)
         assertArrayEquals(identity.vaultKey, result.vaultKey)
         assertFalse(store.files.containsKey(offer.fileName))
     }
@@ -381,7 +325,7 @@ class WebDavPairingTest {
             clockMillis = { clock.now },
             pause = {},
         )
-        val result = flakyCoordinator.awaitOfferApproval(claim) {}
+        val result = flakyCoordinator.awaitOfferApproval(claim)
 
         assertArrayEquals(identity.vaultKey, result.vaultKey)
         assertEquals(0, flaky.failures)
@@ -457,8 +401,10 @@ class WebDavPairingTest {
             store.files[approvalName] = approval.copy(deviceId = "device-android-0009").encode()
 
             assertThrows(WebDavPairingException.InvalidApproval::class.java) {
-                runBlocking { joiner.awaitOfferApproval(claim) {} }
+                runBlocking { joiner.awaitOfferApproval(claim) }
             }
+            // 自动保存失败时保留批准文件，便于重试或排查。
+            assertNotNull(store.files[approvalName])
         }
     }
 

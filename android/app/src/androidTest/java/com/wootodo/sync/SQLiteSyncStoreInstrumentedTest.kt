@@ -3,6 +3,7 @@ package com.wootodo.sync
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.wootodo.data.LocalJoinDataSummary
 import com.wootodo.data.SQLiteTaskStore
 import com.wootodo.data.TaskDatabase
 import com.wootodo.data.TaskEntity
@@ -126,6 +127,135 @@ class SQLiteSyncStoreInstrumentedTest {
             setOf(task.id),
             replacementStore.pendingOperations(50).map { it.entityId }.toSet(),
         )
+    }
+
+    @Test
+    fun `清空本地任务与同步状态保留账号和显示偏好并可绑定新身份`() = runBlocking {
+        val account = WebDavAccount(
+            endpoint = "https://sync.example.test/dav",
+            username = "user",
+            appPassword = "app-password",
+        )
+        val accountStore = AndroidWebDavCredentialsStore(context)
+        accountStore.delete()
+        accountStore.saveAccount(account)
+        try {
+            val taskStore = SQLiteTaskStore(database)
+            val syncStore = SQLiteSyncStore(database, credentials)
+            val display = displayConfiguration("保留显示偏好")
+            writeDisplayConfiguration(
+                database.writableDatabase,
+                display,
+                isLocalOverride = false,
+            )
+            taskStore.replaceCategories(
+                TaskCategories.normalizeList(
+                    TaskCategories.defaults + TaskCategory("work", "工作", 4),
+                ),
+                2_000,
+            )
+            val kept = localTask("task-clear-kept", "将被清空")
+            val trashed = localTask("task-clear-trash", "回收站清空")
+            taskStore.insert(kept)
+            taskStore.insert(trashed)
+            assertTrue(taskStore.deletePending(trashed.id, 3_000))
+            syncStore.acknowledgeOperations(
+                syncStore.pendingOperations(50).map { it.opId },
+            )
+            syncStore.applyRemoteOperations(
+                listOf(
+                    operation(
+                        serverSeq = 1,
+                        opId = "op-clear-remote",
+                        lamport = 10,
+                        payload = remoteTask("task-clear-remote", "远端任务"),
+                    ),
+                ),
+                advancingCursorTo = 1,
+            )
+            syncStore.markWebDavOperationsSkipped(listOf("op-webdav-applied"))
+            assertEquals(0, rowCount("sync_outbox"))
+            assertTrue(rowCount("sync_entity_versions") > 0)
+            assertTrue(rowCount("sync_tombstones") > 0)
+            assertTrue(rowCount("sync_applied_operations") > 0)
+            assertTrue(rowCount("sync_webdav_applied_operations") > 0)
+
+            SQLiteSyncStore.clearAllLocalTasks(database)
+
+            assertEquals(0, rowCount("tasks"))
+            assertEquals(0, rowCount("trash_tasks"))
+            assertEquals(
+                TaskCategories.defaults.map { it.id to it.name },
+                taskStore.getCategories().map { it.id to it.name },
+            )
+            assertEquals(display, readDisplayConfiguration(database.readableDatabase))
+            assertTrue(readDisplayConfigurationLocalOverride(database.readableDatabase))
+            assertEquals(0, rowCount("sync_outbox"))
+            assertEquals(0, rowCount("sync_entity_versions"))
+            assertEquals(0, rowCount("sync_tombstones"))
+            assertEquals(0, rowCount("sync_applied_operations"))
+            assertEquals(0, rowCount("sync_webdav_applied_operations"))
+            assertEquals(0, rowCount("sync_deferred_deletions"))
+            assertEquals("" to "", boundIdentity())
+            assertEquals(account, accountStore.loadAccount())
+
+            val replacement = SyncCredentials(
+                endpoint = "https://replacement.example.test",
+                vaultId = "vault-after-clear",
+                deviceId = "device-after-clear",
+                deviceToken = Base64Url.encode(ByteArray(32) { 21 }),
+                vaultKey = ByteArray(32) { (it + 51).toByte() },
+            )
+            val replacementStore = SQLiteSyncStore(database, replacement)
+            assertEquals(replacement.vaultId to replacement.deviceId, boundIdentity())
+            assertTrue(replacementStore.pendingOperations(50).isEmpty())
+
+            taskStore.insert(localTask("task-after-clear", "新空间任务"))
+            assertEquals(
+                listOf("task-after-clear"),
+                replacementStore.pendingOperations(50).map { it.entityId },
+            )
+        } finally {
+            accountStore.deleteAccount()
+            accountStore.deleteIdentity()
+        }
+    }
+
+    @Test
+    fun `加入前本地数据摘要覆盖任务回收站标签与待同步记录`() = runBlocking {
+        val taskStore = SQLiteTaskStore(database)
+        assertEquals(LocalJoinDataSummary(), taskStore.localJoinDataSummary())
+
+        val active = localTask("task-summary-active", "活动任务")
+        val trashed = localTask("task-summary-trash", "回收站任务")
+        taskStore.insert(active)
+        taskStore.insert(trashed)
+        assertTrue(taskStore.deletePending(trashed.id, 2_000))
+        taskStore.replaceCategories(
+            TaskCategories.normalizeList(
+                TaskCategories.defaults + TaskCategory("work", "工作", 1),
+            ),
+            3_000,
+        )
+
+        val beforeBinding = taskStore.localJoinDataSummary()
+        assertEquals(1, beforeBinding.activeTaskCount)
+        assertEquals(1, beforeBinding.trashedTaskCount)
+        assertEquals(1, beforeBinding.customCategoryCount)
+        assertEquals(1, beforeBinding.deferredDeletionCount)
+        assertEquals(0, beforeBinding.pendingOutboxCount)
+
+        // 绑定会把活动任务、延迟删除与自定义标签作为基线重新入队。
+        val syncStore = SQLiteSyncStore(database, credentials)
+        val boundSummary = taskStore.localJoinDataSummary()
+        assertEquals(1, boundSummary.activeTaskCount)
+        assertEquals(1, boundSummary.trashedTaskCount)
+        assertEquals(1, boundSummary.customCategoryCount)
+        assertEquals(3, boundSummary.pendingOutboxCount)
+        assertEquals(0, boundSummary.deferredDeletionCount)
+
+        syncStore.acknowledgeOperations(syncStore.pendingOperations(50).map { it.opId })
+        assertEquals(0, taskStore.localJoinDataSummary().pendingOutboxCount)
     }
 
     @Test
@@ -1091,7 +1221,9 @@ class SQLiteSyncStoreInstrumentedTest {
             "sync_entity_versions",
             "sync_tombstones",
             "sync_deferred_deletions",
+            "sync_webdav_applied_operations",
             "task_categories",
+            "trash_tasks",
         )
     }
 }

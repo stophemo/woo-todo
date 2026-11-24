@@ -15,6 +15,7 @@ import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.reminder.TaskReminderScheduler
 import com.wootodo.sync.AndroidWebDavCredentialsStore
 import com.wootodo.sync.AutomaticSyncRequestGate
+import com.wootodo.sync.JoinLocalDataReset
 import com.wootodo.sync.LegacySyncNotice
 import com.wootodo.sync.SQLiteSyncStore
 import com.wootodo.sync.SyncBindingConflictException
@@ -35,6 +36,7 @@ import com.wootodo.sync.WebDavSyncRunner
 import com.wootodo.sync.bindPairedSyncStore
 import com.wootodo.sync.newWebDavIdentity
 import com.wootodo.sync.readDisplayConfiguration
+import com.wootodo.sync.withIdentityRollback
 import com.wootodo.sync.writeDisplayConfiguration
 import com.wootodo.ui.DeviceName
 import com.wootodo.widget.TodayWidgetUpdater
@@ -278,19 +280,20 @@ class WooTodoApplication : Application() {
                     }
                 }
                 try {
-                    bindStoredIdentity(
-                        identity,
-                        replaced = previous != null,
-                        remoteLamportFloor = remoteLamportFloor,
-                    )
+                    withIdentityRollback(
+                        previous = previous,
+                        saveIdentity = webDavCredentialsStore::saveIdentity,
+                        deleteIdentity = webDavCredentialsStore::deleteIdentity,
+                    ) {
+                        bindStoredIdentity(
+                            identity,
+                            replaced = previous != null,
+                            remoteLamportFloor = remoteLamportFloor,
+                        )
+                    }
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
-                    if (previous == null) {
-                        webDavCredentialsStore.deleteIdentity()
-                    } else {
-                        webDavCredentialsStore.saveIdentity(previous)
-                    }
                     val fallbackConfigured = activeSyncConfigured()
                     syncRuntime.refreshConfiguration(fallbackConfigured)
                     if (fallbackConfigured) {
@@ -347,6 +350,43 @@ class WooTodoApplication : Application() {
             syncStatusPreferences.clear()
         }
         syncRuntime.refreshConfiguration(false)
+    }
+
+    /**
+     * 加入其他空间前清空本机任务、回收站、分类与同步状态，保留 WebDAV 账号与显示偏好。
+     * 必须先删除并确认旧身份，确认后才停止同步并原子清空任务；任一步失败都不会采纳新身份。
+     */
+    suspend fun clearLocalTasksForJoin() {
+        val previousCredentials = withContext(Dispatchers.IO) {
+            runCatching { webDavCredentialsStore.load() }.getOrNull()
+        }
+        syncRuntime.withExclusiveConfiguration {
+            withContext(Dispatchers.IO) {
+                JoinLocalDataReset(
+                    deleteIdentity = { webDavCredentialsStore.deleteIdentity() },
+                    loadIdentity = { webDavCredentialsStore.loadIdentity() },
+                    stopSync = { SyncJobScheduler.cancel(this@WooTodoApplication) },
+                    clearLocalData = { SQLiteSyncStore.clearAllLocalTasks(database) },
+                    onUnpaired = {
+                        // 身份已确认删除：无论任务清空成败都回到未配对并刷新本地展示。
+                        syncStatusPreferences.clear()
+                        syncRuntime.refreshConfiguration(false)
+                        taskStore.invalidateFromSync()
+                        taskStore.invalidateCategoriesFromSync()
+                        runCatching {
+                            TodayWidgetUpdater.updateAll(this@WooTodoApplication)
+                        }
+                        runCatching {
+                            TaskReminderScheduler.scheduleAll(this@WooTodoApplication)
+                        }
+                        // 心跳删除是尽力而为：失败不能阻止本地清空或加入流程。
+                        previousCredentials?.let { credentials ->
+                            deleteWebDavHeartbeat(credentials.account, credentials.identity)
+                        }
+                    },
+                ).reset()
+            }
+        }
     }
 
     suspend fun synchronizeManually(): SyncExecutionResult {

@@ -18,7 +18,14 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
+import com.wootodo.data.LocalJoinDataSummary
 import com.wootodo.sync.DevicePlatform
+import com.wootodo.sync.JoinIdentityAdoption
+import com.wootodo.sync.JoinPolicy
+import com.wootodo.sync.JoinPolicyChoice
+import com.wootodo.sync.JoinPolicyDecider
+import com.wootodo.sync.JoinPreparation
+import com.wootodo.sync.JoinPreparationResult
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRuntimeState
 import com.wootodo.sync.WebDavAccount
@@ -31,7 +38,6 @@ import com.wootodo.sync.WebDavEndpointPolicy
 import com.wootodo.sync.WebDavJoinSession
 import com.wootodo.sync.WebDavJoinTarget
 import com.wootodo.sync.WebDavOfferSession
-import com.wootodo.sync.WebDavPairingConfirmation
 import com.wootodo.sync.WebDavPairingCoordinator
 import com.wootodo.sync.WebDavPairingStoreClient
 import java.time.Instant
@@ -99,7 +105,9 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private var claimSession: WebDavClaimSession? = null
     private var joinSession: WebDavJoinSession? = null
     private var joinTarget: WebDavJoinTarget? = null
-    private var pendingConfirmation: CompletableDeferred<Unit>? = null
+    private var joinPolicyDialog: AlertDialog? = null
+    private var pendingJoinDecision: CompletableDeferred<JoinPolicyChoice>? = null
+    private var pendingApproval: CompletableDeferred<Unit>? = null
     private var currentAccount: WebDavAccount? = null
     private var currentCredentials: WebDavCredentials? = null
     private var lastSuccessfulSyncAt: Long? = null
@@ -186,6 +194,9 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.action_enter_new_device_code).setOnClickListener {
             startJoinApprover()
+        }
+        findViewById<View>(R.id.action_enter_join_code).setOnClickListener {
+            startClaimOffer()
         }
         findViewById<View>(R.id.space_sync_now).setOnClickListener {
             synchronizeNow()
@@ -425,7 +436,14 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         hidePanel()
         panelMode = PanelMode.CLAIM_OFFER
         panelCoordinator = coordinatorFor(account)
-        beginPanel(R.string.cross_device_enter_code, getString(R.string.cross_device_input_code_hint))
+        beginPanel(
+            if (currentCredentials != null) {
+                R.string.cross_device_enter_join_code
+            } else {
+                R.string.cross_device_enter_code
+            },
+            getString(R.string.cross_device_input_code_hint),
+        )
         panelCode.isVisible = true
         panelCode.setCode("")
         panelCode.setEditable(true)
@@ -454,31 +472,54 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             var session: WebDavClaimSession? = null
             try {
                 val offer = withContext(Dispatchers.IO) { coordinator.findOffer(code) }
+                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
+                // 先按本机身份/任务量确认数据基准，再写入 claim；需要清空时推迟到批准成功后。
+                val clearLocalDataAfterApproval = when (
+                    val result = joinPreparation().prepare(offer.deviceName, offer.platform)
+                ) {
+                    is JoinPreparationResult.Ready -> result.clearLocalDataAfterApproval
+                    JoinPreparationResult.UseLocalData -> {
+                        cancelJoinWithMessage(R.string.cross_device_join_use_local_hint)
+                        return@launch
+                    }
+                    JoinPreparationResult.Cancelled -> {
+                        cancelJoinWithMessage(R.string.cross_device_pairing_canceled)
+                        return@launch
+                    }
+                }
+                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
+                setPanelStatus(getString(R.string.pairing_claiming))
                 session = withContext(Dispatchers.IO) {
                     coordinator.claimOffer(
                         offer,
                         DeviceName.current(this@CrossDeviceSettingsActivity),
                     )
                 }
-                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
                 claimSession = session
+                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
                 panelCode.isVisible = false
                 showVerification(session.verificationCode)
                 setPanelStatus(getString(R.string.cross_device_waiting_approval))
-                val identity = withContext(Dispatchers.IO) {
-                    coordinator.awaitOfferApproval(session) { confirmation ->
-                        confirmJoin(confirmation, generation, PanelMode.CLAIM_OFFER)
-                    }
-                }
-                claimSession = null
-                session = null
-                withContext(Dispatchers.IO) { app.adoptWebDavIdentity(identity) }
+                // approval 到达后按加入策略清空本机数据并自动保存身份。
+                val activeSession = session ?: return@launch
+                val identity = joinIdentityAdoption(generation).awaitAndAdopt(
+                    clearLocalDataAfterApproval = clearLocalDataAfterApproval,
+                    awaitIdentity = {
+                        withContext(Dispatchers.IO) {
+                            coordinator.awaitOfferApproval(activeSession)
+                        }.also {
+                            claimSession = null
+                            session = null
+                        }
+                    },
+                )
                 if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
-                session = null
                 hidePanel()
                 lastSuccessfulSyncAt = null
-                showTransient(R.string.pairing_succeeded)
                 render()
+                showTransient(
+                    getString(R.string.cross_device_joined_space, shortVaultId(identity.vaultId)),
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -529,15 +570,15 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                         R.string.cross_device_claimed_by_device,
                         claimed.deviceName,
                         platformLabel(claimed.platform),
-                    ),
+                    ) + "\n" + getString(R.string.cross_device_approve_warning),
                 )
                 val confirmation = CompletableDeferred<Unit>()
-                pendingConfirmation = confirmation
-                panelPrimary.setText(R.string.cross_device_confirm_binding)
+                pendingApproval = confirmation
+                panelPrimary.setText(R.string.cross_device_approve_device)
                 panelPrimary.isVisible = true
                 panelPrimary.setOnClickListener { confirmation.complete(Unit) }
                 confirmation.await()
-                pendingConfirmation = null
+                pendingApproval = null
                 if (!isCurrentPairing(generation)) return@launch
                 panelCancel.isEnabled = false
                 withContext(Dispatchers.IO) {
@@ -617,49 +658,75 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         panelCode.setEditable(false)
         panelCancel.setOnClickListener { cancelPairingFlow() }
         operationJob = lifecycleScope.launch {
+            var session: WebDavJoinSession? = null
             try {
-                val session = withContext(Dispatchers.IO) {
+                // 先按本机身份/任务量确认数据基准，再创建 join 配对文件；需要清空时推迟到批准成功后。
+                val clearLocalDataAfterApproval = when (
+                    val result = joinPreparation().prepare(null, null)
+                ) {
+                    is JoinPreparationResult.Ready -> result.clearLocalDataAfterApproval
+                    JoinPreparationResult.UseLocalData -> {
+                        cancelJoinWithMessage(R.string.cross_device_join_use_local_hint)
+                        return@launch
+                    }
+                    JoinPreparationResult.Cancelled -> {
+                        cancelJoinWithMessage(R.string.cross_device_pairing_canceled)
+                        return@launch
+                    }
+                }
+                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
+                setPanelStatus(getString(R.string.pairing_short_code_creating))
+                session = withContext(Dispatchers.IO) {
                     coordinator.createJoin(DeviceName.current(this@CrossDeviceSettingsActivity))
                 }
                 joinSession = session
                 if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
                 panelCode.setCode(session.code)
                 setPanelStatus(getString(R.string.pairing_short_code_waiting))
-                val identity = withContext(Dispatchers.IO) {
-                    coordinator.awaitJoinCompletion(
-                        session = session,
-                        onResolution = { resolution ->
-                            runOnUiThread {
-                                if (panelMode != PanelMode.JOIN_CREATOR ||
-                                    !isCurrentPairing(generation)
-                                ) {
-                                    return@runOnUiThread
-                                }
-                                showVerification(resolution.verificationCode)
-                                if (resolution.approverName != null) {
-                                    setPanelStatus(
-                                        getString(
-                                            R.string.cross_device_resolved_by_device,
-                                            resolution.approverName,
-                                        ),
-                                    )
-                                } else {
-                                    setPanelStatus(getString(R.string.cross_device_waiting_approval))
-                                }
-                            }
-                        },
-                        confirm = { confirmation ->
-                            confirmJoin(confirmation, generation, PanelMode.JOIN_CREATOR)
-                        },
-                    )
-                }
-                joinSession = null
-                withContext(Dispatchers.IO) { app.adoptWebDavIdentity(identity) }
+                // approval 到达后按加入策略清空本机数据并自动保存身份。
+                val activeSession = session ?: return@launch
+                val identity = joinIdentityAdoption(generation).awaitAndAdopt(
+                    clearLocalDataAfterApproval = clearLocalDataAfterApproval,
+                    awaitIdentity = {
+                        withContext(Dispatchers.IO) {
+                            coordinator.awaitJoinCompletion(
+                                session = activeSession,
+                                onResolution = { resolution ->
+                                    runOnUiThread {
+                                        if (panelMode != PanelMode.JOIN_CREATOR ||
+                                            !isCurrentPairing(generation)
+                                        ) {
+                                            return@runOnUiThread
+                                        }
+                                        showVerification(resolution.verificationCode)
+                                        if (resolution.approverName != null) {
+                                            setPanelStatus(
+                                                getString(
+                                                    R.string.cross_device_resolved_by_device,
+                                                    resolution.approverName,
+                                                ),
+                                            )
+                                        } else {
+                                            setPanelStatus(
+                                                getString(R.string.cross_device_waiting_approval),
+                                            )
+                                        }
+                                    }
+                                },
+                            )
+                        }.also {
+                            joinSession = null
+                            session = null
+                        }
+                    },
+                )
                 if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
                 hidePanel()
                 lastSuccessfulSyncAt = null
-                showTransient(R.string.pairing_succeeded)
                 render()
+                showTransient(
+                    getString(R.string.cross_device_joined_space, shortVaultId(identity.vaultId)),
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -724,15 +791,15 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                         R.string.cross_device_device_wants_to_join,
                         target.deviceName,
                         platformLabel(target.platform),
-                    ),
+                    ) + "\n" + getString(R.string.cross_device_approve_warning),
                 )
                 val confirmation = CompletableDeferred<Unit>()
-                pendingConfirmation = confirmation
+                pendingApproval = confirmation
                 panelPrimary.setText(R.string.cross_device_approve_device)
                 panelPrimary.isVisible = true
                 panelPrimary.setOnClickListener { confirmation.complete(Unit) }
                 confirmation.await()
-                pendingConfirmation = null
+                pendingApproval = null
                 if (!isCurrentPairing(generation)) return@launch
                 panelCancel.isEnabled = false
                 withContext(Dispatchers.IO) {
@@ -791,57 +858,153 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun joinPreparation(): JoinPreparation = JoinPreparation(
+        policyFor = ::loadJoinPolicy,
+        choose = ::askJoinPolicy,
+    )
+
     /**
-     * 新设备解封 vaultKey 后必须由本机用户核对六位核对码、对端设备与空间指纹，
-     * 点击“核对一致，完成加入”后才返回，让调用方继续保存身份。
+     * 配对批准成功后的本地收尾：需要清空时先删除旧身份、停止同步并原子清空任务，
+     * 全部成功后才采纳新身份；任一步失败都会抛出且不会采纳新身份。
      */
-    private suspend fun confirmJoin(
-        confirmation: WebDavPairingConfirmation,
-        generation: Int,
-        mode: PanelMode,
-    ) {
-        withContext(Dispatchers.Main) {
-            if (panelMode != mode || !isCurrentPairing(generation) ||
-                isFinishing || isDestroyed
-            ) {
-                throw CancellationException("配对面板已关闭")
-            }
-            showVerification(confirmation.verificationCode)
-            val peer = confirmation.peerDeviceName
-            val platform = confirmation.peerPlatform
-            setPanelStatus(
-                when {
-                    peer != null && platform != null -> getString(
-                        R.string.cross_device_verify_peer_with_platform,
-                        peer,
-                        platformLabel(platform),
-                        shortVaultId(confirmation.vaultId),
-                    )
-                    peer != null -> getString(
-                        R.string.cross_device_verify_peer,
-                        peer,
-                        shortVaultId(confirmation.vaultId),
-                    )
-                    else -> getString(
-                        R.string.cross_device_verify_space,
-                        shortVaultId(confirmation.vaultId),
-                    )
-                },
-            )
-            val gate = CompletableDeferred<Unit>()
-            pendingConfirmation = gate
-            panelPrimary.setText(R.string.cross_device_confirm_join)
-            panelPrimary.isVisible = true
-            panelPrimary.setOnClickListener { gate.complete(Unit) }
-            try {
-                gate.await()
-            } finally {
-                if (pendingConfirmation === gate) pendingConfirmation = null
-                panelPrimary.isVisible = false
-                panelPrimary.setOnClickListener(null)
-            }
-            setPanelStatus(getString(R.string.pairing_saving))
+    private fun joinIdentityAdoption(generation: Int): JoinIdentityAdoption =
+        JoinIdentityAdoption(
+            clearLocalData = {
+                withContext(Dispatchers.Main) {
+                    if (isCurrentPairing(generation) && !isFinishing && !isDestroyed) {
+                        setPanelStatus(getString(R.string.cross_device_clearing_local_data))
+                    }
+                }
+                withContext(Dispatchers.IO) { app.clearLocalTasksForJoin() }
+            },
+            adoptIdentity = { identity ->
+                withContext(Dispatchers.Main) {
+                    if (isCurrentPairing(generation) && !isFinishing && !isDestroyed) {
+                        setPanelStatus(getString(R.string.pairing_saving))
+                    }
+                }
+                withContext(Dispatchers.IO) { app.adoptWebDavIdentity(identity) }
+            },
+        )
+
+    private suspend fun loadJoinPolicy(
+        peerDeviceName: String?,
+        peerPlatform: DevicePlatform?,
+    ): JoinPolicy = withContext(Dispatchers.IO) {
+        val identity = app.activeSyncCredentials()?.identity
+        JoinPolicyDecider.decide(
+            hasIdentity = identity != null,
+            localVaultId = identity?.vaultId,
+            lastSyncedAt = app.syncStatusPreferences.lastSuccessfulSyncAt(),
+            peerDeviceName = peerDeviceName,
+            peerPlatform = peerPlatform,
+            localData = if (identity == null) {
+                app.taskStore.localJoinDataSummary()
+            } else {
+                LocalJoinDataSummary()
+            },
+        )
+    }
+
+    private suspend fun askJoinPolicy(policy: JoinPolicy): JoinPolicyChoice =
+        when (policy) {
+            JoinPolicy.JoinDirectly -> JoinPolicyChoice.Continue
+            is JoinPolicy.ClearLocalTasks -> showClearTasksDialog(policy.dataCount)
+            is JoinPolicy.ChooseSpace -> showChooseSpaceDialog(policy)
         }
+
+    private suspend fun showClearTasksDialog(dataCount: Int): JoinPolicyChoice {
+        val gate = CompletableDeferred<JoinPolicyChoice>()
+        val dialog = withContext(Dispatchers.Main) {
+            AlertDialog.Builder(this@CrossDeviceSettingsActivity)
+                .setTitle(R.string.cross_device_join_clear_title)
+                .setMessage(
+                    getString(R.string.cross_device_join_clear_message, dataCount),
+                )
+                .setPositiveButton(R.string.cross_device_join_clear_continue) { _, _ ->
+                    gate.complete(JoinPolicyChoice.Continue)
+                }
+                .setNegativeButton(R.string.cancel) { _, _ ->
+                    gate.complete(JoinPolicyChoice.Cancel)
+                }
+                .setOnCancelListener { gate.complete(JoinPolicyChoice.Cancel) }
+                .create()
+                .also {
+                    joinPolicyDialog = it
+                    pendingJoinDecision = gate
+                    it.show()
+                }
+        }
+        if (isFinishing || isDestroyed) {
+            dialog.dismiss()
+            throw CancellationException("页面已关闭")
+        }
+        return try {
+            gate.await()
+        } finally {
+            if (joinPolicyDialog === dialog) joinPolicyDialog = null
+            if (pendingJoinDecision === gate) pendingJoinDecision = null
+            if (dialog.isShowing) dialog.dismiss()
+        }
+    }
+
+    private suspend fun showChooseSpaceDialog(policy: JoinPolicy.ChooseSpace): JoinPolicyChoice {
+        val gate = CompletableDeferred<JoinPolicyChoice>()
+        val peer = if (policy.peerDeviceName != null && policy.peerPlatform != null) {
+            "${policy.peerDeviceName} · ${platformLabel(policy.peerPlatform)}"
+        } else {
+            getString(R.string.cross_device_join_peer_unknown)
+        }
+        val lastSync = policy.lastSyncedAt?.let { lastSyncAt ->
+            timeFormatter.format(
+                Instant.ofEpochMilli(lastSyncAt).atZone(ZoneId.systemDefault()),
+            )
+        } ?: getString(R.string.cross_device_join_last_sync_never)
+        val dialog = withContext(Dispatchers.Main) {
+            AlertDialog.Builder(this@CrossDeviceSettingsActivity)
+                .setTitle(R.string.cross_device_join_choose_title)
+                .setMessage(
+                    getString(
+                        R.string.cross_device_join_choose_message,
+                        shortVaultId(policy.localVaultId),
+                        lastSync,
+                        peer,
+                    ),
+                )
+                .setPositiveButton(R.string.cross_device_join_choose_peer) { _, _ ->
+                    gate.complete(JoinPolicyChoice.Continue)
+                }
+                .setNeutralButton(R.string.cross_device_join_choose_local) { _, _ ->
+                    gate.complete(JoinPolicyChoice.UseLocalData)
+                }
+                .setNegativeButton(R.string.cancel) { _, _ ->
+                    gate.complete(JoinPolicyChoice.Cancel)
+                }
+                .setOnCancelListener { gate.complete(JoinPolicyChoice.Cancel) }
+                .create()
+                .also {
+                    joinPolicyDialog = it
+                    pendingJoinDecision = gate
+                    it.show()
+                }
+        }
+        if (isFinishing || isDestroyed) {
+            dialog.dismiss()
+            throw CancellationException("页面已关闭")
+        }
+        return try {
+            gate.await()
+        } finally {
+            if (joinPolicyDialog === dialog) joinPolicyDialog = null
+            if (pendingJoinDecision === gate) pendingJoinDecision = null
+            if (dialog.isShowing) dialog.dismiss()
+        }
+    }
+
+    /** 结束本次加入并提示原因；hidePanel 会同时取消当前任务与清理配对文件。 */
+    private fun cancelJoinWithMessage(@StringRes messageRes: Int) {
+        hidePanel()
+        showTransient(messageRes)
     }
 
     private fun synchronizeNow(quiet: Boolean = false) {
@@ -957,8 +1120,12 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         panelGeneration += 1
         val job = operationJob
         operationJob = null
-        pendingConfirmation?.cancel()
-        pendingConfirmation = null
+        pendingApproval?.cancel()
+        pendingApproval = null
+        pendingJoinDecision?.cancel()
+        pendingJoinDecision = null
+        joinPolicyDialog?.dismiss()
+        joinPolicyDialog = null
         val coordinator = panelCoordinator
         panelCoordinator = null
         val offer = offerSession

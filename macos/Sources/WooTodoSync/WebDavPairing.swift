@@ -1316,14 +1316,29 @@ public final class WebDavPathAShowSession: @unchecked Sendable {
 
 public enum WebDavPathAClaimState: Equatable, Sendable {
     case waiting
-    /// 已读到 approval 并解封身份，但必须由本机用户核对六位核对码后显式确认。
-    case awaitingConfirmation(
+    /// 已读到 approval 并解封身份，等待调用方自动保存身份并清理配对文件。
+    case approved(identity: WebDavIdentity)
+    case expired
+}
+
+/// 加入方在写入 claim 前查看 offer 的公开信息，用于展示对方设备并选择数据基准。
+public struct WebDavPathAOfferPreview: Equatable, Sendable {
+    public let deviceName: String
+    public let platform: DevicePlatform
+    public let vaultId: String
+    public let deadline: Date
+
+    public init(
         deviceName: String,
         platform: DevicePlatform,
         vaultId: String,
-        verificationCode: String
-    )
-    case expired
+        deadline: Date
+    ) {
+        self.deviceName = deviceName
+        self.platform = platform
+        self.vaultId = vaultId
+        self.deadline = deadline
+    }
 }
 
 public final class WebDavPathAClaimSession: @unchecked Sendable {
@@ -1337,8 +1352,6 @@ public final class WebDavPathAClaimSession: @unchecked Sendable {
     private let keyPair: PairingKeyPair
     private let vaultId: String
     private let offerPublicKey: Data
-    private let offerDeviceName: String
-    private let offerPlatform: DevicePlatform
     private let sessionKey: Data
     private let claimName: String
     private var observation = WebDavPairingObservation()
@@ -1349,62 +1362,36 @@ public final class WebDavPathAClaimSession: @unchecked Sendable {
         pendingIdentity
     }
 
+    /// 只读取 offer 的公开字段，不写入 claim；用于加入前的数据基准提示。
+    public static func previewOffer(
+        transport: any WebDavPairingFileTransport,
+        code: String,
+        now: Date = Date()
+    ) async throws -> WebDavPathAOfferPreview {
+        let selected = try await discoverOffer(
+            transport: transport,
+            code: code,
+            now: now
+        )
+        return WebDavPathAOfferPreview(
+            deviceName: selected.offer.deviceName,
+            platform: selected.offer.platform,
+            vaultId: selected.offer.vaultId,
+            deadline: selected.deadline
+        )
+    }
+
     public static func start(
         transport: any WebDavPairingFileTransport,
         code: String,
         deviceName: String,
         now: Date = Date()
     ) async throws -> WebDavPathAClaimSession {
-        guard WebDavPairingFileName.isSixDigitCode(code) else {
-            throw WebDavPairingError.invalidCode
-        }
-        try await transport.ensurePairingDirectory()
-        await transport.cleanupExpiredPairingFiles(now: now)
-        let names = try await transport.listPairingFileNames()
-        let offerNames = names.filter {
-            guard let parsed = WebDavPairingFileName.parse($0) else { return false }
-            return parsed.kind == .offer && parsed.code == code
-        }
-        guard !offerNames.isEmpty else {
-            throw WebDavPairingError.notFound
-        }
-
-        var observation = WebDavPairingObservation()
-        var candidates: [(offer: WebDavPairingOffer, deadline: Date)] = []
-        var sawExpired = false
-        for name in offerNames {
-            let data: Data
-            do {
-                data = try await transport.readPairingFile(name: name)
-            } catch WebDavError.http(404) {
-                continue
-            }
-            guard case let .offer(offer) = try? WebDavPairingFileCodec.decode(data),
-                  offer.code == code,
-                  WebDavPairingFileName.parse(name)?.pairingId == offer.pairingId,
-                  let deadline = observation.deadline(
-                    name: name,
-                    createdAt: offer.createdAt,
-                    expiresAt: offer.expiresAt,
-                    now: now
-                  ) else {
-                continue
-            }
-            if now >= deadline {
-                sawExpired = true
-                try? await transport.deletePairingFile(name: name)
-                continue
-            }
-            candidates.append((offer, deadline))
-        }
-        // 同一六位码出现多份有效 offer 时不按远端可控的 createdAt 自动择一，
-        // 否则攻击者可以用更新时间戳的假 offer 抢占配对。让用户回到已有设备重新生成。
-        guard candidates.count <= 1 else {
-            throw WebDavPairingError.pairingCodeConflict
-        }
-        guard let selected = candidates.first else {
-            throw sawExpired ? WebDavPairingError.expired : WebDavPairingError.notFound
-        }
+        let selected = try await discoverOffer(
+            transport: transport,
+            code: code,
+            now: now
+        )
 
         let keyPair = try PairingKeyPair.generate()
         let deviceId = try WebDavPairingRandom.deviceId()
@@ -1457,11 +1444,72 @@ public final class WebDavPathAClaimSession: @unchecked Sendable {
             keyPair: keyPair,
             vaultId: selected.offer.vaultId,
             offerPublicKey: offerPublicKey,
-            offerDeviceName: selected.offer.deviceName,
-            offerPlatform: selected.offer.platform,
             sessionKey: sessionKey,
             claimName: claimName
         )
+    }
+
+    private struct OfferSelection {
+        let offer: WebDavPairingOffer
+        let deadline: Date
+    }
+
+    private static func discoverOffer(
+        transport: any WebDavPairingFileTransport,
+        code: String,
+        now: Date
+    ) async throws -> OfferSelection {
+        guard WebDavPairingFileName.isSixDigitCode(code) else {
+            throw WebDavPairingError.invalidCode
+        }
+        try await transport.ensurePairingDirectory()
+        await transport.cleanupExpiredPairingFiles(now: now)
+        let names = try await transport.listPairingFileNames()
+        let offerNames = names.filter {
+            guard let parsed = WebDavPairingFileName.parse($0) else { return false }
+            return parsed.kind == .offer && parsed.code == code
+        }
+        guard !offerNames.isEmpty else {
+            throw WebDavPairingError.notFound
+        }
+
+        var observation = WebDavPairingObservation()
+        var candidates: [OfferSelection] = []
+        var sawExpired = false
+        for name in offerNames {
+            let data: Data
+            do {
+                data = try await transport.readPairingFile(name: name)
+            } catch WebDavError.http(404) {
+                continue
+            }
+            guard case let .offer(offer) = try? WebDavPairingFileCodec.decode(data),
+                  offer.code == code,
+                  WebDavPairingFileName.parse(name)?.pairingId == offer.pairingId,
+                  let deadline = observation.deadline(
+                    name: name,
+                    createdAt: offer.createdAt,
+                    expiresAt: offer.expiresAt,
+                    now: now
+                  ) else {
+                continue
+            }
+            if now >= deadline {
+                sawExpired = true
+                try? await transport.deletePairingFile(name: name)
+                continue
+            }
+            candidates.append(OfferSelection(offer: offer, deadline: deadline))
+        }
+        // 同一六位码出现多份有效 offer 时不按远端可控的 createdAt 自动择一，
+        // 否则攻击者可以用更新时间戳的假 offer 抢占配对。让用户回到已有设备重新生成。
+        guard candidates.count <= 1 else {
+            throw WebDavPairingError.pairingCodeConflict
+        }
+        guard let selected = candidates.first else {
+            throw sawExpired ? WebDavPairingError.expired : WebDavPairingError.notFound
+        }
+        return selected
     }
 
     private init(
@@ -1474,8 +1522,6 @@ public final class WebDavPathAClaimSession: @unchecked Sendable {
         keyPair: PairingKeyPair,
         vaultId: String,
         offerPublicKey: Data,
-        offerDeviceName: String,
-        offerPlatform: DevicePlatform,
         sessionKey: Data,
         claimName: String
     ) {
@@ -1488,20 +1534,13 @@ public final class WebDavPathAClaimSession: @unchecked Sendable {
         self.keyPair = keyPair
         self.vaultId = vaultId
         self.offerPublicKey = offerPublicKey
-        self.offerDeviceName = offerDeviceName
-        self.offerPlatform = offerPlatform
         self.sessionKey = sessionKey
         self.claimName = claimName
     }
 
     public func poll(now: Date = Date()) async throws -> WebDavPathAClaimState {
         if let pendingIdentity {
-            return .awaitingConfirmation(
-                deviceName: offerDeviceName,
-                platform: offerPlatform,
-                vaultId: pendingIdentity.vaultId,
-                verificationCode: verificationCode
-            )
+            return .approved(identity: pendingIdentity)
         }
         let approvalName = WebDavPairingFileName(
             kind: .approval,
@@ -1543,19 +1582,14 @@ public final class WebDavPathAClaimSession: @unchecked Sendable {
                 vaultKey: vaultKey
             )
             try identity.validate()
-            // 解封后必须由本机用户核对六位核对码并显式确认，不能自动保存身份。
+            // approval 到达并解封后由调用方自动保存身份，不再要求本机再次确认。
             pendingIdentity = identity
-            return .awaitingConfirmation(
-                deviceName: offerDeviceName,
-                platform: offerPlatform,
-                vaultId: identity.vaultId,
-                verificationCode: verificationCode
-            )
+            return .approved(identity: identity)
         }
         return try await expirationState(now: now)
     }
 
-    /// 用户在本机核对六位核对码一致后调用；确认成功才返回可保存的身份。
+    /// 调用方自动保存身份前调用：删除配对文件并返回已解封的身份。
     public func confirm(now: Date = Date()) async throws -> WebDavIdentity {
         guard now < deadline else {
             throw WebDavPairingError.expired
@@ -1591,8 +1625,8 @@ public enum WebDavPathBCreateState: Equatable, Sendable {
     case waiting
     /// 已收到已有设备的 resolve，六位核对码可显示。
     case verification(deviceName: String, code: String)
-    /// 已收到并解封 approval，但必须由本机用户核对后显式确认。
-    case awaitingConfirmation(deviceName: String, code: String, vaultId: String)
+    /// 已收到并解封 approval，等待调用方自动保存身份并清理配对文件。
+    case approved(identity: WebDavIdentity)
     case expired
 }
 
@@ -1688,11 +1722,7 @@ public final class WebDavPathBCreateSession: @unchecked Sendable {
 
     public func poll(now: Date = Date()) async throws -> WebDavPathBCreateState {
         if let pendingIdentity {
-            return .awaitingConfirmation(
-                deviceName: approverName ?? "已配对设备",
-                code: verificationCode ?? "",
-                vaultId: pendingIdentity.vaultId
-            )
+            return .approved(identity: pendingIdentity)
         }
         let resolveName = WebDavPairingFileName(
             kind: .resolve,
@@ -1796,13 +1826,9 @@ public final class WebDavPathBCreateSession: @unchecked Sendable {
                 vaultKey: vaultKey
             )
             try identity.validate()
-            // 解封后必须由本机用户核对六位核对码并显式确认，不能自动保存身份。
+            // approval 到达并解封后由调用方自动保存身份，不再要求本机再次确认。
             pendingIdentity = identity
-            return .awaitingConfirmation(
-                deviceName: approverName ?? "已配对设备",
-                code: verificationCode,
-                vaultId: identity.vaultId
-            )
+            return .approved(identity: identity)
         }
 
         if let verificationCode, approverPublicKey != nil {
@@ -1814,7 +1840,7 @@ public final class WebDavPathBCreateSession: @unchecked Sendable {
         return await expirationState(now: now)
     }
 
-    /// 用户在本机核对六位核对码一致后调用；确认成功才返回可保存的身份。
+    /// 调用方自动保存身份前调用：删除配对文件并返回已解封的身份。
     public func confirm(now: Date = Date()) async throws -> WebDavIdentity {
         guard now < deadline else {
             throw WebDavPairingError.expired

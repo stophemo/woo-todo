@@ -3,15 +3,6 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val syncWorkerUrl = providers.gradleProperty("wooTodoSyncEndpoint")
-    .orElse(providers.gradleProperty("wootodoSyncEndpoint"))
-    .orElse(providers.environmentVariable("WOO_TODO_SYNC_ENDPOINT"))
-    .getOrElse("")
-    .trim()
-val quotedSyncWorkerUrl = "\"" + syncWorkerUrl
-    .replace("\\", "\\\\")
-    .replace("\"", "\\\"") + "\""
-
 val releaseStoreFile = providers.environmentVariable("ANDROID_SIGNING_STORE_FILE").orNull
 val releaseStorePassword = providers.environmentVariable("ANDROID_SIGNING_STORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("ANDROID_SIGNING_KEY_ALIAS").orNull
@@ -44,11 +35,8 @@ android {
         applicationId = "com.wootodo"
         minSdk = 33
         targetSdk = 36
-        versionCode = 53
-        versionName = "0.3.0"
-
-        // 部署后的 Worker 地址；为空时首台设备在设置页手动填写。
-        buildConfigField("String", "SYNC_WORKER_URL", quotedSyncWorkerUrl)
+        versionCode = 54
+        versionName = "0.4.0"
 
         testInstrumentationRunner = "com.wootodo.WooTodoTestRunner"
     }

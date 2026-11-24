@@ -375,8 +375,8 @@ struct SQLiteTaskRepositoryTests {
         #expect(try reopened.displayConfiguration() == payload)
     }
 
-    @Test("升级会删除旧 WebDAV 应用表并提升 schema 版本")
-    func legacyWebDavTableDroppedOnUpgrade() throws {
+    @Test("从 0.3.0 升级会重新创建 WebDAV 应用表并保留任务")
+    func webDavTableRecreatedOnUpgrade() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("woo-todo-schema-\(UUID().uuidString)", isDirectory: true)
         let databaseURL = root.appendingPathComponent("tasks.sqlite")
@@ -384,14 +384,20 @@ struct SQLiteTaskRepositoryTests {
 
         do {
             let repository = try SQLiteTaskRepository(databaseURL: databaseURL)
-            #expect(try repository.schemaVersion() == 9)
-            try repository.recreateLegacyWebDavTableForTesting()
-            #expect(try repository.tableExists("sync_webdav_applied_operations"))
+            #expect(try repository.schemaVersion() == 10)
+            try repository.save(TodoTask(
+                title: "升级保留任务",
+                categoryID: TaskCategory.inboxID
+            ))
+            // 模拟 0.3.0 删除过 WebDAV 表的数据库。
+            try repository.dropWebDavTableForTesting()
+            #expect(try !repository.tableExists("sync_webdav_applied_operations"))
         }
 
         let reopened = try SQLiteTaskRepository(databaseURL: databaseURL)
-        #expect(try !reopened.tableExists("sync_webdav_applied_operations"))
-        #expect(try reopened.schemaVersion() == 9)
+        #expect(try reopened.tableExists("sync_webdav_applied_operations"))
+        #expect(try reopened.schemaVersion() == 10)
+        #expect(try reopened.fetchAll().map(\.title) == ["升级保留任务"])
     }
 
     private func legacyDefaultCategories() -> [TaskCategory] {

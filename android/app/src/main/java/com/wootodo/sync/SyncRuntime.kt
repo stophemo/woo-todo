@@ -102,6 +102,26 @@ object SyncFailurePolicy {
         is SyncBindingConflictException ->
             SyncFailureDescription("此设备已绑定其他同步空间，请先解绑再切换", false)
         is SyncCoordinatorException -> SyncFailureDescription("同步数据校验失败，已保留本地待发送任务", false)
+        is WebDavException.InvalidCredentials ->
+            SyncFailureDescription("WebDAV 账号或应用密码无效，请重新配置账号", false)
+        is WebDavException.Transport ->
+            SyncFailureDescription("WebDAV 服务暂时不可达，网络恢复后会自动重试", true)
+        is WebDavException.Http -> {
+            val retryable = WebDavRetryPolicy.isRetryableHttpStatus(error.statusCode)
+            val message = when {
+                error.statusCode == 401 || error.statusCode == 403 ->
+                    "WebDAV 账号或应用密码无效，请重新配置账号"
+                error.statusCode == 404 ->
+                    "WebDAV 同步目录不存在，请检查服务器地址"
+                retryable -> "WebDAV 服务暂时不可用，稍后会自动重试"
+                else -> "WebDAV 服务拒绝了本次请求（HTTP ${error.statusCode}）"
+            }
+            SyncFailureDescription(message, retryable)
+        }
+        is WebDavException.ObjectConflict ->
+            SyncFailureDescription("WebDAV 同步对象冲突，请稍后重试", true)
+        is WebDavException.MalformedObject ->
+            SyncFailureDescription("WebDAV 同步数据无效，未应用远端数据", false)
         is SyncCryptoException -> SyncFailureDescription("同步密文校验失败，未应用远端数据", false)
         else -> SyncFailureDescription("同步未完成，已保留本地待发送任务", false)
     }

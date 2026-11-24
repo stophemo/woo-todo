@@ -6,7 +6,7 @@ import WooTodoSync
 @Suite("本机数据清理")
 @MainActor
 struct LocalDataManagerTests {
-    @Test("清除本机数据会删除目录、偏好和凭据并保留目录外文件")
+    @Test("清除本机数据会删除目录、偏好和 WebDAV 凭据并保留目录外文件")
     func clearLocalData() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("woo-todo-local-data-\(UUID().uuidString)", isDirectory: true)
@@ -36,7 +36,18 @@ struct LocalDataManagerTests {
         let defaults = try #require(UserDefaults(suiteName: bundleIdentifier))
         defer { defaults.removePersistentDomain(forName: bundleIdentifier) }
         defaults.set("value", forKey: "kept-key")
-        let syncStore = FakeSyncCredentialsStore()
+        let credentialsStore = InMemoryWebDavCredentialsStore(
+            account: WebDavAccount(
+                endpoint: try #require(URL(string: "https://dav.example.test/")),
+                username: "user",
+                appPassword: "password"
+            ),
+            identity: WebDavIdentity(
+                vaultId: "vault-test",
+                deviceId: "device-mac-01",
+                vaultKey: Data(repeating: 7, count: 32)
+            )
+        )
         let manager = LocalDataManager(
             bundleIdentifier: bundleIdentifier,
             bundleURL: bundle,
@@ -44,7 +55,7 @@ struct LocalDataManagerTests {
             cachesURL: caches,
             savedStateURL: savedState,
             defaults: defaults,
-            syncCredentialsStore: syncStore,
+            webDavCredentialsStore: credentialsStore,
             allowsAppRemoval: false
         )
 
@@ -55,10 +66,8 @@ struct LocalDataManagerTests {
         #expect(!FileManager.default.fileExists(atPath: savedState.path))
         #expect(FileManager.default.fileExists(atPath: outside.path))
         #expect(defaults.object(forKey: "kept-key") == nil)
-        #expect(syncStore.deleted)
-        #expect(!FileManager.default.fileExists(
-            atPath: secure.appendingPathComponent("webdav-credentials.enc").path
-        ))
+        #expect(try credentialsStore.loadAccount() == nil)
+        #expect(try credentialsStore.loadIdentity() == nil)
 
         try manager.clearLocalData()
     }
@@ -92,16 +101,8 @@ struct LocalDataManagerTests {
             cachesURL: root,
             savedStateURL: root,
             defaults: UserDefaults(suiteName: "woo-todo.local-data-test")!,
-            syncCredentialsStore: FakeSyncCredentialsStore(),
+            webDavCredentialsStore: InMemoryWebDavCredentialsStore(),
             allowsAppRemoval: allowsAppRemoval
         )
     }
-}
-
-private final class FakeSyncCredentialsStore: SyncCredentialsStoring, @unchecked Sendable {
-    private(set) var deleted = false
-
-    func save(_ credentials: SyncCredentials) throws {}
-    func load() throws -> SyncCredentials? { nil }
-    func delete() throws { deleted = true }
 }

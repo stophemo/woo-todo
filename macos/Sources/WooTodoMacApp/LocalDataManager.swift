@@ -22,7 +22,7 @@ final class LocalDataManager {
     private let cachesURL: URL
     private let savedStateURL: URL
     private let defaults: UserDefaults
-    private let syncCredentialsStore: any SyncCredentialsStoring
+    private let webDavCredentialsStore: any WebDavCredentialsStoring
     private let allowsAppRemoval: Bool
 
     init(
@@ -33,7 +33,7 @@ final class LocalDataManager {
         cachesURL: URL,
         savedStateURL: URL,
         defaults: UserDefaults,
-        syncCredentialsStore: any SyncCredentialsStoring,
+        webDavCredentialsStore: any WebDavCredentialsStoring,
         allowsAppRemoval: Bool
     ) {
         self.fileManager = fileManager
@@ -43,7 +43,7 @@ final class LocalDataManager {
         self.cachesURL = cachesURL
         self.savedStateURL = savedStateURL
         self.defaults = defaults
-        self.syncCredentialsStore = syncCredentialsStore
+        self.webDavCredentialsStore = webDavCredentialsStore
         self.allowsAppRemoval = allowsAppRemoval
     }
 
@@ -66,18 +66,16 @@ final class LocalDataManager {
             }
         }
 
-        attempt { try syncCredentialsStore.delete() }
-        // 0.3.0 起不再使用 WebDAV/局域网同步，但“清除本机数据”仍应覆盖旧凭据文件。
-        for legacyURL in SyncLegacyDetector.legacyFileURLs(
-            applicationSupportURL: appSupportURL
-        ) where fileManager.fileExists(atPath: legacyURL.path) {
-            attempt { try fileManager.removeItem(at: legacyURL) }
-        }
+        // 删除应用数据目录会一并覆盖旧版 Worker/局域网与旧 WebDAV 凭据文件。
         for directory in [appSupportURL, cachesURL, savedStateURL] {
             if fileManager.fileExists(atPath: directory.path) {
                 attempt { try fileManager.removeItem(at: directory) }
             }
         }
+        // 目录删除后再清一次凭据：删除旧 Keychain 项并重新写入迁移标记，
+        // 确保“清除本机数据”后不会从 Keychain 回填旧身份。
+        attempt { try webDavCredentialsStore.deleteIdentity() }
+        attempt { try webDavCredentialsStore.deleteAccount() }
         attempt { defaults.removePersistentDomain(forName: bundleIdentifier) }
         defaults.synchronize()
 

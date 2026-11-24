@@ -1,0 +1,13 @@
+{
+  "format": "woo-todo-webdav-pairing",
+  "protocolVersion": 1,
+  "kind": "join",
+  "pairingId": "pair-b-3v8n6c5t",
+  "createdAt": 1764001000000,
+  "expiresAt": 1764001300000,
+  "code": "731205",
+  "publicKey": "IztdYSXQFr8KAMJQJu8RPRU7znwZciq-FG0gjBKjBnA",
+  "deviceId": "device-android-b2",
+  "deviceName": "Pixel 9",
+  "platform": "android"
+}

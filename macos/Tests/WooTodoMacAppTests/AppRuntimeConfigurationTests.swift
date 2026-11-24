@@ -30,24 +30,6 @@ struct AppRuntimeConfigurationTests {
         }
     }
 
-    @Test("构建期 WooTodoSyncEndpoint 只接受合法 HTTPS 根地址")
-    func resolvesBundledSyncEndpoint() {
-        #expect(AppRuntimeConfiguration.resolveDefaultSyncEndpoint(
-            infoDictionary: [:]
-        ) == nil)
-        #expect(AppRuntimeConfiguration.resolveDefaultSyncEndpoint(
-            infoDictionary: ["WooTodoSyncEndpoint": "   "]
-        ) == nil)
-        #expect(AppRuntimeConfiguration.resolveDefaultSyncEndpoint(
-            infoDictionary: ["WooTodoSyncEndpoint": "http://sync.example.test"]
-        ) == nil)
-        #expect(AppRuntimeConfiguration.resolveDefaultSyncEndpoint(
-            infoDictionary: ["WooTodoSyncEndpoint": "https://192.168.1.2"]
-        ) == nil)
-        #expect(AppRuntimeConfiguration.resolveDefaultSyncEndpoint(
-            infoDictionary: ["WooTodoSyncEndpoint": " https://sync.example.test "]
-        ) == URL(string: "https://sync.example.test"))
-    }
 }
 
 struct WindowActivationPolicyTests {

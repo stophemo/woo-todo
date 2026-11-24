@@ -52,10 +52,9 @@ class TaskDatabase(context: Context) :
         if (oldVersion < 11) {
             removeUnusedLegacyCategories(database)
         }
-        if (oldVersion < 13) {
-            // v0.3.0 移除 WebDAV；旧同步记录不再使用，只保留任务与显示设置。
-            database.execSQL("DROP TABLE IF EXISTS sync_webdav_applied_operations")
-        }
+        // v0.4.0 恢复 WebDAV 同步；0.3.0 删除过该表，这里按 IF NOT EXISTS 重建，
+        // 任务、分类、显示设置与删除记录都保持原样。
+        createWebDavAppliedSchema(database)
     }
 
     override fun onDowngrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -276,8 +275,20 @@ class TaskDatabase(context: Context) :
             )
             """.trimIndent(),
         )
+        createWebDavAppliedSchema(database)
         createDeferredDeletionSchema(database)
         createDisplayConfigurationSchema(database)
+    }
+
+    private fun createWebDavAppliedSchema(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS sync_webdav_applied_operations (
+                op_id TEXT NOT NULL PRIMARY KEY,
+                applied_at INTEGER NOT NULL CHECK(applied_at >= 0)
+            )
+            """.trimIndent(),
+        )
     }
 
     private fun createDeferredDeletionSchema(database: SQLiteDatabase) {
@@ -494,6 +505,6 @@ class TaskDatabase(context: Context) :
 
     private companion object {
         const val DATABASE_NAME = "woo-todo.db"
-        const val DATABASE_VERSION = 13
+        const val DATABASE_VERSION = 14
     }
 }

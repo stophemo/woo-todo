@@ -9,7 +9,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.viewModels
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -17,32 +16,23 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.wootodo.BuildConfig
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
-import com.wootodo.sync.CreateVaultRequest
 import com.wootodo.sync.DevicePlatform
-import com.wootodo.sync.DeviceRegistration
-import com.wootodo.sync.JoinApprovalTarget
-import com.wootodo.sync.JoinApproverCoordinator
-import com.wootodo.sync.JoinCreationProgress
-import com.wootodo.sync.JoinCreatorCoordinator
-import com.wootodo.sync.PairingCodeClaim
-import com.wootodo.sync.PairingCodeClaimResult
-import com.wootodo.sync.PairingCodeCoordinator
-import com.wootodo.sync.PairingCodeOffer
-import com.wootodo.sync.PairingCompletion
-import com.wootodo.sync.PairingException
-import com.wootodo.sync.PairingPollPolicy
-import com.wootodo.sync.SecureBytes
-import com.wootodo.sync.SelfHostedEndpointPreferences
-import com.wootodo.sync.SyncApiClient
-import com.wootodo.sync.SyncCredentials
-import com.wootodo.sync.SyncDeviceManager
-import com.wootodo.sync.SyncEndpointPolicy
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncRuntimeState
-import com.wootodo.sync.SyncStatusPreferences
+import com.wootodo.sync.WebDavAccount
+import com.wootodo.sync.WebDavClaimInfo
+import com.wootodo.sync.WebDavClaimSession
+import com.wootodo.sync.WebDavClient
+import com.wootodo.sync.WebDavCredentials
+import com.wootodo.sync.WebDavEndpointPolicy
+import com.wootodo.sync.WebDavJoinSession
+import com.wootodo.sync.WebDavJoinTarget
+import com.wootodo.sync.WebDavOfferSession
+import com.wootodo.sync.WebDavPairingConfirmation
+import com.wootodo.sync.WebDavPairingCoordinator
+import com.wootodo.sync.WebDavPairingStoreClient
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -54,30 +44,34 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 唯一跨设备入口：未配对设备负责加入，已配对设备负责显示码、批准、设备管理和退出空间。
+ * 唯一跨设备入口：WebDAV 账号、建立空间、六位码配对（Path A / Path B）、
+ * 同步状态与退出空间。所有配对文件只包含公钥、设备名、vaultId 与密文。
  */
 class CrossDeviceSettingsActivity : AppCompatActivity() {
     private enum class PanelMode {
         NONE,
-        CLAIM_CODE,
-        SHOW_CODE,
+        CLAIM_OFFER,
+        SHOW_OFFER,
         JOIN_CREATOR,
         JOIN_APPROVER,
         CREATE_SPACE,
     }
 
     private lateinit var app: WooTodoApplication
-    private lateinit var unpairedSection: View
+    private lateinit var accountSummary: TextView
+    private lateinit var editAccount: Button
+    private lateinit var accountForm: View
+    private lateinit var endpointInput: EditText
+    private lateinit var usernameInput: EditText
+    private lateinit var appPasswordInput: EditText
+    private lateinit var saveAccount: Button
+    private lateinit var noIdentitySection: View
     private lateinit var pairedSection: View
-    private lateinit var serverAddressValue: TextView
-    private lateinit var serverAddressInput: EditText
-    private lateinit var saveServerAddress: Button
     private lateinit var spaceIdValue: TextView
     private lateinit var spaceDeviceValue: TextView
     private lateinit var spaceEndpointValue: TextView
     private lateinit var spaceSyncValue: TextView
     private lateinit var spaceLastSyncValue: TextView
-    private lateinit var deviceList: LinearLayout
     private lateinit var pairingPanel: View
     private lateinit var panelTitle: TextView
     private lateinit var panelStatus: TextView
@@ -88,31 +82,21 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private lateinit var panelPrimary: Button
     private lateinit var panelCancel: Button
 
-    private val selfHostedEndpoints by lazy { SelfHostedEndpointPreferences(this) }
-    private val syncStatusPreferences by lazy { SyncStatusPreferences(this) }
-    private val deviceManager by lazy { SyncDeviceManager() }
-    private val pairingViewModel: PairingViewModel by viewModels {
-        PairingViewModel.Factory(application as WooTodoApplication)
-    }
     private val timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
     private var operationJob: Job? = null
     @Volatile
     private var panelGeneration = 0
     private var panelMode = PanelMode.NONE
-    private var joinCreator: JoinCreatorCoordinator? = null
-    @Volatile
-    private var codeCoordinator: PairingCodeCoordinator? = null
-    @Volatile
-    private var approverCoordinator: JoinApproverCoordinator? = null
-    @Volatile
-    private var codeOffer: PairingCodeOffer? = null
-    @Volatile
-    private var codeClaim: PairingCodeClaim? = null
-    @Volatile
-    private var approvalTarget: JoinApprovalTarget? = null
+    private var panelCoordinator: WebDavPairingCoordinator? = null
+    private var offerSession: WebDavOfferSession? = null
+    private var claimInfo: WebDavClaimInfo? = null
+    private var claimSession: WebDavClaimSession? = null
+    private var joinSession: WebDavJoinSession? = null
+    private var joinTarget: WebDavJoinTarget? = null
     private var pendingConfirmation: CompletableDeferred<Unit>? = null
-    private var currentCredentials: SyncCredentials? = null
+    private var currentAccount: WebDavAccount? = null
+    private var currentCredentials: WebDavCredentials? = null
     private var lastSuccessfulSyncAt: Long? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -121,17 +105,12 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         setContentView(R.layout.activity_cross_device_settings)
         applySystemBarInsets(findViewById(R.id.cross_device_root))
         bindViews()
-        lastSuccessfulSyncAt = syncStatusPreferences.lastSuccessfulSyncAt()
+        lastSuccessfulSyncAt = app.syncStatusPreferences.lastSuccessfulSyncAt()
         findViewById<View>(R.id.cross_device_back_button).setOnClickListener { finish() }
         bindActions()
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch {
-                    app.syncRuntime.state.collect(::renderSyncState)
-                }
-                launch {
-                    pairingViewModel.state.collect(::renderClaimPairingState)
-                }
+                app.syncRuntime.state.collect(::renderSyncState)
             }
         }
     }
@@ -147,17 +126,20 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private fun bindViews() {
-        unpairedSection = findViewById(R.id.unpaired_section)
+        accountSummary = findViewById(R.id.webdav_account_summary)
+        editAccount = findViewById(R.id.webdav_edit_account)
+        accountForm = findViewById(R.id.webdav_account_form)
+        endpointInput = findViewById(R.id.webdav_endpoint_input)
+        usernameInput = findViewById(R.id.webdav_username_input)
+        appPasswordInput = findViewById(R.id.webdav_app_password_input)
+        saveAccount = findViewById(R.id.webdav_save_account)
+        noIdentitySection = findViewById(R.id.no_identity_section)
         pairedSection = findViewById(R.id.paired_section)
-        serverAddressValue = findViewById(R.id.server_address_value)
-        serverAddressInput = findViewById(R.id.server_address_input)
-        saveServerAddress = findViewById(R.id.save_server_address)
         spaceIdValue = findViewById(R.id.space_id_value)
         spaceDeviceValue = findViewById(R.id.space_device_value)
         spaceEndpointValue = findViewById(R.id.space_endpoint_value)
         spaceSyncValue = findViewById(R.id.space_sync_value)
         spaceLastSyncValue = findViewById(R.id.space_last_sync_value)
-        deviceList = findViewById(R.id.device_list)
         pairingPanel = findViewById(R.id.pairing_panel)
         panelTitle = findViewById(R.id.pairing_panel_title)
         panelStatus = findViewById(R.id.pairing_panel_status)
@@ -172,33 +154,30 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private fun bindActions() {
-        saveServerAddress.setOnClickListener {
-            val normalized = SyncEndpointPolicy.normalize(serverAddressInput.text.toString())
-            if (normalized == null) {
-                showTransient(R.string.cross_device_server_address_invalid)
-                return@setOnClickListener
-            }
-            runCatching { selfHostedEndpoints.save(normalized) }
-                .onSuccess {
-                    showTransient(R.string.cross_device_server_saved)
-                    render()
-                }
-                .onFailure { showTransient(R.string.cross_device_server_address_invalid) }
+        saveAccount.setOnClickListener { saveWebDavAccount() }
+        editAccount.setOnClickListener {
+            val account = currentAccount ?: return@setOnClickListener
+            endpointInput.setText(account.endpoint)
+            usernameInput.setText(account.username)
+            appPasswordInput.setText(account.appPassword)
+            accountSummary.isVisible = false
+            editAccount.isVisible = false
+            accountForm.isVisible = true
         }
         findViewById<View>(R.id.action_enter_code).setOnClickListener {
-            startClaimByCode()
+            startClaimOffer()
         }
         findViewById<View>(R.id.action_show_my_code).setOnClickListener {
             startJoinCreator()
         }
         findViewById<View>(R.id.action_create_space).setOnClickListener {
-            showCreateSpaceDialog()
+            confirmCreateSpace()
         }
         findViewById<View>(R.id.action_show_pairing_code).setOnClickListener {
-            startShowPairingCode()
+            startShowOffer()
         }
         findViewById<View>(R.id.action_enter_new_device_code).setOnClickListener {
-            startApproveJoin()
+            startJoinApprover()
         }
         findViewById<View>(R.id.space_sync_now).setOnClickListener {
             synchronizeNow()
@@ -210,50 +189,42 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
 
     private fun render() {
         lifecycleScope.launch {
-            val credentials = withContext(Dispatchers.IO) { app.activeSyncCredentials() }
+            val account = withContext(Dispatchers.IO) { app.webDavAccount() }
+            val credentials = withContext(Dispatchers.IO) {
+                runCatching { app.activeSyncCredentials() }.getOrNull()
+            }
             if (isFinishing || isDestroyed) return@launch
+            currentAccount = account
             currentCredentials = credentials
-            renderServerAddress(credentials)
-            unpairedSection.isVisible = credentials == null
-            pairedSection.isVisible = credentials != null
+            renderAccount(account)
+            val hasIdentity = credentials != null
+            noIdentitySection.isVisible = account != null && !hasIdentity
+            pairedSection.isVisible = account != null && hasIdentity
             if (credentials != null) {
                 renderSpaceCard(credentials)
-                refreshDevices(credentials)
             }
             renderSyncState(app.syncRuntime.state.value)
         }
     }
 
-    private fun renderServerAddress(credentials: SyncCredentials?) {
-        val builtIn = builtInEndpoint()
-        val saved = selfHostedEndpoints.load()
-        when {
-            credentials != null -> {
-                serverAddressValue.text = credentials.endpoint
-                serverAddressInput.isVisible = false
-                saveServerAddress.isVisible = false
-            }
-            builtIn != null -> {
-                serverAddressValue.text = builtIn
-                serverAddressInput.isVisible = false
-                saveServerAddress.isVisible = false
-            }
-            else -> {
-                serverAddressValue.text = if (saved == null) {
-                    getString(R.string.cross_device_server_not_set)
-                } else {
-                    getString(R.string.cross_device_server_saved_short, saved)
-                }
-                serverAddressInput.isVisible = true
-                saveServerAddress.isVisible = true
-                if (serverAddressInput.text.isNullOrBlank()) {
-                    serverAddressInput.setText(saved.orEmpty())
-                }
-            }
+    private fun renderAccount(account: WebDavAccount?) {
+        if (account == null) {
+            accountSummary.isVisible = false
+            editAccount.isVisible = false
+            accountForm.isVisible = true
+            return
         }
+        accountSummary.isVisible = true
+        editAccount.isVisible = true
+        accountForm.isVisible = false
+        accountSummary.text = getString(
+            R.string.cross_device_webdav_account_format,
+            account.username,
+            account.endpoint,
+        )
     }
 
-    private fun renderSpaceCard(credentials: SyncCredentials) {
+    private fun renderSpaceCard(credentials: WebDavCredentials) {
         spaceIdValue.text = getString(
             R.string.cross_device_space_id,
             shortVaultId(credentials.vaultId),
@@ -264,7 +235,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             platformLabel(DevicePlatform.ANDROID),
         )
         spaceEndpointValue.text = getString(
-            R.string.cross_device_server_address_format,
+            R.string.cross_device_webdav_address_format,
             credentials.endpoint,
         )
     }
@@ -298,76 +269,100 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun refreshDevices(credentials: SyncCredentials) {
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { deviceManager.listDevices(credentials) }
-            }
-            if (currentCredentials?.deviceId != credentials.deviceId) return@launch
-            result.onSuccess { data ->
-                val current = data.devices.firstOrNull { it.isCurrent }
-                if (current != null) {
-                    spaceDeviceValue.text = getString(
-                        R.string.cross_device_current_device_detail,
-                        current.name,
-                        platformLabel(current.platform),
-                    )
-                }
-                renderDeviceRows(credentials, data.devices)
-            }
+    private fun saveWebDavAccount() {
+        val endpoint = WebDavEndpointPolicy.normalize(endpointInput.text.toString())
+        val username = usernameInput.text.toString()
+        val password = appPasswordInput.text.toString()
+        if (endpoint == null || username.isBlank() || password.isEmpty()) {
+            showTransient(R.string.cross_device_webdav_account_invalid)
+            return
         }
-    }
-
-    private fun renderDeviceRows(
-        credentials: SyncCredentials,
-        devices: List<com.wootodo.sync.DeviceInfo>,
-    ) {
-        deviceList.removeAllViews()
-        devices.filter { it.revokedAt == null }.forEach { device ->
-            val row = layoutInflater.inflate(R.layout.item_cross_device, deviceList, false)
-            row.findViewById<TextView>(R.id.device_name).text = device.name
-            val details = buildList {
-                add(platformLabel(device.platform))
-                if (device.isCurrent) add(getString(R.string.cross_device_this_device))
-                add(
+        val account = WebDavAccount(endpoint, username, password)
+        saveAccount.isEnabled = false
+        setPanelStatus(getString(R.string.cross_device_webdav_connecting))
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    WebDavClient(account).testConnection()
+                    app.saveWebDavAccount(account)
+                }
+                if (isFinishing || isDestroyed) return@launch
+                endpointInput.setText("")
+                usernameInput.setText("")
+                appPasswordInput.setText("")
+                showTransient(R.string.cross_device_webdav_account_saved)
+                render()
+            } catch (error: Exception) {
+                if (isFinishing || isDestroyed) return@launch
+                showTransient(
                     getString(
-                        R.string.cross_device_created_at,
-                        timeFormatter.format(
-                            Instant.ofEpochMilli(device.createdAt)
-                                .atZone(ZoneId.systemDefault()),
-                        ),
+                        R.string.cross_device_webdav_connection_failed,
+                        PairingErrorMessage.from(error),
                     ),
                 )
-                add(
-                    device.lastSeenAt?.let {
-                        getString(
-                            R.string.cross_device_last_seen,
-                            timeFormatter.format(
-                                Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()),
-                            ),
-                        )
-                    } ?: getString(R.string.cross_device_never_seen),
-                )
+            } finally {
+                saveAccount.isEnabled = true
             }
-            row.findViewById<TextView>(R.id.device_detail).text = details.joinToString(" · ")
-            val remove = row.findViewById<Button>(R.id.device_remove)
-            remove.isVisible = !device.isCurrent
-            remove.setOnClickListener {
-                confirmRemoveDevice(credentials, device.id, device.name)
-            }
-            deviceList.addView(row)
         }
     }
 
-    private fun startClaimByCode() {
-        val endpoint = pairingEndpointOrNull() ?: return
+    private fun confirmCreateSpace() {
+        if (currentAccount == null) {
+            showTransient(R.string.cross_device_webdav_account_required)
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.cross_device_create_space)
+            .setMessage(R.string.cross_device_create_space_message)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.cross_device_create_space) { _, _ ->
+                createSpace()
+            }
+            .show()
+    }
+
+    private fun createSpace() {
         hidePanel()
-        panelMode = PanelMode.CLAIM_CODE
+        panelMode = PanelMode.CREATE_SPACE
+        beginPanel(R.string.cross_device_create_space, getString(R.string.cross_device_creating_space))
+        panelCode.isVisible = false
+        panelPrimary.isVisible = false
+        operationJob = lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    app.createWebDavSpace(DeviceName.current(this@CrossDeviceSettingsActivity))
+                }
+                if (isFinishing || isDestroyed) return@launch
+                hidePanel()
+                lastSuccessfulSyncAt = null
+                showTransient(R.string.cross_device_space_created)
+                render()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (!isFinishing && !isDestroyed) {
+                    showPanelFailure(PairingErrorMessage.from(error))
+                }
+            }
+        }
+    }
+
+    // ---------- Path A：已有设备显示码，新设备输入 ----------
+
+    private fun startClaimOffer() {
+        val account = currentAccount ?: run {
+            showTransient(R.string.cross_device_webdav_account_required)
+            return
+        }
+        hidePanel()
+        panelMode = PanelMode.CLAIM_OFFER
+        panelCoordinator = coordinatorFor(account)
         beginPanel(R.string.cross_device_enter_code, getString(R.string.cross_device_input_code_hint))
         panelCode.isVisible = true
         panelCode.setCode("")
         panelCode.setEditable(true)
         panelCode.requestInputFocus()
+        panelCancel.setOnClickListener { cancelPairingFlow() }
         panelPrimary.setText(R.string.pairing_short_code_pair)
         panelPrimary.isVisible = true
         panelPrimary.setOnClickListener {
@@ -377,124 +372,126 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                 setPanelStatus(getString(R.string.pairing_short_code_invalid), isError = true)
                 return@setOnClickListener
             }
-            panelCode.setEditable(false)
-            panelPrimary.isVisible = false
-            pairingViewModel.begin(
-                endpoint = endpoint,
-                shortCode = code,
-                deviceName = DeviceName.current(this),
-            )
+            claimOfferByCode(account, code)
         }
     }
 
-    private fun renderClaimPairingState(state: PairingUiState) {
-        if (panelMode != PanelMode.CLAIM_CODE) return
-        when (state) {
-            PairingUiState.Idle -> Unit
-            PairingUiState.Claiming -> {
-                panelCode.setEditable(false)
-                setPanelStatus(getString(R.string.pairing_claiming))
-            }
-            is PairingUiState.AwaitingConfirmation -> {
-                // state.expiresAt 已由 PairingCoordinator 换算成本机等待截止时间。
-                val remainingMinutes = (
-                    PairingPollPolicy.remainingSeconds(
-                        System.currentTimeMillis(),
-                        state.expiresAt,
-                    ) + 59L
-                    ) / 60L
+    private fun claimOfferByCode(account: WebDavAccount, code: String) {
+        val coordinator = panelCoordinator ?: return
+        val generation = panelGeneration
+        panelCode.setEditable(false)
+        panelPrimary.isVisible = false
+        setPanelStatus(getString(R.string.pairing_claiming))
+        operationJob = lifecycleScope.launch {
+            var session: WebDavClaimSession? = null
+            try {
+                val offer = withContext(Dispatchers.IO) { coordinator.findOffer(code) }
+                session = withContext(Dispatchers.IO) {
+                    coordinator.claimOffer(
+                        offer,
+                        DeviceName.current(this@CrossDeviceSettingsActivity),
+                    )
+                }
+                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
+                claimSession = session
                 panelCode.isVisible = false
-                showVerification(state.verificationCode)
-                setPanelStatus(
-                    getString(
-                        R.string.pairing_verify_message,
-                        remainingMinutes.coerceAtLeast(1L),
-                    ),
-                )
-            }
-            PairingUiState.SavingCredentials -> setPanelStatus(
-                getString(R.string.pairing_saving),
-            )
-            is PairingUiState.Succeeded -> {
+                showVerification(session.verificationCode)
+                setPanelStatus(getString(R.string.cross_device_waiting_approval))
+                val identity = withContext(Dispatchers.IO) {
+                    coordinator.awaitOfferApproval(session) { confirmation ->
+                        confirmJoin(confirmation, generation, PanelMode.CLAIM_OFFER)
+                    }
+                }
+                claimSession = null
+                session = null
+                withContext(Dispatchers.IO) { app.adoptWebDavIdentity(identity) }
+                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
+                session = null
                 hidePanel()
-                pairingViewModel.acknowledgeTerminalState()
                 lastSuccessfulSyncAt = null
                 showTransient(R.string.pairing_succeeded)
                 render()
-            }
-            is PairingUiState.Failed -> {
-                showPanelFailure(state.message)
-                pairingViewModel.acknowledgeTerminalState()
-            }
-            PairingUiState.Interrupted -> {
-                hidePanel()
-                pairingViewModel.acknowledgeTerminalState()
-                showTransient(R.string.pairing_interrupted_message)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (session != null) claimSession = session
+                if (!isFinishing && !isDestroyed && isCurrentPairing(generation)) {
+                    showPanelFailure(PairingErrorMessage.from(error))
+                }
             }
         }
     }
 
-    private fun startShowPairingCode() {
+    private fun startShowOffer() {
         val credentials = currentCredentials ?: run {
             showTransient(R.string.cross_device_not_paired)
             return
         }
         hidePanel()
         val generation = panelGeneration
-        panelMode = PanelMode.SHOW_CODE
-        beginPanel(R.string.cross_device_show_pairing_code, getString(R.string.pairing_short_code_creating))
+        panelMode = PanelMode.SHOW_OFFER
+        val coordinator = coordinatorFor(credentials.account)
+        panelCoordinator = coordinator
+        beginPanel(
+            R.string.cross_device_show_pairing_code,
+            getString(R.string.pairing_short_code_creating),
+        )
         panelCode.isVisible = true
         panelCode.setEditable(false)
-        val coordinator = PairingCodeCoordinator()
-        codeCoordinator = coordinator
+        panelCancel.setOnClickListener { cancelPairingFlow() }
+        var offer: WebDavOfferSession? = null
+        var claim: WebDavClaimInfo? = null
         operationJob = lifecycleScope.launch {
-            val confirmation = CompletableDeferred<Unit>()
-            pendingConfirmation = confirmation
             try {
-                val offer = withContext(Dispatchers.IO) {
-                    coordinator.create(credentials.endpoint, credentials)
+                val created = withContext(Dispatchers.IO) {
+                    coordinator.createOffer(credentials.identity, DeviceName.current(this@CrossDeviceSettingsActivity))
                 }
-                codeOffer = offer
-                if (panelMode != PanelMode.SHOW_CODE || !isCurrentPairing(generation)) return@launch
-                panelCode.setCode(offer.shortCode)
-                setPanelStatus(getString(R.string.pairing_short_code_waiting))
-
-                val claim = withContext(Dispatchers.IO) {
-                    when (val claimResult = coordinator.awaitClaim(offer, credentials)) {
-                        is PairingCodeClaimResult.Claimed -> claimResult.claim
-                        PairingCodeClaimResult.Confirmed -> null
-                    }
-                }
+                offer = created
+                offerSession = created
                 if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
-                if (claim != null) {
-                    codeClaim = claim
-                    showVerification(claim.verificationCode)
-                    setPanelStatus(
-                        getString(
-                            R.string.cross_device_claimed_by_device,
-                            claim.deviceName,
-                            platformLabel(claim.platform),
-                        ),
-                    )
-                    panelPrimary.setText(R.string.cross_device_confirm_binding)
-                    panelPrimary.isVisible = true
-                    panelPrimary.setOnClickListener { confirmation.complete(Unit) }
-                    confirmation.await()
-                    if (!isCurrentPairing(generation)) return@launch
-                    // confirm 成功时由协调器擦除；失败时保留供重试。
-                    confirmPairing(coordinator, offer, claim, credentials)
+                panelCode.setCode(created.code)
+                setPanelStatus(getString(R.string.pairing_short_code_waiting))
+                val claimed = withContext(Dispatchers.IO) { coordinator.awaitOfferClaim(created) }
+                claim = claimed
+                claimInfo = claimed
+                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
+                showVerification(claimed.verificationCode)
+                setPanelStatus(
+                    getString(
+                        R.string.cross_device_claimed_by_device,
+                        claimed.deviceName,
+                        platformLabel(claimed.platform),
+                    ),
+                )
+                val confirmation = CompletableDeferred<Unit>()
+                pendingConfirmation = confirmation
+                panelPrimary.setText(R.string.cross_device_confirm_binding)
+                panelPrimary.isVisible = true
+                panelPrimary.setOnClickListener { confirmation.complete(Unit) }
+                confirmation.await()
+                pendingConfirmation = null
+                if (!isCurrentPairing(generation)) return@launch
+                panelCancel.isEnabled = false
+                withContext(Dispatchers.IO) {
+                    coordinator.approveOffer(created, claimed, credentials.identity)
                 }
+                offerSession = null
+                claimInfo = null
+                offer = null
+                claim = null
                 if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
                 hidePanel()
                 showTransient(R.string.pairing_short_code_confirmed)
-                render()
+                synchronizeNow(quiet = true)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 if (!isFinishing && !isDestroyed && isCurrentPairing(generation)) {
-                    if (codeOffer != null && codeClaim != null) {
+                    val retryOffer = offer
+                    val retryClaim = claim
+                    if (retryOffer != null && retryClaim != null) {
                         showPanelFailure(PairingErrorMessage.from(error)) {
-                            retryPathAConfirm(credentials, generation)
+                            retryApproveOffer(coordinator, retryOffer, retryClaim, credentials)
                         }
                     } else {
                         showPanelFailure(PairingErrorMessage.from(error))
@@ -504,81 +501,92 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
     }
 
-    /** 请求期间禁用取消，避免与仍在进行的 confirm 并发擦除密钥。 */
-    private suspend fun confirmPairing(
-        coordinator: PairingCodeCoordinator,
-        offer: PairingCodeOffer,
-        claim: PairingCodeClaim,
-        credentials: SyncCredentials,
+    private fun retryApproveOffer(
+        coordinator: WebDavPairingCoordinator,
+        offer: WebDavOfferSession,
+        claim: WebDavClaimInfo,
+        credentials: WebDavCredentials,
     ) {
-        panelCancel.isEnabled = false
-        try {
-            withContext(Dispatchers.IO) {
-                coordinator.confirm(offer, claim, credentials)
-            }
-        } finally {
-            panelCancel.isEnabled = true
-        }
-    }
-
-    private fun retryPathAConfirm(credentials: SyncCredentials, generation: Int) {
-        val coordinator = codeCoordinator ?: return
-        val offer = codeOffer ?: return
-        val claim = codeClaim ?: return
-        if (!isCurrentPairing(generation)) return
-        panelPrimary.isVisible = false
+        val generation = panelGeneration
         operationJob = lifecycleScope.launch {
             try {
-                confirmPairing(coordinator, offer, claim, credentials)
+                panelPrimary.isVisible = false
+                withContext(Dispatchers.IO) {
+                    coordinator.approveOffer(offer, claim, credentials.identity)
+                }
+                offerSession = null
+                claimInfo = null
                 if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
                 hidePanel()
                 showTransient(R.string.pairing_short_code_confirmed)
-                render()
+                synchronizeNow(quiet = true)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 if (!isFinishing && !isDestroyed && isCurrentPairing(generation)) {
                     showPanelFailure(PairingErrorMessage.from(error)) {
-                        retryPathAConfirm(credentials, generation)
+                        retryApproveOffer(coordinator, offer, claim, credentials)
                     }
                 }
             }
         }
     }
 
+    // ---------- Path B：新设备显示码，已有设备输入并批准 ----------
+
     private fun startJoinCreator() {
-        val endpoint = pairingEndpointOrNull() ?: return
+        val account = currentAccount ?: run {
+            showTransient(R.string.cross_device_webdav_account_required)
+            return
+        }
         hidePanel()
         val generation = panelGeneration
         panelMode = PanelMode.JOIN_CREATOR
+        val coordinator = coordinatorFor(account)
+        panelCoordinator = coordinator
         beginPanel(R.string.cross_device_show_my_code, getString(R.string.pairing_short_code_creating))
         panelCode.isVisible = true
         panelCode.setEditable(false)
         panelCancel.setOnClickListener { cancelPairingFlow() }
-        val creator = JoinCreatorCoordinator(credentialsStore = app.syncCredentialsStore)
-        joinCreator = creator
         operationJob = lifecycleScope.launch {
             try {
-                val previousCredentials = withContext(Dispatchers.IO) {
-                    app.syncCredentialsStore.load()
+                val session = withContext(Dispatchers.IO) {
+                    coordinator.createJoin(DeviceName.current(this@CrossDeviceSettingsActivity))
                 }
-                val completion = withContext(Dispatchers.IO) {
-                    creator.awaitApproval(
-                        endpoint = endpoint,
-                        deviceName = DeviceName.current(this@CrossDeviceSettingsActivity),
-                    ) { progress ->
-                        runOnUiThread {
-                            if (panelMode == PanelMode.JOIN_CREATOR &&
-                                isCurrentPairing(generation)
-                            ) {
-                                renderJoinCreationProgress(progress)
+                joinSession = session
+                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
+                panelCode.setCode(session.code)
+                setPanelStatus(getString(R.string.pairing_short_code_waiting))
+                val identity = withContext(Dispatchers.IO) {
+                    coordinator.awaitJoinCompletion(
+                        session = session,
+                        onResolution = { resolution ->
+                            runOnUiThread {
+                                if (panelMode != PanelMode.JOIN_CREATOR ||
+                                    !isCurrentPairing(generation)
+                                ) {
+                                    return@runOnUiThread
+                                }
+                                showVerification(resolution.verificationCode)
+                                if (resolution.approverName != null) {
+                                    setPanelStatus(
+                                        getString(
+                                            R.string.cross_device_resolved_by_device,
+                                            resolution.approverName,
+                                        ),
+                                    )
+                                } else {
+                                    setPanelStatus(getString(R.string.cross_device_waiting_approval))
+                                }
                             }
-                        }
-                    }
+                        },
+                        confirm = { confirmation ->
+                            confirmJoin(confirmation, generation, PanelMode.JOIN_CREATOR)
+                        },
+                    )
                 }
-                withContext(Dispatchers.IO) {
-                    finalizePairingChecked(completion, previousCredentials)
-                }
+                joinSession = null
+                withContext(Dispatchers.IO) { app.adoptWebDavIdentity(identity) }
                 if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
                 hidePanel()
                 lastSuccessfulSyncAt = null
@@ -594,47 +602,14 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun renderJoinCreationProgress(progress: JoinCreationProgress) {
-        when (progress) {
-            JoinCreationProgress.Creating -> setPanelStatus(
-                getString(R.string.pairing_short_code_creating),
-            )
-            is JoinCreationProgress.AwaitingApproval -> {
-                panelCode.setCode(progress.shortCode)
-                setPanelStatus(getString(R.string.pairing_short_code_waiting))
-            }
-            is JoinCreationProgress.AwaitingConfirmation -> {
-                showVerification(progress.verificationCode)
-                if (progress.requiresConfirmation) {
-                    // approved 先到：必须由本机用户核对后显式完成加入。
-                    setPanelStatus(getString(R.string.cross_device_join_approved_verify))
-                    panelPrimary.setText(R.string.cross_device_join_confirm)
-                    panelPrimary.isVisible = true
-                    panelPrimary.setOnClickListener {
-                        panelPrimary.isVisible = false
-                        panelPrimary.setOnClickListener(null)
-                        panelCancel.isEnabled = false
-                        joinCreator?.confirmApproved()
-                    }
-                } else {
-                    setPanelStatus(getString(R.string.cross_device_join_verify_waiting))
-                }
-            }
-            JoinCreationProgress.SavingCredentials -> {
-                panelCancel.isEnabled = false
-                setPanelStatus(getString(R.string.pairing_saving))
-            }
-        }
-    }
-
-    private fun startApproveJoin() {
+    private fun startJoinApprover() {
         val credentials = currentCredentials ?: run {
             showTransient(R.string.cross_device_not_paired)
             return
         }
         hidePanel()
-        val generation = panelGeneration
         panelMode = PanelMode.JOIN_APPROVER
+        panelCoordinator = coordinatorFor(credentials.account)
         beginPanel(
             R.string.cross_device_enter_new_device_code,
             getString(R.string.cross_device_input_new_device_code_hint),
@@ -643,6 +618,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         panelCode.setCode("")
         panelCode.setEditable(true)
         panelCode.requestInputFocus()
+        panelCancel.setOnClickListener { cancelPairingFlow() }
         panelPrimary.setText(R.string.pairing_short_code_pair)
         panelPrimary.isVisible = true
         panelPrimary.setOnClickListener {
@@ -652,31 +628,28 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                 setPanelStatus(getString(R.string.pairing_short_code_invalid), isError = true)
                 return@setOnClickListener
             }
-            panelCode.setEditable(false)
-            panelPrimary.isVisible = false
-            resolveJoinForApproval(credentials, code, generation)
+            resolveJoinByCode(credentials, code)
         }
     }
 
-    private fun resolveJoinForApproval(
-        credentials: SyncCredentials,
-        shortCode: String,
-        generation: Int,
-    ) {
-        val coordinator = JoinApproverCoordinator()
-        approverCoordinator = coordinator
+    private fun resolveJoinByCode(credentials: WebDavCredentials, code: String) {
+        val coordinator = panelCoordinator ?: return
+        val generation = panelGeneration
+        panelCode.setEditable(false)
+        panelPrimary.isVisible = false
         operationJob = lifecycleScope.launch {
+            var target: WebDavJoinTarget? = null
             try {
-                val target = withContext(Dispatchers.IO) {
-                    coordinator.resolve(credentials.endpoint, shortCode, credentials)
+                val join = withContext(Dispatchers.IO) { coordinator.findJoin(code) }
+                target = withContext(Dispatchers.IO) {
+                    coordinator.resolveJoin(
+                        join,
+                        credentials.identity,
+                        DeviceName.current(this@CrossDeviceSettingsActivity),
+                    )
                 }
-                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) {
-                    coordinator.discard(target)
-                    return@launch
-                }
-                approvalTarget = target
-                val confirmation = CompletableDeferred<Unit>()
-                pendingConfirmation = confirmation
+                joinTarget = target
+                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
                 showVerification(target.verificationCode)
                 setPanelStatus(
                     getString(
@@ -685,25 +658,33 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                         platformLabel(target.platform),
                     ),
                 )
+                val confirmation = CompletableDeferred<Unit>()
+                pendingConfirmation = confirmation
                 panelPrimary.setText(R.string.cross_device_approve_device)
                 panelPrimary.isVisible = true
                 panelPrimary.setOnClickListener { confirmation.complete(Unit) }
                 confirmation.await()
+                pendingConfirmation = null
                 if (!isCurrentPairing(generation)) return@launch
-                approveJoinTarget(coordinator, target, credentials)
+                panelCancel.isEnabled = false
+                withContext(Dispatchers.IO) {
+                    coordinator.approveJoin(target, credentials.identity)
+                }
+                joinTarget = null
+                target = null
                 if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
-                approvalTarget = null
                 hidePanel()
                 showTransient(R.string.cross_device_device_approved)
-                refreshDevices(credentials)
                 synchronizeNow(quiet = true)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                if (target != null) joinTarget = target
                 if (!isFinishing && !isDestroyed && isCurrentPairing(generation)) {
-                    if (approvalTarget != null) {
+                    if (target != null) {
+                        val retryTarget = target
                         showPanelFailure(PairingErrorMessage.from(error)) {
-                            retryApproveJoin(credentials, generation)
+                            retryApproveJoin(coordinator, retryTarget, credentials)
                         }
                     } else {
                         showPanelFailure(PairingErrorMessage.from(error))
@@ -713,192 +694,86 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
     }
 
-    /** 请求期间禁用取消，避免与仍在进行的 approve 并发擦除密钥。 */
-    private suspend fun approveJoinTarget(
-        coordinator: JoinApproverCoordinator,
-        target: JoinApprovalTarget,
-        credentials: SyncCredentials,
+    private fun retryApproveJoin(
+        coordinator: WebDavPairingCoordinator,
+        target: WebDavJoinTarget,
+        credentials: WebDavCredentials,
     ) {
-        panelCancel.isEnabled = false
-        try {
-            withContext(Dispatchers.IO) {
-                coordinator.approve(target, credentials)
-            }
-        } finally {
-            panelCancel.isEnabled = true
-        }
-    }
-
-    private fun retryApproveJoin(credentials: SyncCredentials, generation: Int) {
-        val coordinator = approverCoordinator ?: return
-        val target = approvalTarget ?: return
-        if (!isCurrentPairing(generation)) return
-        panelPrimary.isVisible = false
+        val generation = panelGeneration
         operationJob = lifecycleScope.launch {
             try {
-                approveJoinTarget(coordinator, target, credentials)
+                panelPrimary.isVisible = false
+                withContext(Dispatchers.IO) {
+                    coordinator.approveJoin(target, credentials.identity)
+                }
+                joinTarget = null
                 if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
-                approvalTarget = null
                 hidePanel()
                 showTransient(R.string.cross_device_device_approved)
-                refreshDevices(credentials)
                 synchronizeNow(quiet = true)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 if (!isFinishing && !isDestroyed && isCurrentPairing(generation)) {
                     showPanelFailure(PairingErrorMessage.from(error)) {
-                        retryApproveJoin(credentials, generation)
+                        retryApproveJoin(coordinator, target, credentials)
                     }
                 }
             }
         }
     }
 
-    private fun showCreateSpaceDialog() {
-        val builtIn = builtInEndpoint()
-        val saved = selfHostedEndpoints.load()
-        val padding = (20 * resources.displayMetrics.density).toInt()
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(padding, padding / 2, padding, 0)
-        }
-        val endpointInput = if (builtIn == null) {
-            EditText(this).apply {
-                hint = getString(R.string.cross_device_server_hint)
-                setText(saved.orEmpty())
-                isSingleLine = true
-                inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                    android.text.InputType.TYPE_TEXT_VARIATION_URI
-                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
-            }.also(container::addView)
-        } else {
-            null
-        }
-        val inviteInput = EditText(this).apply {
-            hint = getString(R.string.cross_device_invite_code_hint)
-            isSingleLine = true
-            inputType = android.text.InputType.TYPE_CLASS_TEXT
-            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
-        }
-        container.addView(inviteInput)
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.cross_device_create_space)
-            .setMessage(R.string.cross_device_create_space_message)
-            .setView(container)
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.cross_device_create_space, null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val endpoint = SyncEndpointPolicy.normalize(
-                    builtIn ?: endpointInput?.text?.toString(),
-                )
-                val inviteCode = inviteInput.text.toString().trim()
-                when {
-                    endpoint == null -> showTransient(R.string.cross_device_server_address_invalid)
-                    inviteCode.isEmpty() -> showTransient(R.string.cross_device_invite_code_required)
-                    else -> {
-                        if (builtIn == null) {
-                            runCatching { selfHostedEndpoints.save(endpoint) }
-                        }
-                        dialog.dismiss()
-                        createSpace(endpoint, inviteCode)
-                    }
-                }
-            }
-        }
-        dialog.show()
-    }
-
-    private fun createSpace(endpoint: String, inviteCode: String) {
-        hidePanel()
-        val generation = panelGeneration
-        panelMode = PanelMode.CREATE_SPACE
-        beginPanel(R.string.cross_device_create_space, getString(R.string.cross_device_creating_space))
-        panelCode.isVisible = false
-        panelPrimary.isVisible = false
-        panelCancel.setOnClickListener { hidePanel() }
-        operationJob = lifecycleScope.launch {
-            try {
-                val previousCredentials = withContext(Dispatchers.IO) {
-                    app.syncCredentialsStore.load()
-                }
-                if (previousCredentials != null &&
-                    SyncEndpointPolicy.isValid(previousCredentials.endpoint)
-                ) {
-                    throw PairingException.AlreadyPaired
-                }
-                val vaultKey = SecureBytes.generate(32)
-                val credentials = try {
-                    val created = withContext(Dispatchers.IO) {
-                        SyncApiClient(endpoint).createVault(
-                            CreateVaultRequest(
-                                device = DeviceRegistration(
-                                    name = DeviceName.current(this@CrossDeviceSettingsActivity),
-                                    platform = DevicePlatform.ANDROID,
-                                ),
-                            ),
-                            inviteCode,
-                        )
-                    }
-                    SyncCredentials(
-                        endpoint = endpoint,
-                        vaultId = created.vaultId,
-                        deviceId = created.device.id,
-                        deviceToken = created.device.token,
-                        vaultKey = vaultKey,
-                    ).also(SyncCredentials::validate)
-                } finally {
-                    vaultKey.fill(0)
-                }
-                if (!isCurrentPairing(generation)) return@launch
-                withContext(Dispatchers.IO) {
-                    if (!isCurrentPairing(generation)) return@withContext
-                    if (previousCredentials == null) {
-                        if (!app.syncCredentialsStore.saveIfAbsent(credentials)) {
-                            throw PairingException.AlreadyPaired
-                        }
-                    } else {
-                        app.syncCredentialsStore.save(credentials)
-                    }
-                    finalizePairingChecked(
-                        PairingCompletion(
-                            vaultId = credentials.vaultId,
-                            deviceId = credentials.deviceId,
-                            replacedExistingCredentials = previousCredentials != null,
-                        ),
-                        previousCredentials,
-                    )
-                }
-                if (!isCurrentPairing(generation) || isFinishing || isDestroyed) return@launch
-                hidePanel()
-                lastSuccessfulSyncAt = null
-                showTransient(R.string.cross_device_space_created)
-                render()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                if (!isFinishing && !isDestroyed && isCurrentPairing(generation)) {
-                    showPanelFailure(PairingErrorMessage.from(error))
-                }
-            }
-        }
-    }
-
-    /** finalizePairing 前确认凭据仍是本次配对写入的，避免回滚覆盖另一流程的成果。 */
-    private suspend fun finalizePairingChecked(
-        completion: PairingCompletion,
-        previousCredentials: SyncCredentials?,
+    /**
+     * 新设备解封 vaultKey 后必须由本机用户核对六位核对码、对端设备与空间指纹，
+     * 点击“核对一致，完成加入”后才返回，让调用方继续保存身份。
+     */
+    private suspend fun confirmJoin(
+        confirmation: WebDavPairingConfirmation,
+        generation: Int,
+        mode: PanelMode,
     ) {
-        val stored = app.syncCredentialsStore.load()
-        if (stored == null ||
-            stored.deviceId != completion.deviceId ||
-            stored.vaultId != completion.vaultId
-        ) {
-            throw PairingException.CredentialsOverwritten
+        withContext(Dispatchers.Main) {
+            if (panelMode != mode || !isCurrentPairing(generation) ||
+                isFinishing || isDestroyed
+            ) {
+                throw CancellationException("配对面板已关闭")
+            }
+            showVerification(confirmation.verificationCode)
+            val peer = confirmation.peerDeviceName
+            val platform = confirmation.peerPlatform
+            setPanelStatus(
+                when {
+                    peer != null && platform != null -> getString(
+                        R.string.cross_device_verify_peer_with_platform,
+                        peer,
+                        platformLabel(platform),
+                        shortVaultId(confirmation.vaultId),
+                    )
+                    peer != null -> getString(
+                        R.string.cross_device_verify_peer,
+                        peer,
+                        shortVaultId(confirmation.vaultId),
+                    )
+                    else -> getString(
+                        R.string.cross_device_verify_space,
+                        shortVaultId(confirmation.vaultId),
+                    )
+                },
+            )
+            val gate = CompletableDeferred<Unit>()
+            pendingConfirmation = gate
+            panelPrimary.setText(R.string.cross_device_confirm_join)
+            panelPrimary.isVisible = true
+            panelPrimary.setOnClickListener { gate.complete(Unit) }
+            try {
+                gate.await()
+            } finally {
+                if (pendingConfirmation === gate) pendingConfirmation = null
+                panelPrimary.isVisible = false
+                panelPrimary.setOnClickListener(null)
+            }
+            setPanelStatus(getString(R.string.pairing_saving))
         }
-        app.finalizePairing(completion, previousCredentials)
     }
 
     private fun synchronizeNow(quiet: Boolean = false) {
@@ -916,32 +791,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun confirmRemoveDevice(
-        credentials: SyncCredentials,
-        deviceId: String,
-        deviceName: String,
-    ) {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.cross_device_remove_confirm_title)
-            .setMessage(getString(R.string.cross_device_remove_confirm_message, deviceName))
-            .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.cross_device_remove) { _, _ ->
-                lifecycleScope.launch {
-                    val result = withContext(Dispatchers.IO) {
-                        runCatching { deviceManager.removeDevice(credentials, deviceId) }
-                    }
-                    if (isFinishing || isDestroyed) return@launch
-                    if (result.isSuccess) {
-                        showTransient(R.string.cross_device_device_removed)
-                        refreshDevices(credentials)
-                    } else {
-                        showTransient(R.string.cross_device_device_remove_failed)
-                    }
-                }
-            }
-            .show()
-    }
-
     private fun confirmLeaveSpace() {
         val credentials = currentCredentials ?: return
         AlertDialog.Builder(this)
@@ -949,18 +798,19 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             .setMessage(R.string.cross_device_leave_confirm_message)
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.cross_device_leave_confirm) { _, _ ->
+                hidePanel()
                 lifecycleScope.launch {
                     val result = withContext(Dispatchers.IO) {
-                        runCatching { app.leaveSyncSpace(credentials) }
+                        runCatching { app.leaveSyncSpace() }
                     }
                     if (isFinishing || isDestroyed) return@launch
                     result.fold(
                         onSuccess = {
                             currentCredentials = null
                             lastSuccessfulSyncAt = null
-                            syncStatusPreferences.clear()
                             spaceDeviceValue.text = ""
-                            deviceList.removeAllViews()
+                            spaceSyncValue.text = ""
+                            spaceLastSyncValue.isVisible = false
                             showTransient(R.string.cross_device_left_space)
                             render()
                         },
@@ -972,6 +822,9 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             }
             .show()
     }
+
+    private fun coordinatorFor(account: WebDavAccount): WebDavPairingCoordinator =
+        WebDavPairingCoordinator(WebDavPairingStoreClient(WebDavClient(account)))
 
     private fun beginPanel(@StringRes titleRes: Int, status: String) {
         pairingPanel.isVisible = true
@@ -1029,50 +882,50 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     /**
-     * 取消所有面板任务并重置面板。operationJob 先取消、临时密钥等协程结束后再擦除，
-     * 避免与仍在进行的 approve/confirm 并发销毁会话密钥。
+     * 取消所有面板任务并清理本次写在 WebDAV 上的配对文件。先取消协程，
+     * 避免与仍在进行的 approve/confirm 并发擦除会话密钥。
      */
     private fun hidePanel() {
         panelGeneration += 1
-        pairingViewModel.cancel()
         val job = operationJob
         operationJob = null
         pendingConfirmation?.cancel()
         pendingConfirmation = null
-        val creator = joinCreator
-        joinCreator = null
-        val offer = codeOffer
-        codeOffer = null
-        val claim = codeClaim
-        codeClaim = null
-        val target = approvalTarget
-        approvalTarget = null
-        val code = codeCoordinator
-        codeCoordinator = null
-        val approver = approverCoordinator
-        approverCoordinator = null
+        val coordinator = panelCoordinator
+        panelCoordinator = null
+        val offer = offerSession
+        offerSession = null
+        val claim = claimInfo
+        claimInfo = null
+        val claimSessionToCancel = claimSession
+        claimSession = null
+        val join = joinSession
+        joinSession = null
+        val target = joinTarget
+        joinTarget = null
         job?.cancel()
         val cleanup = {
-            if (offer != null && claim != null) {
-                code?.discard(claim, offer) ?: run {
-                    claim.destroy()
-                    offer.destroy()
-                }
+            if (coordinator != null) {
+                offer?.let { runCatching { coordinator.cancelOffer(it) } }
+                claimSessionToCancel?.let { runCatching { coordinator.cancelClaim(it) } }
+                claim?.destroy()
+                join?.let { runCatching { coordinator.cancelJoin(it) } }
+                target?.let { runCatching { coordinator.cancelJoinResolution(it) } }
             } else {
                 offer?.destroy()
                 claim?.destroy()
-            }
-            if (target != null) {
-                approver?.discard(target) ?: target.destroy()
+                claimSessionToCancel?.destroy()
+                join?.destroy()
+                target?.destroy()
             }
         }
+        // 清理会访问 WebDAV，不能在主线程执行；即使 Activity 销毁也尽力删除配对文件。
         if (job == null || job.isCompleted) {
-            cleanup()
+            Thread({ cleanup() }, "woo-todo-pairing-cleanup").start()
         } else {
-            job.invokeOnCompletion { cleanup() }
-        }
-        if (creator != null) {
-            lifecycleScope.launch { creator.cancelActive() }
+            job.invokeOnCompletion {
+                Thread({ cleanup() }, "woo-todo-pairing-cleanup").start()
+            }
         }
         panelMode = PanelMode.NONE
         pairingPanel.isVisible = false
@@ -1097,21 +950,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private fun isCurrentPairing(generation: Int): Boolean = generation == panelGeneration
-
-    private fun pairingEndpointOrNull(): String? {
-        val endpoint = SyncEndpointPolicy.resolvePreferredEndpoint(
-            credentialsEndpoint = currentCredentials?.endpoint,
-            buildEndpoint = BuildConfig.SYNC_WORKER_URL,
-            savedEndpoint = selfHostedEndpoints.load(),
-        )
-        if (endpoint == null) {
-            showTransient(R.string.cross_device_server_address_required)
-        }
-        return endpoint
-    }
-
-    private fun builtInEndpoint(): String? =
-        SyncEndpointPolicy.normalize(BuildConfig.SYNC_WORKER_URL)
 
     private fun shortVaultId(vaultId: String): String =
         if (vaultId.length <= 12) vaultId else "${vaultId.take(12)}…"

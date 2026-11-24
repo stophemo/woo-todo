@@ -54,7 +54,7 @@ class BackupTransferTest {
     }
 
     @Test
-    fun `恢复完整保留任务标识状态和结算时间并为身份生成baseline`() {
+    fun `恢复只保留任务且任何同步身份都只提示重新配对`() {
         val database = FakeBackupDatabase()
         val credentialsStore = FakeCredentialsStore()
         val coordinator = BackupRestoreCoordinator(database, credentialsStore)
@@ -69,30 +69,31 @@ class BackupTransferTest {
             settledAt = 12_345,
         )
         val deleted = TombstonePayload(id = "task-deleted-00003", deletedAt = 13_579)
-        val credentials = credentials()
 
         val result = coordinator.restore(
             BackupSnapshot(
                 exportedAt = 20_000,
                 tasks = listOf(completed, passed),
-                syncCredentials = BackupSyncCredentials.from(credentials),
+                syncCredentials = BackupSyncCredentials.from(credentials()),
                 tombstones = listOf(deleted),
             ),
         )
 
         assertEquals(2, result.restoredTaskCount)
-        assertTrue(result.syncCredentialsRestored)
+        assertFalse(result.syncCredentialsRestored)
+        assertTrue(result.requiresRePairing)
         assertEquals(listOf(completed, passed), database.committedTasks)
-        assertEquals(listOf(completed, passed), database.baselineTasks)
+        assertTrue(database.baselineTasks.isEmpty())
         assertEquals(listOf(deleted), database.committedTombstones)
-        assertEquals(listOf(deleted), database.baselineTombstones)
+        assertTrue(database.baselineTombstones.isEmpty())
         assertEquals(completed.id, database.committedTasks[0].id)
         assertEquals(WireTaskState.COMPLETED, database.committedTasks[0].state)
         assertEquals(9_876L, database.committedTasks[0].settledAt)
         assertEquals(WireTaskState.PASS, database.committedTasks[1].state)
         assertEquals(12_345L, database.committedTasks[1].settledAt)
-        assertEquals(credentials.vaultId, credentialsStore.stored?.vaultId)
-        assertEquals(credentials.deviceId, database.boundDeviceId)
+        assertNull(credentialsStore.stored)
+        assertEquals(0, credentialsStore.saveCount)
+        assertNull(database.boundDeviceId)
     }
 
     @Test
@@ -165,25 +166,25 @@ class BackupTransferTest {
     }
 
     @Test
-    fun `baseline失败会回滚任务并删除本轮新写入的凭据`() {
+    fun `备份中的身份不会被保存或绑定`() {
         val database = FakeBackupDatabase(failWhileBinding = true)
         val credentialsStore = FakeCredentialsStore()
-        val credentials = credentials()
 
-        assertThrows(IllegalStateException::class.java) {
-            BackupRestoreCoordinator(database, credentialsStore).restore(
-                BackupSnapshot(
-                    exportedAt = 20_000,
-                    tasks = listOf(task("task-rollback-0001", WireTaskState.PENDING, null)),
-                    syncCredentials = BackupSyncCredentials.from(credentials),
-                ),
-            )
-        }
+        val result = BackupRestoreCoordinator(database, credentialsStore).restore(
+            BackupSnapshot(
+                exportedAt = 20_000,
+                tasks = listOf(task("task-no-bind-0001", WireTaskState.PENDING, null)),
+                syncCredentials = BackupSyncCredentials.from(credentials()),
+            ),
+        )
 
-        assertTrue(database.committedTasks.isEmpty())
+        assertEquals(1, result.restoredTaskCount)
+        assertTrue(result.requiresRePairing)
+        assertEquals(1, database.committedTasks.size)
+        assertTrue(database.baselineTasks.isEmpty())
         assertNull(credentialsStore.stored)
-        assertEquals(1, credentialsStore.saveCount)
-        assertEquals(1, credentialsStore.deleteCount)
+        assertEquals(0, credentialsStore.saveCount)
+        assertEquals(0, credentialsStore.deleteCount)
     }
 
     @Test
@@ -204,30 +205,6 @@ class BackupTransferTest {
 
         assertTrue(database.committedTasks.isEmpty())
         assertEquals(existing.deviceId, credentialsStore.stored?.deviceId)
-        assertEquals(0, credentialsStore.saveCount)
-        assertEquals(0, credentialsStore.deleteCount)
-    }
-
-    @Test
-    fun `检查后若并发出现身份也不会覆盖或在失败清理时删除它`() {
-        val concurrentIdentity = credentials(deviceId = "device-concurrent")
-        val credentialsStore = FakeCredentialsStore(
-            identityAppearingBeforeConditionalSave = concurrentIdentity,
-        )
-        val database = FakeBackupDatabase()
-
-        assertThrows(BackupTransferException.ExistingIdentity::class.java) {
-            BackupRestoreCoordinator(database, credentialsStore).restore(
-                BackupSnapshot(
-                    exportedAt = 20_000,
-                    tasks = listOf(task("task-concurrent-001", WireTaskState.PENDING, null)),
-                    syncCredentials = BackupSyncCredentials.from(credentials()),
-                ),
-            )
-        }
-
-        assertTrue(database.committedTasks.isEmpty())
-        assertEquals(concurrentIdentity.deviceId, credentialsStore.stored?.deviceId)
         assertEquals(0, credentialsStore.saveCount)
         assertEquals(0, credentialsStore.deleteCount)
     }

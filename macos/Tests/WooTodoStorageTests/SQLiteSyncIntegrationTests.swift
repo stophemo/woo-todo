@@ -1641,6 +1641,155 @@ struct SQLiteSyncIntegrationTests {
         #expect(restored.updatedAt != restored.completedAt)
     }
 
+    @Test("WebDAV 重复操作幂等且不推进 Worker cursor")
+    func webDavDuplicateIsIdempotent() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let task = try makeTask(
+            title: "WebDAV 只应用一次",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        let pulled = try remoteTaskOperation(
+            task,
+            kind: .upsert,
+            lamport: 7,
+            serverSequence: 1,
+            deviceID: "device-webdav",
+            configuration: configuration
+        )
+        let operation = try webDavOperation(from: pulled, configuration: configuration)
+        try await repository.applyWebDavOperations([operation])
+
+        let corrupted = try WebDavOperation(
+            vaultId: configuration.vaultId,
+            deviceId: pulled.deviceId,
+            operation: SyncPushOperation(
+                opId: pulled.opId,
+                entityId: pulled.entityId,
+                kind: pulled.kind,
+                lamport: pulled.lamport,
+                ciphertext: Base64URL.encode(Data(repeating: 9, count: 16)),
+                nonce: pulled.nonce
+            )
+        )
+        try await repository.applyWebDavOperations([corrupted])
+
+        #expect(try repository.fetchAll().first?.title == "WebDAV 只应用一次")
+        #expect(try await repository.currentCursor() == 0)
+        #expect(try await repository.pendingOperations(limit: 50).isEmpty)
+    }
+
+    @Test("WebDAV 单条坏密文只跳过，不阻塞整批且保留本地任务")
+    func webDavBadOperationIsSkippedAndDoesNotBlockBatch() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let localTask = try makeTask(
+            title: "本地任务必须保留",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        try repository.save(localTask)
+        let task = try makeTask(
+            title: "同批好操作",
+            createdAt: date("2026-07-16T08:00:00+08:00")
+        )
+        let valid = try webDavOperation(
+            from: remoteTaskOperation(
+                task,
+                kind: .upsert,
+                lamport: 1,
+                serverSequence: 1,
+                deviceID: "device-webdav",
+                configuration: configuration
+            ),
+            configuration: configuration
+        )
+        let broken = try WebDavOperation(
+            vaultId: configuration.vaultId,
+            deviceId: "device-webdav",
+            operation: SyncPushOperation(
+                opId: "operation-webdav-broken",
+                entityId: localTask.id.uuidString.lowercased(),
+                kind: .upsert,
+                lamport: 2,
+                ciphertext: Base64URL.encode(Data(repeating: 2, count: 16)),
+                nonce: Base64URL.encode(Data(repeating: 3, count: 12))
+            )
+        )
+
+        try await repository.applyWebDavOperations([valid, broken])
+
+        // 好操作正常落地；坏操作按 opId 记为已处理，本地任务保持原样。
+        #expect(try repository.fetchAll().map(\.title).contains("同批好操作"))
+        #expect(try repository.fetchAll().first { $0.id == localTask.id }?.title
+            == "本地任务必须保留")
+        #expect(try await repository.pendingWebDavOperationIDs(
+            [valid.opId, broken.opId]
+        ).isEmpty)
+
+        // 再次应用同一批不会重试坏操作，也不会重复写入。
+        try await repository.applyWebDavOperations([valid, broken])
+        #expect(try repository.webDavAppliedOperationCount() == 2)
+        #expect(try repository.fetchAll().filter { $0.title == "同批好操作" }.count == 1)
+    }
+
+    @Test("WebDAV applied 记录裁剪到最近 10000 条且重放不增长")
+    func webDavAppliedTableIsBounded() async throws {
+        let configuration = syncConfiguration()
+        let repository = try SQLiteTaskRepository(
+            path: ":memory:",
+            syncConfiguration: configuration
+        )
+        let task = try makeTask(
+            title: "WebDAV 裁剪测试",
+            createdAt: date("2026-07-15T08:00:00+08:00")
+        )
+        let total = 10_001
+        let operations = try (1...total).map { index in
+            try webDavOperation(
+                from: remoteTaskOperation(
+                    task,
+                    kind: .upsert,
+                    lamport: Int64(index),
+                    serverSequence: Int64(index),
+                    deviceID: "device-webdav",
+                    configuration: configuration
+                ),
+                configuration: configuration
+            )
+        }
+        try await repository.applyWebDavOperations(operations)
+        #expect(try repository.webDavAppliedOperationCount() == 10_000)
+        #expect(try repository.fetchAll().map(\.title) == ["WebDAV 裁剪测试"])
+
+        // 幂等重放整批旧对象：全部被 applied 表去重跳过，行数不增长。
+        try await repository.applyWebDavOperations(operations)
+        #expect(try repository.webDavAppliedOperationCount() == 10_000)
+        #expect(try repository.fetchAll().map(\.title) == ["WebDAV 裁剪测试"])
+    }
+}
+
+private func webDavOperation(
+    from operation: SyncPulledOperation,
+    configuration: SQLiteSyncConfiguration
+) throws -> WebDavOperation {
+    try WebDavOperation(
+        vaultId: configuration.vaultId,
+        deviceId: operation.deviceId,
+        operation: SyncPushOperation(
+            opId: operation.opId,
+            entityId: operation.entityId,
+            kind: operation.kind,
+            lamport: operation.lamport,
+            ciphertext: operation.ciphertext,
+            nonce: operation.nonce
+        )
+    )
 }
 
 private func syncConfiguration() -> SQLiteSyncConfiguration {

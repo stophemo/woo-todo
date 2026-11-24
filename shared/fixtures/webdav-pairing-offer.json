@@ -1,0 +1,14 @@
+{
+  "format": "woo-todo-webdav-pairing",
+  "protocolVersion": 1,
+  "kind": "offer",
+  "pairingId": "pair-a-7k2m9x4q",
+  "createdAt": 1764000000000,
+  "expiresAt": 1764000300000,
+  "code": "482913",
+  "publicKey": "7rfZhVegZtRYb9HciBp923H90H69EUXYpwQ_YDIP3UQ",
+  "pairingSecret": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "vaultId": "vault-demo-a1",
+  "deviceName": "MacBook Pro",
+  "platform": "macos"
+}

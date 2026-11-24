@@ -2,6 +2,8 @@
 
 这是一个运行在 Cloudflare Workers + D1 上的 local-first 增量同步服务。macOS、Android 与 Windows 客户端始终先写各自的本地 SQLite；服务端只负责保存客户端产生的 AES-256-GCM 密文、分配递增游标和转发变更，不读取任务正文。
 
+> 当前状态：macOS 与 Android 的 0.4.0 客户端已改为只使用 WebDAV 同步，不需要部署本 Worker；本后端保留给 Windows 客户端与未来版本。除非你需要 Worker 后端，否则不必执行本文的部署步骤。
+
 ## 安全边界
 
 - 每台设备持有独立的 32 字节随机 Bearer 令牌。服务端使用 `TOKEN_PEPPER` 做 HMAC-SHA-256 后再写入 D1，令牌明文只在创建或配对客户端本地存在。
@@ -11,7 +13,7 @@
 - 任意已绑定设备都可撤销同 vault 的其他设备；撤销会阻止后续 API 访问，但无法远程删除目标设备已经下载的数据。
 - 创建 vault 必须提供部署者配置的邀请码。邀请码只通过专用 Header 传输并与 Worker secret 比较，不进入 JSON、日志或 D1；它只控制新空间创建，不是传统账号，也不参与已有设备同步和配对。
 - 通过邀请码后，创建请求会按 Cloudflare 提供的来源 IP 做 HMAC 后进入固定时间窗计数，D1 不保存 IP 明文。默认每个来源每小时最多创建 5 个、整个服务每天最多创建 100 个；全服务额度已满时不会创建新的来源计数桶。
-- 每个 vault 最多保留 4 台未撤销设备，足够 macOS + Android 双机配对，并为设备更换留出余量；达到上限时先撤销不用的旧设备。
+- 每个 vault 最多保留 4 台未撤销设备，足够 Windows 与未来客户端多端配对，并为设备更换留出余量；达到上限时先撤销不用的旧设备。
 - 每个 vault 最多保存 100000 条操作、合计 32 MiB 解码后密文。D1 用持久用量账本和触发器原子维护额度，不会在每次同步时全表求和。
 
 ## 本地准备
@@ -31,7 +33,7 @@ npx wrangler dev
 
 ## 面向个人的 Cloudflare 免费部署
 
-这是一条自托管的可选路径，不需要跨设备同步的单机用户不需要执行本节。macOS 与 Android 的跨设备同步都依赖本节部署的 Worker。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人多端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
+这是一条自托管的可选路径，不需要跨设备同步的单机用户不需要执行本节。macOS 与 Android 的 0.4.0 客户端已改为 WebDAV 同步，不需要部署本 Worker；本节保留给 Windows 客户端、未来版本或需要 Worker 后端的自托管场景。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人多端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
 
 ### 1. 准备账号和工具
 
@@ -100,7 +102,7 @@ npx wrangler deploy
 
 更早的部署如果还没应用 `0005_windows_platform.sql`，同一条迁移命令会按顺序补齐。继续使用原来的真实 `database_id`、`TOKEN_PEPPER` 和 `VAULT_CREATION_INVITE_CODE`。尤其不要重建 D1 或更换 `TOKEN_PEPPER`，否则既有设备令牌将无法认证。执行前可在 Cloudflare Dashboard 导出 D1 备份；迁移完成后应先验证 `/health`，再让客户端连接。
 
-### 5. 验证并连接多端
+### 5. 验证 Worker 部署
 
 把部署输出的根地址（不要附加 `/v1`）保存到密码管理器或私密笔记，并先检查健康接口：
 
@@ -108,13 +110,9 @@ npx wrangler deploy
 curl -fsS 'https://woo-todo-sync.example.workers.dev/health'
 ```
 
-把示例地址替换为部署命令输出的实际 URL；响应应包含 `"ok": true`。随后在 Mac 或 Android 的“跨设备”页填写 Worker 根地址（如果构建时没有内置）和 `VAULT_CREATION_INVITE_CODE` 建立同步空间；之后其他设备输入六位配对码，或显示自己的六位码由已有设备批准。没有内置地址时，每台新设备首次配对前也要填写同一个 HTTPS 地址；只有内置了地址的构建才能仅凭六位码加入。邀请码只随创建请求发送，客户端不会保存；配对码 5 分钟内有效。
+把示例地址替换为部署命令输出的实际 URL；响应应包含 `"ok": true`。本后端只服务于仍使用 Worker 同步的客户端（Windows 客户端及未来版本）；macOS 与 Android 的 0.4.0 客户端使用 WebDAV，不需要填写 Worker 地址或邀请码。Windows/未来客户端仍可用六位配对码或配对链接加入，配对码 5 分钟内有效。
 
-建议把固定 Worker 地址写入两端构建配置，让首台设备无需手填地址：
-
-- macOS：`macos/Resources/Info.plist` 的 `WooTodoSyncEndpoint` 填入 Worker 根地址（不要附加 `/v1`）；留空时首台设备在设置页手填。
-- Android：构建时通过 Gradle 属性 `wooTodoSyncEndpoint` 或环境变量 `WOO_TODO_SYNC_ENDPOINT` 传入地址，构建脚本会写入 `BuildConfig.SYNC_WORKER_URL`；留空时首台设备在设置页手填。
-- 两端必须使用同一个 Worker 地址；配对后的设备沿用同步凭据中保存的地址。
+构建配置说明：macOS 0.4.0 不再读取 `Info.plist` 的 `WooTodoSyncEndpoint`，Android 0.4.0 也不再使用 Worker 地址；不要为这两个平台部署或内置 Worker。
 
 ### 免费层和数据边界
 
@@ -157,6 +155,8 @@ Content-Type: application/json
 ```
 
 ## API
+
+以下接口只服务于 Worker 后端；macOS 与 Android 的 0.4.0 客户端使用 WebDAV，不调用这些接口。Windows 客户端与未来版本仍可使用。
 
 | 方法与路径 | 鉴权 | 用途 |
 |---|---:|---|

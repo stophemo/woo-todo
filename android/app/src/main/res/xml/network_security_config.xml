@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    跨设备同步只允许 HTTPS Worker；应用更新也固定使用 HTTPS。
-    v0.3.0 移除局域网同步后，不再需要放行任何明文流量。
+    跨设备同步只允许 HTTPS WebDAV；应用更新也固定使用 HTTPS。
+    客户端不再使用局域网明文同步，因此不放行任何明文流量。
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />

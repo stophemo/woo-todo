@@ -12,6 +12,7 @@ import java.time.LocalDate
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -55,9 +56,8 @@ class SQLiteBackupDatabaseInstrumentedTest {
     }
 
     @Test
-    fun `空库恢复凭据后在同一事务生成完整baseline`() {
+    fun `空库恢复Worker备份只写任务且不绑定身份`() {
         val credentialsStore = MemoryCredentialsStore()
-        val credentials = credentials()
         val completed = taskPayload("task-restore-0001", WireTaskState.COMPLETED, 8_888)
         val passed = taskPayload("task-restore-0002", WireTaskState.PASS, 9_999)
         val deleted = TombstonePayload(id = "task-restore-deleted", deletedAt = 10_001)
@@ -69,24 +69,25 @@ class SQLiteBackupDatabaseInstrumentedTest {
             BackupSnapshot(
                 exportedAt = 20_000,
                 tasks = listOf(completed, passed),
-                syncCredentials = BackupSyncCredentials.from(credentials),
+                syncCredentials = BackupSyncCredentials.from(credentials()),
                 tombstones = listOf(deleted),
             ),
         )
 
         assertEquals(2, result.restoredTaskCount)
+        assertFalse(result.syncCredentialsRestored)
+        assertTrue(result.requiresRePairing)
         assertEquals(2, count("tasks"))
-        assertEquals(3, count("sync_outbox"))
-        assertEquals(3, count("sync_entity_versions"))
-        assertEquals(1, count("sync_tombstones"))
-        assertEquals(0, count("sync_deferred_deletions"))
-        assertEquals(credentials.vaultId to credentials.deviceId, boundIdentity())
-        assertEquals(3L, lamport())
+        assertEquals(0, count("sync_outbox"))
+        assertEquals(0, count("sync_entity_versions"))
+        assertEquals(0, count("sync_tombstones"))
+        assertEquals(1, count("sync_deferred_deletions"))
+        assertEquals("" to "", boundIdentity())
+        assertEquals(0L, lamport())
         assertEquals(8_888L, settledAt(completed.id))
         assertEquals(9_999L, settledAt(passed.id))
-        assertEquals(deleted.deletedAt, tombstoneDeletedAt(deleted.id))
         assertEquals(listOf(deleted), SQLiteBackupDatabase(database).readTaskSnapshot().tombstones)
-        assertEquals(credentials.deviceId, credentialsStore.load()?.deviceId)
+        assertEquals(null, credentialsStore.load())
     }
 
     @Test

@@ -12,36 +12,34 @@ import com.wootodo.display.DayCounterPreferences
 import com.wootodo.reminder.NotificationHelper
 import com.wootodo.reminder.ReminderScheduler
 import com.wootodo.reminder.TaskReminderScheduler
-import com.wootodo.sync.AndroidSyncCredentialsStore
+import com.wootodo.sync.AndroidWebDavCredentialsStore
 import com.wootodo.sync.AutomaticSyncRequestGate
-import com.wootodo.sync.BearerCredential
-import com.wootodo.sync.LegacySyncDetector
 import com.wootodo.sync.LegacySyncNotice
-import com.wootodo.sync.PairingCompletion
-import com.wootodo.sync.PairingException
 import com.wootodo.sync.SQLiteSyncStore
-import com.wootodo.sync.SyncApiClient
-import com.wootodo.sync.SyncCoordinator
-import com.wootodo.sync.SyncCredentials
-import com.wootodo.sync.SyncDeviceManager
-import com.wootodo.sync.SyncEndpointPolicy
+import com.wootodo.sync.SyncBindingConflictException
 import com.wootodo.sync.SyncExecutionResult
 import com.wootodo.sync.SyncJobScheduler
-import com.wootodo.sync.SyncLeavePolicy
 import com.wootodo.sync.SyncRunner
 import com.wootodo.sync.SyncRuntime
 import com.wootodo.sync.SyncRuntimeState
 import com.wootodo.sync.SyncStatusPreferences
+import com.wootodo.sync.WebDavAccount
+import com.wootodo.sync.WebDavClient
+import com.wootodo.sync.WebDavCredentials
+import com.wootodo.sync.WebDavIdentity
+import com.wootodo.sync.WebDavPairingException
+import com.wootodo.sync.WebDavSyncRunner
 import com.wootodo.sync.bindPairedSyncStore
+import com.wootodo.sync.newWebDavIdentity
 import com.wootodo.sync.readDisplayConfiguration
 import com.wootodo.sync.writeDisplayConfiguration
 import com.wootodo.widget.TodayWidgetUpdater
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.CancellationException
 
 class WooTodoApplication : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -54,7 +52,7 @@ class WooTodoApplication : Application() {
     val database: TaskDatabase by lazy { TaskDatabase(this) }
     val taskStore: SQLiteTaskStore by lazy { SQLiteTaskStore(database) }
     val taskRepository: TaskRepository by lazy { TaskRepository(taskStore) }
-    val syncCredentialsStore by lazy { AndroidSyncCredentialsStore(this) }
+    val webDavCredentialsStore by lazy { AndroidWebDavCredentialsStore(this) }
     val syncStatusPreferences by lazy { SyncStatusPreferences(this) }
     val legacySyncNotice by lazy { LegacySyncNotice(this) }
     val syncRuntime: SyncRuntime by lazy {
@@ -63,43 +61,58 @@ class WooTodoApplication : Application() {
         )
     }
 
-    /** 只返回端点符合 HTTPS Worker 规则的凭据；旧 LAN/WebDAV 凭据视为未配对。 */
-    fun activeSyncCredentials(): SyncCredentials? = runCatching {
-        syncCredentialsStore.load()?.takeIf { SyncEndpointPolicy.isValid(it.endpoint) }
+    /** 账号与身份分开保存；任一部分缺失或无效都视为未配置。 */
+    fun webDavAccount(): WebDavAccount? = runCatching {
+        webDavCredentialsStore.loadAccount()
+    }.getOrNull()
+
+    fun activeSyncCredentials(): WebDavCredentials? = runCatching {
+        webDavCredentialsStore.load()
     }.getOrNull()
 
     fun activeSyncConfigured(): Boolean = activeSyncCredentials() != null
 
-    /** 旧凭据不删除、不启用；升级后只提示一次重新配对。 */
+    /** 0.3.0 Worker / 旧 LAN 凭据保留但不启用；旧 WebDAV 凭据会自动迁移。 */
     fun legacySyncDetected(): Boolean = runCatching {
         if (activeSyncConfigured()) return false
-        LegacySyncDetector.detects(
-            hasWebDavCredentials = legacySyncNotice.hasWebDavCredentials(),
-            syncCredentialsEndpoint = syncCredentialsStore.load()?.endpoint,
-        )
+        legacySyncNotice.hasWorkerOrLanCredentials()
     }.getOrDefault(false)
 
-    private fun createSyncRunner(): SyncRunner? = activeSyncCredentials()?.let { credentials ->
-        SyncRunner(createSyncCoordinator(credentials)::synchronize)
-    }
-
-    /** 调用方应在 IO 线程运行同步；尚未配对时返回 null。 */
-    fun createSyncCoordinator(): SyncCoordinator? =
-        activeSyncCredentials()?.let(::createSyncCoordinator)
-
-    private fun createSyncCoordinator(credentials: SyncCredentials): SyncCoordinator {
+    private fun createSyncRunner(): SyncRunner? {
+        val credentials = activeSyncCredentials() ?: return null
         ensureDisplayConfigurationStored()
-        val syncStore = SQLiteSyncStore(
-            database = database,
-            credentials = credentials,
-            onTasksChanged = { onRemoteTasksChanged() },
-            onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
-        )
-        return SyncCoordinator(
-            transport = SyncApiClient(credentials.endpoint),
-            outbox = syncStore,
-            remoteApplyStore = syncStore,
-            credential = BearerCredential(credentials.deviceToken),
+        // 首次绑定前先取远端最大 lamport，避免本地基线操作覆盖已有空间的历史数据。
+        val remoteLamportFloor = if (SQLiteSyncStore.needsBinding(database)) {
+            WebDavClient(credentials.account).maximumLamport(credentials.vaultId)
+        } else {
+            0L
+        }
+        val syncStore = try {
+            SQLiteSyncStore(
+                database = database,
+                credentials = credentials.syncIdentity(),
+                onTasksChanged = { onRemoteTasksChanged() },
+                onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
+                remoteLamportFloor = remoteLamportFloor,
+            )
+        } catch (_: SyncBindingConflictException) {
+            // 本机刚从 Worker/LAN 升级或数据库仍绑定旧身份：保留任务并重新绑定 WebDAV。
+            SQLiteSyncStore.replaceSyncBinding(
+                database = database,
+                credentials = credentials.syncIdentity(),
+                onTasksChanged = { onRemoteTasksChanged() },
+                onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
+                remoteLamportFloor = WebDavClient(credentials.account)
+                    .maximumLamport(credentials.vaultId),
+            )
+        }
+        return SyncRunner(
+            WebDavSyncRunner(
+                transport = WebDavClient(credentials.account),
+                identity = credentials.identity,
+                outbox = syncStore,
+                local = syncStore,
+            )::synchronize,
         )
     }
 
@@ -162,85 +175,131 @@ class WooTodoApplication : Application() {
         }
     }
 
-    suspend fun finalizePairing(
-        completion: PairingCompletion,
-        previousCredentials: SyncCredentials?,
-    ) {
-        check(completion.deviceId.isNotBlank() && completion.vaultId.isNotBlank())
+    suspend fun saveWebDavAccount(account: WebDavAccount) = withContext(Dispatchers.IO) {
+        account.validate()
+        webDavCredentialsStore.saveAccount(account)
+        syncRuntime.refreshConfiguration(activeSyncConfigured())
+    }
+
+    /** 建立首个同步空间：生成 vaultId/vaultKey/deviceId 并确保 v1/<vaultId>/ops 存在。 */
+    suspend fun createWebDavSpace(deviceName: String): WebDavIdentity {
+        var createdIdentity: WebDavIdentity? = null
         syncRuntime.withExclusiveConfiguration {
-            try {
-                withContext(Dispatchers.IO) {
-                    val credentials = checkNotNull(syncCredentialsStore.load()) {
-                        "同步凭据未完成保存"
+            withContext(Dispatchers.IO) {
+                val account = webDavCredentialsStore.loadAccount()
+                    ?: throw WebDavPairingException.LocalBindingFailed
+                val identity = newWebDavIdentity()
+                // 先确认 WebDAV 目录可写，再保存身份，避免留下无法同步的空间。
+                WebDavClient(account).ensureCollections(identity.vaultId)
+                val previous = webDavCredentialsStore.loadIdentity()
+                if (previous != null) {
+                    throw WebDavPairingException.AlreadyPaired
+                }
+                webDavCredentialsStore.saveIdentity(identity)
+                try {
+                    bindStoredIdentity(identity, replaced = false)
+                } catch (error: Exception) {
+                    webDavCredentialsStore.deleteIdentity()
+                    throw error
+                }
+                syncStatusPreferences.clear()
+                createdIdentity = identity
+            }
+            syncRuntime.refreshConfiguration(true)
+            SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
+            SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
+        }
+        applicationScope.launch { syncRuntime.synchronize() }
+        return checkNotNull(createdIdentity)
+    }
+
+    /**
+     * 配对成功后写入新身份并绑定任务库。本机已有旧身份时整体替换；
+     * 数据库仍绑定旧空间但本机没有 WebDAV 身份时也允许 replace。
+     */
+    suspend fun adoptWebDavIdentity(identity: WebDavIdentity) {
+        identity.validate()
+        syncRuntime.withExclusiveConfiguration {
+            withContext(Dispatchers.IO) {
+                val account = webDavCredentialsStore.loadAccount()
+                    ?: throw WebDavPairingException.LocalBindingFailed
+                val previous = webDavCredentialsStore.loadIdentity()
+                if (previous != null && previous != identity) {
+                    throw WebDavPairingException.CredentialsOverwritten
+                }
+                // 加入已有空间：先取远端最大 lamport 作为本地基线水位，再绑定并开始同步。
+                val remoteLamportFloor = WebDavClient(account).maximumLamport(identity.vaultId)
+                if (previous == null && !webDavCredentialsStore.saveIdentityIfAbsent(identity)) {
+                    val stored = webDavCredentialsStore.loadIdentity()
+                    if (stored != identity) {
+                        throw WebDavPairingException.CredentialsOverwritten
                     }
-                    check(
-                        credentials.deviceId == completion.deviceId &&
-                            credentials.vaultId == completion.vaultId
-                    ) { "配对结果与本地同步凭据不一致" }
-                    // 先验证新端点，确保重绑后不会因客户端构造失败回滚。
-                    SyncApiClient(credentials.endpoint)
-                    ensureDisplayConfigurationStored()
-                    if (completion.replacedExistingCredentials) {
+                }
+                try {
+                    bindStoredIdentity(
+                        identity,
+                        replaced = previous != null,
+                        remoteLamportFloor = remoteLamportFloor,
+                    )
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (previous == null) {
+                        webDavCredentialsStore.deleteIdentity()
+                    } else {
+                        webDavCredentialsStore.saveIdentity(previous)
+                    }
+                    val fallbackConfigured = activeSyncConfigured()
+                    syncRuntime.refreshConfiguration(fallbackConfigured)
+                    if (fallbackConfigured) {
+                        SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
+                        SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
+                    } else {
                         SyncJobScheduler.cancel(this@WooTodoApplication)
                     }
-                    bindPairedSyncStore(
-                        database = database,
-                        credentials = credentials,
-                        replacedExistingCredentials = completion.replacedExistingCredentials,
-                        onTasksChanged = { onRemoteTasksChanged() },
-                        onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
-                    )
+                    throw WebDavPairingException.LocalBindingFailed
                 }
-            } catch (error: CancellationException) {
-                // 凭据已完整落盘时保留它；下次启动会继续完成数据库绑定。
-                throw error
-            } catch (error: Exception) {
-                runCatching {
-                    if (previousCredentials == null) {
-                        syncCredentialsStore.delete()
-                    } else {
-                        syncCredentialsStore.save(previousCredentials)
-                    }
-                }
-                val fallbackConfigured = withContext(Dispatchers.IO) {
-                    runCatching { activeSyncConfigured() }.getOrDefault(false)
-                }
-                syncRuntime.refreshConfiguration(fallbackConfigured)
-                if (fallbackConfigured) {
-                    SyncJobScheduler.ensurePeriodic(this)
-                    SyncJobScheduler.enqueueImmediate(this)
-                } else {
-                    SyncJobScheduler.cancel(this)
-                }
-                throw PairingException.LocalBindingFailed
+                syncStatusPreferences.clear()
             }
-            syncStatusPreferences.clear()
             syncRuntime.refreshConfiguration(true)
-            SyncJobScheduler.ensurePeriodic(this)
-            SyncJobScheduler.enqueueImmediate(this)
+            SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
+            SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
         }
         applicationScope.launch { syncRuntime.synchronize() }
     }
 
-    /** 退出同步空间：先撤销服务端设备，再清除本机凭据并重置同步绑定，任务保留。 */
-    suspend fun leaveSyncSpace(credentials: SyncCredentials) {
-        syncRuntime.withExclusiveConfiguration {
-            withContext(Dispatchers.IO) {
-                SyncJobScheduler.cancel(this@WooTodoApplication)
-                try {
-                    SyncDeviceManager().leaveSpace(credentials)
-                } catch (error: Exception) {
-                    // 设备已被其他设备移除时服务端会拒绝撤销，但本地仍须完成退出。
-                    if (!SyncLeavePolicy.serverAlreadyRemoved(error)) throw error
-                }
-                // 先成功解绑数据库，再删除凭据；解绑失败时保留凭据并抛出，
-                // 避免留下「无凭据但数据库仍绑定」的无法恢复状态。
-                SQLiteSyncStore.resetSyncBinding(database)
-                syncCredentialsStore.delete()
-                syncStatusPreferences.clear()
-            }
-            syncRuntime.refreshConfiguration(false)
+    /** 只在网络互斥锁内调用；调用方负责保存身份与失败回滚。 */
+    private fun bindStoredIdentity(
+        identity: WebDavIdentity,
+        replaced: Boolean,
+        remoteLamportFloor: Long = 0,
+    ) {
+        val account = checkNotNull(webDavCredentialsStore.loadAccount()) {
+            "WebDAV 账号未完成保存"
         }
+        val credentials = WebDavCredentials(account, identity).also {
+            it.validate()
+        }
+        ensureDisplayConfigurationStored()
+        bindPairedSyncStore(
+            database = database,
+            credentials = credentials.syncIdentity(),
+            replacedExistingCredentials = replaced,
+            onTasksChanged = { onRemoteTasksChanged() },
+            onDisplayConfigurationChanged = { onRemoteDisplayConfigurationChanged(it) },
+            remoteLamportFloor = remoteLamportFloor,
+        )
+    }
+
+    /** 退出同步空间：只清本机身份，保留账号与本地任务；远端需改应用密码才会失效。 */
+    suspend fun leaveSyncSpace() = syncRuntime.withExclusiveConfiguration {
+        withContext(Dispatchers.IO) {
+            SyncJobScheduler.cancel(this@WooTodoApplication)
+            SQLiteSyncStore.resetSyncBinding(database)
+            webDavCredentialsStore.deleteIdentity()
+            syncStatusPreferences.clear()
+        }
+        syncRuntime.refreshConfiguration(false)
     }
 
     suspend fun synchronizeManually(): SyncExecutionResult {
@@ -346,6 +405,7 @@ class WooTodoApplication : Application() {
             }
         }
         applicationScope.launch {
+            // 首次读取时会自动迁移 0.2.x 的完整 WebDAV 凭据。
             val configured = runCatching {
                 activeSyncConfigured()
             }.getOrDefault(false)

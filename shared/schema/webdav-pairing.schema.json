@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woo-todo.dev/schema/webdav-pairing.schema.json",
+  "title": "woo-todo WebDAV 六位码配对文件",
+  "description": "v1/pairing/ 目录下 offer、claim、join、resolve、approval 五类配对文件的严格 JSON 结构。配对文件只承载临时 X25519 公钥、设备信息、vaultId 与 vaultKey 密文，不包含任务明文或长期认证凭据。",
+  "type": "object",
+  "required": [
+    "format", "protocolVersion", "kind", "pairingId", "createdAt", "expiresAt"
+  ],
+  "properties": {
+    "format": { "const": "woo-todo-webdav-pairing" },
+    "protocolVersion": { "const": 1 },
+    "kind": { "enum": ["offer", "claim", "join", "resolve", "approval"] },
+    "pairingId": { "$ref": "#/$defs/pairingId" },
+    "createdAt": { "$ref": "#/$defs/timestamp" },
+    "expiresAt": { "$ref": "#/$defs/timestamp" }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/offerFile" },
+    { "$ref": "#/$defs/claimFile" },
+    { "$ref": "#/$defs/joinFile" },
+    { "$ref": "#/$defs/resolveFile" },
+    { "$ref": "#/$defs/approvalFile" }
+  ],
+  "$defs": {
+    "pairingId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "随机配对标识，同时出现在 v1/pairing/ 文件名中，必须可安全用作路径组件。"
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Unix epoch 毫秒。expiresAt 必须晚于 createdAt，TTL 为 5 分钟。"
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[0-9]{6}$",
+      "description": "六位数字定位码，仅用于在 v1/pairing/ 中查找文件，不参与密钥派生。"
+    },
+    "publicKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "description": "32 字节 X25519 公钥的无填充 Base64URL 编码。"
+    },
+    "pairingSecret": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "description": "32 字节随机 pairingSecret 的无填充 Base64URL 编码，作为 HKDF 盐。"
+    },
+    "vaultId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "deviceId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "deviceName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "description": "展示给对端用户的设备名，不含控制字符。"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["macos", "android", "windows"]
+    },
+    "vaultKeyEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ciphertext", "nonce"],
+      "properties": {
+        "ciphertext": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{64}$",
+          "description": "AES-256-GCM 密文（32 字节 vaultKey 加 16 字节认证标签）的无填充 Base64URL 编码。"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{16}$",
+          "description": "12 字节 AES-GCM nonce 的无填充 Base64URL 编码。"
+        }
+      }
+    },
+    "offerFile": {
+      "title": "offer：已有设备发出的配对邀请",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format", "protocolVersion", "kind", "pairingId", "createdAt", "expiresAt",
+        "code", "publicKey", "pairingSecret", "vaultId", "deviceName", "platform"
+      ],
+      "properties": {
+        "format": { "const": "woo-todo-webdav-pairing" },
+        "protocolVersion": { "const": 1 },
+        "kind": { "const": "offer" },
+        "pairingId": { "$ref": "#/$defs/pairingId" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "expiresAt": { "$ref": "#/$defs/timestamp" },
+        "code": { "$ref": "#/$defs/code" },
+        "publicKey": { "$ref": "#/$defs/publicKey" },
+        "pairingSecret": { "$ref": "#/$defs/pairingSecret" },
+        "vaultId": { "$ref": "#/$defs/vaultId" },
+        "deviceName": { "$ref": "#/$defs/deviceName" },
+        "platform": { "$ref": "#/$defs/platform" }
+      }
+    },
+    "claimFile": {
+      "title": "claim：新设备对 offer 的认领",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format", "protocolVersion", "kind", "pairingId", "createdAt", "expiresAt",
+        "publicKey", "deviceId", "deviceName", "platform"
+      ],
+      "properties": {
+        "format": { "const": "woo-todo-webdav-pairing" },
+        "protocolVersion": { "const": 1 },
+        "kind": { "const": "claim" },
+        "pairingId": { "$ref": "#/$defs/pairingId" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "expiresAt": { "$ref": "#/$defs/timestamp" },
+        "publicKey": { "$ref": "#/$defs/publicKey" },
+        "deviceId": { "$ref": "#/$defs/deviceId" },
+        "deviceName": { "$ref": "#/$defs/deviceName" },
+        "platform": { "$ref": "#/$defs/platform" }
+      }
+    },
+    "joinFile": {
+      "title": "join：新设备发出的配对请求",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format", "protocolVersion", "kind", "pairingId", "createdAt", "expiresAt",
+        "code", "publicKey", "deviceId", "deviceName", "platform"
+      ],
+      "properties": {
+        "format": { "const": "woo-todo-webdav-pairing" },
+        "protocolVersion": { "const": 1 },
+        "kind": { "const": "join" },
+        "pairingId": { "$ref": "#/$defs/pairingId" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "expiresAt": { "$ref": "#/$defs/timestamp" },
+        "code": { "$ref": "#/$defs/code" },
+        "publicKey": { "$ref": "#/$defs/publicKey" },
+        "deviceId": { "$ref": "#/$defs/deviceId" },
+        "deviceName": { "$ref": "#/$defs/deviceName" },
+        "platform": { "$ref": "#/$defs/platform" }
+      }
+    },
+    "resolveFile": {
+      "title": "resolve：已有设备对 join 的响应",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format", "protocolVersion", "kind", "pairingId", "createdAt", "expiresAt",
+        "approverPublicKey", "approverDeviceId", "approverName"
+      ],
+      "properties": {
+        "format": { "const": "woo-todo-webdav-pairing" },
+        "protocolVersion": { "const": 1 },
+        "kind": { "const": "resolve" },
+        "pairingId": { "$ref": "#/$defs/pairingId" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "expiresAt": { "$ref": "#/$defs/timestamp" },
+        "approverPublicKey": { "$ref": "#/$defs/publicKey" },
+        "approverDeviceId": { "$ref": "#/$defs/deviceId" },
+        "approverName": { "$ref": "#/$defs/deviceName" }
+      }
+    },
+    "approvalFile": {
+      "title": "approval：批准并封存 vaultKey",
+      "description": "Path A 只写 initiatorPublicKey（offer 公钥）；Path B 在相同字段上追加 approverPublicKey（resolve 公钥），initiatorPublicKey 指向 join 公钥。deviceId 始终是被批准的新设备。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format", "protocolVersion", "kind", "pairingId", "createdAt", "expiresAt",
+        "deviceId", "vaultId", "vaultKeyEnvelope", "initiatorPublicKey"
+      ],
+      "properties": {
+        "format": { "const": "woo-todo-webdav-pairing" },
+        "protocolVersion": { "const": 1 },
+        "kind": { "const": "approval" },
+        "pairingId": { "$ref": "#/$defs/pairingId" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "expiresAt": { "$ref": "#/$defs/timestamp" },
+        "deviceId": { "$ref": "#/$defs/deviceId" },
+        "vaultId": { "$ref": "#/$defs/vaultId" },
+        "vaultKeyEnvelope": { "$ref": "#/$defs/vaultKeyEnvelope" },
+        "initiatorPublicKey": { "$ref": "#/$defs/publicKey" },
+        "approverPublicKey": { "$ref": "#/$defs/publicKey" }
+      }
+    }
+  }
+}

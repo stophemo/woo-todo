@@ -1,0 +1,11 @@
+{
+  "format": "woo-todo-webdav-pairing",
+  "protocolVersion": 1,
+  "kind": "resolve",
+  "pairingId": "pair-b-3v8n6c5t",
+  "createdAt": 1764001002000,
+  "expiresAt": 1764001300000,
+  "approverPublicKey": "R0iEo6DjFaxzPdb4oKYpZDhuOZvyRWoh93dLY4aM_CU",
+  "approverDeviceId": "device-macos-b1",
+  "approverName": "MacBook Pro"
+}

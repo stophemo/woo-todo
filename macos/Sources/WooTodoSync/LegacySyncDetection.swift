@@ -59,6 +59,32 @@ public enum SyncLegacyDetector {
 
 public enum SyncLegacyNotice {
     public static let text = "旧同步方式已停用，本地任务已保留。请重新输入配对码或建立同步空间；旧同步凭据不会被删除。"
+    /// 0.4.0 起客户端只使用 WebDAV。
+    public static let webDavMigrationText = "同步已改为 WebDAV。旧 Worker/局域网凭据已保留但不会启用；请配置 WebDAV 账号，本地任务会保留。"
+}
+
+public extension SyncLegacyDetector {
+    /// 旧 Worker/局域网凭据文件与目录；不包含当前仍在使用中的 WebDAV 凭据。
+    static func workerLegacyStorageURLs(applicationSupportURL: URL) -> [URL] {
+        let secure = applicationSupportURL.appendingPathComponent(
+            "Secure",
+            isDirectory: true
+        )
+        return [
+            secure.appendingPathComponent("sync-credentials.enc"),
+            secure.appendingPathComponent("sync-local-key.json"),
+            applicationSupportURL.appendingPathComponent("local-sync", isDirectory: true),
+        ]
+    }
+
+    static func workerLegacyStoragePresent(
+        applicationSupportURL: URL,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        workerLegacyStorageURLs(applicationSupportURL: applicationSupportURL).contains {
+            fileManager.fileExists(atPath: $0.path)
+        }
+    }
 }
 
 /// 启动时的同步身份判断结果：旧文件只影响提示，不否决已读取且合法的新凭据。

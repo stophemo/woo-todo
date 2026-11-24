@@ -1,0 +1,12 @@
+{
+  "format": "woo-todo-webdav-pairing",
+  "protocolVersion": 1,
+  "kind": "claim",
+  "pairingId": "pair-a-7k2m9x4q",
+  "createdAt": 1764000002000,
+  "expiresAt": 1764000300000,
+  "publicKey": "vksCGOLYjFQF6u5EojyzwJdKfCtJRrd3DeJburl3c38",
+  "deviceId": "device-android-a1",
+  "deviceName": "Pixel 9",
+  "platform": "android"
+}

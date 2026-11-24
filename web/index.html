@@ -13,7 +13,7 @@
   <meta property="og:locale" content="zh_CN">
   <meta property="og:url" content="https://woo-todo.vercel.app/">
   <meta property="og:title" content="无我待办 | 本地优先的跨设备待办">
-  <meta property="og:description" content="写下要做的事，按需输入标签和起止日期。macOS 与 Android 均可本地使用，并通过自建 Worker 同步空间端到端加密同步。">
+  <meta property="og:description" content="写下要做的事，按需输入标签和起止日期。macOS 与 Android 均可本地使用，并通过自己的 WebDAV 账号端到端加密同步。">
   <meta property="og:image" content="https://woo-todo.vercel.app/assets/og-cover.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -38,7 +38,7 @@
         <a href="#download">下载</a>
         <a href="https://github.com/stophemo/woo-todo" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
-      <a class="header-action" href="#download">下载 v0.3.0</a>
+      <a class="header-action" href="#download">下载 v0.4.0</a>
     </div>
   </header>
 
@@ -47,13 +47,13 @@
       <div class="hero-grid" aria-hidden="true"></div>
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="eyebrow">v0.3.0 · macOS / Android</p>
+          <p class="eyebrow">v0.4.0 · macOS / Android</p>
           <h1 id="hero-title">无我待办</h1>
           <p class="hero-tagline">写下要做的事，完成即止。</p>
           <p class="hero-summary">任务始终先留在本地。写下标题，按需输入标签和起止日期；没有日期的任务完成即止，不在时间流逝中被自动结算。</p>
           <div class="hero-actions" aria-label="正式版下载">
-            <a class="button button-light" href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/Woo-Todo-v0.3.0-macos-arm64.zip">下载 macOS</a>
-            <a class="button button-outline" href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/Woo-Todo-v0.3.0-android.apk">下载 Android</a>
+            <a class="button button-light" href="https://github.com/stophemo/woo-todo/releases/download/v0.4.0/Woo-Todo-v0.4.0-macos-arm64.zip">下载 macOS</a>
+            <a class="button button-outline" href="https://github.com/stophemo/woo-todo/releases/download/v0.4.0/Woo-Todo-v0.4.0-android.apk">下载 Android</a>
           </div>
           <p class="hero-note">本地优先 · 断网可用 · MIT 开源</p>
         </div>
@@ -141,11 +141,11 @@
         <div class="availability-inner">
           <div class="availability-item">
             <span>macOS</span>
-            <strong>v0.3.0 正式版</strong>
+            <strong>v0.4.0 正式版</strong>
           </div>
           <div class="availability-item">
             <span>Android</span>
-            <strong>v0.3.0 正式版</strong>
+            <strong>v0.4.0 正式版</strong>
           </div>
         </div>
       </div>
@@ -188,20 +188,20 @@
       <div class="section-inner">
         <header class="sync-heading">
           <div>
-            <p class="section-kicker">跨设备同步空间</p>
-            <h2 id="sync-title">一个同步空间，连接所有设备</h2>
+            <p class="section-kicker">跨设备同步</p>
+            <h2 id="sync-title">一个 WebDAV 账号，连接所有设备</h2>
           </div>
-          <p>macOS 与 Android 统一连接自行部署的 Cloudflare Worker + D1 同步空间：首台设备用邀请码建立空间，之后设备用六位配对码双向加入。没有内置 Worker 地址时，每台新设备首次配对前需填写同一个 HTTPS 地址；只有内置了地址的构建才能仅凭六位码加入。任意网络可用，任务正文端到端加密；旧版的局域网与 WebDAV 入口已停用，同步只保留 Worker 同步空间，已经配置好的 HTTPS Worker 身份可以继续使用。</p>
+          <p>macOS 与 Android 统一使用 WebDAV 同步：坚果云、Nextcloud、群晖或自定义服务都可以。每台设备先配置同一个 WebDAV 账号，之后只用六位配对码双向加入；任务正文端到端加密，供应商只能看到密文与配对所需的公开信息。旧 Worker 与局域网同步已停用，本地任务保留。</p>
         </header>
 
-        <div class="sync-topology" aria-label="Mac 与 Android 通过 Worker 同步空间加密同步">
+        <div class="sync-topology" aria-label="Mac 与 Android 通过 WebDAV 端到端加密同步">
           <div class="device device-desktop">
             <div class="desktop-shape" aria-hidden="true"><span></span></div>
             <strong>Mac</strong>
             <small>本地任务库 · 六位码配对</small>
           </div>
           <div class="connection">
-            <span>Worker 同步空间 · AES-256-GCM</span>
+            <span>WebDAV · AES-256-GCM</span>
             <i aria-hidden="true"></i>
             <b aria-hidden="true">☁</b>
           </div>
@@ -212,33 +212,33 @@
           </div>
         </div>
 
-        <div class="network-options" aria-label="同步空间能力">
+        <div class="network-options" aria-label="WebDAV 同步能力">
           <article>
             <span>01</span>
-            <h3>任意网络</h3>
-            <p>不再要求同一 Wi-Fi 或本地网络权限，设备通过 HTTPS 访问同一个 Worker。</p>
+            <h3>供应商自选</h3>
+            <p>坚果云、Nextcloud、群晖或任何兼容的 HTTPS WebDAV 服务；所有设备使用同一个账号与目录。</p>
           </article>
           <article>
             <span>02</span>
             <h3>端到端加密</h3>
-            <p>任务正文与标签以 AES-256-GCM 密文离开设备，服务端只保存密文与必要元数据。</p>
+            <p>任务正文与标签以 AES-256-GCM 密文写入 WebDAV；同步密钥只在本机，供应商无法解密。</p>
           </article>
           <article>
             <span>03</span>
-            <h3>设备管理</h3>
-            <p>查看设备列表、移除其他设备，或退出同步空间；本地任务始终保留。</p>
+            <h3>六位码配对</h3>
+            <p>已有设备显示配对码，新设备输入；也可以反向批准。两端核对六位核对码后绑定，配对码 5 分钟内有效。</p>
           </article>
         </div>
 
         <div class="sync-details">
           <ol>
-            <li><span>1</span>首台设备用邀请码建立同步空间</li>
-            <li><span>2</span>其他设备输入六位码，或显示六位码让对方批准</li>
-            <li><span>3</span>任意网络自动同步任务、标签和历史</li>
+            <li><span>1</span>每台设备先配置同一个 WebDAV 账号</li>
+            <li><span>2</span>用六位配对码双向加入，核对六位核对码</li>
+            <li><span>3</span>启动、本地修改和每 15 分钟自动同步</li>
           </ol>
           <div>
-            <p>配对码 5 分钟内有效；断网仍可正常编辑，重新联网后自动补齐。</p>
-            <p>自建 Worker 的部署步骤见 <a href="https://github.com/stophemo/woo-todo/blob/main/backend/README.md">后端说明</a>；局域网与 WebDAV 同步已停用。</p>
+            <p>WebDAV 没有服务端推送，其他设备的变更会在下次同步时到达；也没有设备列表，无法远程吊销设备。退出空间只清除本机身份，要阻止旧设备继续同步请修改 WebDAV 应用密码。</p>
+            <p>断网仍可正常编辑，恢复网络后自动补齐；供应商的请求频率与流量限制可能影响同步速度。</p>
           </div>
         </div>
       </div>
@@ -248,10 +248,10 @@
       <div class="section-inner">
         <header class="download-heading">
           <div>
-            <p class="section-kicker">v0.3.0</p>
+            <p class="section-kicker">v0.4.0</p>
             <h2 id="download-title">下载正式版</h2>
           </div>
-          <p>macOS 与 Android 提供 v0.3.0 正式版，两者都支持应用内更新。</p>
+          <p>macOS 与 Android 提供 v0.4.0 正式版，两者都支持应用内更新。</p>
         </header>
 
         <div class="download-list">
@@ -260,22 +260,22 @@
               <span class="platform-mark platform-macos">M</span>
               <div><strong>macOS</strong><small>macOS 15+ · Apple Silicon</small></div>
             </div>
-            <p>独立主窗口、最近删除恢复、悬浮任务板、MCP 服务、统计与本机数据清理。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/Woo-Todo-v0.3.0-macos-arm64.zip">下载 ZIP</a>
+            <p>独立主窗口、WebDAV 同步、最近删除恢复、悬浮任务板、MCP 服务、统计与本机数据清理。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.4.0/Woo-Todo-v0.4.0-macos-arm64.zip">下载 ZIP</a>
           </article>
           <article class="download-item">
             <div class="platform-name">
               <span class="platform-mark platform-android">A</span>
               <div><strong>Android</strong><small>Android 13+</small></div>
             </div>
-            <p>统一任务列表、最近删除恢复、定时提醒、桌面 Widget、标签拖动排序与统计。</p>
-            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/Woo-Todo-v0.3.0-android.apk">下载 APK</a>
+            <p>统一任务列表、WebDAV 同步、最近删除恢复、定时提醒、桌面 Widget、标签拖动排序与统计。</p>
+            <a class="button button-dark" href="https://github.com/stophemo/woo-todo/releases/download/v0.4.0/Woo-Todo-v0.4.0-android.apk">下载 APK</a>
           </article>
         </div>
 
         <div class="release-links">
-          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.3.0">查看发布说明</a>
-          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.3.0/SHA256SUMS.txt">SHA-256 校验</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.4.0">查看发布说明</a>
+          <a href="https://github.com/stophemo/woo-todo/releases/download/v0.4.0/SHA256SUMS.txt">SHA-256 校验</a>
           <a href="https://github.com/stophemo/woo-todo">GitHub 源代码</a>
         </div>
       </div>

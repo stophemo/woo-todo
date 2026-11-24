@@ -8,12 +8,19 @@ const files = [
   "shared/schema/sync.schema.json",
   "shared/schema/webdav-operation.schema.json",
   "shared/schema/webdav-setup-link.schema.json",
+  "shared/schema/webdav-pairing.schema.json",
   "shared/schema/backup.schema.json",
   "shared/schema/backup-plaintext.schema.json",
   "shared/fixtures/period-cases.json",
   "shared/fixtures/sync-request.json",
   "shared/fixtures/webdav-operation.json",
   "shared/fixtures/webdav-setup-link.json",
+  "shared/fixtures/webdav-pairing-offer.json",
+  "shared/fixtures/webdav-pairing-claim.json",
+  "shared/fixtures/webdav-pairing-join.json",
+  "shared/fixtures/webdav-pairing-resolve.json",
+  "shared/fixtures/webdav-pairing-approval.json",
+  "shared/fixtures/webdav-pairing-approval-path-a.json",
   "shared/fixtures/crypto-vectors.json",
   "shared/fixtures/task-payloads.json",
   "shared/fixtures/task-validation-cases.json",
@@ -108,6 +115,57 @@ if (Buffer.from(webDavOperation.nonce, "base64url").byteLength !== 12) {
 }
 if (Buffer.from(webDavOperation.ciphertext, "base64url").byteLength < 16) {
   throw new Error("WebDAV 操作对象密文缺少认证标签");
+}
+
+const webDavPairingSchema = documents.get("shared/schema/webdav-pairing.schema.json");
+const pairingKinds = ["offer", "claim", "join", "resolve", "approval"];
+if (
+  webDavPairingSchema.$schema !== "https://json-schema.org/draft/2020-12/schema"
+  || webDavPairingSchema.properties?.format?.const !== "woo-todo-webdav-pairing"
+  || webDavPairingSchema.properties?.protocolVersion?.const !== 1
+  || webDavPairingSchema.properties?.kind?.enum?.join(",") !== pairingKinds.join(",")
+  || !Array.isArray(webDavPairingSchema.oneOf)
+  || webDavPairingSchema.oneOf.length !== pairingKinds.length
+  || pairingKinds.some((kind) => (
+    webDavPairingSchema.$defs?.[`${kind}File`]?.properties?.kind?.const !== kind
+    || webDavPairingSchema.$defs[`${kind}File`].additionalProperties !== false
+  ))
+) {
+  throw new Error("WebDAV 配对 JSON Schema 未按 kind 严格约束字段");
+}
+
+const webDavPairingFixtures = {
+  offer: documents.get("shared/fixtures/webdav-pairing-offer.json"),
+  claim: documents.get("shared/fixtures/webdav-pairing-claim.json"),
+  join: documents.get("shared/fixtures/webdav-pairing-join.json"),
+  resolve: documents.get("shared/fixtures/webdav-pairing-resolve.json"),
+  approvalPathA: documents.get("shared/fixtures/webdav-pairing-approval-path-a.json"),
+  approvalPathB: documents.get("shared/fixtures/webdav-pairing-approval.json"),
+};
+for (const [name, fixture] of Object.entries(webDavPairingFixtures)) {
+  validateWebDavPairingFile(
+    name === "approvalPathA" || name === "approvalPathB" ? "approval" : name,
+    fixture,
+  );
+}
+if (
+  webDavPairingFixtures.offer.pairingId !== webDavPairingFixtures.claim.pairingId
+  || webDavPairingFixtures.offer.pairingId !== webDavPairingFixtures.approvalPathA.pairingId
+  || webDavPairingFixtures.approvalPathA.deviceId !== webDavPairingFixtures.claim.deviceId
+  || webDavPairingFixtures.approvalPathA.vaultId !== webDavPairingFixtures.offer.vaultId
+  || webDavPairingFixtures.approvalPathA.initiatorPublicKey !== webDavPairingFixtures.offer.publicKey
+  || Object.hasOwn(webDavPairingFixtures.approvalPathA, "approverPublicKey")
+) {
+  throw new Error("WebDAV 配对 Path A fixture 未构成一致的 offer→claim→approval 示例");
+}
+if (
+  webDavPairingFixtures.join.pairingId !== webDavPairingFixtures.resolve.pairingId
+  || webDavPairingFixtures.join.pairingId !== webDavPairingFixtures.approvalPathB.pairingId
+  || webDavPairingFixtures.approvalPathB.deviceId !== webDavPairingFixtures.join.deviceId
+  || webDavPairingFixtures.approvalPathB.initiatorPublicKey !== webDavPairingFixtures.join.publicKey
+  || webDavPairingFixtures.approvalPathB.approverPublicKey !== webDavPairingFixtures.resolve.approverPublicKey
+) {
+  throw new Error("WebDAV 配对 Path B fixture 未构成一致的 join→resolve→approval 示例");
 }
 
 const opIds = new Set(syncRequest.push.map((operation) => operation.opId));
@@ -219,6 +277,84 @@ function isValidWebDavEndpoint(value) {
       && endpoint.hash === "";
   } catch {
     return false;
+  }
+}
+
+function validateWebDavPairingFile(kind, document) {
+  const pairingIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
+  const vaultIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+  const deviceIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
+  const deviceNamePattern = /^[^\u0000-\u001f\u007f-\u009f]+$/u;
+  const commonFields = ["format", "protocolVersion", "kind", "pairingId", "createdAt", "expiresAt"];
+  const specificFields = {
+    offer: ["code", "publicKey", "pairingSecret", "vaultId", "deviceName", "platform"],
+    claim: ["publicKey", "deviceId", "deviceName", "platform"],
+    join: ["code", "publicKey", "deviceId", "deviceName", "platform"],
+    resolve: ["approverPublicKey", "approverDeviceId", "approverName"],
+    approval: ["deviceId", "vaultId", "vaultKeyEnvelope", "initiatorPublicKey"],
+  }[kind];
+  const optionalFields = kind === "approval" ? ["approverPublicKey"] : [];
+  const requiredFields = [...commonFields, ...(specificFields ?? [])];
+  const allowedFields = [...requiredFields, ...optionalFields];
+  const actualFields = Object.keys(document);
+  if (
+    !Array.isArray(specificFields)
+    || requiredFields.some((field) => !actualFields.includes(field))
+    || actualFields.some((field) => !allowedFields.includes(field))
+    || document.format !== "woo-todo-webdav-pairing"
+    || document.protocolVersion !== 1
+    || document.kind !== kind
+    || !pairingIdPattern.test(document.pairingId)
+    || !isBoundedInteger(document.createdAt, Number.MAX_SAFE_INTEGER)
+    || !isBoundedInteger(document.expiresAt, Number.MAX_SAFE_INTEGER)
+    || document.expiresAt <= document.createdAt
+  ) {
+    throw new Error(`WebDAV 配对 ${kind} 文件公共字段无效`);
+  }
+  if (document.code !== undefined && !/^[0-9]{6}$/u.test(document.code)) {
+    throw new Error(`WebDAV 配对 ${kind} 文件六位码无效`);
+  }
+  for (const field of ["publicKey", "pairingSecret", "initiatorPublicKey", "approverPublicKey"]) {
+    if (document[field] === undefined) continue;
+    if (
+      !/^[A-Za-z0-9_-]{43}$/u.test(document[field])
+      || Buffer.from(document[field], "base64url").byteLength !== 32
+    ) {
+      throw new Error(`WebDAV 配对 ${kind} 文件 ${field} 不是 32 字节`);
+    }
+  }
+  if (document.vaultId !== undefined && !vaultIdPattern.test(document.vaultId)) {
+    throw new Error(`WebDAV 配对 ${kind} 文件 vaultId 无效`);
+  }
+  for (const field of ["deviceId", "approverDeviceId"]) {
+    if (document[field] !== undefined && !deviceIdPattern.test(document[field])) {
+      throw new Error(`WebDAV 配对 ${kind} 文件 ${field} 无效`);
+    }
+  }
+  for (const field of ["deviceName", "approverName"]) {
+    if (document[field] === undefined) continue;
+    if (
+      codePointLength(document[field]) < 1
+      || codePointLength(document[field]) > 64
+      || !deviceNamePattern.test(document[field])
+    ) {
+      throw new Error(`WebDAV 配对 ${kind} 文件 ${field} 无效`);
+    }
+  }
+  if (document.platform !== undefined && !["macos", "android", "windows"].includes(document.platform)) {
+    throw new Error(`WebDAV 配对 ${kind} 文件平台无效`);
+  }
+  if (document.vaultKeyEnvelope !== undefined) {
+    const envelope = document.vaultKeyEnvelope;
+    if (
+      Object.keys(envelope).sort().join(",") !== "ciphertext,nonce"
+      || !/^[A-Za-z0-9_-]{64}$/u.test(envelope.ciphertext)
+      || Buffer.from(envelope.ciphertext, "base64url").byteLength !== 48
+      || !/^[A-Za-z0-9_-]{16}$/u.test(envelope.nonce)
+      || Buffer.from(envelope.nonce, "base64url").byteLength !== 12
+    ) {
+      throw new Error(`WebDAV 配对 ${kind} 文件 vaultKey 密文无效`);
+    }
   }
 }
 

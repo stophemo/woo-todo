@@ -1,0 +1,16 @@
+{
+  "format": "woo-todo-webdav-pairing",
+  "protocolVersion": 1,
+  "kind": "approval",
+  "pairingId": "pair-b-3v8n6c5t",
+  "createdAt": 1764001004000,
+  "expiresAt": 1764001300000,
+  "deviceId": "device-android-b2",
+  "vaultId": "vault-demo-b1",
+  "vaultKeyEnvelope": {
+    "ciphertext": "Uj-1fr3r025D5GL0m4KT2r5ahvOyzalOhwrZA4Do62NIsE05K003GVwkav75iR2A",
+    "nonce": "UFFSU1RVVldYWVpb"
+  },
+  "initiatorPublicKey": "IztdYSXQFr8KAMJQJu8RPRU7znwZciq-FG0gjBKjBnA",
+  "approverPublicKey": "R0iEo6DjFaxzPdb4oKYpZDhuOZvyRWoh93dLY4aM_CU"
+}

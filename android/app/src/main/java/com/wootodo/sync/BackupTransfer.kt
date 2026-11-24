@@ -42,8 +42,12 @@ data class BackupTaskSnapshot(
 
 data class BackupRestoreResult(
     val restoredTaskCount: Int,
+    /** 始终为 false：备份不恢复 WebDAV 账号或任何同步身份。 */
     val syncCredentialsRestored: Boolean,
-    /** 备份中的旧 endpoint 不属于新的 HTTPS Worker 空间，需要重新配对。 */
+    /**
+     * 备份带有同步身份（旧 Worker/LAN 或过去的 WebDAV 形状）时提示用户：
+     * 任务已恢复，但需要重新配置 WebDAV 账号并用六位码配对后才能同步。
+     */
     val requiresRePairing: Boolean = false,
 )
 
@@ -129,44 +133,23 @@ class BackupRestoreCoordinator(
     }
 
     fun restore(snapshot: BackupSnapshot): BackupRestoreResult {
-        // 旧备份可能携带 LAN/WebDAV 地址：只恢复任务，不保存凭据也不绑定身份。
-        val rejectedCredentials = snapshot.syncCredentials?.takeIf { !it.hasValidEndpoint() }
-        val restoredCredentials = snapshot.syncCredentials
-            ?.takeIf { it.hasValidEndpoint() }
-            ?.credentials()
-        var credentialsWriteAttempted = false
-        var committed = false
-        try {
-            database.inTransaction { transaction ->
-                BackupRestorePolicy.requireReady(
-                    state = transaction.readState(),
-                    hasStoredCredentials = credentialsStore.load() != null,
-                )
-                snapshot.tasks.forEach(transaction::insertTask)
-                snapshot.tombstones.forEach(transaction::insertTombstone)
-                restoredCredentials?.let { credentials ->
-                    credentialsWriteAttempted = true
-                    if (!credentialsStore.saveIfAbsent(credentials)) {
-                        credentialsWriteAttempted = false
-                        throw BackupTransferException.ExistingIdentity()
-                    }
-                    transaction.bindIdentityAndCreateBaseline(credentials)
-                }
-            }
-            committed = true
-            return BackupRestoreResult(
-                restoredTaskCount = snapshot.tasks.size,
-                syncCredentialsRestored = restoredCredentials != null,
-                requiresRePairing = rejectedCredentials != null,
+        // 客户端已改为 WebDAV-only：恢复只写任务与删除记录。备份中的任何同步身份
+        // （旧 Worker/LAN 或过去的 WebDAV 形状）都不恢复、不绑定；用户需重新配置
+        // WebDAV 账号并用六位码配对，界面应据此提示。
+        val requiresRePairing = snapshot.syncCredentials != null
+        database.inTransaction { transaction ->
+            BackupRestorePolicy.requireReady(
+                state = transaction.readState(),
+                hasStoredCredentials = credentialsStore.load() != null,
             )
-        } catch (error: Exception) {
-            if (credentialsWriteAttempted && !committed) {
-                runCatching(credentialsStore::delete).exceptionOrNull()?.let(error::addSuppressed)
-            }
-            throw error
-        } finally {
-            restoredCredentials?.vaultKey?.fill(0)
+            snapshot.tasks.forEach(transaction::insertTask)
+            snapshot.tombstones.forEach(transaction::insertTombstone)
         }
+        return BackupRestoreResult(
+            restoredTaskCount = snapshot.tasks.size,
+            syncCredentialsRestored = false,
+            requiresRePairing = requiresRePairing,
+        )
     }
 }
 

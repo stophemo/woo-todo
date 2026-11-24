@@ -18,29 +18,13 @@ struct AppRuntimeConfiguration {
     let cachesURL: URL
     let savedStateURL: URL
     let defaults: UserDefaults
-    let syncCredentialsStore: any SyncCredentialsStoring
-    /// 构建期写入 Info.plist 的 Worker 根地址；为空时由首台设备手填。
-    let defaultSyncEndpoint: URL?
+    let webDavCredentialsStore: any WebDavCredentialsStoring
     let allowsExternalServices: Bool
     let allowsLocalDataRemoval: Bool
     let initialScreen: InitialScreen
     let shouldSeedUITestFixtures: Bool
     let uiTestArtifactDirectory: URL?
     let uiTestScreenName: String?
-
-    static func resolveDefaultSyncEndpoint(
-        infoDictionary: [String: Any]
-    ) -> URL? {
-        guard let raw = infoDictionary["WooTodoSyncEndpoint"] as? String else {
-            return nil
-        }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        if case let .ready(endpoint) = SyncEndpointSetupPolicy.assess(trimmed) {
-            return endpoint
-        }
-        return nil
-    }
 
     static func initialScreen(for screen: String) throws -> InitialScreen {
         switch screen {
@@ -74,12 +58,8 @@ struct AppRuntimeConfiguration {
     static func current(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundleIdentifier: String? = Bundle.main.bundleIdentifier,
-        infoDictionary: [String: Any]? = Bundle.main.infoDictionary,
         fileManager: FileManager = .default
     ) throws -> Self {
-        let defaultSyncEndpoint = resolveDefaultSyncEndpoint(
-            infoDictionary: infoDictionary ?? [:]
-        )
         guard environment["WOO_TODO_UI_TEST"] == "1" else {
             let applicationSupport = try fileManager.url(
                 for: .applicationSupportDirectory,
@@ -110,14 +90,12 @@ struct AppRuntimeConfiguration {
                 cachesURL: caches,
                 savedStateURL: savedState,
                 defaults: .standard,
-                syncCredentialsStore: EncryptedFileSyncCredentialsStore(
+                webDavCredentialsStore: EncryptedFileWebDavCredentialsStore(
                     directoryURL: applicationData.appendingPathComponent(
                         "Secure",
                         isDirectory: true
-                    ),
-                    legacyStore: KeychainCredentialsStore()
+                    )
                 ),
-                defaultSyncEndpoint: defaultSyncEndpoint,
                 allowsExternalServices: true,
                 allowsLocalDataRemoval: true,
                 initialScreen: .panel,
@@ -170,8 +148,7 @@ struct AppRuntimeConfiguration {
             cachesURL: root.appendingPathComponent("caches", isDirectory: true),
             savedStateURL: root.appendingPathComponent("saved-state", isDirectory: true),
             defaults: defaults,
-            syncCredentialsStore: InMemorySyncCredentialsStore(),
-            defaultSyncEndpoint: defaultSyncEndpoint,
+            webDavCredentialsStore: InMemoryWebDavCredentialsStore(),
             allowsExternalServices: false,
             allowsLocalDataRemoval: false,
             initialScreen: initialScreen,
@@ -261,30 +238,6 @@ enum UITestFixtureSeeder {
         )
         try repository.save(trashed)
         try repository.delete(id: trashed.id)
-    }
-}
-
-private final class InMemorySyncCredentialsStore: SyncCredentialsStoring, @unchecked Sendable {
-    private let lock = NSLock()
-    private var credentials: SyncCredentials?
-
-    func save(_ credentials: SyncCredentials) throws {
-        try credentials.validate()
-        lock.lock()
-        defer { lock.unlock() }
-        self.credentials = credentials
-    }
-
-    func load() throws -> SyncCredentials? {
-        lock.lock()
-        defer { lock.unlock() }
-        return credentials
-    }
-
-    func delete() throws {
-        lock.lock()
-        defer { lock.unlock() }
-        credentials = nil
     }
 }
 

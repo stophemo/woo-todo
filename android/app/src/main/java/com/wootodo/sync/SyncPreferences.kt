@@ -2,12 +2,12 @@ package com.wootodo.sync
 
 import android.content.Context
 
-/** 旧同步方式只用于检测，不读取、不删除其中的凭据。 */
+/**
+ * 0.3.0 的 Worker / 旧 LAN 凭据只用于提示，不读取、不删除、不启用。
+ * 旧 WebDAV 完整凭据由 AndroidWebDavCredentialsStore 自动迁移，不再是 legacy。
+ */
 object LegacySyncDetector {
-    fun detects(hasWebDavCredentials: Boolean, syncCredentialsEndpoint: String?): Boolean =
-        hasWebDavCredentials ||
-            (syncCredentialsEndpoint != null &&
-                !SyncEndpointPolicy.isValid(syncCredentialsEndpoint))
+    fun detects(hasWorkerOrLanCredentials: Boolean): Boolean = hasWorkerOrLanCredentials
 }
 
 class LegacySyncNotice(context: Context) {
@@ -17,12 +17,12 @@ class LegacySyncNotice(context: Context) {
         Context.MODE_PRIVATE,
     )
 
-    fun hasWebDavCredentials(): Boolean {
+    fun hasWorkerOrLanCredentials(): Boolean {
         val legacy = applicationContext.getSharedPreferences(
-            WEBDAV_PREFERENCES_NAME,
+            WORKER_PREFERENCES_NAME,
             Context.MODE_PRIVATE,
         )
-        return legacy.contains(WEBDAV_CIPHERTEXT_KEY) || legacy.contains(WEBDAV_NONCE_KEY)
+        return legacy.contains(WORKER_CIPHERTEXT_KEY) || legacy.contains(WORKER_NONCE_KEY)
     }
 
     fun shouldShowOnce(): Boolean = !preferences.getBoolean(KEY_SHOWN, false)
@@ -34,9 +34,9 @@ class LegacySyncNotice(context: Context) {
     private companion object {
         const val PREFERENCES_NAME = "sync_legacy_notice"
         const val KEY_SHOWN = "legacy_notice_shown"
-        const val WEBDAV_PREFERENCES_NAME = "webdav_credentials_encrypted"
-        const val WEBDAV_CIPHERTEXT_KEY = "ciphertext"
-        const val WEBDAV_NONCE_KEY = "nonce"
+        const val WORKER_PREFERENCES_NAME = "sync_credentials_encrypted"
+        const val WORKER_CIPHERTEXT_KEY = "ciphertext"
+        const val WORKER_NONCE_KEY = "nonce"
     }
 }
 
@@ -62,30 +62,5 @@ class SyncStatusPreferences(context: Context) {
     private companion object {
         const val PREFERENCES_NAME = "sync_status"
         const val KEY_LAST_SUCCESS = "last_success_at"
-    }
-}
-
-/** 没有构建期地址时，首台设备填写并持久化的自托管 Worker 地址。 */
-class SelfHostedEndpointPreferences(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences(
-        PREFERENCES_NAME,
-        Context.MODE_PRIVATE,
-    )
-
-    fun load(): String? = SyncEndpointPolicy.normalize(
-        preferences.getString(KEY_ENDPOINT, null),
-    )
-
-    fun save(endpoint: String) {
-        val normalized = SyncEndpointPolicy.normalize(endpoint)
-            ?: throw IllegalArgumentException("同步服务地址无效")
-        check(preferences.edit().putString(KEY_ENDPOINT, normalized).commit()) {
-            "无法保存同步服务地址"
-        }
-    }
-
-    private companion object {
-        const val PREFERENCES_NAME = "sync_endpoint"
-        const val KEY_ENDPOINT = "endpoint"
     }
 }

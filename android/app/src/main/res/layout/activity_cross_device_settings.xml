@@ -47,70 +47,120 @@
             android:textAppearance="?attr/textAppearanceBodySmall"
             android:textColor="@color/muted" />
 
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/webdav_account_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="0dp"
+            app:strokeColor="@color/line"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/cross_device_webdav_account"
+                    android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+                <TextView
+                    android:id="@+id/webdav_account_summary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textColor="@color/muted" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/webdav_edit_account"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/cross_device_webdav_edit_account"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/webdav_account_form"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <EditText
+                        android:id="@+id/webdav_endpoint_input"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:hint="@string/cross_device_webdav_endpoint_hint"
+                        android:importantForAutofill="no"
+                        android:inputType="textUri"
+                        android:maxLines="1" />
+
+                    <EditText
+                        android:id="@+id/webdav_username_input"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:hint="@string/cross_device_webdav_username_hint"
+                        android:importantForAutofill="no"
+                        android:inputType="text"
+                        android:maxLines="1" />
+
+                    <EditText
+                        android:id="@+id/webdav_app_password_input"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:hint="@string/cross_device_webdav_app_password_hint"
+                        android:importantForAutofill="no"
+                        android:inputType="textPassword"
+                        android:maxLines="1" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/cross_device_webdav_provider_examples"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="@color/muted" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/webdav_save_account"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/cross_device_webdav_test_and_save" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <LinearLayout
-            android:id="@+id/unpaired_section"
+            android:id="@+id/no_identity_section"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:visibility="gone">
 
-            <com.google.android.material.card.MaterialCardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                app:cardCornerRadius="12dp"
-                app:cardElevation="0dp"
-                app:strokeColor="@color/line"
-                app:strokeWidth="1dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="16dp">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/cross_device_server_address"
-                        android:textAppearance="?attr/textAppearanceLabelLarge" />
-
-                    <TextView
-                        android:id="@+id/server_address_value"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:textAppearance="?attr/textAppearanceBodyMedium"
-                        android:textColor="@color/muted" />
-
-                    <EditText
-                        android:id="@+id/server_address_input"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:hint="@string/cross_device_server_hint"
-                        android:importantForAutofill="no"
-                        android:inputType="textUri"
-                        android:maxLines="1"
-                        android:visibility="gone" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/save_server_address"
-                        style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="end"
-                        android:text="@string/save"
-                        android:visibility="gone" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/action_enter_code"
+                android:id="@+id/action_create_space"
                 style="@style/Widget.Material3.Button"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
+                android:text="@string/cross_device_create_space" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/action_enter_code"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:text="@string/cross_device_enter_code" />
 
             <com.google.android.material.button.MaterialButton
@@ -121,16 +171,7 @@
                 android:layout_marginTop="8dp"
                 android:text="@string/cross_device_show_my_code" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/action_create_space"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/cross_device_create_space" />
-
             <TextView
-                android:id="@+id/unpaired_hint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
@@ -224,20 +265,6 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/cross_device_enter_new_device_code" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:text="@string/cross_device_devices"
-                android:textAppearance="?attr/textAppearanceTitleSmall" />
-
-            <LinearLayout
-                android:id="@+id/device_list"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:orientation="vertical" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/action_leave_space"

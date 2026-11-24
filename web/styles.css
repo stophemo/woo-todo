@@ -1011,13 +1011,6 @@ strong {
   font-size: 12px;
 }
 
-.sync-details a {
-  padding-bottom: 2px;
-  border-bottom: 1px solid var(--green-dark);
-  color: var(--green-dark);
-  font-weight: 700;
-}
-
 .download {
   border-top: 1px solid var(--line);
   background: var(--surface);

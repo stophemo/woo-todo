@@ -233,8 +233,8 @@ public struct BackupSnapshot: Codable, Equatable, Sendable {
             BackupSyncCredentials.self,
             forKey: .syncCredentials
         )
-        // 旧备份可能携带已停用的局域网/WebDAV 地址：先允许读取任务，
-        // 恢复流程再单独判断是否保存同步身份。
+        // 旧备份可能携带已停用的 Worker/局域网同步身份：先允许读取任务。
+        // WebDAV 账号与同步身份不写入备份，恢复后必须重新配置账号并重新配对。
         try validate(requiringSupportedSyncCredentials: false)
     }
 

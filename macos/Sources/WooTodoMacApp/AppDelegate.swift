@@ -46,59 +46,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 cachesURL: runtime.cachesURL,
                 savedStateURL: runtime.savedStateURL,
                 defaults: runtime.defaults,
-                syncCredentialsStore: runtime.syncCredentialsStore,
+                webDavCredentialsStore: runtime.webDavCredentialsStore,
                 allowsAppRemoval: runtime.allowsLocalDataRemoval
             )
             self.localDataManager = localDataManager
-            // 本地任务库是启动的唯一硬依赖；同步身份即使损坏或不匹配也不能阻塞本地使用。
+            // 本地任务库是启动的唯一硬依赖；WebDAV 凭据即使损坏也不能阻塞本地使用。
             let repository = try SQLiteTaskRepository(databaseURL: runtime.databaseURL)
             if runtime.shouldSeedUITestFixtures {
                 try UITestFixtureSeeder.seedIfNeeded(repository: repository)
             }
-            let credentialsStore = runtime.syncCredentialsStore
-            var storedCredentials: SyncCredentials?
-            var credentialsLoadError: Error?
-            do {
-                storedCredentials = try credentialsStore.load()
-            } catch {
-                credentialsLoadError = error
-                logger.error(
-                    "同步身份无法读取，本地模式继续启动：\(error.localizedDescription, privacy: .public)"
-                )
-            }
-            let startupDecision = SyncStartupActivationPolicy.evaluate(
-                storedCredentials: storedCredentials,
-                credentialsError: credentialsLoadError,
+            let legacyNotice = SyncLegacyDetector.workerLegacyStoragePresent(
                 applicationSupportURL: runtime.appDataURL
-            )
-            let legacyDetection = startupDecision.legacyDetection
-            let hasStoredValidCredentials = startupDecision.hasStoredValidCredentials
-            // 旧文件只影响提示，不能否决已读取且合法的新凭据。
-            var activeCredentials = startupDecision.activeCredentials
-            var syncActivationError = startupDecision.activationError
-            if let credentials = activeCredentials {
-                do {
-                    try repository.configureSync(SQLiteSyncConfiguration(
-                        vaultId: credentials.vaultId,
-                        deviceId: credentials.deviceId,
-                        vaultKey: credentials.vaultKey
-                    ))
-                } catch {
-                    activeCredentials = nil
-                    syncActivationError = error
-                    logger.error(
-                        "同步身份无法激活，本地模式继续启动：\(error.localizedDescription, privacy: .public)"
-                    )
-                }
-            }
-            let syncSettingsStore = try SyncSettingsStore(
+            ) ? SyncLegacyNotice.webDavMigrationText : nil
+            let syncSettingsStore = SyncSettingsStore(
                 repository: repository,
-                credentialsStore: credentialsStore,
-                credentials: activeCredentials,
-                defaultSyncEndpoint: runtime.defaultSyncEndpoint,
-                legacyDetection: legacyDetection,
-                hasStoredValidCredentials: hasStoredValidCredentials,
-                defaults: runtime.defaults
+                credentialsStore: runtime.webDavCredentialsStore,
+                defaults: runtime.defaults,
+                legacyNotice: legacyNotice
             )
             let store = TodayStore(repository: repository)
             let mcpSettingsStore = MCPSettingsStore(
@@ -297,9 +261,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 panelController.show()
                 scheduleUITestSnapshot(window: panelController.window, runtime: runtime)
             }
-            if let syncActivationError {
-                showSyncCredentialsWarning(syncActivationError)
-            }
             if let legacyNotice = syncSettingsStore.legacyNotice {
                 showLegacySyncNotice(legacyNotice)
                 syncSettingsStore.acknowledgeLegacyNotice()
@@ -318,6 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         appUpdateController?.checkAutomatically()
+        syncSettingsStore?.requestSync(.wake)
     }
 
     func applicationShouldHandleReopen(
@@ -583,24 +545,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showLegacySyncNotice(_ message: String) {
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = "旧同步方式已停用"
+        alert.messageText = "同步已改为 WebDAV"
         alert.informativeText = message
-        alert.addButton(withTitle: "继续使用本地任务")
-        alert.runModal()
-    }
-
-    private func showSyncCredentialsWarning(_ error: Error) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        if let repositoryError = error as? SQLiteRepositoryError,
-           case .syncIdentityMismatch = repositoryError {
-            alert.messageText = "同步身份与本地数据库不匹配"
-            alert.informativeText = "Keychain 中的同步空间或设备身份与当前本地任务库不一致，因此本次启动已停用同步。\n\n本地任务仍可查看和编辑，变更会安全保存在本地待恢复队列中；应用没有覆盖 Keychain 或数据库身份。请先保留当前安装与数据，恢复匹配的同步身份后再重新启动。"
-        } else {
-            alert.messageText = "同步身份暂时不可用"
-            alert.informativeText = "\(error.localizedDescription)\n\n本地任务仍可查看和编辑；如果数据库已有同步身份，变更会安全保存在本地待恢复队列中。Keychain 恢复并重新启动后，应用会补入待同步队列。请暂时不要卸载应用或创建新的同步空间。"
-        }
-        alert.addButton(withTitle: "继续使用本地任务")
+        alert.addButton(withTitle: "配置 WebDAV")
         alert.runModal()
     }
 }

@@ -13,6 +13,15 @@ struct SyncConnectionSummary: Equatable {
     let deviceName: String
 }
 
+struct SyncDeviceSummary: Equatable, Identifiable, Sendable {
+    let id: String
+    let name: String
+    let platform: DevicePlatform
+    let lastSeenAt: Date
+    let appVersion: String
+    let isCurrent: Bool
+}
+
 enum AccountEndpointAssessment: Equatable {
     case empty
     case invalid
@@ -94,6 +103,9 @@ final class SyncSettingsStore: ObservableObject {
     @Published private(set) var account: WebDavAccount?
     @Published private(set) var identity: WebDavIdentity?
     @Published private(set) var connection: SyncConnectionSummary?
+    @Published private(set) var devices: [SyncDeviceSummary] = []
+    @Published private(set) var isRefreshingDevices = false
+    @Published private(set) var devicesErrorMessage: String?
     @Published private(set) var runtimeSnapshot: SyncRuntimeSnapshot
     @Published private(set) var lastRunSummary: SyncRunSummary?
     @Published private(set) var isSavingAccount = false
@@ -382,7 +394,7 @@ final class SyncSettingsStore: ObservableObject {
     }
 
     func exitSpace() async {
-        guard identity != nil, !isExitingSpace else { return }
+        guard let exitingIdentity = identity, !isExitingSpace else { return }
         actionErrorMessage = nil
         statusMessage = nil
         isExitingSpace = true
@@ -396,6 +408,14 @@ final class SyncSettingsStore: ObservableObject {
         runner = nil
         cancelAllPairingTasks()
 
+        // 尽力删除自己的设备心跳；WebDAV 没有服务端设备表，失败不影响本地退出。
+        if let account {
+            await deleteDeviceHeartbeatBestEffort(
+                account: account,
+                identity: exitingIdentity
+            )
+        }
+
         var deleteError: Error?
         do {
             try credentialsStore.deleteIdentity()
@@ -405,6 +425,8 @@ final class SyncSettingsStore: ObservableObject {
         try? repository.resetSyncBinding()
         identity = nil
         connection = nil
+        devices = []
+        devicesErrorMessage = nil
         pathAShowPhase = .idle
         pathAShowCode = nil
         pathAClaimPhase = .idle
@@ -459,6 +481,7 @@ final class SyncSettingsStore: ObservableObject {
                 self.runtimeMachine.setConfigured(true)
                 self.publishRuntimeState()
                 self.actionErrorMessage = nil
+                await self.writeOwnDeviceHeartbeat()
                 self.requestSync(.launch)
             } catch {
                 guard self.pendingStartupBinding != nil, !Task.isCancelled else {
@@ -494,6 +517,7 @@ final class SyncSettingsStore: ObservableObject {
                 )
                 trigger = runtimeMachine.succeed(at: successfulAt)
                 publishRuntimeState()
+                await writeOwnDeviceHeartbeat()
                 if summary.pulled > 0 {
                     onRemoteChanges?()
                 }
@@ -510,6 +534,85 @@ final class SyncSettingsStore: ObservableObject {
             }
         }
         syncTask = nil
+    }
+
+    // MARK: - 设备列表
+
+    func refreshDevices() async {
+        guard let account, let identity, !isRefreshingDevices else { return }
+        let currentDeviceId = identity.deviceId
+        isRefreshingDevices = true
+        devicesErrorMessage = nil
+        defer { isRefreshingDevices = false }
+
+        do {
+            let client = try clientFactory(account, identity)
+            let remoteDevices = try await client.listDevices()
+            // 等待期间用户可能已切换或退出空间，旧空间的结果不再展示。
+            guard self.identity?.deviceId == currentDeviceId else { return }
+            devices = remoteDevices.map { device in
+                SyncDeviceSummary(
+                    id: device.deviceId,
+                    name: device.name,
+                    platform: device.platform,
+                    lastSeenAt: device.lastSeenAt,
+                    appVersion: device.appVersion,
+                    isCurrent: device.deviceId == currentDeviceId
+                )
+            }
+        } catch is CancellationError {
+            // 页面关闭导致的取消不显示错误。
+        } catch {
+            devicesErrorMessage = friendlyMessage(for: error)
+            logger.notice(
+                "读取 WebDAV 设备列表失败：\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    /// 退出时最多等待几秒；服务不可达不能阻塞本地退出。
+    private func deleteDeviceHeartbeatBestEffort(
+        account: WebDavAccount,
+        identity: WebDavIdentity
+    ) async {
+        guard let client = try? clientFactory(account, identity) else { return }
+        let logger = self.logger
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                do {
+                    try await client.deleteOwnDeviceHeartbeat()
+                } catch {
+                    logger.notice(
+                        "删除 WebDAV 设备心跳失败：\(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(3))
+            }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    /// 心跳是尽力而为的展示信息：失败只记录，不影响同步与本地操作。
+    private func writeOwnDeviceHeartbeat() async {
+        guard let account, let identity else { return }
+        do {
+            let client = try clientFactory(account, identity)
+            let heartbeat = try WebDavDeviceHeartbeat(
+                name: Self.localDeviceName,
+                platform: .macos,
+                lastSeenAt: Self.timestampMilliseconds(),
+                appVersion: Self.appVersion
+            )
+            try await client.putDeviceHeartbeat(heartbeat)
+        } catch is CancellationError {
+        } catch {
+            logger.notice(
+                "写入 WebDAV 设备心跳失败：\(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     // MARK: - Path A：已有设备显示码
@@ -1220,6 +1323,22 @@ final class SyncSettingsStore: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let value = cleaned.isEmpty ? "Mac" : cleaned
         return String(value.prefix(64))
+    }
+
+    private static var appVersion: String {
+        let raw = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String ?? ""
+        let cleaned = raw
+            .components(separatedBy: .controlCharacters)
+            .joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = cleaned.isEmpty ? "0.0.0" : cleaned
+        return String(value.prefix(32))
+    }
+
+    private static func timestampMilliseconds(_ date: Date = Date()) -> Int64 {
+        Int64((date.timeIntervalSince1970 * 1_000).rounded())
     }
 }
 

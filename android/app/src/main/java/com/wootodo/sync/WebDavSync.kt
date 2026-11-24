@@ -531,7 +531,7 @@ class WebDavClient(
         .build(),
     private val retryDelaysMillis: List<Long> = WebDavRetryPolicy.delaysMillis,
     private val retrySleep: (Long) -> Unit = Thread::sleep,
-) : WebDavOperationTransport {
+) : WebDavOperationTransport, WebDavDeviceHeartbeatTransport {
     init {
         account.validate()
     }
@@ -637,6 +637,62 @@ class WebDavClient(
         )
     }
 
+    override fun ensureDevicesCollection(vaultId: String) {
+        listOf(
+            listOf("v1"),
+            listOf("v1", vaultId),
+            listOf("v1", vaultId, DEVICES_DIRECTORY),
+        ).forEach { request("MKCOL", it, null, emptyMap(), setOf(201, 405, 409)) }
+    }
+
+    /** 覆盖写入自己的心跳；调用方需先 ensureDevicesCollection。 */
+    override fun putDeviceHeartbeat(vaultId: String, deviceId: String, content: String) {
+        if (!WebDavCredentialPolicy.isValidVaultId(vaultId) ||
+            !WebDavCredentialPolicy.isValidDeviceId(deviceId)
+        ) {
+            throw WebDavException.MalformedObject("设备心跳路径无效")
+        }
+        request(
+            method = "PUT",
+            path = deviceHeartbeatPath(vaultId, deviceId),
+            body = content.toByteArray(StandardCharsets.UTF_8),
+            headers = mapOf("Content-Type" to "application/json"),
+            accepted = setOf(200, 201, 204),
+        )
+    }
+
+    override fun listDeviceHeartbeatFileNames(vaultId: String): List<String> {
+        val root = listOf("v1", vaultId, DEVICES_DIRECTORY)
+        return propfind(root)
+            .filter {
+                it.size == root.size + 1 &&
+                    it.subList(0, root.size) == root &&
+                    it.last().endsWith(".json")
+            }
+            .map(List<String>::last)
+            .distinct()
+            .sorted()
+    }
+
+    override fun getDeviceHeartbeatOrNull(vaultId: String, deviceId: String): String? = try {
+        String(get(deviceHeartbeatPath(vaultId, deviceId)), StandardCharsets.UTF_8)
+    } catch (error: WebDavException.Http) {
+        if (error.statusCode == 404) null else throw error
+    }
+
+    override fun deleteDeviceHeartbeat(vaultId: String, deviceId: String) {
+        request(
+            "DELETE",
+            deviceHeartbeatPath(vaultId, deviceId),
+            null,
+            emptyMap(),
+            setOf(200, 204, 404),
+        )
+    }
+
+    private fun deviceHeartbeatPath(vaultId: String, deviceId: String): List<String> =
+        listOf("v1", vaultId, DEVICES_DIRECTORY, "$deviceId.json")
+
     /** 写入成功或已有完全相同内容返回 true；已有不同内容返回 false。 */
     private fun putFile(path: List<String>, data: ByteArray): Boolean {
         val result = request(
@@ -733,6 +789,7 @@ class WebDavClient(
 
     private companion object {
         const val PAIRING_DIRECTORY = "pairing"
+        const val DEVICES_DIRECTORY = "devices"
     }
 }
 
@@ -744,6 +801,8 @@ class WebDavSyncRunner(
     private val onWarning: (String, Throwable) -> Unit = { message, error ->
         android.util.Log.w("WooTodoWebDav", message, error)
     },
+    /** 同步全部成功并确认 outbox 后触发；心跳失败不能影响同步结果。 */
+    private val onSynchronized: () -> Unit = {},
 ) {
     fun synchronize(): SyncRunSummary {
         identity.validate()
@@ -795,6 +854,11 @@ class WebDavSyncRunner(
         if (skipped.isNotEmpty()) local.markWebDavOperationsSkipped(skipped)
         operations.chunked(WEBDAV_APPLY_BATCH_SIZE).forEach(::applyBatch)
         outbox.acknowledgeOperations(pending.map(SyncPushOperation::opId))
+        try {
+            onSynchronized()
+        } catch (error: Exception) {
+            onWarning("同步完成后写入设备心跳失败", error)
+        }
         return SyncRunSummary(
             pushed = pending.size,
             pulled = operations.size,

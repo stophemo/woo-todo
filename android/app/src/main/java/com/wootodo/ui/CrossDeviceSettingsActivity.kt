@@ -26,6 +26,7 @@ import com.wootodo.sync.WebDavClaimInfo
 import com.wootodo.sync.WebDavClaimSession
 import com.wootodo.sync.WebDavClient
 import com.wootodo.sync.WebDavCredentials
+import com.wootodo.sync.WebDavDeviceInfo
 import com.wootodo.sync.WebDavEndpointPolicy
 import com.wootodo.sync.WebDavJoinSession
 import com.wootodo.sync.WebDavJoinTarget
@@ -72,6 +73,9 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private lateinit var spaceEndpointValue: TextView
     private lateinit var spaceSyncValue: TextView
     private lateinit var spaceLastSyncValue: TextView
+    private lateinit var devicesStatus: TextView
+    private lateinit var devicesEmpty: TextView
+    private lateinit var deviceList: LinearLayout
     private lateinit var pairingPanel: View
     private lateinit var panelTitle: TextView
     private lateinit var panelStatus: TextView
@@ -85,6 +89,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private val timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
     private var operationJob: Job? = null
+    private var devicesJob: Job? = null
     @Volatile
     private var panelGeneration = 0
     private var panelMode = PanelMode.NONE
@@ -140,6 +145,9 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         spaceEndpointValue = findViewById(R.id.space_endpoint_value)
         spaceSyncValue = findViewById(R.id.space_sync_value)
         spaceLastSyncValue = findViewById(R.id.space_last_sync_value)
+        devicesStatus = findViewById(R.id.devices_status)
+        devicesEmpty = findViewById(R.id.devices_empty)
+        deviceList = findViewById(R.id.device_list)
         pairingPanel = findViewById(R.id.pairing_panel)
         panelTitle = findViewById(R.id.pairing_panel_title)
         panelStatus = findViewById(R.id.pairing_panel_status)
@@ -202,6 +210,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             pairedSection.isVisible = account != null && hasIdentity
             if (credentials != null) {
                 renderSpaceCard(credentials)
+                loadDevices()
             }
             renderSyncState(app.syncRuntime.state.value)
         }
@@ -238,6 +247,65 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             R.string.cross_device_webdav_address_format,
             credentials.endpoint,
         )
+    }
+
+    private fun loadDevices() {
+        devicesJob?.cancel()
+        devicesStatus.isVisible = true
+        devicesStatus.setText(R.string.cross_device_devices_loading)
+        devicesEmpty.isVisible = false
+        deviceList.isVisible = false
+        devicesJob = lifecycleScope.launch {
+            try {
+                val devices = app.listWebDavDevices()
+                if (isFinishing || isDestroyed) return@launch
+                renderDevices(devices)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                if (isFinishing || isDestroyed) return@launch
+                devicesStatus.isVisible = true
+                devicesStatus.setText(R.string.cross_device_devices_failed)
+            }
+        }
+    }
+
+    private fun renderDevices(devices: List<WebDavDeviceInfo>) {
+        val now = System.currentTimeMillis()
+        deviceList.removeAllViews()
+        devicesStatus.isVisible = false
+        deviceList.isVisible = devices.isNotEmpty()
+        devices.forEach { device ->
+            val row = layoutInflater.inflate(
+                R.layout.item_cross_device_device,
+                deviceList,
+                false,
+            )
+            row.findViewById<TextView>(R.id.device_name).text = if (device.isCurrent) {
+                getString(R.string.cross_device_device_current, device.name)
+            } else {
+                device.name
+            }
+            row.findViewById<TextView>(R.id.device_meta).text = getString(
+                R.string.cross_device_device_meta,
+                platformLabel(device.platform),
+                device.appVersion,
+            )
+            val lastSeen = getString(
+                R.string.cross_device_device_last_seen,
+                timeFormatter.format(
+                    Instant.ofEpochMilli(device.lastSeenAt).atZone(ZoneId.systemDefault()),
+                ),
+            )
+            row.findViewById<TextView>(R.id.device_last_seen).text =
+                if (now - device.lastSeenAt > STALE_DEVICE_MILLIS) {
+                    getString(R.string.cross_device_device_last_seen_stale, lastSeen)
+                } else {
+                    lastSeen
+                }
+            deviceList.addView(row)
+        }
+        devicesEmpty.isVisible = devices.none { !it.isCurrent }
     }
 
     private fun renderSyncState(state: SyncRuntimeState) {
@@ -968,5 +1036,9 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
 
     private fun showTransient(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private companion object {
+        const val STALE_DEVICE_MILLIS = 30L * 24L * 60L * 60L * 1_000L
     }
 }

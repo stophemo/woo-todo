@@ -487,6 +487,356 @@ struct SyncSettingsStoreTests {
         fixture.store.cancelShortCodeClaim()
     }
 
+    @Test("启动激活身份后写入本机设备心跳")
+    func startupWritesDeviceHeartbeat() async throws {
+        let suite = "woo-todo-webdav-heartbeat-startup-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let account = WebDavAccount(
+            endpoint: try #require(URL(string: "https://dav.example.test/woo-todo/")),
+            username: "user@example.com",
+            appPassword: "application-password"
+        )
+        let identity = WebDavIdentity(
+            vaultId: "personal-vault",
+            deviceId: "device-mac-01",
+            vaultKey: Data(repeating: 1, count: 32)
+        )
+        let credentials = InMemoryWebDavCredentialsStore(
+            account: account,
+            identity: identity
+        )
+        let recorder = DeviceHeartbeatRecorder()
+        WebDavTestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            switch request.httpMethod {
+            case "PUT":
+                if path.contains("/devices/") {
+                    recorder.recordPut(body: requestBody(request))
+                }
+                return (try makeWebDavTestResponse(request, status: 201), Data())
+            case "PROPFIND":
+                return (
+                    try makeWebDavTestResponse(request, status: 207),
+                    Data(webDavMultistatus([]).utf8)
+                )
+            case "MKCOL":
+                return (try makeWebDavTestResponse(request, status: 201), Data())
+            case "DELETE":
+                return (try makeWebDavTestResponse(request, status: 204), Data())
+            default:
+                return (try makeWebDavTestResponse(request, status: 200), Data())
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WebDavTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let store = SyncSettingsStore(
+            repository: repository,
+            credentialsStore: credentials,
+            defaults: defaults,
+            clientFactory: { account, identity in
+                try WebDavClient(
+                    account: account,
+                    identity: identity,
+                    session: session,
+                    retryDelaysNanoseconds: [],
+                    retrySleep: { _ in }
+                )
+            }
+        )
+        defer {
+            store.stop()
+            WebDavTestURLProtocol.handler = nil
+        }
+
+        store.start()
+        let data = try await waitForHeartbeatWrite(recorder)
+        let envelope = try JSONDecoder().decode(
+            WebDavDeviceHeartbeatEnvelope.self,
+            from: data
+        )
+        #expect(envelope.deviceId == identity.deviceId)
+        let heartbeat = try WebDavDeviceHeartbeatCodec.open(
+            envelope,
+            vaultId: identity.vaultId,
+            vaultKey: identity.vaultKey
+        )
+        #expect(heartbeat.platform == .macos)
+        #expect(!heartbeat.name.isEmpty)
+        #expect((1...32).contains(heartbeat.appVersion.count))
+        #expect(heartbeat.lastSeenAt > 0)
+    }
+
+    @Test("每次同步成功后写入设备心跳")
+    func syncSuccessWritesDeviceHeartbeat() async throws {
+        let suite = "woo-todo-webdav-heartbeat-sync-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let account = WebDavAccount(
+            endpoint: try #require(URL(string: "https://dav.example.test/woo-todo/")),
+            username: "user@example.com",
+            appPassword: "application-password"
+        )
+        let identity = WebDavIdentity(
+            vaultId: "personal-vault",
+            deviceId: "device-mac-01",
+            vaultKey: Data(repeating: 1, count: 32)
+        )
+        let credentials = InMemoryWebDavCredentialsStore(
+            account: account,
+            identity: identity
+        )
+        let recorder = DeviceHeartbeatRecorder()
+        let failures = DeviceHeartbeatFirstAttemptFailure()
+        WebDavTestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            switch request.httpMethod {
+            case "PUT":
+                if path.contains("/devices/") {
+                    // 启动心跳失败不影响同步；同步成功后的心跳应重试成功。
+                    if failures.consumeFailure() {
+                        return (try makeWebDavTestResponse(request, status: 503), Data())
+                    }
+                    recorder.recordPut(body: requestBody(request))
+                }
+                return (try makeWebDavTestResponse(request, status: 201), Data())
+            case "PROPFIND":
+                return (
+                    try makeWebDavTestResponse(request, status: 207),
+                    Data(webDavMultistatus([]).utf8)
+                )
+            case "MKCOL":
+                return (try makeWebDavTestResponse(request, status: 201), Data())
+            case "DELETE":
+                return (try makeWebDavTestResponse(request, status: 204), Data())
+            default:
+                return (try makeWebDavTestResponse(request, status: 200), Data())
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WebDavTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let store = SyncSettingsStore(
+            repository: repository,
+            credentialsStore: credentials,
+            defaults: defaults,
+            clientFactory: { account, identity in
+                try WebDavClient(
+                    account: account,
+                    identity: identity,
+                    session: session,
+                    retryDelaysNanoseconds: [],
+                    retrySleep: { _ in }
+                )
+            }
+        )
+        defer {
+            store.stop()
+            WebDavTestURLProtocol.handler = nil
+        }
+
+        store.start()
+        _ = try await waitForHeartbeatWrite(recorder, minimumCount: 1)
+        store.requestSync(.manual)
+        _ = try await waitForHeartbeatWrite(recorder, minimumCount: 2)
+        #expect(recorder.heartbeatWrites.count >= 2)
+    }
+
+    @Test("退出空间时尽力删除本机设备心跳")
+    func exitSpaceDeletesOwnDeviceHeartbeat() async throws {
+        let suite = "woo-todo-webdav-heartbeat-exit-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let account = WebDavAccount(
+            endpoint: try #require(URL(string: "https://dav.example.test/woo-todo/")),
+            username: "user@example.com",
+            appPassword: "application-password"
+        )
+        let identity = WebDavIdentity(
+            vaultId: "personal-vault",
+            deviceId: "device-mac-01",
+            vaultKey: Data(repeating: 1, count: 32)
+        )
+        let credentials = InMemoryWebDavCredentialsStore(
+            account: account,
+            identity: identity
+        )
+        let recorder = DeviceHeartbeatRecorder()
+        WebDavTestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            switch request.httpMethod {
+            case "DELETE":
+                recorder.recordDelete(path: path)
+                return (try makeWebDavTestResponse(request, status: 204), Data())
+            case "MKCOL":
+                return (try makeWebDavTestResponse(request, status: 201), Data())
+            case "PROPFIND":
+                return (
+                    try makeWebDavTestResponse(request, status: 207),
+                    Data(webDavMultistatus([]).utf8)
+                )
+            default:
+                return (try makeWebDavTestResponse(request, status: 200), Data())
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WebDavTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let store = SyncSettingsStore(
+            repository: repository,
+            credentialsStore: credentials,
+            defaults: defaults,
+            clientFactory: { account, identity in
+                try WebDavClient(
+                    account: account,
+                    identity: identity,
+                    session: session,
+                    retryDelaysNanoseconds: [],
+                    retrySleep: { _ in }
+                )
+            }
+        )
+        defer {
+            store.stop()
+            WebDavTestURLProtocol.handler = nil
+        }
+
+        await store.exitSpace()
+
+        #expect(
+            recorder.deletedPaths
+                == ["/woo-todo/v1/personal-vault/devices/device-mac-01.json"]
+        )
+        #expect(try credentials.loadIdentity() == nil)
+        #expect(store.devices.isEmpty)
+    }
+
+    @Test("刷新设备列表并标记当前设备")
+    func refreshDevicesMarksCurrentDevice() async throws {
+        let suite = "woo-todo-webdav-devices-refresh-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let repository = try SQLiteTaskRepository(path: ":memory:")
+        let account = WebDavAccount(
+            endpoint: try #require(URL(string: "https://dav.example.test/woo-todo/")),
+            username: "user@example.com",
+            appPassword: "application-password"
+        )
+        let identity = WebDavIdentity(
+            vaultId: "personal-vault",
+            deviceId: "device-mac-01",
+            vaultKey: Data(repeating: 1, count: 32)
+        )
+        let credentials = InMemoryWebDavCredentialsStore(
+            account: account,
+            identity: identity
+        )
+        let currentData = try deviceHeartbeatData(
+            identity: identity,
+            deviceId: identity.deviceId,
+            name: "MacBook Pro",
+            platform: .macos,
+            lastSeenAt: 2_000
+        )
+        let otherData = try deviceHeartbeatData(
+            identity: identity,
+            deviceId: "device-android-02",
+            name: "Pixel",
+            platform: .android,
+            lastSeenAt: 3_000
+        )
+        WebDavTestURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            switch request.httpMethod {
+            case "PROPFIND":
+                return (
+                    try makeWebDavTestResponse(request, status: 207),
+                    Data(webDavMultistatus([
+                        "v1/personal-vault/devices/\(identity.deviceId).json",
+                        "v1/personal-vault/devices/device-android-02.json",
+                    ]).utf8)
+                )
+            case "GET":
+                let data = path.hasSuffix("device-android-02.json")
+                    ? otherData
+                    : currentData
+                return (try makeWebDavTestResponse(request, status: 200), data)
+            default:
+                return (try makeWebDavTestResponse(request, status: 201), Data())
+            }
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [WebDavTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let store = SyncSettingsStore(
+            repository: repository,
+            credentialsStore: credentials,
+            defaults: defaults,
+            clientFactory: { account, identity in
+                try WebDavClient(
+                    account: account,
+                    identity: identity,
+                    session: session,
+                    retryDelaysNanoseconds: [],
+                    retrySleep: { _ in }
+                )
+            }
+        )
+        defer {
+            store.stop()
+            WebDavTestURLProtocol.handler = nil
+        }
+
+        await store.refreshDevices()
+
+        #expect(store.devices.map(\.id) == ["device-android-02", identity.deviceId])
+        #expect(store.devices.map(\.name) == ["Pixel", "MacBook Pro"])
+        #expect(store.devices.map(\.isCurrent) == [false, true])
+        #expect(store.devicesErrorMessage == nil)
+    }
+
+    private func waitForHeartbeatWrite(
+        _ recorder: DeviceHeartbeatRecorder,
+        minimumCount: Int = 1,
+        timeout: TimeInterval = 3
+    ) async throws -> Data {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let data = recorder.latestHeartbeat,
+               recorder.heartbeatWrites.count >= minimumCount {
+                return data
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        return try #require(recorder.latestHeartbeat)
+    }
+
+    private func deviceHeartbeatData(
+        identity: WebDavIdentity,
+        deviceId: String,
+        name: String,
+        platform: DevicePlatform,
+        lastSeenAt: Int64
+    ) throws -> Data {
+        let heartbeat = try WebDavDeviceHeartbeat(
+            name: name,
+            platform: platform,
+            lastSeenAt: lastSeenAt,
+            appVersion: "0.2.23"
+        )
+        let envelope = try WebDavDeviceHeartbeatCodec.seal(
+            heartbeat,
+            vaultId: identity.vaultId,
+            deviceId: deviceId,
+            vaultKey: identity.vaultKey
+        )
+        return try JSONEncoder().encode(envelope)
+    }
+
     private func makeFixture(
         withSavedAccount: Bool = true,
         pollInterval: TimeInterval = WebDavPairingProtocol.pollIntervalSeconds
@@ -571,6 +921,45 @@ struct SyncSettingsStoreTests {
             store.stop()
             WebDavTestURLProtocol.handler = nil
             defaults.removePersistentDomain(forName: suite)
+        }
+    }
+}
+
+private final class DeviceHeartbeatRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var puts: [Data] = []
+    private var deletes: [String] = []
+
+    var heartbeatWrites: [Data] {
+        lock.withLock { puts }
+    }
+
+    var latestHeartbeat: Data? {
+        lock.withLock { puts.last }
+    }
+
+    var deletedPaths: [String] {
+        lock.withLock { deletes }
+    }
+
+    func recordPut(body: Data) {
+        lock.withLock { puts.append(body) }
+    }
+
+    func recordDelete(path: String) {
+        lock.withLock { deletes.append(path) }
+    }
+}
+
+private final class DeviceHeartbeatFirstAttemptFailure: @unchecked Sendable {
+    private let lock = NSLock()
+    private var attempted = false
+
+    func consumeFailure() -> Bool {
+        lock.withLock {
+            guard !attempted else { return false }
+            attempted = true
+            return true
         }
     }
 }

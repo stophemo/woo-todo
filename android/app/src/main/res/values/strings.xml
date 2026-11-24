@@ -206,6 +206,15 @@
     <string name="cross_device_enter_new_device_code">输入新设备的配对码</string>
     <string name="cross_device_space_id">同步空间 %1$s</string>
     <string name="cross_device_current_device_detail">当前设备：%1$s · %2$s</string>
+    <string name="cross_device_devices_title">设备</string>
+    <string name="cross_device_devices_loading">正在读取设备列表…</string>
+    <string name="cross_device_devices_failed">设备列表暂时无法读取，请稍后重试</string>
+    <string name="cross_device_devices_empty">还没有其他设备同步过</string>
+    <string name="cross_device_devices_note">WebDAV 无法远程吊销设备；要移除设备，请修改 WebDAV 应用密码，所有设备需重新配置或配对。</string>
+    <string name="cross_device_device_current">%1$s（当前设备）</string>
+    <string name="cross_device_device_meta">%1$s · 版本 %2$s</string>
+    <string name="cross_device_device_last_seen">最近同步：%1$s</string>
+    <string name="cross_device_device_last_seen_stale">%1$s · 很久未同步</string>
     <string name="cross_device_sync_now">立即同步</string>
     <string name="cross_device_last_sync">最近同步：%1$s</string>
     <string name="cross_device_sync_done">同步完成</string>

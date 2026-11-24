@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woo-todo.dev/schema/webdav-device.schema.json",
+  "title": "woo-todo WebDAV 设备心跳信封",
+  "description": "第三方 WebDAV `v1/<vaultId>/devices/<deviceId>.json` 中每台设备写入的加密心跳信封；文件名必须与 deviceId 一致。信封之外的设备元数据只存在于 ciphertext 中，其明文结构由客户端内部约定。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "protocolVersion", "deviceId", "nonce", "ciphertext"],
+  "properties": {
+    "format": { "const": "woo-todo-webdav-device" },
+    "protocolVersion": { "const": 1 },
+    "deviceId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16}$"
+    },
+    "ciphertext": {
+      "type": "string",
+      "minLength": 22,
+      "maxLength": 43691,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  }
+}

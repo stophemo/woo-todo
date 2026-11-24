@@ -1,0 +1,7 @@
+{
+  "format": "woo-todo-webdav-device",
+  "protocolVersion": 1,
+  "deviceId": "device-mac-01",
+  "nonce": "AAECAwQFBgcICQoL",
+  "ciphertext": "VGhpcy1pcy1hLXRlc3QtZGV2aWNlLWhlYXJ0YmVhdC1jaXBoZXJ0ZXh0LWFuZC10YWch"
+}

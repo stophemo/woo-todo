@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.util.Log
 import com.wootodo.data.LegacyTaskDateMigration
 import com.wootodo.data.SQLiteTaskStore
 import com.wootodo.data.TaskDatabase
@@ -26,6 +27,8 @@ import com.wootodo.sync.SyncStatusPreferences
 import com.wootodo.sync.WebDavAccount
 import com.wootodo.sync.WebDavClient
 import com.wootodo.sync.WebDavCredentials
+import com.wootodo.sync.WebDavDeviceDirectory
+import com.wootodo.sync.WebDavDeviceInfo
 import com.wootodo.sync.WebDavIdentity
 import com.wootodo.sync.WebDavPairingException
 import com.wootodo.sync.WebDavSyncRunner
@@ -33,6 +36,7 @@ import com.wootodo.sync.bindPairedSyncStore
 import com.wootodo.sync.newWebDavIdentity
 import com.wootodo.sync.readDisplayConfiguration
 import com.wootodo.sync.writeDisplayConfiguration
+import com.wootodo.ui.DeviceName
 import com.wootodo.widget.TodayWidgetUpdater
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -72,11 +76,45 @@ class WooTodoApplication : Application() {
 
     fun activeSyncConfigured(): Boolean = activeSyncCredentials() != null
 
+    /** 读取 WebDAV 加密心跳设备列表；坏文件已在存储层跳过。 */
+    suspend fun listWebDavDevices(): List<WebDavDeviceInfo> = withContext(Dispatchers.IO) {
+        val credentials = activeSyncCredentials() ?: return@withContext emptyList()
+        webDavDeviceDirectory(credentials.account, credentials.identity).listDevices()
+    }
+
     /** 旧版 Worker / LAN 凭据保留但不启用；旧 WebDAV 凭据会自动迁移。 */
     fun legacySyncDetected(): Boolean = runCatching {
         if (activeSyncConfigured()) return false
         legacySyncNotice.hasWorkerOrLanCredentials()
     }.getOrDefault(false)
+
+    private fun webDavDeviceDirectory(
+        account: WebDavAccount,
+        identity: WebDavIdentity,
+    ): WebDavDeviceDirectory = WebDavDeviceDirectory(
+        transport = WebDavClient(account),
+        identity = identity,
+    )
+
+    /** 心跳是尽力而为的附加信息：失败只记录，不影响空间创建、同步或退出。 */
+    private fun writeWebDavHeartbeat(
+        account: WebDavAccount,
+        identity: WebDavIdentity,
+        name: String = DeviceName.current(this),
+    ) {
+        runCatching {
+            webDavDeviceDirectory(account, identity).writeHeartbeat(
+                name = name,
+                appVersion = BuildConfig.VERSION_NAME,
+            )
+        }.onFailure { Log.w("WooTodoWebDav", "写入 WebDAV 设备心跳失败", it) }
+    }
+
+    private fun deleteWebDavHeartbeat(account: WebDavAccount, identity: WebDavIdentity) {
+        runCatching {
+            webDavDeviceDirectory(account, identity).deleteOwnHeartbeat()
+        }.onFailure { Log.w("WooTodoWebDav", "删除 WebDAV 设备心跳失败", it) }
+    }
 
     private fun createSyncRunner(): SyncRunner? {
         val credentials = activeSyncCredentials() ?: return null
@@ -112,6 +150,9 @@ class WooTodoApplication : Application() {
                 identity = credentials.identity,
                 outbox = syncStore,
                 local = syncStore,
+                onSynchronized = {
+                    writeWebDavHeartbeat(credentials.account, credentials.identity)
+                },
             )::synchronize,
         )
     }
@@ -203,6 +244,7 @@ class WooTodoApplication : Application() {
                     throw error
                 }
                 syncStatusPreferences.clear()
+                writeWebDavHeartbeat(account, identity, deviceName)
                 createdIdentity = identity
             }
             syncRuntime.refreshConfiguration(true)
@@ -260,6 +302,7 @@ class WooTodoApplication : Application() {
                     throw WebDavPairingException.LocalBindingFailed
                 }
                 syncStatusPreferences.clear()
+                writeWebDavHeartbeat(account, identity)
             }
             syncRuntime.refreshConfiguration(true)
             SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
@@ -296,6 +339,10 @@ class WooTodoApplication : Application() {
         withContext(Dispatchers.IO) {
             SyncJobScheduler.cancel(this@WooTodoApplication)
             SQLiteSyncStore.resetSyncBinding(database)
+            // 心跳删除是尽力而为：即使读取旧凭据失败，也必须继续退出空间。
+            runCatching { webDavCredentialsStore.load() }.getOrNull()?.let { credentials ->
+                deleteWebDavHeartbeat(credentials.account, credentials.identity)
+            }
             webDavCredentialsStore.deleteIdentity()
             syncStatusPreferences.clear()
         }

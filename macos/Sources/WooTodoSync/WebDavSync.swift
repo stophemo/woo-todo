@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 public struct WebDavOperation: Codable, Equatable, Sendable {
     public let format: String
@@ -120,6 +121,10 @@ public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable
     private let retryDelaysNanoseconds: [UInt64]
     private let retrySleep: RetrySleep
 
+    private static let deviceLogger = Logger(
+        subsystem: "io.github.stophemo.woo-todo",
+        category: "跨设备"
+    )
     private static let defaultRetryDelaysNanoseconds: [UInt64] = [
         1_000_000_000,
         2_000_000_000,
@@ -379,6 +384,128 @@ public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable
         _ = try await request(
             method: "DELETE",
             path: ["v1", "pairing", name],
+            body: nil,
+            headers: [:],
+            accepted: [200, 202, 204, 404]
+        )
+    }
+
+    // MARK: - WebDAV 设备心跳
+
+    /// 设备目录不参与任务同步，只在写入心跳时按需创建。
+    public func ensureDeviceCollection() async throws {
+        let vaultId = try vaultId
+        _ = try await request(
+            method: "MKCOL",
+            path: ["v1", vaultId, "devices"],
+            body: nil,
+            headers: [:],
+            accepted: [201, 405, 409]
+        )
+    }
+
+    /// PUT 覆盖本机自己的 `<deviceId>.json`，不写其他设备。
+    public func putDeviceHeartbeat(_ heartbeat: WebDavDeviceHeartbeat) async throws {
+        guard let identity else { throw WebDavError.invalidCredentials }
+        let envelope = try WebDavDeviceHeartbeatCodec.seal(
+            heartbeat,
+            vaultId: identity.vaultId,
+            deviceId: identity.deviceId,
+            vaultKey: identity.vaultKey
+        )
+        let data: Data
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            data = try encoder.encode(envelope)
+        } catch {
+            throw WebDavError.encoding(error.localizedDescription)
+        }
+        try await ensureDeviceCollection()
+        _ = try await request(
+            method: "PUT",
+            path: WebDavDeviceHeartbeatEnvelope.path(
+                vaultId: identity.vaultId,
+                deviceId: identity.deviceId
+            ),
+            body: data,
+            headers: ["Content-Type": "application/json"],
+            accepted: [200, 201, 204]
+        )
+    }
+
+    /// 列举并解密设备心跳。单个坏文件或未知版本只跳过并记录，不删除。
+    public func listDevices() async throws -> [WebDavDevice] {
+        guard let identity else { throw WebDavError.invalidCredentials }
+        let root = ["v1", identity.vaultId, "devices"]
+        let paths: [[String]]
+        do {
+            paths = try await propfind(path: root, depth: 1)
+        } catch WebDavError.http(404) {
+            return []
+        }
+        var devices: [WebDavDevice] = []
+        for path in paths {
+            guard path.count == root.count + 1,
+                  let fileName = path.last,
+                  fileName.hasSuffix(".json") else { continue }
+            let deviceId = String(fileName.dropLast(".json".count))
+            guard WebDavDeviceIdentifier.isValid(deviceId) else { continue }
+            let data: Data
+            do {
+                data = try await get(path: path)
+            } catch WebDavError.http(404) {
+                // 列举后文件被删除：跳过。
+                continue
+            }
+            do {
+                let envelope = try JSONDecoder().decode(
+                    WebDavDeviceHeartbeatEnvelope.self,
+                    from: data
+                )
+                guard envelope.deviceId == deviceId,
+                      path == WebDavDeviceHeartbeatEnvelope.path(
+                        vaultId: identity.vaultId,
+                        deviceId: deviceId
+                      ) else {
+                    throw WebDavError.malformedObject("设备心跳文件名与 deviceId 不匹配")
+                }
+                let heartbeat = try WebDavDeviceHeartbeatCodec.open(
+                    envelope,
+                    vaultId: identity.vaultId,
+                    vaultKey: identity.vaultKey
+                )
+                devices.append(WebDavDevice(
+                    deviceId: deviceId,
+                    name: heartbeat.name,
+                    platform: heartbeat.platform,
+                    lastSeenAt: heartbeat.lastSeenDate,
+                    appVersion: heartbeat.appVersion
+                ))
+            } catch {
+                Self.deviceLogger.notice(
+                    "跳过无法解析的 WebDAV 设备心跳：\(path.joined(separator: "/"), privacy: .public)"
+                )
+                continue
+            }
+        }
+        return devices.sorted {
+            if $0.lastSeenAt != $1.lastSeenAt {
+                return $0.lastSeenAt > $1.lastSeenAt
+            }
+            return $0.deviceId < $1.deviceId
+        }
+    }
+
+    /// 退出空间时尽力删除自己的心跳；删除失败不会阻止本地退出。
+    public func deleteOwnDeviceHeartbeat() async throws {
+        guard let identity else { throw WebDavError.invalidCredentials }
+        _ = try await request(
+            method: "DELETE",
+            path: WebDavDeviceHeartbeatEnvelope.path(
+                vaultId: identity.vaultId,
+                deviceId: identity.deviceId
+            ),
             body: nil,
             headers: [:],
             accepted: [200, 202, 204, 404]

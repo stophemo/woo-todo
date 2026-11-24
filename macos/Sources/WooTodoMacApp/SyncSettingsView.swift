@@ -65,7 +65,7 @@ struct SyncSettingsView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("只删除本机同步身份并停止同步；WebDAV 账号与本地任务会保留，其他设备不受影响。WebDAV 没有服务端设备列表，如需阻止旧设备同步，请在供应商处修改应用密码。")
+            Text("只删除本机同步身份并停止同步；WebDAV 账号与本地任务会保留，其他设备不受影响。设备列表来自加密心跳，只能展示，不能远程吊销；如需阻止旧设备同步，请在供应商处修改应用密码。")
         }
     }
 
@@ -428,6 +428,7 @@ struct SyncSettingsView: View {
                     "任务通过 WebDAV 端到端加密同步。添加设备时两端会显示同一个六位核对码，核对一致后再批准；配对码 5 分钟内有效。"
                 )
                 spaceCard
+                deviceCard
                 pathAShowCard
                 pathBApproveCard
                 privacyNote
@@ -486,12 +487,103 @@ struct SyncSettingsView: View {
             }
             Divider()
             Label(
-                "WebDAV 没有服务端设备列表，无法远程移除已配对设备。如需阻止旧设备继续同步，请在 WebDAV 供应商处修改应用密码。",
+                "设备列表来自各设备写入的加密心跳，只能展示，不能远程吊销。如需阻止旧设备继续同步，请在 WebDAV 供应商处修改应用密码。",
                 systemImage: "info.circle"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+    }
+
+    private var deviceCard: some View {
+        SettingsCard(title: "设备", systemImage: "laptopcomputer.and.iphone") {
+            if store.isRefreshingDevices && store.devices.isEmpty {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("正在读取设备列表…")
+                        .foregroundStyle(.secondary)
+                }
+            } else if store.devices.isEmpty {
+                Text("还没有其他设备同步过")
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(store.devices) { device in
+                        deviceRow(device)
+                    }
+                    if store.devices.allSatisfy({ $0.isCurrent }) {
+                        Text("还没有其他设备同步过")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let message = store.devicesErrorMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            Button {
+                Task { await store.refreshDevices() }
+            } label: {
+                if store.isRefreshingDevices {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label("刷新设备列表", systemImage: "arrow.clockwise")
+                }
+            }
+            .disabled(store.isRefreshingDevices)
+            Text("设备列表来自各设备写入的加密心跳，可能不是最新状态。WebDAV 无法远程吊销；要移除设备请修改应用密码。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .task { await store.refreshDevices() }
+    }
+
+    private func deviceRow(_ device: SyncDeviceSummary) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: device.platform == .android ? "smartphone" : "laptopcomputer")
+                .frame(width: 20)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(device.name)
+                        .font(.body.weight(.medium))
+                    if device.isCurrent {
+                        Text("本机")
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(.quaternary, in: Capsule())
+                    }
+                    if isStale(device.lastSeenAt) {
+                        Text("很久未同步")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                Text(
+                    "\(platformName(device.platform)) · v\(device.appVersion) · \(lastSeenDescription(device.lastSeenAt))"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func lastSeenDescription(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.unitsStyle = .full
+        return "最近同步：\(formatter.localizedString(for: date, relativeTo: Date()))"
+    }
+
+    private func isStale(_ date: Date) -> Bool {
+        Date().timeIntervalSince(date) > 30 * 24 * 60 * 60
     }
 
     private var statusSymbol: some View {

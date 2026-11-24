@@ -9,6 +9,7 @@ const files = [
   "shared/schema/webdav-operation.schema.json",
   "shared/schema/webdav-setup-link.schema.json",
   "shared/schema/webdav-pairing.schema.json",
+  "shared/schema/webdav-device.schema.json",
   "shared/schema/backup.schema.json",
   "shared/schema/backup-plaintext.schema.json",
   "shared/fixtures/period-cases.json",
@@ -21,6 +22,7 @@ const files = [
   "shared/fixtures/webdav-pairing-resolve.json",
   "shared/fixtures/webdav-pairing-approval.json",
   "shared/fixtures/webdav-pairing-approval-path-a.json",
+  "shared/fixtures/webdav-device.json",
   "shared/fixtures/crypto-vectors.json",
   "shared/fixtures/task-payloads.json",
   "shared/fixtures/task-validation-cases.json",
@@ -115,6 +117,40 @@ if (Buffer.from(webDavOperation.nonce, "base64url").byteLength !== 12) {
 }
 if (Buffer.from(webDavOperation.ciphertext, "base64url").byteLength < 16) {
   throw new Error("WebDAV 操作对象密文缺少认证标签");
+}
+
+const webDavDeviceFields = ["format", "protocolVersion", "deviceId", "nonce", "ciphertext"];
+const webDavDeviceSchema = documents.get("shared/schema/webdav-device.schema.json");
+if (
+  webDavDeviceSchema.$schema !== "https://json-schema.org/draft/2020-12/schema"
+  || webDavDeviceSchema.additionalProperties !== false
+  || [...(webDavDeviceSchema.required ?? [])].sort().join(",") !== [...webDavDeviceFields].sort().join(",")
+  || Object.keys(webDavDeviceSchema.properties ?? {}).sort().join(",") !== [...webDavDeviceFields].sort().join(",")
+  || webDavDeviceSchema.properties?.format?.const !== "woo-todo-webdav-device"
+  || webDavDeviceSchema.properties?.protocolVersion?.const !== 1
+  || webDavDeviceSchema.properties?.deviceId?.pattern !== "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+  || webDavDeviceSchema.properties?.deviceId?.minLength !== 8
+  || webDavDeviceSchema.properties?.deviceId?.maxLength !== 128
+  || webDavDeviceSchema.properties?.nonce?.pattern !== "^[A-Za-z0-9_-]{16}$"
+  || webDavDeviceSchema.properties?.ciphertext?.pattern !== "^[A-Za-z0-9_-]+$"
+  || webDavDeviceSchema.properties?.ciphertext?.minLength !== 22
+  || webDavDeviceSchema.properties?.ciphertext?.maxLength !== 43691
+) {
+  throw new Error("WebDAV 设备心跳 JSON Schema 未严格约束信封字段");
+}
+
+const webDavDevice = documents.get("shared/fixtures/webdav-device.json");
+if (
+  Object.keys(webDavDevice).sort().join(",") !== [...webDavDeviceFields].sort().join(",")
+  || webDavDevice.format !== "woo-todo-webdav-device"
+  || webDavDevice.protocolVersion !== 1
+  || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(webDavDevice.deviceId)
+  || !/^[A-Za-z0-9_-]{16}$/u.test(webDavDevice.nonce)
+  || Buffer.from(webDavDevice.nonce, "base64url").byteLength !== 12
+  || !/^[A-Za-z0-9_-]{22,43691}$/u.test(webDavDevice.ciphertext)
+  || Buffer.from(webDavDevice.ciphertext, "base64url").byteLength < 16
+) {
+  throw new Error("WebDAV 设备心跳 fixture 信封无效");
 }
 
 const webDavPairingSchema = documents.get("shared/schema/webdav-pairing.schema.json");

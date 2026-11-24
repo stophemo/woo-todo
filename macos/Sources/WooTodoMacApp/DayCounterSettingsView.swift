@@ -269,6 +269,7 @@ struct DayCounterSettingsView: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("插入动态变量")
+            .accessibilityLabel("插入动态变量")
         }
     }
 

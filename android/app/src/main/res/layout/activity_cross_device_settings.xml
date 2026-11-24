@@ -40,12 +40,23 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/cross_device_expiry_top"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="@string/cross_device_expiry_hint"
             android:textAppearance="?attr/textAppearanceBodySmall"
             android:textColor="@color/muted" />
+
+        <TextView
+            android:id="@+id/webdav_setup_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/cross_device_webdav_setup_hint"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="@color/muted"
+            android:visibility="gone" />
 
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/webdav_account_card"
@@ -76,6 +87,16 @@
                     android:layout_marginTop="4dp"
                     android:textAppearance="?attr/textAppearanceBodyMedium"
                     android:textColor="@color/muted" />
+
+                <TextView
+                    android:id="@+id/webdav_endpoint_summary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:fontFamily="monospace"
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textColor="@color/muted"
+                    android:textIsSelectable="true" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/webdav_edit_account"
@@ -129,6 +150,35 @@
                         android:textAppearance="?attr/textAppearanceBodySmall"
                         android:textColor="@color/muted" />
 
+                    <LinearLayout
+                        android:id="@+id/webdav_connection_feedback"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <ProgressBar
+                            android:id="@+id/webdav_connection_progress"
+                            style="?android:attr/progressBarStyleSmall"
+                            android:layout_width="20dp"
+                            android:layout_height="20dp"
+                            android:indeterminate="true"
+                            android:indeterminateTint="@color/primary"
+                            android:visibility="gone" />
+
+                        <TextView
+                            android:id="@+id/webdav_connection_status"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:layout_weight="1"
+                            android:textAppearance="?attr/textAppearanceBodySmall"
+                            android:textColor="@color/muted"
+                            android:visibility="gone" />
+                    </LinearLayout>
+
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/webdav_save_account"
                         style="@style/Widget.Material3.Button"
@@ -147,12 +197,20 @@
             android:orientation="vertical"
             android:visibility="gone">
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/cross_device_unpaired_group_hint"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="@color/muted" />
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/action_create_space"
                 style="@style/Widget.Material3.Button"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/cross_device_create_space" />
 
             <com.google.android.material.button.MaterialButton
@@ -202,26 +260,33 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <TextView
-                        android:id="@+id/space_id_value"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:textAppearance="?attr/textAppearanceTitleMedium"
-                        android:textStyle="bold" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/space_id_value"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:textAppearance="?attr/textAppearanceTitleMedium"
+                            android:textStyle="bold" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/space_id_copy"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/cross_device_copy_space_id" />
+                    </LinearLayout>
 
                     <TextView
                         android:id="@+id/space_device_value"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
-                        android:textAppearance="?attr/textAppearanceBodySmall"
-                        android:textColor="@color/muted" />
-
-                    <TextView
-                        android:id="@+id/space_endpoint_value"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
                         android:textAppearance="?attr/textAppearanceBodySmall"
                         android:textColor="@color/muted" />
 
@@ -242,7 +307,7 @@
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/space_sync_now"
-                        style="@style/Widget.Material3.Button.TextButton"
+                        style="@style/Widget.Material3.Button.TonalButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_gravity="end"
@@ -266,11 +331,26 @@
                     android:orientation="vertical"
                     android:padding="16dp">
 
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/cross_device_devices_title"
-                        android:textAppearance="?attr/textAppearanceLabelLarge" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/cross_device_devices_title"
+                            android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/devices_refresh"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/cross_device_devices_refresh" />
+                    </LinearLayout>
 
                     <TextView
                         android:id="@+id/devices_status"
@@ -308,12 +388,27 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/cross_device_add_device_title"
+                android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/cross_device_add_device_hint"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="@color/muted" />
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/action_show_pairing_code"
                 style="@style/Widget.Material3.Button"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="8dp"
                 android:text="@string/cross_device_show_pairing_code" />
 
             <com.google.android.material.button.MaterialButton
@@ -323,6 +418,21 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/cross_device_enter_new_device_code" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/cross_device_join_other_title"
+                android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/cross_device_join_other_hint"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="@color/muted" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/action_enter_join_code"
@@ -339,7 +449,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="20dp"
                 android:text="@string/cross_device_leave"
-                android:textColor="@color/orange" />
+                android:textColor="@color/orange_text" />
         </LinearLayout>
 
         <LinearLayout

@@ -141,7 +141,7 @@ internal class TaskAdapter(
                 ContextCompat.getColor(
                     itemView.context,
                     if (TaskDateState.isOverdue(task, TaskDateRules.today())) {
-                        R.color.orange
+                        R.color.orange_text
                     } else {
                         R.color.muted
                     },
@@ -166,7 +166,12 @@ internal class TaskAdapter(
                 task.title,
             )
             taskActions.setOnClickListener { onMenu(task, it) }
-            taskRow.alpha = if (pending) 1f else 0.72f
+            taskTitle.setTextColor(
+                ContextCompat.getColor(
+                    itemView.context,
+                    if (pending) R.color.task_text else R.color.muted,
+                ),
+            )
             taskTitle.paintFlags = if (task.status == TaskStatus.COMPLETED) {
                 taskTitle.paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
             } else {

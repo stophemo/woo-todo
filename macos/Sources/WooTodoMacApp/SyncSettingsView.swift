@@ -43,6 +43,7 @@ struct SyncSettingsView: View {
     @State private var claimCodeInput = ""
     @State private var joinCodeInput = ""
     @State private var showsExitConfirmation = false
+    @State private var isEditingAccount = false
 
     var body: some View {
         Group {
@@ -65,7 +66,7 @@ struct SyncSettingsView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("只删除本机同步身份并停止同步；WebDAV 账号与本地任务会保留，其他设备不受影响。设备列表来自加密心跳，只能展示，不能远程吊销；如需阻止旧设备同步，请在供应商处修改应用密码。")
+            Text("只删除本机同步身份并停止同步；WebDAV 账号与本地任务会保留，其他设备不受影响。")
         }
         .alert(
             joinPolicyTitle,
@@ -209,7 +210,14 @@ struct SyncSettingsView: View {
                     legacyNotice(notice)
                 }
                 accountSummaryCard
+                if isEditingAccount {
+                    accountEditorCard
+                }
                 createSpaceCard
+                sectionHeader(
+                    "加入其他空间",
+                    "已有同步空间时，用六位配对码加入。加入其他空间可能清空本机任务。"
+                )
                 pathAClaimCard
                 pathBCreateCard
                 privacyNote
@@ -224,11 +232,66 @@ struct SyncSettingsView: View {
     private var accountSummaryCard: some View {
         SettingsCard(title: "WebDAV 账号", systemImage: "checkmark.shield.fill") {
             if let account = store.account {
-                LabeledContent("地址", value: account.endpoint.absoluteString)
+                LabeledContent("地址") {
+                    Text(account.endpoint.absoluteString)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .help(account.endpoint.absoluteString)
+                        .textSelection(.enabled)
+                }
                 LabeledContent("用户名", value: account.username)
                 Text("账号与应用密码保存在本机加密文件中；WebDAV 供应商只能看到端到端加密密文与配对所需的公开信息（公钥、设备名、配对码）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button {
+                    beginAccountEditing()
+                } label: {
+                    Label("编辑账号", systemImage: "pencil")
+                }
+                .disabled(store.isSavingAccount)
+            }
+        }
+    }
+
+    private var accountEditorCard: some View {
+        SettingsCard(title: "编辑 WebDAV 账号", systemImage: "pencil") {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField("https://dav.jianguoyun.com/dav/", text: $store.endpointText)
+                    .textFieldStyle(.roundedBorder)
+                endpointGuidance
+                TextField("WebDAV 用户名", text: $store.username)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("应用密码或访问令牌", text: $store.appPassword)
+                    .textFieldStyle(.roundedBorder)
+                Text("保存不会退出当前同步空间，配对身份、本地任务与设备列表保持不变。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let message = store.actionErrorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if let message = store.statusMessage {
+                    Label(message, systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+                HStack(spacing: 12) {
+                    Button {
+                        Task { await store.testAndSaveAccount() }
+                    } label: {
+                        if store.isSavingAccount {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("测试连接并保存", systemImage: "checkmark.shield")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.isSavingAccount || !store.canSaveAccount)
+                    Button("收起表单") {
+                        isEditingAccount = false
+                    }
+                }
             }
         }
     }
@@ -412,9 +475,21 @@ struct SyncSettingsView: View {
                     "任务通过 WebDAV 端到端加密同步。添加设备时两端会显示同一个六位核对码，核对一致后再批准；配对码 5 分钟内有效。"
                 )
                 spaceCard
+                accountSummaryCard
+                if isEditingAccount {
+                    accountEditorCard
+                }
                 deviceCard
+                sectionHeader(
+                    "添加设备",
+                    "先用其中一种方式完成六位码配对，新设备首次同步后会出现在设备列表。"
+                )
                 pathAShowCard
                 pathBApproveCard
+                sectionHeader(
+                    "加入其他空间",
+                    "本机加入另一台设备的同步空间可能清空本机任务，请先确认数据以哪台设备为准。"
+                )
                 pathAClaimCard
                 privacyNote
                 feedback
@@ -429,8 +504,12 @@ struct SyncSettingsView: View {
         SettingsCard(title: "同步空间", systemImage: "lock.shield.fill") {
             if let connection = store.connection {
                 LabeledContent("空间", value: shortened(connection.vaultId))
-                LabeledContent("当前设备", value: connection.deviceName)
-                LabeledContent("WebDAV", value: connection.endpoint.absoluteString)
+                LabeledContent("当前设备") {
+                    Text(connection.deviceName)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(connection.deviceName)
+                }
             }
             HStack(spacing: 10) {
                 statusSymbol
@@ -470,13 +549,6 @@ struct SyncSettingsView: View {
                 }
                 .disabled(store.isExitingSpace)
             }
-            Divider()
-            Label(
-                "设备列表来自各设备写入的加密心跳，只能展示，不能远程吊销。如需阻止旧设备继续同步，请在 WebDAV 供应商处修改应用密码。",
-                systemImage: "info.circle"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
     }
 
@@ -520,7 +592,7 @@ struct SyncSettingsView: View {
                 }
             }
             .disabled(store.isRefreshingDevices)
-            Text("设备列表来自各设备写入的加密心跳，可能不是最新状态。WebDAV 无法远程吊销；要阻止旧设备继续同步请修改应用密码。")
+            Text("设备列表来自各设备写入的加密心跳，可能不是最新状态。WebDAV 无法远程吊销设备；要阻止旧设备继续同步，请修改 WebDAV 应用密码。修改后在每台保留的设备上「编辑账号」更新密码即可，不需要重新配对。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -536,17 +608,22 @@ struct SyncSettingsView: View {
                 HStack(spacing: 6) {
                     Text(device.name)
                         .font(.body.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(device.name)
                     if device.isCurrent {
                         Text("本机")
                             .font(.caption2)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
                             .background(.quaternary, in: Capsule())
+                            .fixedSize()
                     }
                     if isStale(device.lastSeenAt) {
                         Text("很久未同步")
                             .font(.caption2)
                             .foregroundStyle(.orange)
+                            .fixedSize()
                     }
                 }
                 Text(
@@ -813,12 +890,12 @@ struct SyncSettingsView: View {
 
     @ViewBuilder
     private var feedback: some View {
-        if let message = store.statusMessage {
+        if !isEditingAccount, let message = store.statusMessage {
             Label(message, systemImage: "checkmark.circle")
                 .font(.caption)
                 .foregroundStyle(.green)
         }
-        if let message = store.actionErrorMessage {
+        if !isEditingAccount, let message = store.actionErrorMessage {
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(.orange)
@@ -832,6 +909,17 @@ struct SyncSettingsView: View {
             Text(subtitle)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func sectionHeader(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 2)
     }
 
     private func expiryText(_ deadline: Date) -> some View {
@@ -881,6 +969,15 @@ struct SyncSettingsView: View {
             } ?? "尚未成功同步"
             return "本机已有同步空间 \(shortened(localVaultId))（最近同步：\(lastSync)）；对方设备：\(peerDeviceName) · \(platformName(peerPlatform))。\n\n以对方为准会清空本机任务、回收站与同步身份，保留 WebDAV 账号与显示偏好；以本机为准会取消本次输入，请在本机显示配对码后到对方设备输入。"
         }
+    }
+
+    private func beginAccountEditing() {
+        if let account = store.account {
+            store.endpointText = account.endpoint.absoluteString
+            store.username = account.username
+            store.appPassword = account.appPassword
+        }
+        isEditingAccount = true
     }
 
     private func submitClaimCode() {

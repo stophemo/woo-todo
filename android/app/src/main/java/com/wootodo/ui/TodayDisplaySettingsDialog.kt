@@ -3,6 +3,7 @@ package com.wootodo.ui
 import android.app.AlertDialog
 import android.app.DatePickerDialog
 import android.text.InputFilter
+import android.text.TextUtils
 import android.view.Menu
 import android.view.View
 import android.widget.Button
@@ -114,10 +115,12 @@ internal object TodayDisplaySettingsDialog {
         val previewHeader = TextView(activity).apply {
             textSize = 20f
             maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         }
         val previewSubtitle = TextView(activity).apply {
             textSize = 13f
             maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
         }
         val previewHidden = TextView(activity).apply {
             setText(R.string.display_preview_hidden)

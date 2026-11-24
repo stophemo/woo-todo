@@ -548,6 +548,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = "同步已改为 WebDAV"
         alert.informativeText = message
         alert.addButton(withTitle: "配置 WebDAV")
-        alert.runModal()
+        if alert.runModal() == .alertFirstButtonReturn {
+            showSettings(section: .sync)
+        }
     }
 }

@@ -123,7 +123,10 @@ object SyncFailurePolicy {
         is WebDavException.MalformedObject ->
             SyncFailureDescription("WebDAV 同步数据无效，未应用远端数据", false)
         is SyncCryptoException -> SyncFailureDescription("同步密文校验失败，未应用远端数据", false)
-        else -> SyncFailureDescription("同步未完成，已保留本地待发送任务", false)
+        else -> SyncFailureDescription(
+            "同步未完成，已保留本地待发送任务；请点「立即同步」重试",
+            false,
+        )
     }
 }
 

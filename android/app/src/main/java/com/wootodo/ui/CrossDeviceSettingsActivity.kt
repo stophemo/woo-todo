@@ -1,11 +1,14 @@
 package com.wootodo.ui
 
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -65,20 +68,27 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private lateinit var app: WooTodoApplication
+    private lateinit var expiryTopHint: TextView
+    private lateinit var setupHint: TextView
     private lateinit var accountSummary: TextView
+    private lateinit var endpointSummary: TextView
     private lateinit var editAccount: Button
     private lateinit var accountForm: View
     private lateinit var endpointInput: EditText
     private lateinit var usernameInput: EditText
     private lateinit var appPasswordInput: EditText
     private lateinit var saveAccount: Button
+    private lateinit var connectionFeedback: View
+    private lateinit var connectionProgress: ProgressBar
+    private lateinit var connectionStatus: TextView
     private lateinit var noIdentitySection: View
     private lateinit var pairedSection: View
     private lateinit var spaceIdValue: TextView
     private lateinit var spaceDeviceValue: TextView
-    private lateinit var spaceEndpointValue: TextView
+    private lateinit var spaceIdCopy: Button
     private lateinit var spaceSyncValue: TextView
     private lateinit var spaceLastSyncValue: TextView
+    private lateinit var spaceSyncNow: Button
     private lateinit var devicesStatus: TextView
     private lateinit var devicesEmpty: TextView
     private lateinit var deviceList: LinearLayout
@@ -118,6 +128,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         setContentView(R.layout.activity_cross_device_settings)
         applySystemBarInsets(findViewById(R.id.cross_device_root))
         bindViews()
+        expiryTopHint.isVisible = false
         lastSuccessfulSyncAt = app.syncStatusPreferences.lastSuccessfulSyncAt()
         findViewById<View>(R.id.cross_device_back_button).setOnClickListener { finish() }
         bindActions()
@@ -139,20 +150,27 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private fun bindViews() {
+        expiryTopHint = findViewById(R.id.cross_device_expiry_top)
+        setupHint = findViewById(R.id.webdav_setup_hint)
         accountSummary = findViewById(R.id.webdav_account_summary)
+        endpointSummary = findViewById(R.id.webdav_endpoint_summary)
         editAccount = findViewById(R.id.webdav_edit_account)
         accountForm = findViewById(R.id.webdav_account_form)
         endpointInput = findViewById(R.id.webdav_endpoint_input)
         usernameInput = findViewById(R.id.webdav_username_input)
         appPasswordInput = findViewById(R.id.webdav_app_password_input)
         saveAccount = findViewById(R.id.webdav_save_account)
+        connectionFeedback = findViewById(R.id.webdav_connection_feedback)
+        connectionProgress = findViewById(R.id.webdav_connection_progress)
+        connectionStatus = findViewById(R.id.webdav_connection_status)
         noIdentitySection = findViewById(R.id.no_identity_section)
         pairedSection = findViewById(R.id.paired_section)
         spaceIdValue = findViewById(R.id.space_id_value)
         spaceDeviceValue = findViewById(R.id.space_device_value)
-        spaceEndpointValue = findViewById(R.id.space_endpoint_value)
+        spaceIdCopy = findViewById(R.id.space_id_copy)
         spaceSyncValue = findViewById(R.id.space_sync_value)
         spaceLastSyncValue = findViewById(R.id.space_last_sync_value)
+        spaceSyncNow = findViewById(R.id.space_sync_now)
         devicesStatus = findViewById(R.id.devices_status)
         devicesEmpty = findViewById(R.id.devices_empty)
         deviceList = findViewById(R.id.device_list)
@@ -177,8 +195,10 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             usernameInput.setText(account.username)
             appPasswordInput.setText(account.appPassword)
             accountSummary.isVisible = false
+            endpointSummary.isVisible = false
             editAccount.isVisible = false
             accountForm.isVisible = true
+            clearConnectionFeedback()
         }
         findViewById<View>(R.id.action_enter_code).setOnClickListener {
             startClaimOffer()
@@ -200,6 +220,15 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.space_sync_now).setOnClickListener {
             synchronizeNow()
+        }
+        findViewById<View>(R.id.devices_refresh).setOnClickListener {
+            loadDevices()
+        }
+        spaceIdCopy.setOnClickListener {
+            val vaultId = currentCredentials?.vaultId ?: return@setOnClickListener
+            val clipboard = getSystemService(ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(ClipData.newPlainText("Woo Todo", vaultId))
+            showTransient(R.string.cross_device_space_id_copied)
         }
         findViewById<View>(R.id.action_leave_space).setOnClickListener {
             confirmLeaveSpace()
@@ -228,18 +257,26 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private fun renderAccount(account: WebDavAccount?) {
+        setupHint.isVisible = account == null
+        expiryTopHint.isVisible = account != null
         if (account == null) {
             accountSummary.isVisible = false
+            endpointSummary.isVisible = false
             editAccount.isVisible = false
             accountForm.isVisible = true
+            clearConnectionFeedback()
             return
         }
         accountSummary.isVisible = true
+        endpointSummary.isVisible = true
         editAccount.isVisible = true
         accountForm.isVisible = false
         accountSummary.text = getString(
             R.string.cross_device_webdav_account_format,
             account.username,
+        )
+        endpointSummary.text = getString(
+            R.string.cross_device_webdav_endpoint_format,
             account.endpoint,
         )
     }
@@ -253,10 +290,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             R.string.cross_device_current_device_detail,
             DeviceName.current(this),
             platformLabel(DevicePlatform.ANDROID),
-        )
-        spaceEndpointValue.text = getString(
-            R.string.cross_device_webdav_address_format,
-            credentials.endpoint,
         )
     }
 
@@ -283,20 +316,17 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
 
     private fun renderDevices(devices: List<WebDavDeviceInfo>) {
         val now = System.currentTimeMillis()
+        val otherDevices = devices.filterNot { it.isCurrent }
         deviceList.removeAllViews()
         devicesStatus.isVisible = false
-        deviceList.isVisible = devices.isNotEmpty()
-        devices.forEach { device ->
+        deviceList.isVisible = otherDevices.isNotEmpty()
+        otherDevices.forEach { device ->
             val row = layoutInflater.inflate(
                 R.layout.item_cross_device_device,
                 deviceList,
                 false,
             )
-            row.findViewById<TextView>(R.id.device_name).text = if (device.isCurrent) {
-                getString(R.string.cross_device_device_current, device.name)
-            } else {
-                device.name
-            }
+            row.findViewById<TextView>(R.id.device_name).text = device.name
             row.findViewById<TextView>(R.id.device_meta).text = getString(
                 R.string.cross_device_device_meta,
                 platformLabel(device.platform),
@@ -316,7 +346,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                 }
             deviceList.addView(row)
         }
-        devicesEmpty.isVisible = devices.none { !it.isCurrent }
+        devicesEmpty.isVisible = otherDevices.isEmpty()
     }
 
     private fun renderSyncState(state: SyncRuntimeState) {
@@ -333,6 +363,11 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             is SyncRuntimeState.Failed -> state.message
         }
         spaceSyncValue.text = text
+        val running = state is SyncRuntimeState.Running
+        spaceSyncNow.isEnabled = !running
+        spaceSyncNow.setText(
+            if (running) R.string.cross_device_sync_running else R.string.cross_device_sync_now,
+        )
         if (state is SyncRuntimeState.Succeeded) {
             lastSuccessfulSyncAt = state.finishedAt
         }
@@ -357,8 +392,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             return
         }
         val account = WebDavAccount(endpoint, username, password)
-        saveAccount.isEnabled = false
-        setPanelStatus(getString(R.string.cross_device_webdav_connecting))
+        showConnectionTesting()
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -369,20 +403,46 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                 endpointInput.setText("")
                 usernameInput.setText("")
                 appPasswordInput.setText("")
+                clearConnectionFeedback()
                 showTransient(R.string.cross_device_webdav_account_saved)
                 render()
             } catch (error: Exception) {
                 if (isFinishing || isDestroyed) return@launch
-                showTransient(
-                    getString(
-                        R.string.cross_device_webdav_connection_failed,
-                        PairingErrorMessage.from(error),
-                    ),
-                )
+                showConnectionFailure(PairingErrorMessage.from(error))
             } finally {
+                connectionProgress.isVisible = false
                 saveAccount.isEnabled = true
             }
         }
+    }
+
+    private fun showConnectionTesting() {
+        connectionFeedback.isVisible = true
+        connectionProgress.isVisible = true
+        connectionStatus.isVisible = true
+        connectionStatus.setText(R.string.cross_device_webdav_connecting)
+        connectionStatus.setTextColor(ContextCompat.getColor(this, R.color.muted))
+        saveAccount.isEnabled = false
+    }
+
+    private fun showConnectionFailure(message: String) {
+        connectionFeedback.isVisible = true
+        connectionProgress.isVisible = false
+        connectionStatus.isVisible = true
+        connectionStatus.text = getString(
+            R.string.cross_device_webdav_connection_failed,
+            message,
+        )
+        connectionStatus.setTextColor(ContextCompat.getColor(this, R.color.orange_text))
+        saveAccount.isEnabled = true
+    }
+
+    private fun clearConnectionFeedback() {
+        connectionFeedback.isVisible = false
+        connectionProgress.isVisible = false
+        connectionStatus.isVisible = false
+        connectionStatus.text = ""
+        saveAccount.isEnabled = true
     }
 
     private fun confirmCreateSpace() {
@@ -1008,6 +1068,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private fun synchronizeNow(quiet: Boolean = false) {
+        if (app.syncRuntime.state.value is SyncRuntimeState.Running) return
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) { app.synchronizeManually() }
             if (isFinishing || isDestroyed) return@launch
@@ -1089,7 +1150,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private fun setPanelStatus(message: String, isError: Boolean = false) {
         panelStatus.text = message
         panelStatus.setTextColor(
-            ContextCompat.getColor(this, if (isError) R.color.orange else R.color.muted),
+            ContextCompat.getColor(this, if (isError) R.color.orange_text else R.color.muted),
         )
     }
 

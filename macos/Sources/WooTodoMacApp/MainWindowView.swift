@@ -491,7 +491,7 @@ struct MainWindowView: View {
         case .history:
             return "完成或放弃的任务会留在这里"
         case .statistics:
-            return "按完成记录统计；放弃不进入完成率、趋势和标签分布。"
+            return "完成率、趋势与标签分布只统计完成；最近记录包含完成与放弃（Pass）。"
         case .trash:
             return "删除的任务会保留在本机，可随时恢复；恢复后会像新任务一样同步到其他设备。"
         }
@@ -611,6 +611,7 @@ private struct QuickAddBar: View {
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
             .help("详细设置标签、日期与提醒")
+            .accessibilityLabel("详细设置")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -710,6 +711,7 @@ private struct MainTaskRow: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(isHovered ? Color.primary : Color.secondary.opacity(0.65))
                 .help("编辑任务")
+                .accessibilityLabel("编辑任务")
             }
         }
         .padding(.vertical, 7)
@@ -1177,8 +1179,11 @@ private struct StatisticsView: View {
                 .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("最近完成")
+                    Text("最近记录")
                         .font(.headline)
+                    Text("包含完成与放弃（Pass）；放弃不计入完成率、趋势和标签分布。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     if snapshot.recentHistory.isEmpty {
                         Text("还没有完成或放弃的任务")
                             .font(.caption)

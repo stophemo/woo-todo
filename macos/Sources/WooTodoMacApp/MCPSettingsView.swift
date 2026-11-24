@@ -5,6 +5,7 @@ struct MCPSettingsView: View {
     @ObservedObject var store: MCPSettingsStore
     @State private var revealsToken = false
     @State private var copied: String?
+    @State private var showsRegenerateConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -28,6 +29,7 @@ struct MCPSettingsView: View {
                             )
                             .labelsHidden()
                             .toggleStyle(.switch)
+                            .accessibilityLabel("开放 MCP 服务")
                         }
 
                         Text("开启后，Woo Todo 会在本机开放 MCP 服务，仅限本机的其他 Agent 通过回环地址调用。Agent 可以查询、新增、编辑、完成、撤销、放弃、删除和恢复任务，管理标签，并读取统计。服务不会暴露到局域网或互联网；任务仍只保存在本机，并会参与你已配置的同步。服务使用首次生成后固定的五位随机端口；端口冲突时会自动更换，届时需要重新复制 Agent 命令。")
@@ -79,8 +81,7 @@ struct MCPSettingsView: View {
                                     target: "token"
                                 )
                                 Button("重新生成") {
-                                    store.regenerateToken()
-                                    revealsToken = true
+                                    showsRegenerateConfirmation = true
                                 }
                                 .help("旧令牌会立即失效，需要同步更新客户端配置")
                             }
@@ -158,6 +159,19 @@ struct MCPSettingsView: View {
             .padding(24)
         }
         .textSelection(.enabled)
+        .confirmationDialog(
+            "重新生成访问令牌？",
+            isPresented: $showsRegenerateConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("重新生成", role: .destructive) {
+                store.regenerateToken()
+                revealsToken = true
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("旧令牌立即失效，所有 Agent 配置需要更新。")
+        }
     }
 
     private var statusColor: Color {

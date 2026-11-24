@@ -817,7 +817,7 @@ class MainActivity : AppCompatActivity() {
                 state.summary.pushed,
                 state.summary.pulled,
             )
-            is SyncRuntimeState.Failed -> state.message
+            is SyncRuntimeState.Failed -> getString(R.string.sync_failed_short)
         }
     }
 

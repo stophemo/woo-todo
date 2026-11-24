@@ -94,7 +94,7 @@ class InsightsActivity : AppCompatActivity() {
                                 tasks = tasks,
                                 referenceDate = TaskDateRules.today(),
                                 zoneId = TaskDateRules.zoneId,
-                                recentHistoryLimit = Int.MAX_VALUE,
+                                recentHistoryLimit = RECENT_HISTORY_LIMIT,
                             ),
                         )
                     }
@@ -284,6 +284,7 @@ class InsightsActivity : AppCompatActivity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
+        const val RECENT_HISTORY_LIMIT = 200
         val dayFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern(
             "M月d日",
             Locale.SIMPLIFIED_CHINESE,

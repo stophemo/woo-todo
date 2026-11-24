@@ -12,6 +12,7 @@
     <color name="purple_light">#A99AE8</color>
     <color name="green">#38B878</color>
     <color name="orange">#ED7043</color>
+    <color name="orange_text">#A63E1E</color>
     <color name="yellow">#F0C85A</color>
     <color name="header_text">#FFFFFF</color>
     <color name="header_muted">#B9BDB7</color>

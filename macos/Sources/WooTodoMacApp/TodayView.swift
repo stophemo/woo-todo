@@ -124,9 +124,9 @@ struct TodayView: View {
             .foregroundStyle(WooTodoTheme.mutedOnDark)
             .padding(.bottom, 10)
 
-            Rectangle()
-                .fill(WooTodoTheme.green)
-                .frame(height: 2)
+            ProgressView(value: Double(completed), total: Double(max(total, 1)))
+                .progressViewStyle(.linear)
+                .tint(WooTodoTheme.green)
         }
         .padding(.horizontal, 24)
         .padding(.top, 12)
@@ -289,6 +289,7 @@ private struct TaskRow: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(WooTodoTheme.metadataOnDark)
                 .help("编辑任务")
+                .accessibilityLabel("编辑任务")
             }
         }
         .contextMenu {

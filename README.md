@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://woo-todo.vercel.app/">产品主页</a> ·
-  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.4.0">下载 v0.4.0</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.20">下载 v0.2.20</a> ·
   <a href="#装好以后从这里开始">安装指南</a> ·
   <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
 </p>
@@ -70,22 +70,22 @@
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.4.0`](https://github.com/stophemo/woo-todo/releases/tag/v0.4.0)，只提供 macOS 与 Android 两个正式版本。
+当前稳定版是 [`v0.2.20`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.20)，只提供 macOS 与 Android 两个正式版本。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、独立主窗口与设置、最近删除恢复、统计与本机数据清理 | `v0.4.0` 正式版 |
-| Android 13+ | 统一任务列表、最近删除恢复、任务提醒、今日 Widget、统计与应用内更新 | `v0.4.0` 正式版 |
+| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、独立主窗口与设置、最近删除恢复、统计与本机数据清理 | `v0.2.20` 正式版 |
+| Android 13+ | 统一任务列表、最近删除恢复、任务提醒、今日 Widget、统计与应用内更新 | `v0.2.20` 正式版 |
 
-## 下载 v0.4.0
+## 下载 v0.2.20
 
 | 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.4.0-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.4.0/Woo-Todo-v0.4.0-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
-| Android | [Woo-Todo-v0.4.0-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.4.0/Woo-Todo-v0.4.0-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.4.0/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
+| macOS | [Woo-Todo-v0.2.20-macos-arm64.zip](https://github.com/stophemo/woo-todo/releases/download/v0.2.20/Woo-Todo-v0.2.20-macos-arm64.zip) | ZIP 内是 `Woo Todo.app`；解压后可直接运行，也可移入“应用程序”。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.2.20-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.20/Woo-Todo-v0.2.20-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.20/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
 
-`v0.4.0` 将 macOS 与 Android 的跨设备同步统一为 WebDAV：坚果云、Nextcloud、群晖或自定义 HTTPS WebDAV 服务都可以。每台设备先配置同一个 WebDAV 账号与目录，之后新增设备只用六位配对码双向加入，两端核对六位核对码后完成绑定。配对码 5 分钟内有效；任务正文端到端加密，WebDAV 供应商只能看到密文。旧 Worker 与局域网同步已停用，凭据保留但不启用，本地任务不受影响；旧版 0.2.x 的 WebDAV 凭据会自动迁移并继续使用。
+`v0.2.20` 将 macOS 与 Android 的跨设备同步统一为 WebDAV：坚果云、Nextcloud、群晖或自定义 HTTPS WebDAV 服务都可以。每台设备先配置同一个 WebDAV 账号与目录，之后新增设备只用六位配对码双向加入，两端核对六位核对码后完成绑定。配对码 5 分钟内有效；任务正文端到端加密，WebDAV 供应商只能看到密文。旧 Worker 与局域网同步已停用，凭据保留但不启用，本地任务不受影响；旧版 0.2.x 的 WebDAV 凭据会自动迁移并继续使用。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名；同步凭据以本机 AES-256-GCM 加密文件保存，首次从旧版本迁移时会读取一次旧 Keychain 项或旧 WebDAV 凭据文件，之后更新不再反复请求 Keychain 授权。Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -120,7 +120,7 @@ Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；�
 
 同步不会成为本地操作的前置条件：断网时仍可新增、编辑、完成和删除，WebDAV 恢复可达后自动补齐。供应商的请求频率和流量限制可能影响同步速度。
 
-> **版本要求**：`v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7` 至 `v0.2.19` 的 WebDAV 客户端可以与 `v0.4.0` 同步；`v0.2.6` 及更早客户端不保留“未分类”的自定义排序位置，建议两端同时升级。`v0.3.0` 只支持 Worker 同步空间，无法与 `v0.4.0` 的 WebDAV 空间互通，建议两端同时升级到 `v0.4.0`。
+> **版本要求**：`v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7` 至 `v0.2.20` 的 WebDAV 客户端可以互相同步；`v0.2.6` 及更早客户端不保留“未分类”的自定义排序位置，建议两端同时升级。
 
 ## 让本机 Agent 通过 MCP 直接写入计划
 

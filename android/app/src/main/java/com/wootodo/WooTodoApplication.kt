@@ -72,7 +72,7 @@ class WooTodoApplication : Application() {
 
     fun activeSyncConfigured(): Boolean = activeSyncCredentials() != null
 
-    /** 0.3.0 Worker / 旧 LAN 凭据保留但不启用；旧 WebDAV 凭据会自动迁移。 */
+    /** 旧版 Worker / LAN 凭据保留但不启用；旧 WebDAV 凭据会自动迁移。 */
     fun legacySyncDetected(): Boolean = runCatching {
         if (activeSyncConfigured()) return false
         legacySyncNotice.hasWorkerOrLanCredentials()

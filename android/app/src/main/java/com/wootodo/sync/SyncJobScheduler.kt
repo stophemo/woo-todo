@@ -23,7 +23,7 @@ object SyncJobScheduler {
     private const val BACKOFF_MILLIS = 30_000L
     private const val PERIOD_MILLIS = 15L * 60L * 1_000L
     private const val FLEX_MILLIS = 5L * 60L * 1_000L
-    // v0.3.0 删除了 transport mode，递增版本号确保升级后替换旧持久 Job。
+    // 此前版本删除了 transport mode，递增版本号确保升级后替换旧持久 Job。
     private const val SCHEDULER_VERSION = 3
     private const val EXTRA_SCHEDULER_VERSION = "sync_scheduler_version"
     private const val RETRY_PREFS_NAME = "sync_job_retry"

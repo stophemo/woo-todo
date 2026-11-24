@@ -52,7 +52,7 @@ class TaskDatabase(context: Context) :
         if (oldVersion < 11) {
             removeUnusedLegacyCategories(database)
         }
-        // v0.4.0 恢复 WebDAV 同步；0.3.0 删除过该表，这里按 IF NOT EXISTS 重建，
+        // v0.2.20 恢复 WebDAV 同步；旧版删除过该表，这里按 IF NOT EXISTS 重建，
         // 任务、分类、显示设置与删除记录都保持原样。
         createWebDavAppliedSchema(database)
     }

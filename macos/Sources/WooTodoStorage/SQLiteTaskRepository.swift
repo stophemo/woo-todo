@@ -836,7 +836,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
             )
         }
         try removeUnusedLegacyCategories()
-        // 0.3.0 曾删除 WebDAV 幂等表；0.4.0 恢复 WebDAV 同步时重新创建，任务数据不受影响。
+        // 此前版本曾删除 WebDAV 幂等表；0.2.20 恢复 WebDAV 同步时重新创建，任务数据不受影响。
         try execute(
             """
             CREATE TABLE IF NOT EXISTS sync_webdav_applied_operations (
@@ -1431,7 +1431,7 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
-    /// 测试用：模拟 0.3.0 删除过 WebDAV 幂等表的状态，验证升级会重新创建。
+    /// 测试用：模拟删除过 WebDAV 幂等表的旧数据库，验证升级会重新创建。
     internal func dropWebDavTableForTesting() throws {
         try withLock {
             try execute("DROP TABLE IF EXISTS sync_webdav_applied_operations")

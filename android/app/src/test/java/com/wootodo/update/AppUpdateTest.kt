@@ -305,7 +305,7 @@ class AppUpdateTest {
         assertEquals("v0.2.0", restored?.versionLabel)
         assertEquals(entry.apkUrl, restored?.downloadUrl)
         assertEquals(null, AppUpdateCache.restore("0.2.0", entry))
-        assertEquals(null, AppUpdateCache.restore("0.3.0", entry))
+        assertEquals(null, AppUpdateCache.restore("0.2.20", entry))
     }
 
     @Test

@@ -3,7 +3,7 @@ package com.wootodo.sync
 import android.content.Context
 
 /**
- * 0.3.0 的 Worker / 旧 LAN 凭据只用于提示，不读取、不删除、不启用。
+ * 旧版 Worker / 旧 LAN 凭据只用于提示，不读取、不删除、不启用。
  * 旧 WebDAV 完整凭据由 AndroidWebDavCredentialsStore 自动迁移，不再是 legacy。
  */
 object LegacySyncDetector {

@@ -109,7 +109,7 @@ class WebDavLocalApplyingInstrumentedTest {
         )
         database.close()
 
-        // 模拟 v0.3.0 的数据库：用户版本 13，WebDAV 已应用表已被删除。
+        // 模拟删除过 WebDAV 表的旧数据库：用户版本 13，WebDAV 已应用表已被删除。
         val path = context.getDatabasePath(DATABASE_NAME)
         SQLiteDatabase.openDatabase(path.path, null, SQLiteDatabase.OPEN_READWRITE).use { raw ->
             raw.execSQL("DROP TABLE IF EXISTS sync_webdav_applied_operations")

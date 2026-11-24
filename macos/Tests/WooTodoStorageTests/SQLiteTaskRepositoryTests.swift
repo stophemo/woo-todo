@@ -375,7 +375,7 @@ struct SQLiteTaskRepositoryTests {
         #expect(try reopened.displayConfiguration() == payload)
     }
 
-    @Test("从 0.3.0 升级会重新创建 WebDAV 应用表并保留任务")
+    @Test("从删除过 WebDAV 表的旧版本升级会重新创建应用表并保留任务")
     func webDavTableRecreatedOnUpgrade() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("woo-todo-schema-\(UUID().uuidString)", isDirectory: true)
@@ -389,7 +389,7 @@ struct SQLiteTaskRepositoryTests {
                 title: "升级保留任务",
                 categoryID: TaskCategory.inboxID
             ))
-            // 模拟 0.3.0 删除过 WebDAV 表的数据库。
+            // 模拟删除过 WebDAV 表的旧数据库。
             try repository.dropWebDavTableForTesting()
             #expect(try !repository.tableExists("sync_webdav_applied_operations"))
         }

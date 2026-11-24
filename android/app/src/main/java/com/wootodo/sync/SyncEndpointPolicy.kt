@@ -6,7 +6,7 @@ import java.net.URI
 
 /**
  * 跨设备同步只允许部署在公网的 HTTPS Worker 地址。
- * 局域网、明文、回环和私有地址都在 v0.3.0 移除，旧地址只会被识别为未配对。
+ * 局域网、明文、回环和私有地址已移除，旧地址只会被识别为未配对。
  */
 object SyncEndpointPolicy {
     private const val MAXIMUM_LENGTH = 2_048

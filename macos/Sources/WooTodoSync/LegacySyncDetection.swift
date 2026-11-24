@@ -59,7 +59,7 @@ public enum SyncLegacyDetector {
 
 public enum SyncLegacyNotice {
     public static let text = "旧同步方式已停用，本地任务已保留。请重新输入配对码或建立同步空间；旧同步凭据不会被删除。"
-    /// 0.4.0 起客户端只使用 WebDAV。
+    /// 0.2.20 起客户端只使用 WebDAV。
     public static let webDavMigrationText = "同步已改为 WebDAV。旧 Worker/局域网凭据已保留但不会启用；请配置 WebDAV 账号，本地任务会保留。"
 }
 

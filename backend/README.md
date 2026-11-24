@@ -2,7 +2,7 @@
 
 这是一个运行在 Cloudflare Workers + D1 上的 local-first 增量同步服务。macOS、Android 与 Windows 客户端始终先写各自的本地 SQLite；服务端只负责保存客户端产生的 AES-256-GCM 密文、分配递增游标和转发变更，不读取任务正文。
 
-> 当前状态：macOS 与 Android 的 0.4.0 客户端已改为只使用 WebDAV 同步，不需要部署本 Worker；本后端保留给 Windows 客户端与未来版本。除非你需要 Worker 后端，否则不必执行本文的部署步骤。
+> 当前状态：macOS 与 Android 的 0.2.20 客户端已改为只使用 WebDAV 同步，不需要部署本 Worker；本后端保留给 Windows 客户端与未来版本。除非你需要 Worker 后端，否则不必执行本文的部署步骤。
 
 ## 安全边界
 
@@ -33,7 +33,7 @@ npx wrangler dev
 
 ## 面向个人的 Cloudflare 免费部署
 
-这是一条自托管的可选路径，不需要跨设备同步的单机用户不需要执行本节。macOS 与 Android 的 0.4.0 客户端已改为 WebDAV 同步，不需要部署本 Worker；本节保留给 Windows 客户端、未来版本或需要 Worker 后端的自托管场景。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人多端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
+这是一条自托管的可选路径，不需要跨设备同步的单机用户不需要执行本节。macOS 与 Android 的 0.2.20 客户端已改为 WebDAV 同步，不需要部署本 Worker；本节保留给 Windows 客户端、未来版本或需要 Worker 后端的自托管场景。它不需要购买域名：仓库的 `workers_dev = true` 会使用 Cloudflare 提供的 `workers.dev` 地址。Cloudflare 账号、Workers/D1 免费计划的额度、计费规则和中国大陆网络可达性都由 Cloudflare 决定，可能随时间或地区变化；部署前请在 Cloudflare Dashboard 核对当前计划、用量和告警设置。项目按个人多端低频负载设计，但是否落在免费计划范围内以部署账号的实时用量为准，项目不承诺永久零费用或免费额度。
 
 ### 1. 准备账号和工具
 
@@ -92,7 +92,7 @@ npx wrangler deploy
 
 #### 从旧版本升级已有部署
 
-发布 `v0.3.0` 客户端时，必须先在原 D1 上应用 `0006_cross_device_pairing.sql`，再部署新版 Worker。该迁移是 additive 的，只增加六位短码、反向加入请求、中继 epoch 与配对限流表，不改动既有 `change_log`、cursor 和容量语义：
+发布使用 Worker 的客户端版本时，必须先在原 D1 上应用 `0006_cross_device_pairing.sql`，再部署新版 Worker。该迁移是 additive 的，只增加六位短码、反向加入请求、中继 epoch 与配对限流表，不改动既有 `change_log`、cursor 和容量语义：
 
 ```bash
 cd backend
@@ -110,9 +110,9 @@ npx wrangler deploy
 curl -fsS 'https://woo-todo-sync.example.workers.dev/health'
 ```
 
-把示例地址替换为部署命令输出的实际 URL；响应应包含 `"ok": true`。本后端只服务于仍使用 Worker 同步的客户端（Windows 客户端及未来版本）；macOS 与 Android 的 0.4.0 客户端使用 WebDAV，不需要填写 Worker 地址或邀请码。Windows/未来客户端仍可用六位配对码或配对链接加入，配对码 5 分钟内有效。
+把示例地址替换为部署命令输出的实际 URL；响应应包含 `"ok": true`。本后端只服务于仍使用 Worker 同步的客户端（Windows 客户端及未来版本）；macOS 与 Android 的 0.2.20 客户端使用 WebDAV，不需要填写 Worker 地址或邀请码。Windows/未来客户端仍可用六位配对码或配对链接加入，配对码 5 分钟内有效。
 
-构建配置说明：macOS 0.4.0 不再读取 `Info.plist` 的 `WooTodoSyncEndpoint`，Android 0.4.0 也不再使用 Worker 地址；不要为这两个平台部署或内置 Worker。
+构建配置说明：macOS 0.2.20 不再读取 `Info.plist` 的 `WooTodoSyncEndpoint`，Android 0.2.20 也不再使用 Worker 地址；不要为这两个平台部署或内置 Worker。
 
 ### 免费层和数据边界
 
@@ -156,7 +156,7 @@ Content-Type: application/json
 
 ## API
 
-以下接口只服务于 Worker 后端；macOS 与 Android 的 0.4.0 客户端使用 WebDAV，不调用这些接口。Windows 客户端与未来版本仍可使用。
+以下接口只服务于 Worker 后端；macOS 与 Android 的 0.2.20 客户端使用 WebDAV，不调用这些接口。Windows 客户端与未来版本仍可使用。
 
 | 方法与路径 | 鉴权 | 用途 |
 |---|---:|---|
@@ -174,7 +174,7 @@ Content-Type: application/json
 | `POST /v1/pairings/join/:id/approve` | 是 | 已有设备批准加入并提交 vault 密钥密文 |
 | `POST /v1/pairings/join/:id/result` | 否 | 新设备查询批准结果 |
 | `POST /v1/pairings/join/:id/cancel` | 否 | 新设备取消加入请求 |
-| `GET /v1/relay`、`PUT /v1/relay` | 是 | 预留的 ntfy 通知中继配置；v0.3.0 客户端不使用，远程通知计划在后续版本实现 |
+| `GET /v1/relay`、`PUT /v1/relay` | 是 | 预留的 ntfy 通知中继配置；当前 WebDAV 客户端不使用，远程通知计划在后续版本实现 |
 | `POST /v1/sync` | 是 | 原子 push、ack 与 pull |
 | `GET /v1/devices` | 是 | 查看同 vault 设备 |
 | `POST /v1/devices/current/revoke` | 是 | 当前设备退出同步空间 |

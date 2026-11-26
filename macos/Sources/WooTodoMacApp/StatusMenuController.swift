@@ -104,9 +104,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             ? "隐藏任务板"
             : "显示任务板"
         desktopWidgetItem.state = panelController.isDesktopWidget ? .on : .off
-        desktopWidgetItem.title = panelController.isDesktopWidget
-            ? "桌面小组件模式：已开启"
-            : "桌面小组件模式"
+        if panelController.isDesktopWidget {
+            desktopWidgetItem.title = panelController.isAlwaysOnTop
+                ? "桌面小组件模式：已开启（置顶中）"
+                : "桌面小组件模式：已开启"
+        } else {
+            desktopWidgetItem.title = "桌面小组件模式"
+        }
         clickThroughItem.title = panelController.isClickThrough
             ? "鼠标穿透：已开启"
             : "鼠标穿透"

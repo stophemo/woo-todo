@@ -25,21 +25,28 @@ enum PanelPresentation: Equatable {
 }
 
 enum PanelPresentationPolicy {
+    /// 置顶是桌面小组件之上的临时覆盖；关闭置顶后自动回到小组件或普通窗口。
     static func resolve(
         isDesktopWidget: Bool,
         isAlwaysOnTop: Bool
     ) -> PanelPresentation {
-        if isDesktopWidget { return .desktopWidget }
-        return isAlwaysOnTop ? .alwaysOnTop : .normal
+        if isAlwaysOnTop { return .alwaysOnTop }
+        return isDesktopWidget ? .desktopWidget : .normal
     }
 }
 
-enum PanelInteractionPolicy {
-    static func clickThroughEnabled(
-        isDesktopWidget: Bool,
-        requestedClickThrough: Bool
-    ) -> Bool {
-        !isDesktopWidget && requestedClickThrough
+enum PanelCollectionBehaviorPolicy {
+    /// `.stationary` 让窗口在“显示桌面”和 Mission Control 中保持原位；
+    /// 普通窗口仍随系统一起收起。
+    static func behavior(for presentation: PanelPresentation) -> NSWindow.CollectionBehavior {
+        switch presentation {
+        case .desktopWidget:
+            return [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        case .alwaysOnTop:
+            return [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        case .normal:
+            return [.canJoinAllSpaces, .fullScreenAuxiliary]
+        }
     }
 }
 
@@ -111,7 +118,10 @@ final class FloatingPanelController: NSWindowController {
         static let desktopWidget = "panel.desktopWidget"
         static let opacity = "panel.opacity"
         static let frameLayoutVersion = "panel.frameLayoutVersion"
+        static let stateModelVersion = "panel.stateModelVersion"
     }
+
+    private static let currentStateModelVersion = 2
 
     private let defaults: UserDefaults
     private let contentContainer = NSView()
@@ -130,6 +140,26 @@ final class FloatingPanelController: NSWindowController {
     private(set) var panelOpacity: CGFloat
     var isVisible: Bool { window?.isVisible == true }
 
+    private var presentation: PanelPresentation {
+        PanelPresentationPolicy.resolve(
+            isDesktopWidget: isDesktopWidget,
+            isAlwaysOnTop: isAlwaysOnTop
+        )
+    }
+
+    /// 旧版把置顶/穿透实现成互斥模式，开启时会持久化 desktopWidget=false。
+    /// 该状态与用户主动选择的普通窗口无法区分，升级后统一恢复默认桌面小组件。
+    private static func migratePreferencesIfNeeded(_ defaults: UserDefaults) {
+        guard defaults.integer(forKey: PreferenceKey.stateModelVersion)
+                < currentStateModelVersion else {
+            return
+        }
+        defaults.set(true, forKey: PreferenceKey.desktopWidget)
+        defaults.set(false, forKey: PreferenceKey.alwaysOnTop)
+        defaults.set(false, forKey: PreferenceKey.clickThrough)
+        defaults.set(currentStateModelVersion, forKey: PreferenceKey.stateModelVersion)
+    }
+
     init(
         store: TodayStore,
         dayCounterStore: DayCounterStore,
@@ -143,17 +173,14 @@ final class FloatingPanelController: NSWindowController {
             PreferenceKey.desktopWidget: true,
             PreferenceKey.opacity: Double(PanelOpacityPolicy.defaultValue)
         ])
+        Self.migratePreferencesIfNeeded(defaults)
         isBlurEnabled = defaults.bool(forKey: PreferenceKey.blurEnabled)
         isDesktopWidget = defaults.bool(forKey: PreferenceKey.desktopWidget)
-        isClickThrough = PanelInteractionPolicy.clickThroughEnabled(
-            isDesktopWidget: isDesktopWidget,
-            requestedClickThrough: defaults.bool(forKey: PreferenceKey.clickThrough)
-        )
-        isAlwaysOnTop = !isDesktopWidget && defaults.bool(forKey: PreferenceKey.alwaysOnTop)
+        isClickThrough = defaults.bool(forKey: PreferenceKey.clickThrough)
+        isAlwaysOnTop = defaults.bool(forKey: PreferenceKey.alwaysOnTop)
         panelOpacity = PanelOpacityPolicy.normalized(
             CGFloat(defaults.double(forKey: PreferenceKey.opacity))
         )
-        defaults.set(isClickThrough, forKey: PreferenceKey.clickThrough)
 
         let panel = FloatingPanel(
             contentRect: NSRect(origin: .zero, size: PanelFramePolicy.defaultSize)
@@ -182,7 +209,9 @@ final class FloatingPanelController: NSWindowController {
             )
         }
         window.orderFrontRegardless()
-        if isDesktopWidget { startPointerTracking() }
+        if presentation == .desktopWidget, !isClickThrough {
+            startPointerTracking()
+        }
         onStateChange?()
     }
 
@@ -222,13 +251,7 @@ final class FloatingPanelController: NSWindowController {
     }
 
     func toggleAlwaysOnTop() {
-        if isDesktopWidget {
-            isDesktopWidget = false
-            isAlwaysOnTop = true
-        } else {
-            isAlwaysOnTop.toggle()
-        }
-        defaults.set(isDesktopWidget, forKey: PreferenceKey.desktopWidget)
+        isAlwaysOnTop.toggle()
         defaults.set(isAlwaysOnTop, forKey: PreferenceKey.alwaysOnTop)
         applyVisualState()
     }
@@ -237,11 +260,9 @@ final class FloatingPanelController: NSWindowController {
         isDesktopWidget.toggle()
         if isDesktopWidget {
             isAlwaysOnTop = false
-            isClickThrough = false
         }
         defaults.set(isDesktopWidget, forKey: PreferenceKey.desktopWidget)
         defaults.set(isAlwaysOnTop, forKey: PreferenceKey.alwaysOnTop)
-        defaults.set(isClickThrough, forKey: PreferenceKey.clickThrough)
         applyVisualState()
     }
 
@@ -266,10 +287,6 @@ final class FloatingPanelController: NSWindowController {
     }
 
     private func setClickThrough(_ enabled: Bool) {
-        if enabled && isDesktopWidget {
-            isDesktopWidget = false
-            defaults.set(false, forKey: PreferenceKey.desktopWidget)
-        }
         isClickThrough = enabled
         defaults.set(enabled, forKey: PreferenceKey.clickThrough)
         applyVisualState()
@@ -285,6 +302,7 @@ final class FloatingPanelController: NSWindowController {
         panel.isMovableByWindowBackground = true
         panel.isReleasedWhenClosed = false
         panel.isExcludedFromWindowsMenu = true
+        panel.acceptsMouseMovedEvents = true
         panel.animationBehavior = .utilityWindow
         panel.setFrameAutosaveName(PanelFramePolicy.autosaveName)
         panel.minSize = NSSize(width: 300, height: 360)
@@ -351,22 +369,20 @@ final class FloatingPanelController: NSWindowController {
 
     private func applyVisualState() {
         guard let panel = window else { return }
-        switch PanelPresentationPolicy.resolve(
-            isDesktopWidget: isDesktopWidget,
-            isAlwaysOnTop: isAlwaysOnTop
-        ) {
+        let presentation = self.presentation
+        switch presentation {
         case .desktopWidget:
             panel.level = PanelDesktopLevelPolicy.level(pointerInside: false)
-            panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-            startPointerTracking()
-        case .normal:
+            panel.collectionBehavior = PanelCollectionBehaviorPolicy.behavior(for: presentation)
+            if isClickThrough {
+                stopPointerTracking()
+            } else {
+                startPointerTracking()
+            }
+        case .normal, .alwaysOnTop:
             stopPointerTracking()
-            panel.level = .normal
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        case .alwaysOnTop:
-            stopPointerTracking()
-            panel.level = .floating
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel.level = presentation == .alwaysOnTop ? .floating : .normal
+            panel.collectionBehavior = PanelCollectionBehaviorPolicy.behavior(for: presentation)
         }
         panel.ignoresMouseEvents = isClickThrough
         panel.alphaValue = panelOpacity
@@ -374,7 +390,7 @@ final class FloatingPanelController: NSWindowController {
         effectView.isHidden = !isBlurEnabled
         blurTintView.isHidden = !isBlurEnabled
         solidBackgroundView.isHidden = isBlurEnabled
-        resizeHandle.isHidden = !isDesktopWidget
+        resizeHandle.isHidden = presentation != .desktopWidget || isClickThrough
         solidBackgroundView.refreshColor()
         onStateChange?()
     }
@@ -382,12 +398,16 @@ final class FloatingPanelController: NSWindowController {
     /// 图标层会吞掉桌面窗口的点击；指针进入面板时把窗口临时抬到图标上方。
     /// 使用鼠标事件监听而不是 50ms 轮询，面板隐藏时不保留任何后台唤醒。
     private func startPointerTracking() {
-        guard window?.isVisible == true else { return }
+        guard presentation == .desktopWidget, !isClickThrough,
+              window?.isVisible == true else {
+            return
+        }
         updateDesktopWidgetLevel()
         guard globalMouseMonitor == nil, localMouseMonitor == nil else { return }
 
         let events: NSEvent.EventTypeMask = [
             .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+            .leftMouseUp, .rightMouseUp, .otherMouseUp,
         ]
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) {
             [weak self] _ in
@@ -414,7 +434,9 @@ final class FloatingPanelController: NSWindowController {
     }
 
     private func updateDesktopWidgetLevel() {
-        guard isDesktopWidget, let panel = window else { return }
+        guard presentation == .desktopWidget, !isClickThrough, let panel = window else {
+            return
+        }
         let pointerInside = panel.isVisible
             && panel.frame.contains(NSEvent.mouseLocation)
         let target = PanelDesktopLevelPolicy.level(pointerInside: pointerInside)

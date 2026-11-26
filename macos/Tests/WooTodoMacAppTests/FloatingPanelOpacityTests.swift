@@ -26,11 +26,17 @@ struct FloatingPanelOpacityTests {
         #expect(twice == once)
     }
 
-    @Test func desktopWidgetTakesPrecedenceOverWindowLevels() {
+    @Test func alwaysOnTopTemporarilyOverridesDesktopWidget() {
         #expect(PanelPresentationPolicy.resolve(
             isDesktopWidget: true,
             isAlwaysOnTop: true
-        ) == .desktopWidget)
+        ) == .alwaysOnTop)
+    }
+
+    @Test func onlyWidgetAndPinnedWindowsStayOnDesktopDuringShowDesktop() {
+        #expect(PanelCollectionBehaviorPolicy.behavior(for: .desktopWidget).contains(.stationary))
+        #expect(PanelCollectionBehaviorPolicy.behavior(for: .alwaysOnTop).contains(.stationary))
+        #expect(!PanelCollectionBehaviorPolicy.behavior(for: .normal).contains(.stationary))
     }
 
     @Test func disabledDesktopWidgetUsesRequestedWindowLevel() {
@@ -42,17 +48,6 @@ struct FloatingPanelOpacityTests {
             isDesktopWidget: false,
             isAlwaysOnTop: true
         ) == .alwaysOnTop)
-    }
-
-    @Test func desktopWidgetAlwaysStartsInteractive() {
-        #expect(!PanelInteractionPolicy.clickThroughEnabled(
-            isDesktopWidget: true,
-            requestedClickThrough: true
-        ))
-        #expect(PanelInteractionPolicy.clickThroughEnabled(
-            isDesktopWidget: false,
-            requestedClickThrough: true
-        ))
     }
 
     @Test func desktopWidgetStaysBelowIconsUntilPointerEnters() {

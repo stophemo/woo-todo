@@ -699,10 +699,13 @@ struct SyncSettingsStoreTests {
         #expect(try fixture.credentialsStore.loadIdentity() == localIdentity)
         #expect(fixture.store.identity == localIdentity)
         #expect(fixture.store.connection?.vaultId == localIdentity.vaultId)
-        guard case .awaitingApproval = fixture.store.pathAClaimPhase else {
-            Issue.record("选择以对方为准后应继续认领并等待批准")
-            return
-        }
+        // 服务端已收到 claim 后，客户端状态可能还要一拍才切到等待批准。
+        #expect(try await waitFor {
+            if case .awaitingApproval = fixture.store.pathAClaimPhase {
+                return true
+            }
+            return false
+        })
 
         try approve(
             claim: claim,

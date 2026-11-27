@@ -587,10 +587,13 @@ struct SyncSettingsStoreTests {
         #expect(try fixture.repository.fetchAll().map(\.title) == ["本机任务"])
         #expect(try fixture.credentialsStore.loadAccount() != nil)
         #expect(try fixture.credentialsStore.loadIdentity() == nil)
-        guard case .awaitingApproval = fixture.store.pathAClaimPhase else {
-            Issue.record("继续认领后应等待对方批准")
-            return
-        }
+        // 服务端已收到 claim 后，客户端状态可能还要一拍才切到等待批准。
+        #expect(try await waitFor {
+            if case .awaitingApproval = fixture.store.pathAClaimPhase {
+                return true
+            }
+            return false
+        })
 
         let vaultKey = Data(repeating: 5, count: 32)
         try approve(

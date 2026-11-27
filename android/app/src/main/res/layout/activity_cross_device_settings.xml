@@ -98,6 +98,14 @@
                     android:textColor="@color/muted"
                     android:textIsSelectable="true" />
 
+                <TextView
+                    android:id="@+id/webdav_folder_note"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textColor="@color/muted" />
+
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/webdav_edit_account"
                     style="@style/Widget.Material3.Button.TextButton"
@@ -111,6 +119,19 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/cross_device_webdav_provider"
+                        android:textAppearance="?attr/textAppearanceLabelMedium" />
+
+                    <Spinner
+                        android:id="@+id/webdav_provider_spinner"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp" />
 
                     <EditText
                         android:id="@+id/webdav_endpoint_input"
@@ -143,10 +164,10 @@
                         android:maxLines="1" />
 
                     <TextView
+                        android:id="@+id/webdav_provider_hint"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="@string/cross_device_webdav_provider_examples"
                         android:textAppearance="?attr/textAppearanceBodySmall"
                         android:textColor="@color/muted" />
 

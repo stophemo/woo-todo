@@ -326,7 +326,8 @@ final class SyncSettingsStore: ObservableObject {
         defer { isSavingAccount = false }
 
         do {
-            let newAccount = try makeAccountFromFields()
+            let account = try makeAccountFromFields()
+            let newAccount = try await resolveStorageAccount(account)
             let client = try clientFactory(newAccount, nil)
             try await client.ensurePairingDirectory()
             _ = try await client.listPairingFileNames()
@@ -361,6 +362,33 @@ final class SyncSettingsStore: ObservableObject {
                 "保存 WebDAV 账号失败：\(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    /**
+     新账号自动落在 WooTodo 专属文件夹；已有空间沿用原目录，避免升级后断链。
+     */
+    private func resolveStorageAccount(_ account: WebDavAccount) async throws -> WebDavAccount {
+        func accountAt(_ endpoint: URL) -> WebDavAccount {
+            WebDavAccount(
+                endpoint: endpoint,
+                username: account.username,
+                appPassword: account.appPassword
+            )
+        }
+        let vaultId = identity?.vaultId
+        let endpoint = try await WebDavStorageLayout.resolveEndpoint(
+            account.endpoint,
+            vaultId: vaultId,
+            hasVaultAt: { candidate in
+                guard let vaultId else { return false }
+                return try await clientFactory(accountAt(candidate), nil)
+                    .hasVaultDirectory(vaultId: vaultId)
+            },
+            hasPairingAt: { candidate in
+                try await clientFactory(accountAt(candidate), nil).hasPairingDirectory()
+            }
+        )
+        return accountAt(endpoint)
     }
 
     private func makeAccountFromFields() throws -> WebDavAccount {

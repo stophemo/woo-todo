@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://woo-todo.vercel.app/">产品主页</a> ·
-  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.24">下载 v0.2.24</a> ·
+  <a href="https://github.com/stophemo/woo-todo/releases/tag/v0.2.25">下载 v0.2.25</a> ·
   <a href="#装好以后从这里开始">安装指南</a> ·
   <a href="https://github.com/stophemo/woo-todo/issues">反馈问题</a>
 </p>
@@ -70,22 +70,22 @@
 
 ## 现在可以在哪里用
 
-当前稳定版是 [`v0.2.24`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.24)，只提供 macOS 与 Android 两个正式版本。
+当前稳定版是 [`v0.2.25`](https://github.com/stophemo/woo-todo/releases/tag/v0.2.25)，只提供 macOS 与 Android 两个正式版本。
 
 | 平台 | 最适合的场景 | 状态 |
 | --- | --- | --- |
-| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、独立主窗口与设置、最近删除恢复、统计与本机数据清理 | `v0.2.24` 正式版 |
-| Android 13+ | 统一任务列表、最近删除恢复、任务提醒、今日 Widget、统计与应用内更新 | `v0.2.24` 正式版 |
+| macOS 15+、Apple Silicon | 桌面层任务小组件、悬浮任务板、独立主窗口与设置、最近删除恢复、统计与本机数据清理 | `v0.2.25` 正式版 |
+| Android 13+ | 统一任务列表、最近删除恢复、任务提醒、今日 Widget、统计与应用内更新 | `v0.2.25` 正式版 |
 
-## 下载 v0.2.24
+## 下载 v0.2.25
 
 | 平台 | 发布文件 | 使用提示 |
 | --- | --- | --- |
-| macOS | [Woo-Todo-v0.2.24-macos-arm64.dmg](https://github.com/stophemo/woo-todo/releases/download/v0.2.24/Woo-Todo-v0.2.24-macos-arm64.dmg) | 打开 DMG，把 `Woo Todo.app` 拖到“应用程序”。同页的 ZIP 仅用于 Sparkle 自动更新，手动安装请用 DMG。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
-| Android | [Woo-Todo-v0.2.24-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.24/Woo-Todo-v0.2.24-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
-| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.24/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
+| macOS | [Woo-Todo-v0.2.25-macos-arm64.dmg](https://github.com/stophemo/woo-todo/releases/download/v0.2.25/Woo-Todo-v0.2.25-macos-arm64.dmg) | 打开 DMG，把 `Woo Todo.app` 拖到“应用程序”。同页的 ZIP 仅用于 Sparkle 自动更新，手动安装请用 DMG。当前为 ad-hoc 签名且未经过 Apple 公证，首次打开可能需要在“隐私与安全性”中允许。 |
+| Android | [Woo-Todo-v0.2.25-android.apk](https://github.com/stophemo/woo-todo/releases/download/v0.2.25/Woo-Todo-v0.2.25-android.apk) | 从系统文件管理器打开并允许本次来源安装。正式 APK 使用项目长期 Release 签名，可直接覆盖升级。 |
+| 正式版校验 | [SHA256SUMS.txt](https://github.com/stophemo/woo-todo/releases/download/v0.2.25/SHA256SUMS.txt) | 校验本次 macOS 与 Android 正式包。 |
 
-`v0.2.24` 优化跨设备页与全局可读性，并修复 macOS 任务板的展示模式：开启「始终置顶」后再关闭会回到桌面小组件，点击桌面空白触发「显示桌面」时不再被一起隐藏；鼠标穿透也不再退出小组件模式。升级后首次启动会一次性恢复被旧版置顶开关误关的小组件模式。跨设备同步仍使用 WebDAV：每台设备配置同一个 WebDAV 账号与目录，再用六位配对码加入，任务正文端到端加密。
+`v0.2.25` 简化 WebDAV 配置：选择服务商即可带出常用地址，新账号自动使用 `WooTodo` 专属文件夹，已有空间沿用原目录、无需重新配对。Android 同步改为按批合并请求并并发拉取，首次导入和日常同步更快，失败时会显示具体错误类型；macOS MCP 服务在监听中断或端口变化时会自愈并在设置页提示更新 Agent 命令。
 
 不要先卸载、清除应用数据，或用不同签名的 Debug APK 覆盖正式版。macOS 当前没有 Developer ID 签名；同步凭据以本机 AES-256-GCM 加密文件保存，首次从旧版本迁移时会读取一次旧 Keychain 项或旧 WebDAV 凭据文件，之后更新不再反复请求 Keychain 授权。Sparkle 的下载签名可以验证更新包，但不能替代 Apple 的代码签名。
 
@@ -112,16 +112,17 @@
 Woo Todo 不要求先配置同步。单设备使用时，什么都不用做；任务始终留在本地。需要跨设备时，macOS 与 Android 都通过你自己选择的 WebDAV 服务同步，不再依赖 Worker 或局域网。
 
 - **供应商自选**：坚果云、Nextcloud、群晖或任何兼容的 HTTPS WebDAV 服务都可以；所有设备使用同一个账号与目录。建议使用供应商提供的应用专用密码，而不是登录密码。
-- **每台设备先配置账号**：在“跨设备”里填写 WebDAV 地址、用户名与应用密码；保存前会测试目录读写。账号与应用密码在本机加密保存：macOS 使用 AES-256-GCM 加密文件，Android 使用 Keystore 包裹。
+- **每台设备先配置账号**：在“跨设备”里选择服务商，填写账户与应用密码即可；坚果云会自动带出通用地址，也可自行修改。新账号会自动使用该地址下的 `WooTodo` 专属文件夹，不会和同一 WebDAV 账号下的其他应用混在一起；已有同步空间沿用原目录。保存前会测试目录读写。账号与应用密码在本机加密保存：macOS 使用 AES-256-GCM 加密文件，Android 使用 Keystore 包裹。
 - **之后用六位码配对**：已有设备可以显示六位配对码，新设备输入；新设备也可以显示自己的六位码，由已有设备输入。持有空间的一方看到加入方设备名后点一次「批准加入」，加入方自动完成，配对码 5 分钟内有效。两方都有空间时，加入方选择以哪台设备的数据为准；只有选择对方数据时，才会在批准成功后清空本机任务并加入，取消或对方不批准不会清空本机数据。
 - **端到端加密**：任务正文与标签以 AES-256-GCM 密文写入 WebDAV，配对时通过 X25519 传递同步密钥；供应商只能看到密文、公钥、设备名与配对码，无法读取任务明文或同步密钥。
-- **同步时机**：启动、本地修改、回到前台以及每 15 分钟兜底时同步。WebDAV 没有服务端推送，其他设备的变更会在下次同步时到达，不是实时同步。
-- **设备列表**：每台设备同步时写入加密心跳，其他设备可以查看设备名、平台和最近同步时间。这是尽力而为的名册，可能不是最新状态，也不能远程吊销；退出空间只清除本机身份，要阻止旧设备继续同步请在 WebDAV 供应商处修改应用密码。
+- **同步时机**：启动、本地修改、回到前台以及每 15 分钟兜底时同步；连续编辑会合并成一次同步。WebDAV 没有服务端推送，其他设备的变更会在下次同步时到达，不是实时同步。
+- **请求按批合并**：同一目录一轮只创建一次，待上传操作分批连续推送，拉取最多 4 路并发；首次加入已有空间时会先分批上传本机任务，再拉取历史，期间可能连续显示几次同步。
+- **设备列表**：每台设备最多每 15 分钟写入一次加密心跳，其他设备可以查看设备名、平台和最近同步时间。这是尽力而为的名册，可能不是最新状态，也不能远程吊销；退出空间只清除本机身份，要阻止旧设备继续同步请在 WebDAV 供应商处修改应用密码。
 - **旧方式已停用**：旧 Worker 与局域网同步凭据保留但不会启用，本地任务保留，应用会提示重新配置 WebDAV；旧版 0.2.x 的 WebDAV 完整凭据会自动迁移并继续同步。
 
 同步不会成为本地操作的前置条件：断网时仍可新增、编辑、完成和删除，WebDAV 恢复可达后自动补齐。供应商的请求频率和流量限制可能影响同步速度。
 
-> **版本要求**：`v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7` 至 `v0.2.24` 的 WebDAV 客户端可以互相同步；`v0.2.6` 及更早客户端不保留“未分类”的自定义排序位置，建议两端同时升级。
+> **版本要求**：`v0.2.4` 起任务正文使用新的标签和日期语义，v0.2.3 及更早客户端无法正确理解。`v0.2.7` 至 `v0.2.25` 的 WebDAV 客户端可以互相同步；`v0.2.6` 及更早客户端不保留“未分类”的自定义排序位置，建议两端同时升级。
 
 ## 让本机 Agent 通过 MCP 直接写入计划
 

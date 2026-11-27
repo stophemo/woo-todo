@@ -302,6 +302,45 @@ struct MCPServerTests {
         #expect(first.endpointURL.absoluteString.contains(":\(first.port)/mcp"))
     }
 
+    @Test("端点变化时提示重新复制命令，确认后不再提示")
+    func endpointChangeRequiresAcknowledgment() async throws {
+        let suite = "io.github.stophemo.woo-todo.mcp-test.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "mcp.enabled.v1")
+        defaults.set("12345|stale-token", forKey: "mcp.running-endpoint.v1")
+        let repository = MCPTestRepository()
+
+        var runningSettings: MCPSettingsStore?
+        for _ in 0..<8 {
+            let port = UInt16.random(in: 20_000...50_000)
+            let settings = MCPSettingsStore(
+                store: TodayStore(repository: repository),
+                repository: repository,
+                defaults: defaults,
+                allowsExternalServices: true,
+                port: port
+            )
+            settings.startIfNeeded()
+            if await waitUntilRunning(settings) {
+                runningSettings = settings
+                break
+            }
+        }
+
+        let settings = try #require(runningSettings)
+        let notice = try #require(settings.endpointChangeNotice)
+        #expect(notice.contains("重新复制"))
+
+        settings.acknowledgeEndpointChange()
+        #expect(settings.endpointChangeNotice == nil)
+        #expect(
+            defaults.string(forKey: "mcp.running-endpoint.v1")
+                == "\(settings.port)|\(settings.token)"
+        )
+        settings.setEnabled(false)
+    }
+
     @Test("常用 Agent 命令包含本机地址与令牌")
     func agentSnippetsUseEndpointAndToken() throws {
         let suite = "io.github.stophemo.woo-todo.mcp-test.\(UUID().uuidString)"

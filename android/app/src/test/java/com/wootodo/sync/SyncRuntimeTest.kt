@@ -197,6 +197,26 @@ class SyncRuntimeTest {
         )
     }
 
+    @Test
+    fun `未分类异常保留错误类型并继续自动重试`() = runBlocking {
+        val logged = Collections.synchronizedList(mutableListOf<Exception>())
+        val runtime = SyncRuntime(
+            runnerFactory = {
+                SyncRunner { throw IllegalStateException("tombstone 版本记录缺失") }
+            },
+            clockMillis = { 321L },
+            logFailure = { logged += it },
+        )
+
+        assertEquals(SyncExecutionResult.Failed(retryable = true), runtime.synchronize())
+
+        val state = runtime.state.value as SyncRuntimeState.Failed
+        assertTrue(state.message.contains("IllegalStateException"))
+        assertTrue(state.message.contains("tombstone 版本记录缺失"))
+        assertEquals(1, logged.size)
+        assertEquals("tombstone 版本记录缺失", logged.single().message)
+    }
+
     private fun serverError(status: Int): SyncApiException.Server = SyncApiException.Server(
         statusCode = status,
         payload = ServerErrorPayload("TEST_$status", "测试错误"),

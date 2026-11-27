@@ -30,8 +30,10 @@ import com.wootodo.sync.WebDavClient
 import com.wootodo.sync.WebDavCredentials
 import com.wootodo.sync.WebDavDeviceDirectory
 import com.wootodo.sync.WebDavDeviceInfo
+import com.wootodo.sync.WebDavEndpointPolicy
 import com.wootodo.sync.WebDavIdentity
 import com.wootodo.sync.WebDavPairingException
+import com.wootodo.sync.WebDavStorageLayout
 import com.wootodo.sync.WebDavSyncRunner
 import com.wootodo.sync.bindPairedSyncStore
 import com.wootodo.sync.newWebDavIdentity
@@ -43,13 +45,16 @@ import com.wootodo.widget.TodayWidgetUpdater
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class WooTodoApplication : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val automaticSyncGate = AutomaticSyncRequestGate()
+    private var mutationSyncJob: Job? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             requestNetworkRestoredSync()
@@ -64,6 +69,13 @@ class WooTodoApplication : Application() {
     val syncRuntime: SyncRuntime by lazy {
         SyncRuntime(
             runnerFactory = { createSyncRunner() },
+            logFailure = { error ->
+                Log.e(
+                    "WooTodoSync",
+                    "同步失败：${error::class.java.simpleName}: ${error.message}",
+                    error,
+                )
+            },
         )
     }
 
@@ -103,19 +115,26 @@ class WooTodoApplication : Application() {
         account: WebDavAccount,
         identity: WebDavIdentity,
         name: String = DeviceName.current(this),
-    ) {
-        runCatching {
-            webDavDeviceDirectory(account, identity).writeHeartbeat(
-                name = name,
-                appVersion = BuildConfig.VERSION_NAME,
-            )
-        }.onFailure { Log.w("WooTodoWebDav", "写入 WebDAV 设备心跳失败", it) }
-    }
+    ): Boolean = runCatching {
+        webDavDeviceDirectory(account, identity).writeHeartbeat(
+            name = name,
+            appVersion = BuildConfig.VERSION_NAME,
+        )
+    }.onFailure { Log.w("WooTodoWebDav", "写入 WebDAV 设备心跳失败", it) }.isSuccess
 
     private fun deleteWebDavHeartbeat(account: WebDavAccount, identity: WebDavIdentity) {
         runCatching {
             webDavDeviceDirectory(account, identity).deleteOwnHeartbeat()
         }.onFailure { Log.w("WooTodoWebDav", "删除 WebDAV 设备心跳失败", it) }
+    }
+
+    /** 心跳只用于设备列表展示，每轮同步都写会白白多出 4 个 WebDAV 请求。 */
+    private fun writeWebDavHeartbeatIfDue(account: WebDavAccount, identity: WebDavIdentity) {
+        val now = System.currentTimeMillis()
+        if (now - syncStatusPreferences.lastHeartbeatAt() < HEARTBEAT_INTERVAL_MILLIS) return
+        if (writeWebDavHeartbeat(account, identity)) {
+            syncStatusPreferences.recordHeartbeat(now)
+        }
     }
 
     private fun createSyncRunner(): SyncRunner? {
@@ -153,7 +172,7 @@ class WooTodoApplication : Application() {
                 outbox = syncStore,
                 local = syncStore,
                 onSynchronized = {
-                    writeWebDavHeartbeat(credentials.account, credentials.identity)
+                    writeWebDavHeartbeatIfDue(credentials.account, credentials.identity)
                 },
             )::synchronize,
         )
@@ -218,10 +237,37 @@ class WooTodoApplication : Application() {
         }
     }
 
+    /**
+     * 保存账号前自动决定存储目录：新账号落在专属文件夹，已有空间沿用原目录，
+     * 避免升级后旧空间突然“消失”。
+     */
     suspend fun saveWebDavAccount(account: WebDavAccount) = withContext(Dispatchers.IO) {
         account.validate()
-        webDavCredentialsStore.saveAccount(account)
+        val vaultId = runCatching { webDavCredentialsStore.loadIdentity()?.vaultId }.getOrNull()
+        val resolved = resolveWebDavAccount(account, vaultId)
+        WebDavClient(resolved).testConnection()
+        webDavCredentialsStore.saveAccount(resolved)
         syncRuntime.refreshConfiguration(activeSyncConfigured())
+    }
+
+    private fun resolveWebDavAccount(account: WebDavAccount, vaultId: String?): WebDavAccount {
+        fun endpointAccount(endpoint: String) = WebDavAccount(
+            endpoint = endpoint,
+            username = account.username,
+            appPassword = account.appPassword,
+        )
+        val endpoint = WebDavEndpointPolicy.normalize(account.endpoint) ?: account.endpoint
+        val resolved = WebDavStorageLayout.resolveEndpoint(
+            endpoint = endpoint,
+            vaultId = vaultId,
+            hasVaultAt = { candidate ->
+                WebDavClient(endpointAccount(candidate)).hasVaultDirectory(checkNotNull(vaultId))
+            },
+            hasPairingAt = { candidate ->
+                WebDavClient(endpointAccount(candidate)).hasPairingDirectory()
+            },
+        )
+        return endpointAccount(resolved)
     }
 
     /** 建立首个同步空间：生成 vaultId/vaultKey/deviceId 并确保 v1/<vaultId>/ops 存在。 */
@@ -247,6 +293,7 @@ class WooTodoApplication : Application() {
                 }
                 syncStatusPreferences.clear()
                 writeWebDavHeartbeat(account, identity, deviceName)
+                syncStatusPreferences.recordHeartbeat(System.currentTimeMillis())
                 createdIdentity = identity
             }
             syncRuntime.refreshConfiguration(true)
@@ -306,6 +353,7 @@ class WooTodoApplication : Application() {
                 }
                 syncStatusPreferences.clear()
                 writeWebDavHeartbeat(account, identity)
+                syncStatusPreferences.recordHeartbeat(System.currentTimeMillis())
             }
             syncRuntime.refreshConfiguration(true)
             SyncJobScheduler.ensurePeriodic(this@WooTodoApplication)
@@ -391,7 +439,12 @@ class WooTodoApplication : Application() {
 
     suspend fun synchronizeManually(): SyncExecutionResult {
         val result = syncRuntime.synchronize()
-        if (result is SyncExecutionResult.Failed && result.retryable) {
+        val needsAnotherRun = when (result) {
+            is SyncExecutionResult.Failed -> result.retryable
+            is SyncExecutionResult.Succeeded -> result.summary.moreWork
+            SyncExecutionResult.NotConfigured -> false
+        }
+        if (needsAnotherRun) {
             withContext(Dispatchers.IO) {
                 SyncJobScheduler.enqueueImmediate(this@WooTodoApplication)
             }
@@ -401,10 +454,14 @@ class WooTodoApplication : Application() {
         return result
     }
 
-    /** 本地写入已经落入 SQLite outbox，联网后由持久化 Job 发送。 */
+    /** 本地编辑后先合批，避免连续写入触发多次完整 WebDAV 扫描；写入已落入 SQLite outbox。 */
     fun notifyLocalMutation() {
         TaskReminderScheduler.scheduleAllAsync(this)
-        requestAutomaticSync()
+        mutationSyncJob?.cancel()
+        mutationSyncJob = applicationScope.launch {
+            delay(LOCAL_MUTATION_SYNC_DEBOUNCE_MILLIS)
+            requestAutomaticSync()
+        }
     }
 
     fun notifyAppForegrounded() {
@@ -444,9 +501,10 @@ class WooTodoApplication : Application() {
             is SyncExecutionResult.Failed -> {
                 if (!result.retryable) SyncJobScheduler.cancelImmediate(this)
             }
-            SyncExecutionResult.NotConfigured,
-            is SyncExecutionResult.Succeeded,
-            -> SyncJobScheduler.cancelImmediate(this)
+            is SyncExecutionResult.Succeeded -> {
+                if (!result.summary.moreWork) SyncJobScheduler.cancelImmediate(this)
+            }
+            SyncExecutionResult.NotConfigured -> SyncJobScheduler.cancelImmediate(this)
         }
     }
 
@@ -511,5 +569,12 @@ class WooTodoApplication : Application() {
                 }
             }
         }
+    }
+
+    private companion object {
+        /** 心跳仅用于设备列表展示；与 15 分钟周期同步对齐即可。 */
+        const val HEARTBEAT_INTERVAL_MILLIS = 15L * 60L * 1_000L
+        /** 连续编辑合并成一次同步，避免每次输入都跑一轮 WebDAV 扫描。 */
+        const val LOCAL_MUTATION_SYNC_DEBOUNCE_MILLIS = 1_500L
     }
 }

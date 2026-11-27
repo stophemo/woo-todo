@@ -30,11 +30,19 @@ private enum WebDavProviderExample: String, CaseIterable, Identifiable {
 
     var hint: String {
         switch self {
-        case .jianguoyun: "在坚果云「账户信息 → 安全选项」中添加应用密码，用户名填写登录邮箱。"
+        case .jianguoyun: "请使用坚果云「账户信息 → 安全选项」中的第三方应用密码，用户名填写登录邮箱。"
         case .nextcloud: "使用「WebDAV 地址」并在设置中创建应用密码；地址通常含 /remote.php/dav/files/用户名/。"
         case .synology: "在群晖「控制面板 → 文件服务 → WebDAV」启用 HTTPS，端口通常为 5006。"
         case .custom: "填写供应商提供的 WebDAV 根目录，必须使用 HTTPS。"
         }
+    }
+
+    static func matching(_ endpoint: String) -> Self {
+        let value = endpoint.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if value.hasPrefix("https://dav.jianguoyun.com/") { return .jianguoyun }
+        if value.contains("/remote.php/dav/") { return .nextcloud }
+        if value.contains(":5006") { return .synology }
+        return .custom
     }
 }
 
@@ -44,6 +52,7 @@ struct SyncSettingsView: View {
     @State private var joinCodeInput = ""
     @State private var showsExitConfirmation = false
     @State private var isEditingAccount = false
+    @State private var selectedProvider: WebDavProviderExample = .jianguoyun
 
     var body: some View {
         Group {
@@ -56,6 +65,7 @@ struct SyncSettingsView: View {
             }
         }
         .textSelection(.enabled)
+        .onAppear(perform: syncProviderSelection)
         .confirmationDialog(
             "退出此同步空间？",
             isPresented: $showsExitConfirmation,
@@ -125,33 +135,7 @@ struct SyncSettingsView: View {
     private var accountCard: some View {
         SettingsCard(title: "WebDAV 账号", systemImage: "externaldrive.connected.to.line.below") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("WebDAV 供应商由你选择。所有设备配置同一个账号与目录，Woo Todo 只在该目录保存端到端加密密文。")
-                    .foregroundStyle(.secondary)
-                HStack {
-                    TextField("https://dav.jianguoyun.com/dav/", text: $store.endpointText)
-                        .textFieldStyle(.roundedBorder)
-                    Menu {
-                        ForEach(WebDavProviderExample.allCases) { provider in
-                            Button(provider.title) {
-                                if provider != .custom {
-                                    store.endpointText = provider.endpoint
-                                }
-                            }
-                        }
-                    } label: {
-                        Label("供应商示例", systemImage: "questionmark.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                }
-                endpointGuidance
-                TextField("WebDAV 用户名", text: $store.username)
-                    .textFieldStyle(.roundedBorder)
-                SecureField("应用密码或访问令牌", text: $store.appPassword)
-                    .textFieldStyle(.roundedBorder)
-                Text("建议使用供应商提供的应用专用密码，而不是登录密码。地址必须使用 HTTPS，可以包含供应商要求的路径，但不能包含账号、查询参数或片段。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                accountFields
                 HStack(spacing: 12) {
                     Button {
                         Task { await store.testAndSaveAccount() }
@@ -165,11 +149,51 @@ struct SyncSettingsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(store.isSavingAccount || !store.canSaveAccount)
-                    Text("保存前会创建并读取 v1/pairing 目录，确认地址与权限可用。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    /// 用户只需要填：服务商、地址（默认带出）、账户、应用密码。
+    private var accountFields: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LabeledContent("服务商") {
+                Picker("服务商", selection: $selectedProvider) {
+                    ForEach(WebDavProviderExample.allCases) { provider in
+                        Text(provider.title).tag(provider)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(maxWidth: 240, alignment: .trailing)
+                .onChange(of: selectedProvider) { _, provider in
+                    if provider != .custom {
+                        store.endpointText = provider.endpoint
+                    }
+                }
+            }
+            TextField("https://dav.jianguoyun.com/dav/", text: $store.endpointText)
+                .textFieldStyle(.roundedBorder)
+            endpointGuidance
+            TextField("WebDAV 账户（登录邮箱或用户名）", text: $store.username)
+                .textFieldStyle(.roundedBorder)
+            SecureField("应用密码（不是登录密码）", text: $store.appPassword)
+                .textFieldStyle(.roundedBorder)
+            Text(selectedProvider.hint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("同步文件只写入该地址下的 WooTodo 专属文件夹，不会和其他应用混在一起。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func syncProviderSelection() {
+        if store.endpointText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            selectedProvider = .jianguoyun
+            store.endpointText = selectedProvider.endpoint
+        } else {
+            selectedProvider = WebDavProviderExample.matching(store.endpointText)
         }
     }
 
@@ -177,7 +201,7 @@ struct SyncSettingsView: View {
     private var endpointGuidance: some View {
         switch store.endpointAssessment {
         case .empty:
-            Label("请输入供应商提供的 HTTPS WebDAV 根目录。", systemImage: "info.circle")
+            Label("请输入供应商提供的 HTTPS WebDAV 根目录；新账号会自动使用 WooTodo 专属文件夹。", systemImage: "info.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .invalid:
@@ -239,7 +263,15 @@ struct SyncSettingsView: View {
                         .help(account.endpoint.absoluteString)
                         .textSelection(.enabled)
                 }
+                LabeledContent("服务商", value: WebDavProviderExample.matching(
+                    account.endpoint.absoluteString
+                ).title)
                 LabeledContent("用户名", value: account.username)
+                Text(WebDavStorageLayout.isAppFolder(account.endpoint)
+                    ? "同步文件只写入这个 WooTodo 专属文件夹，不会写到账号根目录。"
+                    : "当前沿用旧版目录；新建账号会自动使用 WooTodo 专属文件夹。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text("账号与应用密码保存在本机加密文件中；WebDAV 供应商只能看到端到端加密密文与配对所需的公开信息（公钥、设备名、配对码）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -256,13 +288,7 @@ struct SyncSettingsView: View {
     private var accountEditorCard: some View {
         SettingsCard(title: "编辑 WebDAV 账号", systemImage: "pencil") {
             VStack(alignment: .leading, spacing: 12) {
-                TextField("https://dav.jianguoyun.com/dav/", text: $store.endpointText)
-                    .textFieldStyle(.roundedBorder)
-                endpointGuidance
-                TextField("WebDAV 用户名", text: $store.username)
-                    .textFieldStyle(.roundedBorder)
-                SecureField("应用密码或访问令牌", text: $store.appPassword)
-                    .textFieldStyle(.roundedBorder)
+                accountFields
                 Text("保存不会退出当前同步空间，配对身份、本地任务与设备列表保持不变。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -977,6 +1003,7 @@ struct SyncSettingsView: View {
             store.username = account.username
             store.appPassword = account.appPassword
         }
+        selectedProvider = WebDavProviderExample.matching(store.endpointText)
         isEditingAccount = true
     }
 

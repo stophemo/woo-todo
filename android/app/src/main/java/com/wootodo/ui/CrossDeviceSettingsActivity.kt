@@ -5,11 +5,14 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.os.Bundle
 import android.view.View
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.annotation.StringRes
@@ -35,6 +38,7 @@ import com.wootodo.sync.WebDavAccount
 import com.wootodo.sync.WebDavClaimInfo
 import com.wootodo.sync.WebDavClaimSession
 import com.wootodo.sync.WebDavClient
+import com.wootodo.sync.WebDavStorageLayout
 import com.wootodo.sync.WebDavCredentials
 import com.wootodo.sync.WebDavDeviceInfo
 import com.wootodo.sync.WebDavEndpointPolicy
@@ -67,13 +71,22 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         CREATE_SPACE,
     }
 
+    private data class WebDavProvider(
+        @StringRes val titleRes: Int,
+        @StringRes val hintRes: Int,
+        val endpoint: String,
+    )
+
     private lateinit var app: WooTodoApplication
     private lateinit var expiryTopHint: TextView
     private lateinit var setupHint: TextView
     private lateinit var accountSummary: TextView
     private lateinit var endpointSummary: TextView
+    private lateinit var folderNote: TextView
     private lateinit var editAccount: Button
     private lateinit var accountForm: View
+    private lateinit var providerSpinner: Spinner
+    private lateinit var providerHint: TextView
     private lateinit var endpointInput: EditText
     private lateinit var usernameInput: EditText
     private lateinit var appPasswordInput: EditText
@@ -119,6 +132,30 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private var pendingJoinDecision: CompletableDeferred<JoinPolicyChoice>? = null
     private var pendingApproval: CompletableDeferred<Unit>? = null
     private var currentAccount: WebDavAccount? = null
+    private var suppressProviderAutofill = false
+    private var accountFormInitialized = false
+    private val webDavProviders = listOf(
+        WebDavProvider(
+            titleRes = R.string.cross_device_webdav_provider_jianguoyun,
+            hintRes = R.string.cross_device_webdav_provider_hint_jianguoyun,
+            endpoint = "https://dav.jianguoyun.com/dav/",
+        ),
+        WebDavProvider(
+            titleRes = R.string.cross_device_webdav_provider_nextcloud,
+            hintRes = R.string.cross_device_webdav_provider_hint_nextcloud,
+            endpoint = "",
+        ),
+        WebDavProvider(
+            titleRes = R.string.cross_device_webdav_provider_synology,
+            hintRes = R.string.cross_device_webdav_provider_hint_synology,
+            endpoint = "",
+        ),
+        WebDavProvider(
+            titleRes = R.string.cross_device_webdav_provider_custom,
+            hintRes = R.string.cross_device_webdav_provider_hint_custom,
+            endpoint = "",
+        ),
+    )
     private var currentCredentials: WebDavCredentials? = null
     private var lastSuccessfulSyncAt: Long? = null
 
@@ -154,8 +191,11 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         setupHint = findViewById(R.id.webdav_setup_hint)
         accountSummary = findViewById(R.id.webdav_account_summary)
         endpointSummary = findViewById(R.id.webdav_endpoint_summary)
+        folderNote = findViewById(R.id.webdav_folder_note)
         editAccount = findViewById(R.id.webdav_edit_account)
         accountForm = findViewById(R.id.webdav_account_form)
+        providerSpinner = findViewById(R.id.webdav_provider_spinner)
+        providerHint = findViewById(R.id.webdav_provider_hint)
         endpointInput = findViewById(R.id.webdav_endpoint_input)
         usernameInput = findViewById(R.id.webdav_username_input)
         appPasswordInput = findViewById(R.id.webdav_app_password_input)
@@ -189,11 +229,37 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
 
     private fun bindActions() {
         saveAccount.setOnClickListener { saveWebDavAccount() }
+        providerSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            webDavProviders.map { getString(it.titleRes) },
+        ).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        providerSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: AdapterView<*>?,
+                view: View?,
+                position: Int,
+                id: Long,
+            ) {
+                if (suppressProviderAutofill) return
+                val provider = webDavProviders[position]
+                providerHint.setText(provider.hintRes)
+                if (provider.endpoint.isNotEmpty()) {
+                    endpointInput.setText(provider.endpoint)
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
         editAccount.setOnClickListener {
             val account = currentAccount ?: return@setOnClickListener
             endpointInput.setText(account.endpoint)
             usernameInput.setText(account.username)
             appPasswordInput.setText(account.appPassword)
+            selectProvider(providerIndex(account.endpoint), applyEndpoint = false)
+            accountFormInitialized = true
             accountSummary.isVisible = false
             endpointSummary.isVisible = false
             editAccount.isVisible = false
@@ -260,15 +326,26 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         setupHint.isVisible = account == null
         expiryTopHint.isVisible = account != null
         if (account == null) {
+            if (!accountFormInitialized) {
+                accountFormInitialized = true
+                if (endpointInput.text.isNullOrEmpty()) {
+                    selectProvider(0, applyEndpoint = true)
+                } else {
+                    selectProvider(providerIndex(endpointInput.text.toString()), applyEndpoint = false)
+                }
+            }
             accountSummary.isVisible = false
             endpointSummary.isVisible = false
+            folderNote.isVisible = false
             editAccount.isVisible = false
             accountForm.isVisible = true
             clearConnectionFeedback()
             return
         }
+        accountFormInitialized = false
         accountSummary.isVisible = true
         endpointSummary.isVisible = true
+        folderNote.isVisible = true
         editAccount.isVisible = true
         accountForm.isVisible = false
         accountSummary.text = getString(
@@ -279,6 +356,11 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             R.string.cross_device_webdav_endpoint_format,
             account.endpoint,
         )
+        folderNote.text = if (WebDavStorageLayout.isAppFolder(account.endpoint)) {
+            getString(R.string.cross_device_webdav_folder_note)
+        } else {
+            getString(R.string.cross_device_webdav_folder_legacy_note)
+        }
     }
 
     private fun renderSpaceCard(credentials: WebDavCredentials) {
@@ -383,6 +465,24 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun selectProvider(position: Int, applyEndpoint: Boolean) {
+        suppressProviderAutofill = true
+        providerSpinner.setSelection(position, false)
+        suppressProviderAutofill = false
+        val provider = webDavProviders[position]
+        providerHint.setText(provider.hintRes)
+        if (applyEndpoint && provider.endpoint.isNotEmpty()) {
+            endpointInput.setText(provider.endpoint)
+        }
+    }
+
+    private fun providerIndex(endpoint: String): Int = when {
+        endpoint.startsWith("https://dav.jianguoyun.com/") -> 0
+        endpoint.contains("/remote.php/dav/") -> 1
+        endpoint.contains(":5006") -> 2
+        else -> 3
+    }
+
     private fun saveWebDavAccount() {
         val endpoint = WebDavEndpointPolicy.normalize(endpointInput.text.toString())
         val username = usernameInput.text.toString()
@@ -396,7 +496,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    WebDavClient(account).testConnection()
                     app.saveWebDavAccount(account)
                 }
                 if (isFinishing || isDestroyed) return@launch

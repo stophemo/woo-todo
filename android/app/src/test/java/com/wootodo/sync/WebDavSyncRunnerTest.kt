@@ -2,6 +2,7 @@ package com.wootodo.sync
 
 import java.nio.charset.StandardCharsets
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -31,6 +32,7 @@ class WebDavSyncRunnerTest {
         assertEquals("vault-android-test", transport.ensuredVaultId)
         assertEquals(listOf(localPush.opId), outbox.acknowledged)
         assertEquals(listOf(remoteOperation.opId), local.applied.map(WebDavOperation::opId))
+        assertEquals(listOf(localPush.opId), local.uploadedApplied)
         assertTrue(transport.paths().contains(WebDavOperation.path(identity.vaultId, localPush.opId)))
 
         val second = runner.synchronize()
@@ -38,6 +40,58 @@ class WebDavSyncRunnerTest {
         assertEquals(0, second.pushed)
         assertEquals(0, second.pulled)
         assertEquals(1, local.applied.size)
+    }
+
+    @Test
+    fun `一次同步推送超过单批的待发送操作`() {
+        val pending = (1..120).map { index ->
+            pushOperation(
+                opId = "local-op-${index.toString().padStart(4, '0')}",
+                entityId = "entity-local-$index",
+                lamport = index.toLong(),
+            )
+        }
+        val transport = FakeTransport()
+        val outbox = FakeOutbox(pending)
+        val local = FakeLocal()
+        val runner = WebDavSyncRunner(transport, identity, outbox, local)
+
+        val summary = runner.synchronize()
+
+        assertEquals(120, summary.pushed)
+        assertFalse(summary.moreWork)
+        assertEquals(120, transport.paths().count { it.size == 5 })
+        assertTrue(outbox.pendingOperations(200).isEmpty())
+        // 自己刚上传的对象不需要再下载并应用一遍。
+        assertTrue(local.applied.isEmpty())
+        assertEquals(120, local.uploadedApplied.size)
+    }
+
+    @Test
+    fun `积压超过单轮上限时只推送不拉取并标记还有工作`() {
+        val pending = (1..250).map { index ->
+            pushOperation(
+                opId = "local-op-${index.toString().padStart(4, '0')}",
+                entityId = "entity-local-$index",
+                lamport = index.toLong(),
+            )
+        }
+        val transport = FakeTransport()
+        val outbox = FakeOutbox(pending)
+        val local = FakeLocal()
+        val runner = WebDavSyncRunner(transport, identity, outbox, local)
+
+        val first = runner.synchronize()
+
+        assertEquals(WebDavSyncRunner.MAXIMUM_PUSH_OPS_PER_RUN, first.pushed)
+        assertEquals(0, first.pulled)
+        assertTrue(first.moreWork)
+
+        val second = runner.synchronize()
+
+        assertEquals(50, second.pushed)
+        assertFalse(second.moreWork)
+        assertTrue(outbox.pendingOperations(200).isEmpty())
     }
 
     @Test
@@ -263,6 +317,7 @@ class WebDavSyncRunnerTest {
         val applied = mutableListOf<WebDavOperation>()
         val batchSizes = mutableListOf<Int>()
         val skipped = mutableListOf<String>()
+        val uploadedApplied = mutableListOf<String>()
         var failFor: Set<String> = emptySet()
         private val preApplied = mutableSetOf<String>()
 
@@ -285,6 +340,11 @@ class WebDavSyncRunnerTest {
 
         override fun markWebDavOperationsSkipped(operationIds: List<String>) {
             skipped += operationIds
+        }
+
+        override fun markWebDavOperationsApplied(operationIds: List<String>) {
+            uploadedApplied += operationIds
+            preApplied += operationIds
         }
     }
 }

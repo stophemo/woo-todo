@@ -142,7 +142,10 @@ class SyncJobService : JobService() {
         runningJobs.remove(params.jobId)?.cancel()
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val result = runtime.synchronize()
-            val shouldRetry = SyncJobScheduler.shouldReschedule(
+            // 还有积压时不走失败退避：直接排一个新的即时任务继续推送，避免退避累积成几小时。
+            val moreWork = (result as? SyncExecutionResult.Succeeded)?.summary?.moreWork == true
+            if (moreWork) SyncJobScheduler.enqueueImmediate(this@SyncJobService)
+            val shouldRetry = !moreWork && SyncJobScheduler.shouldReschedule(
                 this@SyncJobService,
                 params.jobId,
                 result,

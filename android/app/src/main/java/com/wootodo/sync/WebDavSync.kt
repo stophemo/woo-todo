@@ -6,6 +6,9 @@ import java.io.IOException
 import java.io.StringReader
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
 import okhttp3.Credentials
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -500,8 +503,36 @@ interface WebDavLocalApplying {
 
     fun applyWebDavOperations(operations: List<WebDavOperation>)
 
+    /** 已成功上传的操作等价于已应用，避免下次同步重复下载自己的对象。 */
+    fun markWebDavOperationsApplied(operationIds: List<String>) =
+        markWebDavOperationsSkipped(operationIds)
+
     /** 单条操作解密/校验失败时按 opId 记为已处理，避免整批同步永久失败。 */
     fun markWebDavOperationsSkipped(operationIds: List<String>) = Unit
+}
+
+/** WebDAV 拉取并发度；供应商会限流，保持在个位数。 */
+internal const val WEBDAV_FETCH_PARALLELISM = 4
+
+/** 顺序无关的并发映射；保持输入顺序并原样抛出第一个失败。 */
+internal fun <T, R> parallelMap(items: List<T>, block: (T) -> R): List<R> {
+    if (items.size <= 1) return items.map(block)
+    val pool = Executors.newFixedThreadPool(minOf(WEBDAV_FETCH_PARALLELISM, items.size))
+    return try {
+        pool.invokeAll(items.map { item -> Callable { block(item) } }).map { future ->
+            try {
+                future.get()
+            } catch (error: ExecutionException) {
+                throw when (val cause = error.cause) {
+                    is Exception -> cause
+                    is Error -> cause
+                    else -> error
+                }
+            }
+        }
+    } finally {
+        pool.shutdownNow()
+    }
 }
 
 internal object WebDavRetryPolicy {
@@ -520,6 +551,41 @@ interface WebDavOperationTransport {
     fun listOperationPaths(vaultId: String): List<List<String>>
 
     fun get(path: List<String>): ByteArray
+}
+
+/** 新账号自动使用的专属目录，避免和同一 WebDAV 账号下的其他应用混用。 */
+internal object WebDavStorageLayout {
+    const val APP_FOLDER = "WooTodo"
+
+    fun isAppFolder(endpoint: String): Boolean =
+        endpoint.trimEnd('/').substringAfterLast('/').equals(APP_FOLDER, ignoreCase = true)
+
+    /**
+     * 新账号落到 `<地址>/WooTodo`；已有空间的旧目录保持不变。
+     * 先看专属目录，再看旧目录，避免同一个账号下同时存在两种布局时误判。
+     */
+    fun resolveEndpoint(
+        endpoint: String,
+        vaultId: String?,
+        hasVaultAt: (String) -> Boolean,
+        hasPairingAt: (String) -> Boolean,
+    ): String {
+        val base = endpoint.trimEnd('/')
+        if (isAppFolder(base)) return base
+        val namespaced = "$base/$APP_FOLDER"
+        if (vaultId != null) {
+            return when {
+                hasVaultAt(namespaced) -> namespaced
+                hasVaultAt(base) -> base
+                else -> namespaced
+            }
+        }
+        return when {
+            hasPairingAt(namespaced) -> namespaced
+            hasPairingAt(base) -> base
+            else -> namespaced
+        }
+    }
 }
 
 class WebDavClient(
@@ -543,12 +609,25 @@ class WebDavClient(
         .build()
     private val authorization = Credentials.basic(account.username, account.appPassword)
 
+    /** 同一轮同步内只对相同目录发一次 MKCOL。 */
+    private val ensuredCollections = java.util.concurrent.ConcurrentHashMap.newKeySet<List<String>>()
+
     override fun ensureCollections(vaultId: String) {
         listOf(
             listOf("v1"),
             listOf("v1", vaultId),
             listOf("v1", vaultId, "ops"),
-        ).forEach { request("MKCOL", it, null, emptyMap(), setOf(201, 405, 409)) }
+        ).forEach(::ensureCollection)
+    }
+
+    private fun ensureCollection(path: List<String>) {
+        if (!ensuredCollections.add(path)) return
+        try {
+            request("MKCOL", path, null, emptyMap(), setOf(201, 405, 409))
+        } catch (error: Exception) {
+            ensuredCollections.remove(path)
+            throw error
+        }
     }
 
     /** 账号配置页用一次 MKCOL + PROPFIND 验证地址与凭据。 */
@@ -563,6 +642,18 @@ class WebDavClient(
         return WebDavOperationIndex.maximumLamport(this, vaultId)
     }
 
+    /** 只探测不创建，用于判断账号根目录或专属目录是否已经属于某个同步空间。 */
+    fun hasPairingDirectory(): Boolean = directoryExists(listOf("v1", PAIRING_DIRECTORY))
+
+    fun hasVaultDirectory(vaultId: String): Boolean = directoryExists(listOf("v1", vaultId))
+
+    private fun directoryExists(path: List<String>): Boolean = try {
+        propfind(path)
+        true
+    } catch (error: WebDavException.Http) {
+        if (error.statusCode in setOf(403, 404, 409)) false else throw error
+    }
+
     fun ensurePairingCollection() {
         listOf(
             listOf("v1"),
@@ -573,7 +664,7 @@ class WebDavClient(
     override fun putOperation(operation: WebDavOperation) {
         operation.validate()
         val path = WebDavOperation.path(operation.vaultId, operation.opId)
-        request("MKCOL", path.dropLast(1), null, emptyMap(), setOf(201, 405, 409))
+        ensureCollection(path.dropLast(1))
         if (!putFile(path, operation.canonicalJson().toByteArray(StandardCharsets.UTF_8))) {
             throw WebDavException.ObjectConflict(path.joinToString("/"))
         }
@@ -589,11 +680,11 @@ class WebDavClient(
             .map(List<String>::last)
             .distinct()
             .sorted()
-        return shards.flatMap { shard ->
+        return parallelMap(shards) { shard ->
             propfind(root + shard).filter {
                 it.size == root.size + 2 && it.last().endsWith(".json")
             }
-        }.sortedBy { it.joinToString("/") }
+        }.flatten().sortedBy { it.joinToString("/") }
     }
 
     override fun get(path: List<String>): ByteArray = request(
@@ -807,10 +898,18 @@ class WebDavSyncRunner(
     fun synchronize(): SyncRunSummary {
         identity.validate()
         transport.ensureCollections(identity.vaultId)
-        val pending = outbox.pendingOperations(SyncCoordinator.MAXIMUM_PUSH_BATCH)
-        pending.forEach { push ->
-            transport.putOperation(
-                WebDavOperation.from(push, identity.vaultId, identity.deviceId),
+        val pushed = pushPendingOperations()
+        // 首次导入或离线积压：本轮只推送，不下发翻页扫描；下一轮继续推送，
+        // 直到 outbox 清空才拉取远端，避免每批 200 条都重复 1+N 次 PROPFIND。
+        if (pushed > 0 && outbox.pendingOperations(1).isNotEmpty()) {
+            runCatching(onSynchronized)
+                .onFailure { onWarning("同步完成后写入设备心跳失败", it) }
+            return SyncRunSummary(
+                pushed = pushed,
+                pulled = 0,
+                pages = 0,
+                finalCursor = 0,
+                moreWork = true,
             )
         }
         val paths = transport.listOperationPaths(identity.vaultId)
@@ -823,49 +922,110 @@ class WebDavSyncRunner(
             }
         }
         val pendingIds = local.pendingWebDavOperationIds(candidates.map { it.second })
-        val operations = mutableListOf<WebDavOperation>()
-        val skipped = mutableListOf<String>()
-        candidates.forEach { (path, opId) ->
-            if (opId !in pendingIds) return@forEach
-            val operation = try {
-                WebDavOperation.decode(String(transport.get(path), StandardCharsets.UTF_8))
-            } catch (error: WebDavException.MalformedObject) {
-                onWarning("跳过无法解析的 WebDAV 操作：$opId", error)
-                skipped += opId
-                return@forEach
-            } catch (error: WebDavException.Http) {
-                if (error.statusCode != 404) throw error
-                onWarning("远端操作已不存在：$opId", error)
-                skipped += opId
-                return@forEach
+        var pulled = 0
+        // 按窗口拉取并立即应用：中途失败时已落地的批次不会重做。
+        candidates
+            .filter { (_, opId) -> opId in pendingIds }
+            .chunked(WEBDAV_APPLY_BATCH_SIZE)
+            .forEach { window ->
+                val outcomes = parallelMap(window) { (path, opId) ->
+                    fetchOperation(path, opId)
+                }
+                val skipped = mutableListOf<String>()
+                val operations = mutableListOf<WebDavOperation>()
+                outcomes.forEach { outcome ->
+                    val operation = outcome.operation
+                    when {
+                        operation != null -> operations += operation
+                        outcome.skippable -> {
+                            onWarning(outcome.warningMessage, checkNotNull(outcome.error))
+                            skipped += outcome.opId
+                        }
+
+                        else -> throw checkNotNull(outcome.error)
+                    }
+                }
+                if (skipped.isNotEmpty()) local.markWebDavOperationsSkipped(skipped)
+                operations.chunked(WEBDAV_APPLY_BATCH_SIZE).forEach(::applyBatch)
+                pulled += operations.size
             }
-            if (operation.vaultId != identity.vaultId ||
-                path != WebDavOperation.path(operation.vaultId, operation.opId)
-            ) {
-                onWarning(
-                    "跳过与当前空间或路径不匹配的 WebDAV 操作：$opId",
-                    WebDavException.MalformedObject("同步对象元数据不匹配"),
-                )
-                skipped += opId
-                return@forEach
-            }
-            operations += operation
-        }
-        if (skipped.isNotEmpty()) local.markWebDavOperationsSkipped(skipped)
-        operations.chunked(WEBDAV_APPLY_BATCH_SIZE).forEach(::applyBatch)
-        outbox.acknowledgeOperations(pending.map(SyncPushOperation::opId))
         try {
             onSynchronized()
         } catch (error: Exception) {
             onWarning("同步完成后写入设备心跳失败", error)
         }
         return SyncRunSummary(
-            pushed = pending.size,
-            pulled = operations.size,
-            pages = webDavPageCount(operations.size),
+            pushed = pushed,
+            pulled = pulled,
+            pages = webDavPageCount(pulled),
             finalCursor = 0,
         )
     }
+
+    /**
+     * 连续推送多批直到本轮上限：只推送 50 条会让首次上传需要十几次同步，
+     * 而同一分片的 MKCOL 已由 transport 去重。上传成功即确认，失败重试不会重复上传。
+     */
+    private fun pushPendingOperations(): Int {
+        var pushed = 0
+        while (pushed < MAXIMUM_PUSH_OPS_PER_RUN) {
+            val limit = minOf(
+                SyncCoordinator.MAXIMUM_PUSH_BATCH,
+                MAXIMUM_PUSH_OPS_PER_RUN - pushed,
+            )
+            val pending = outbox.pendingOperations(limit)
+            if (pending.isEmpty()) break
+            val uploaded = mutableListOf<String>()
+            try {
+                pending.forEach { push ->
+                    transport.putOperation(
+                        WebDavOperation.from(push, identity.vaultId, identity.deviceId),
+                    )
+                    uploaded += push.opId
+                }
+            } finally {
+                if (uploaded.isNotEmpty()) {
+                    outbox.acknowledgeOperations(uploaded)
+                    // 已上传的操作就是本地状态，拉取阶段不应再下载并应用一遍。
+                    local.markWebDavOperationsApplied(uploaded)
+                }
+            }
+            pushed += pending.size
+            if (pending.size < limit) break
+        }
+        return pushed
+    }
+
+    private fun fetchOperation(path: List<String>, opId: String): FetchOutcome {
+        val operation = try {
+            WebDavOperation.decode(String(transport.get(path), StandardCharsets.UTF_8))
+        } catch (error: WebDavException.MalformedObject) {
+            return FetchOutcome(opId, null, error, skippable = true, warningMessage = "跳过无法解析的 WebDAV 操作：$opId")
+        } catch (error: WebDavException.Http) {
+            if (error.statusCode != 404) return FetchOutcome(opId, null, error, skippable = false, warningMessage = "")
+            return FetchOutcome(opId, null, error, skippable = true, warningMessage = "远端操作已不存在：$opId")
+        }
+        if (operation.vaultId != identity.vaultId ||
+            path != WebDavOperation.path(operation.vaultId, operation.opId)
+        ) {
+            return FetchOutcome(
+                opId = opId,
+                operation = null,
+                error = WebDavException.MalformedObject("同步对象元数据不匹配"),
+                skippable = true,
+                warningMessage = "跳过与当前空间或路径不匹配的 WebDAV 操作：$opId",
+            )
+        }
+        return FetchOutcome(opId, operation, null, skippable = false, warningMessage = "")
+    }
+
+    private data class FetchOutcome(
+        val opId: String,
+        val operation: WebDavOperation?,
+        val error: Exception?,
+        val skippable: Boolean,
+        val warningMessage: String,
+    )
 
     /**
      * 批量应用失败时退化为逐条应用：单条解密/校验失败的操作按 opId 跳过并告警，
@@ -893,6 +1053,9 @@ class WebDavSyncRunner(
 
     companion object {
         internal const val WEBDAV_APPLY_BATCH_SIZE = 500
+
+        /** 每轮同步最多确认的待发送操作；超出部分留给下一轮，避免一次产生过多请求。 */
+        internal const val MAXIMUM_PUSH_OPS_PER_RUN = 200
 
         internal fun webDavPageCount(operationCount: Int): Int =
             maxOf(1, (operationCount + WEBDAV_APPLY_BATCH_SIZE - 1) / WEBDAV_APPLY_BATCH_SIZE)
@@ -922,21 +1085,27 @@ internal object WebDavOperationIndex {
         },
     ): Long {
         var maximum = 0L
-        transport.listOperationPaths(vaultId).forEach { path ->
-            val operation = try {
-                WebDavOperation.decode(String(transport.get(path), StandardCharsets.UTF_8))
-            } catch (error: WebDavException.MalformedObject) {
-                onWarning("跳过无法解析的 WebDAV 操作：${path.joinToString("/")}", error)
-                return@forEach
-            } catch (error: WebDavException.Http) {
-                if (error.statusCode != 404) throw error
-                onWarning("远端操作已不存在：${path.joinToString("/")}", error)
-                return@forEach
+        // 加入空间时最多要扫描全部历史；并发读取避免移动端在配对后等十几分钟。
+        transport.listOperationPaths(vaultId)
+            .chunked(WebDavSyncRunner.WEBDAV_APPLY_BATCH_SIZE)
+            .forEach { window ->
+                val lamports = parallelMap(window) { path ->
+                    try {
+                        val operation = WebDavOperation.decode(
+                            String(transport.get(path), StandardCharsets.UTF_8),
+                        )
+                        if (operation.vaultId == vaultId) operation.lamport else 0L
+                    } catch (error: WebDavException.MalformedObject) {
+                        onWarning("跳过无法解析的 WebDAV 操作：${path.joinToString("/")}", error)
+                        0L
+                    } catch (error: WebDavException.Http) {
+                        if (error.statusCode != 404) throw error
+                        onWarning("远端操作已不存在：${path.joinToString("/")}", error)
+                        0L
+                    }
+                }
+                lamports.forEach { maximum = maxOf(maximum, it) }
             }
-            if (operation.vaultId == vaultId) {
-                maximum = maxOf(maximum, operation.lamport)
-            }
-        }
         return maximum
     }
 }

@@ -124,9 +124,19 @@ object SyncFailurePolicy {
             SyncFailureDescription("WebDAV 同步数据无效，未应用远端数据", false)
         is SyncCryptoException -> SyncFailureDescription("同步密文校验失败，未应用远端数据", false)
         else -> SyncFailureDescription(
-            "同步未完成，已保留本地待发送任务；请点「立即同步」重试",
-            false,
+            "同步未完成（${error.summaryForFailure()}），已保留本地待发送任务；请点「立即同步」重试",
+            true,
         )
+    }
+
+    /** 未分类异常保留错误类型与简短说明，便于用户反馈和日志定位。 */
+    private fun Exception.summaryForFailure(): String {
+        val detail = message?.replace('\n', ' ')?.trim()?.take(80)
+        return if (detail.isNullOrEmpty()) {
+            this::class.java.simpleName
+        } else {
+            "${this::class.java.simpleName}: $detail"
+        }
     }
 }
 
@@ -135,6 +145,8 @@ class SyncRuntime(
     private val runnerFactory: () -> SyncRunner?,
     private val clockMillis: () -> Long = System::currentTimeMillis,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** 未分类失败需要堆栈日志；默认空实现便于单元测试。 */
+    private val logFailure: (Exception) -> Unit = {},
 ) {
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow<SyncRuntimeState>(SyncRuntimeState.Loading)
@@ -176,6 +188,7 @@ class SyncRuntime(
     }
 
     private fun recordFailure(error: Exception): SyncExecutionResult.Failed {
+        logFailure(error)
         val failure = SyncFailurePolicy.describe(error)
         mutableState.value = SyncRuntimeState.Failed(
             message = failure.message,

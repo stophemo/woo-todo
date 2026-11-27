@@ -40,14 +40,20 @@ final class MCPHTTPServer: @unchecked Sendable {
 
     private let listener: NWListener
     private let handler: Handler
+    private let onUnexpectedFailure: (@Sendable (String) -> Void)?
     private let queue = DispatchQueue(
         label: "io.github.stophemo.woo-todo.mcp",
         qos: .userInitiated
     )
     private let lock = NSLock()
     private var started = false
+    private var reportedUnexpectedFailure = false
 
-    init(port: UInt16, handler: @escaping Handler) throws {
+    init(
+        port: UInt16,
+        handler: @escaping Handler,
+        onUnexpectedFailure: (@Sendable (String) -> Void)? = nil
+    ) throws {
         guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
             throw MCPHTTPServerError.invalidPort
         }
@@ -59,6 +65,7 @@ final class MCPHTTPServer: @unchecked Sendable {
         )
         listener = try NWListener(using: parameters)
         self.handler = handler
+        self.onUnexpectedFailure = onUnexpectedFailure
     }
 
     func start() async throws {
@@ -66,18 +73,23 @@ final class MCPHTTPServer: @unchecked Sendable {
         do {
             try await withCheckedThrowingContinuation { continuation in
                 let gate = MCPContinuationGate(continuation)
-                listener.stateUpdateHandler = { state in
+                listener.stateUpdateHandler = { [weak self] state in
                     switch state {
                     case .ready:
                         gate.resume(.success(()))
                     case .failed(let error):
-                        gate.resume(.failure(
+                        let message = "MCP 服务监听失败：\(error.localizedDescription)"
+                        if !gate.resume(.failure(
                             MCPHTTPServerError.listenerFailed(error.localizedDescription)
-                        ))
+                        )) {
+                            self?.reportUnexpectedFailure(message)
+                        }
                     case .cancelled:
-                        gate.resume(.failure(
+                        if !gate.resume(.failure(
                             MCPHTTPServerError.listenerFailed("服务已停止")
-                        ))
+                        )) {
+                            self?.reportUnexpectedFailure("MCP 服务监听已意外停止")
+                        }
                     default:
                         break
                     }
@@ -113,6 +125,18 @@ final class MCPHTTPServer: @unchecked Sendable {
         lock.lock()
         started = false
         lock.unlock()
+    }
+
+    /** 只在 ready 之后的意外中断时上报一次；用户主动 stop 已先清掉 started。 */
+    private func reportUnexpectedFailure(_ message: String) {
+        lock.lock()
+        let shouldReport = started && !reportedUnexpectedFailure
+        if shouldReport {
+            started = false
+            reportedUnexpectedFailure = true
+        }
+        lock.unlock()
+        if shouldReport { onUnexpectedFailure?(message) }
     }
 
     private func accept(_ connection: NWConnection) {
@@ -278,12 +302,15 @@ private final class MCPContinuationGate: @unchecked Sendable {
         self.continuation = continuation
     }
 
-    func resume(_ result: Result<Void, Error>) {
+    /** 返回 true 表示本次调用完成了启动等待；false 表示已经 ready 过。 */
+    @discardableResult
+    func resume(_ result: Result<Void, Error>) -> Bool {
         lock.lock()
         let pending = continuation
         continuation = nil
         lock.unlock()
         pending?.resume(with: result)
+        return pending != nil
     }
 }
 

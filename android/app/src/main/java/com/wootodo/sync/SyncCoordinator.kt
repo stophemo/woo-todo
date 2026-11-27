@@ -23,6 +23,8 @@ data class SyncRunSummary(
     val pulled: Int,
     val pages: Int,
     val finalCursor: Long,
+    /** 还有未上传的本地操作；本轮只推送，下一轮继续，避免首次导入反复扫描翻页。 */
+    val moreWork: Boolean = false,
 )
 
 sealed class SyncCoordinatorException(message: String) : Exception(message) {

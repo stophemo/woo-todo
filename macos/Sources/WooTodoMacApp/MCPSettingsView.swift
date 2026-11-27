@@ -46,8 +46,34 @@ struct MCPSettingsView: View {
                                 if let detail = store.status.detail {
                                     Text(detail)
                                         .foregroundStyle(.red)
+                                    if store.isEnabled {
+                                        Button("重试") {
+                                            store.restartIfNeeded()
+                                        }
+                                        .buttonStyle(.borderless)
+                                    }
                                 }
                             }
+                        }
+
+                        if let notice = store.endpointChangeNotice {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                Text(notice)
+                                    .font(.caption)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 8)
+                                Button("已重新复制") {
+                                    store.acknowledgeEndpointChange()
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            .padding(10)
+                            .background(
+                                .orange.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
                         }
 
                         LabeledContent("地址") {

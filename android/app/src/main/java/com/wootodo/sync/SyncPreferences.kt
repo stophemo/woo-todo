@@ -55,12 +55,23 @@ class SyncStatusPreferences(context: Context) {
         preferences.edit().putLong(KEY_LAST_SUCCESS, finishedAt).apply()
     }
 
+    /** 设备心跳只是展示信息，不需要每轮同步都写一次。 */
+    fun lastHeartbeatAt(): Long = preferences.getLong(KEY_LAST_HEARTBEAT, 0L)
+
+    fun recordHeartbeat(at: Long) {
+        preferences.edit().putLong(KEY_LAST_HEARTBEAT, at).apply()
+    }
+
     fun clear() {
-        preferences.edit().remove(KEY_LAST_SUCCESS).apply()
+        preferences.edit()
+            .remove(KEY_LAST_SUCCESS)
+            .remove(KEY_LAST_HEARTBEAT)
+            .apply()
     }
 
     private companion object {
         const val PREFERENCES_NAME = "sync_status"
         const val KEY_LAST_SUCCESS = "last_success_at"
+        const val KEY_LAST_HEARTBEAT = "last_heartbeat_at"
     }
 }

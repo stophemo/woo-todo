@@ -280,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         appUpdateController?.checkAutomatically()
         syncSettingsStore?.requestSync(.wake)
+        mcpSettingsStore?.restartIfNeeded()
     }
 
     func applicationShouldHandleReopen(

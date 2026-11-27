@@ -111,6 +111,46 @@ public extension WebDavLocalApplying {
     func skipWebDavOperations(opIds: [String]) async throws {}
 }
 
+/// 新账号自动使用的专属目录，避免和同一 WebDAV 账号下的其他应用混用。
+public enum WebDavStorageLayout {
+    public static let appFolder = "WooTodo"
+
+    public static func isAppFolder(_ endpoint: URL) -> Bool {
+        let normalized = endpoint.absoluteString.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/")
+        )
+        return normalized.split(separator: "/").last?
+            .caseInsensitiveCompare(appFolder) == .orderedSame
+    }
+
+    public static func appendingAppFolder(to endpoint: URL) -> URL {
+        endpoint.appendingPathComponent(appFolder)
+    }
+
+    /**
+     新账号落到 `<地址>/WooTodo`；已有空间的旧目录保持不变。
+     先看专属目录，再看旧目录，避免同一个账号下同时存在两种布局时误判。
+     */
+    @MainActor
+    public static func resolveEndpoint(
+        _ endpoint: URL,
+        vaultId: String?,
+        hasVaultAt: (URL) async throws -> Bool,
+        hasPairingAt: (URL) async throws -> Bool
+    ) async rethrows -> URL {
+        if isAppFolder(endpoint) { return endpoint }
+        let namespaced = appendingAppFolder(to: endpoint)
+        if let vaultId {
+            if try await hasVaultAt(namespaced) { return namespaced }
+            if try await hasVaultAt(endpoint) { return endpoint }
+            return namespaced
+        }
+        if try await hasPairingAt(namespaced) { return namespaced }
+        if try await hasPairingAt(endpoint) { return endpoint }
+        return namespaced
+    }
+}
+
 public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable {
     internal typealias RetrySleep = @Sendable (UInt64) async throws -> Void
 
@@ -318,6 +358,25 @@ public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable
             }
         }
         return (operations, skippedOpIDs)
+    }
+
+
+    /// 只探测不创建，用于判断账号根目录或专属目录是否已经有同步数据。
+    public func hasPairingDirectory() async throws -> Bool {
+        try await directoryExists(["v1", "pairing"])
+    }
+
+    public func hasVaultDirectory(vaultId: String) async throws -> Bool {
+        try await directoryExists(["v1", vaultId])
+    }
+
+    private func directoryExists(_ path: [String]) async throws -> Bool {
+        do {
+            _ = try await propfind(path: path, depth: 0)
+            return true
+        } catch WebDavError.http(let status) where [403, 404, 409].contains(status) {
+            return false
+        }
     }
 
     public func maximumLamport() async throws -> Int64 {

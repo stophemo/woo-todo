@@ -1,6 +1,6 @@
 import Foundation
 
-/// 邀请二维码/链接里的内容：完整的目标目录、账号、应用密码、空间 ID 与同步密钥。
+/// 同步二维码/信息里的内容：完整的目标目录、账号、应用密码、空间 ID 与同步密钥。
 /// 只在用户的两台设备之间传递，不写入 WebDAV；请只给自己的设备扫描或粘贴。
 public struct WebDavInvite: Equatable, Sendable {
     public static let prefix = "woo-todo-invite:1:"
@@ -31,13 +31,13 @@ public struct WebDavInvite: Equatable, Sendable {
             of: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
             options: .regularExpression
         ) != nil else {
-            throw WebDavError.malformedObject("邀请缺少有效的同步空间")
+            throw WebDavError.malformedObject("同步信息缺少同步空间")
         }
         guard vaultKey.count == AES256GCM.keyByteCount else {
-            throw WebDavError.malformedObject("邀请缺少有效的同步密钥")
+            throw WebDavError.malformedObject("同步信息缺少同步密钥")
         }
         guard issuedAt.timeIntervalSince1970 <= expiresAt.timeIntervalSince1970 else {
-            throw WebDavError.malformedObject("邀请时间无效")
+            throw WebDavError.malformedObject("同步信息时间无效")
         }
         self.account = account
         self.vaultId = vaultId
@@ -127,7 +127,7 @@ public struct WebDavInvite: Equatable, Sendable {
             throw invalid()
         }
         guard invite.expiresAt > now else {
-            throw WebDavError.malformedObject("邀请已过期，请在已配对的设备上重新生成")
+            throw WebDavError.malformedObject("同步二维码已过期，请在已连接的设备上重新生成")
         }
         guard invite.issuedAt <= now.addingTimeInterval(clockSkew),
               invite.expiresAt.timeIntervalSince(invite.issuedAt)
@@ -138,7 +138,7 @@ public struct WebDavInvite: Equatable, Sendable {
     }
 
     private static func invalid() -> WebDavError {
-        .malformedObject("邀请无效或格式不正确")
+        .malformedObject("同步信息无效或格式不正确")
     }
 
     private struct Payload: Codable {

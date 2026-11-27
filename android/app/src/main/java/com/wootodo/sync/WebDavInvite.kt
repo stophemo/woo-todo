@@ -18,9 +18,9 @@ data class WebDavInvite(
 ) {
     init {
         account.validate()
-        require(WebDavCredentialPolicy.isValidVaultId(vaultId)) { "邀请缺少有效的同步空间" }
-        require(WebDavCredentialPolicy.isValidVaultKey(vaultKey)) { "邀请缺少有效的同步密钥" }
-        require(issuedAt in 0..expiresAt) { "邀请时间无效" }
+        require(WebDavCredentialPolicy.isValidVaultId(vaultId)) { "同步信息缺少同步空间" }
+        require(WebDavCredentialPolicy.isValidVaultKey(vaultKey)) { "同步信息缺少同步密钥" }
+        require(issuedAt in 0..expiresAt) { "同步信息时间无效" }
     }
 
     /** 第二台设备必须生成自己的 deviceId，避免两台设备共用同步身份。 */
@@ -96,7 +96,7 @@ data class WebDavInvite(
                 throw invalid()
             }
             if (invite.expiresAt <= now) {
-                throw WebDavInviteException("邀请已过期，请在已配对的设备上重新生成")
+                throw WebDavInviteException("同步二维码已过期，请在已连接的设备上重新生成")
             }
             if (invite.issuedAt > now + CLOCK_SKEW_MILLIS ||
                 invite.expiresAt - invite.issuedAt > TTL_MILLIS + CLOCK_SKEW_MILLIS
@@ -106,6 +106,6 @@ data class WebDavInvite(
             return invite
         }
 
-        private fun invalid() = WebDavInviteException("邀请无效或格式不正确")
+        private fun invalid() = WebDavInviteException("同步信息无效或格式不正确")
     }
 }

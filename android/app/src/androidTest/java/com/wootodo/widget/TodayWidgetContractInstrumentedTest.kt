@@ -45,6 +45,8 @@ class TodayWidgetContractInstrumentedTest {
         // 桌面用「70 × 格数 − 30」反推占位：4 列 = 250dp，2 行 = 110dp。
         assertEquals(250f, values["minWidth"].dimensionValue(), 0.01f)
         assertEquals(110f, values["minHeight"].dimensionValue(), 0.01f)
+        assertEquals(250f, values["minResizeWidth"].dimensionValue(), 0.01f)
+        assertEquals(110f, values["minResizeHeight"].dimensionValue(), 0.01f)
         assertEquals("4", values["targetCellWidth"])
         assertEquals("2", values["targetCellHeight"])
     }

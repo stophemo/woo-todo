@@ -609,14 +609,14 @@ final class SyncSettingsStore: ObservableObject {
             try activate(account: invite.account, identity: newIdentity)
             runtimeMachine.setConfigured(true)
             publishRuntimeState()
-            statusMessage = "已通过邀请加入同步空间 \(shortVaultId(newIdentity.vaultId))，正在执行首次同步。"
+            statusMessage = "已连接同步空间 \(shortVaultId(newIdentity.vaultId))，正在执行首次同步。"
             requestSync(.manual)
         } catch is CancellationError {
             // 用户取消。
         } catch {
             actionErrorMessage = friendlyMessage(for: error)
             logger.error(
-                "通过邀请加入同步空间失败：\(error.localizedDescription, privacy: .public)"
+                "连接同步空间失败：\(error.localizedDescription, privacy: .public)"
             )
         }
     }

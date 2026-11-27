@@ -104,7 +104,7 @@ struct SyncSettingsStoreTests {
         await fixture.store.prepareInviteJoin("woo-todo-invite:1:not-valid")
 
         #expect(fixture.store.inviteJoinPrompt == nil)
-        #expect(fixture.store.actionErrorMessage?.contains("邀请") == true)
+        #expect(fixture.store.actionErrorMessage?.contains("同步信息") == true)
         #expect(try fixture.repository.fetchAll().map(\.title) == ["保持不变"])
         #expect(fixture.store.identity == nil)
     }

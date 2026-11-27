@@ -90,7 +90,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     )
 
     private lateinit var app: WooTodoApplication
-    private lateinit var setupHint: TextView
     private lateinit var accountSummary: TextView
     private lateinit var endpointSummary: TextView
     private lateinit var folderNote: TextView
@@ -105,16 +104,11 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private lateinit var connectionFeedback: View
     private lateinit var connectionProgress: ProgressBar
     private lateinit var connectionStatus: TextView
+    private lateinit var webdavAccountCard: View
     private lateinit var noIdentitySection: View
-    private lateinit var startSyncHint: TextView
     private lateinit var createSpaceButton: View
-    private lateinit var legacyPairingToggle: View
-    private lateinit var legacyPairingSection: View
-    private lateinit var advancedSection: View
+    private lateinit var unpairedSyncCard: View
     private lateinit var pairedSection: View
-    private lateinit var spaceIdValue: TextView
-    private lateinit var spaceDeviceValue: TextView
-    private lateinit var spaceIdCopy: Button
     private lateinit var spaceSyncValue: TextView
     private lateinit var spaceLastSyncValue: TextView
     private lateinit var spaceSyncNow: Button
@@ -206,7 +200,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private fun bindViews() {
-        setupHint = findViewById(R.id.webdav_setup_hint)
         accountSummary = findViewById(R.id.webdav_account_summary)
         endpointSummary = findViewById(R.id.webdav_endpoint_summary)
         folderNote = findViewById(R.id.webdav_folder_note)
@@ -221,16 +214,11 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         connectionFeedback = findViewById(R.id.webdav_connection_feedback)
         connectionProgress = findViewById(R.id.webdav_connection_progress)
         connectionStatus = findViewById(R.id.webdav_connection_status)
+        webdavAccountCard = findViewById(R.id.webdav_account_card)
         noIdentitySection = findViewById(R.id.no_identity_section)
-        startSyncHint = findViewById(R.id.start_sync_hint)
         createSpaceButton = findViewById(R.id.action_create_space)
-        legacyPairingToggle = findViewById(R.id.action_legacy_pairing_toggle)
-        legacyPairingSection = findViewById(R.id.legacy_pairing_section)
-        advancedSection = findViewById(R.id.advanced_section)
+        unpairedSyncCard = findViewById(R.id.unpaired_sync_card)
         pairedSection = findViewById(R.id.paired_section)
-        spaceIdValue = findViewById(R.id.space_id_value)
-        spaceDeviceValue = findViewById(R.id.space_device_value)
-        spaceIdCopy = findViewById(R.id.space_id_copy)
         spaceSyncValue = findViewById(R.id.space_sync_value)
         spaceLastSyncValue = findViewById(R.id.space_last_sync_value)
         spaceSyncNow = findViewById(R.id.space_sync_now)
@@ -289,12 +277,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             accountForm.isVisible = true
             clearConnectionFeedback()
         }
-        findViewById<View>(R.id.action_enter_code).setOnClickListener {
-            startClaimOffer()
-        }
-        findViewById<View>(R.id.action_show_my_code).setOnClickListener {
-            startJoinCreator()
-        }
         findViewById<View>(R.id.action_create_space).setOnClickListener {
             confirmCreateSpace()
         }
@@ -323,32 +305,11 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                 acceptInvite(text)
             }
         }
-        findViewById<View>(R.id.action_legacy_pairing_toggle).setOnClickListener {
-            legacyPairingSection.isVisible = !legacyPairingSection.isVisible
-        }
-        findViewById<View>(R.id.action_advanced_toggle).setOnClickListener {
-            advancedSection.isVisible = !advancedSection.isVisible
-        }
-        findViewById<View>(R.id.action_show_pairing_code).setOnClickListener {
-            startShowOffer()
-        }
-        findViewById<View>(R.id.action_enter_new_device_code).setOnClickListener {
-            startJoinApprover()
-        }
-        findViewById<View>(R.id.action_enter_join_code).setOnClickListener {
-            startClaimOffer()
-        }
         findViewById<View>(R.id.space_sync_now).setOnClickListener {
             synchronizeNow()
         }
         findViewById<View>(R.id.devices_refresh).setOnClickListener {
             loadDevices()
-        }
-        spaceIdCopy.setOnClickListener {
-            val vaultId = currentCredentials?.vaultId ?: return@setOnClickListener
-            val clipboard = getSystemService(ClipboardManager::class.java)
-            clipboard?.setPrimaryClip(ClipData.newPlainText("Woo Todo", vaultId))
-            showTransient(R.string.cross_device_space_id_copied)
         }
         findViewById<View>(R.id.action_leave_space).setOnClickListener {
             confirmLeaveSpace()
@@ -366,21 +327,21 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             currentCredentials = credentials
             renderAccount(account)
             val hasIdentity = credentials != null
-            // 邀请扫描不要求本机先有账号：新设备可以直接扫码/粘贴加入。
+            webdavAccountCard.isVisible = !hasIdentity
             noIdentitySection.isVisible = !hasIdentity
-            // 没有账号时只能靠邀请加入；建空间和旧版配对码都要求先配置账号。
+            // 扫码同步不要求本机先有账号；开始同步要求账号已连接。
             createSpaceButton.isVisible = account != null
-            legacyPairingToggle.isVisible = account != null
-            startSyncHint.setText(
-                if (account == null) {
-                    R.string.cross_device_invite_only_hint
-                } else {
-                    R.string.cross_device_start_hint
-                },
-            )
-            pairedSection.isVisible = account != null && hasIdentity
+            unpairedSyncCard.isVisible = account != null
+            pairedSection.isVisible = hasIdentity
+            if (account != null && !hasIdentity) {
+                findViewById<TextView>(R.id.unpaired_sync_status).setText(
+                    R.string.cross_device_sync_not_yet,
+                )
+                findViewById<TextView>(R.id.unpaired_last_sync).setText(
+                    R.string.cross_device_last_sync_none,
+                )
+            }
             if (credentials != null) {
-                renderSpaceCard(credentials)
                 loadDevices()
             }
             renderSyncState(app.syncRuntime.state.value)
@@ -388,7 +349,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private fun renderAccount(account: WebDavAccount?) {
-        setupHint.isVisible = account == null
         if (account == null) {
             if (!accountFormInitialized) {
                 accountFormInitialized = true
@@ -425,18 +385,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         } else {
             getString(R.string.cross_device_webdav_folder_legacy_note)
         }
-    }
-
-    private fun renderSpaceCard(credentials: WebDavCredentials) {
-        spaceIdValue.text = getString(
-            R.string.cross_device_space_id,
-            shortVaultId(credentials.vaultId),
-        )
-        spaceDeviceValue.text = getString(
-            R.string.cross_device_current_device_detail,
-            DeviceName.current(this),
-            platformLabel(DevicePlatform.ANDROID),
-        )
     }
 
     private fun loadDevices() {
@@ -518,14 +466,16 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             lastSuccessfulSyncAt = state.finishedAt
         }
         val lastSync = lastSuccessfulSyncAt
-        spaceLastSyncValue.isVisible = lastSync != null && currentCredentials != null
-        if (lastSync != null) {
-            spaceLastSyncValue.text = getString(
+        spaceLastSyncValue.isVisible = currentCredentials != null
+        spaceLastSyncValue.text = if (lastSync != null) {
+            getString(
                 R.string.cross_device_last_sync,
                 timeFormatter.format(
                     Instant.ofEpochMilli(lastSync).atZone(ZoneId.systemDefault()),
                 ),
             )
+        } else {
+            getString(R.string.cross_device_last_sync_none)
         }
     }
 
@@ -1401,7 +1351,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                         onSuccess = {
                             currentCredentials = null
                             lastSuccessfulSyncAt = null
-                            spaceDeviceValue.text = ""
                             spaceSyncValue.text = ""
                             spaceLastSyncValue.isVisible = false
                             showTransient(R.string.cross_device_left_space)
@@ -1423,13 +1372,11 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         pairingPanel.isVisible = true
         panelTitle.setText(titleRes)
         setPanelStatus(status)
-        panelCode.isVisible = true
+        panelCode.isVisible = false
         panelCode.setCode("")
-        panelCode.setEditable(false)
         panelVerificationGroup.isVisible = false
         panelVerification.setCode("")
-        panelExpiry.isVisible = true
-        panelExpiry.setText(R.string.cross_device_expiry_hint)
+        panelExpiry.isVisible = false
         panelPrimary.isVisible = false
         panelPrimary.isEnabled = true
         panelPrimary.setOnClickListener(null)

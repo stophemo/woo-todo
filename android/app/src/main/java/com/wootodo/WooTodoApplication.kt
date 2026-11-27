@@ -250,6 +250,13 @@ class WooTodoApplication : Application() {
         syncRuntime.refreshConfiguration(activeSyncConfigured())
     }
 
+    /** 邀请里已经带完整目录，跳过目录探测与连接测试，避免重复请求。 */
+    suspend fun saveInviteAccount(account: WebDavAccount) = withContext(Dispatchers.IO) {
+        account.validate()
+        webDavCredentialsStore.saveAccount(account)
+        syncRuntime.refreshConfiguration(activeSyncConfigured())
+    }
+
     private fun resolveWebDavAccount(account: WebDavAccount, vaultId: String?): WebDavAccount {
         fun endpointAccount(endpoint: String) = WebDavAccount(
             endpoint = endpoint,
@@ -318,8 +325,14 @@ class WooTodoApplication : Application() {
                 if (previous != null && previous != identity) {
                     throw WebDavPairingException.CredentialsOverwritten
                 }
-                // 加入已有空间：先取远端最大 lamport 作为本地基线水位，再绑定并开始同步。
-                val remoteLamportFloor = WebDavClient(account).maximumLamport(identity.vaultId)
+                // 加入已有空间：只有本机还有需要保留的任务/待同步记录时才扫描远端最大 lamport。
+                // 全新设备或刚刚清空的加入不需要这次全量读取，首次同步会正常拉取历史。
+                val localData = taskStore.localJoinDataSummary()
+                val remoteLamportFloor = if (localData.hasLocalData) {
+                    WebDavClient(account).maximumLamport(identity.vaultId)
+                } else {
+                    0L
+                }
                 if (previous == null && !webDavCredentialsStore.saveIdentityIfAbsent(identity)) {
                     val stored = webDavCredentialsStore.loadIdentity()
                     if (stored != identity) {

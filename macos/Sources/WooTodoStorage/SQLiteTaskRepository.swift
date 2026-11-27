@@ -1026,6 +1026,16 @@ public final class SQLiteTaskRepository: TaskRepository, SyncOutbox, SyncLocalAp
         }
     }
 
+    /// 只读检查数据库是否已绑定到同一同步身份。
+    /// 启动时绑定已存在就无需扫描远端全部操作的 Lamport 水位。
+    public func isSyncBound(to identity: WebDavIdentity) throws -> Bool {
+        try withLock {
+            guard let persisted = try persistedSyncIdentity() else { return false }
+            return persisted.vaultId == identity.vaultId
+                && persisted.deviceId == identity.deviceId
+        }
+    }
+
     /// 首次绑定会把现有任务作为加密快照写入 outbox；再次加载相同身份不会重复入队。
     public func configureSync(_ configuration: SQLiteSyncConfiguration) throws {
         try withLock {

@@ -47,6 +47,68 @@ struct SyncSettingsStoreTests {
         fixture.store.stop()
     }
 
+    @Test("通过邀请加入：保存账号并生成独立设备身份")
+    func joinsWithInviteOnFreshDevice() async throws {
+        let fixture = try makeFixture(withSavedAccount: false)
+        defer { fixture.cleanup() }
+        let invite = try makeInvite()
+        let encoded = try invite.encode()
+
+        await fixture.store.prepareInviteJoin(encoded)
+
+        let prompt = try #require(fixture.store.inviteJoinPrompt)
+        #expect(prompt.needsClear == false)
+        #expect(fixture.store.actionErrorMessage == nil)
+
+        await fixture.store.confirmInviteJoin()
+
+        #expect(fixture.store.actionErrorMessage == nil)
+        #expect(fixture.store.account?.username == "invite@example.com")
+        #expect(fixture.store.connection?.vaultId == "vault-invite")
+        #expect(fixture.store.connection?.deviceId != "device-owner-01")
+        #expect(try fixture.credentialsStore.loadAccount()?.appPassword == "invite-password")
+        #expect(try fixture.credentialsStore.loadIdentity()?.vaultId == "vault-invite")
+    }
+
+    @Test("通过邀请加入另一空间会先清空本机任务")
+    func joinWithInviteClearsLocalData() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        try fixture.repository.save(TodoTask(
+            title: "加入前的本机任务",
+            categoryID: TaskCategory.inboxID
+        ))
+        let encoded = try makeInvite().encode()
+
+        await fixture.store.prepareInviteJoin(encoded)
+
+        let prompt = try #require(fixture.store.inviteJoinPrompt)
+        #expect(prompt.needsClear)
+        #expect(prompt.localSummary?.taskCount == 1)
+        await fixture.store.confirmInviteJoin()
+
+        #expect(fixture.store.actionErrorMessage == nil)
+        #expect(try fixture.repository.fetchAll().isEmpty)
+        #expect(fixture.store.connection?.vaultId == "vault-invite")
+    }
+
+    @Test("无效邀请不会改变本机数据")
+    func invalidInviteKeepsLocalData() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        try fixture.repository.save(TodoTask(
+            title: "保持不变",
+            categoryID: TaskCategory.inboxID
+        ))
+
+        await fixture.store.prepareInviteJoin("woo-todo-invite:1:not-valid")
+
+        #expect(fixture.store.inviteJoinPrompt == nil)
+        #expect(fixture.store.actionErrorMessage?.contains("邀请") == true)
+        #expect(try fixture.repository.fetchAll().map(\.title) == ["保持不变"])
+        #expect(fixture.store.identity == nil)
+    }
+
     @Test("退出同步空间只删本机身份，保留账号与任务")
     func exitSpaceKeepsAccountAndTasks() async throws {
         let fixture = try makeFixture()
@@ -1765,6 +1827,20 @@ struct SyncSettingsStoreTests {
             vaultId: "vault-test",
             deviceId: "device-mac-01",
             vaultKey: Data(repeating: 7, count: 32)
+        )
+    }
+
+    private func makeInvite() throws -> WebDavInvite {
+        try WebDavInvite(
+            account: WebDavAccount(
+                endpoint: try #require(URL(string: "https://dav.example.test/woo-todo/")),
+                username: "invite@example.com",
+                appPassword: "invite-password"
+            ),
+            vaultId: "vault-invite",
+            vaultKey: Data(repeating: 9, count: 32),
+            issuedAt: Date(),
+            expiresAt: Date().addingTimeInterval(WebDavInvite.ttl)
         )
     }
 

@@ -226,6 +226,30 @@
                 android:textAppearance="?attr/textAppearanceBodySmall"
                 android:textColor="@color/muted" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/cross_device_invite_join_hint"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="@color/muted" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/action_scan_invite"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/cross_device_invite_scan" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/action_paste_invite"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/cross_device_invite_paste" />
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/action_create_space"
                 style="@style/Widget.Material3.Button"
@@ -423,6 +447,14 @@
                 android:text="@string/cross_device_add_device_hint"
                 android:textAppearance="?attr/textAppearanceBodySmall"
                 android:textColor="@color/muted" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/action_invite_device"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/cross_device_invite_device" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/action_show_pairing_code"

@@ -3,12 +3,15 @@ package com.wootodo.ui
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.os.Bundle
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -22,6 +25,12 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.data.LocalJoinDataSummary
@@ -42,6 +51,8 @@ import com.wootodo.sync.WebDavStorageLayout
 import com.wootodo.sync.WebDavCredentials
 import com.wootodo.sync.WebDavDeviceInfo
 import com.wootodo.sync.WebDavEndpointPolicy
+import com.wootodo.sync.WebDavInvite
+import com.wootodo.sync.WebDavInviteException
 import com.wootodo.sync.WebDavJoinSession
 import com.wootodo.sync.WebDavJoinTarget
 import com.wootodo.sync.WebDavOfferSession
@@ -50,6 +61,7 @@ import com.wootodo.sync.WebDavPairingStoreClient
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.UUID
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -118,6 +130,10 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private val timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
     private var operationJob: Job? = null
+    private val scanInviteLauncher =
+        registerForActivityResult(ScanContract()) { result ->
+            result.contents?.takeIf(String::isNotBlank)?.let(::acceptInvite)
+        }
     private var devicesJob: Job? = null
     @Volatile
     private var panelGeneration = 0
@@ -274,6 +290,31 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.action_create_space).setOnClickListener {
             confirmCreateSpace()
+        }
+        findViewById<View>(R.id.action_invite_device).setOnClickListener {
+            showInviteDialog()
+        }
+        findViewById<View>(R.id.action_scan_invite).setOnClickListener {
+            scanInviteLauncher.launch(
+                ScanOptions()
+                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                    .setPrompt(getString(R.string.cross_device_invite_scan_prompt))
+                    .setBeepEnabled(false)
+                    .setOrientationLocked(false),
+            )
+        }
+        findViewById<View>(R.id.action_paste_invite).setOnClickListener {
+            val clipboard = getSystemService(ClipboardManager::class.java)
+            val text = clipboard.primaryClip
+                ?.takeIf { it.itemCount > 0 }
+                ?.getItemAt(0)
+                ?.coerceToText(this)
+                ?.toString()
+            if (text.isNullOrBlank()) {
+                showTransient(R.string.cross_device_invite_no_clipboard)
+            } else {
+                acceptInvite(text)
+            }
         }
         findViewById<View>(R.id.action_show_pairing_code).setOnClickListener {
             startShowOffer()
@@ -481,6 +522,144 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         endpoint.contains("/remote.php/dav/") -> 1
         endpoint.contains(":5006") -> 2
         else -> 3
+    }
+
+    private fun showInviteDialog() {
+        val credentials = app.activeSyncCredentials()
+        if (credentials == null) {
+            showTransient(R.string.cross_device_webdav_account_required)
+            return
+        }
+        val text = WebDavInvite.create(credentials, System.currentTimeMillis()).encode()
+        val view = layoutInflater.inflate(R.layout.dialog_webdav_invite, null)
+        view.findViewById<ImageView>(R.id.invite_qr).setImageBitmap(createInviteQr(text))
+        view.findViewById<TextView>(R.id.invite_text).text = text
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.cross_device_invite_title)
+            .setView(view)
+            .setNegativeButton(R.string.cross_device_invite_close, null)
+            .create()
+        view.findViewById<Button>(R.id.invite_copy).setOnClickListener {
+            val clipboard = getSystemService(ClipboardManager::class.java)
+            clipboard.setPrimaryClip(ClipData.newPlainText("Woo Todo invite", text))
+            Toast.makeText(this, R.string.cross_device_invite_copied, Toast.LENGTH_SHORT).show()
+        }
+        dialog.show()
+    }
+
+    private fun createInviteQr(text: String): Bitmap {
+        val size = 720
+        val matrix = QRCodeWriter().encode(
+            text,
+            BarcodeFormat.QR_CODE,
+            size,
+            size,
+            mapOf(
+                EncodeHintType.MARGIN to 1,
+                EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
+            ),
+        )
+        val pixels = IntArray(size * size)
+        for (y in 0 until size) {
+            val row = y * size
+            for (x in 0 until size) {
+                pixels[row + x] = if (matrix[x, y]) Color.BLACK else Color.WHITE
+            }
+        }
+        return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+    }
+
+    private fun acceptInvite(source: String) {
+        val invite = try {
+            WebDavInvite.decode(source, System.currentTimeMillis())
+        } catch (error: Exception) {
+            showTransient(error.localizedMessage ?: getString(R.string.cross_device_invite_join_title))
+            return
+        }
+        lifecycleScope.launch {
+            val current = withContext(Dispatchers.IO) { app.activeSyncCredentials() }
+            if (current?.vaultId == invite.vaultId) {
+                withContext(Dispatchers.IO) {
+                    if (current.account != invite.account) app.saveInviteAccount(invite.account)
+                }
+                if (isFinishing || isDestroyed) return@launch
+                showTransient(R.string.cross_device_invite_same_space)
+                synchronizeNow(quiet = true)
+                render()
+                return@launch
+            }
+            val localData = withContext(Dispatchers.IO) {
+                if (current == null) app.taskStore.localJoinDataSummary() else null
+            }
+            val needsClear = current != null || localData?.hasLocalData == true
+            val message = buildString {
+                append(
+                    getString(
+                        R.string.cross_device_invite_join_message,
+                        shortVaultId(invite.vaultId),
+                    ),
+                )
+                if (needsClear) {
+                    append("\n\n").append(getString(R.string.cross_device_invite_clear_warning))
+                }
+            }
+            if (!confirmInviteJoin(message)) return@launch
+            val progress = showInviteProgress()
+            try {
+                withContext(Dispatchers.IO) {
+                    if (!WebDavClient(invite.account).hasVaultDirectory(invite.vaultId)) {
+                        throw WebDavInviteException(
+                            getString(R.string.cross_device_invite_missing_vault),
+                        )
+                    }
+                    if (needsClear) app.clearLocalTasksForJoin()
+                    app.saveInviteAccount(invite.account)
+                    app.adoptWebDavIdentity(
+                        invite.identity(UUID.randomUUID().toString().lowercase()),
+                    )
+                }
+                if (isFinishing || isDestroyed) return@launch
+                showTransient(R.string.cross_device_invite_joined)
+                render()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (!isFinishing && !isDestroyed) {
+                    showTransient(PairingErrorMessage.from(error))
+                }
+            } finally {
+                progress.dismiss()
+            }
+        }
+    }
+
+    private suspend fun confirmInviteJoin(message: String): Boolean {
+        val gate = CompletableDeferred<Boolean>()
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.cross_device_invite_join_title)
+            .setMessage(message)
+            .setNegativeButton(R.string.cancel) { _, _ -> gate.complete(false) }
+            .setPositiveButton(R.string.cross_device_invite_join_confirm) { _, _ ->
+                gate.complete(true)
+            }
+            .setOnCancelListener { gate.complete(false) }
+            .create()
+        dialog.setOnDismissListener { gate.complete(false) }
+        dialog.show()
+        return gate.await()
+    }
+
+    private fun showInviteProgress(): AlertDialog {
+        val progress = ProgressBar(this).apply {
+            isIndeterminate = true
+            setPadding(48, 32, 48, 32)
+        }
+        return AlertDialog.Builder(this)
+            .setTitle(R.string.cross_device_invite_join_title)
+            .setMessage(getString(R.string.cross_device_invite_joining))
+            .setView(progress)
+            .setCancelable(false)
+            .show()
     }
 
     private fun saveWebDavAccount() {

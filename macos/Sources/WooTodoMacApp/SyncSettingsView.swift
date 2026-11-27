@@ -53,6 +53,8 @@ struct SyncSettingsView: View {
     @State private var showsExitConfirmation = false
     @State private var isEditingAccount = false
     @State private var selectedProvider: WebDavProviderExample = .jianguoyun
+    @State private var inviteInput = ""
+    @State private var presentedInvite: WebDavInvite?
 
     var body: some View {
         Group {
@@ -108,6 +110,32 @@ struct SyncSettingsView: View {
         } message: { prompt in
             Text(joinPolicyMessage(prompt))
         }
+        .alert(
+            "通过邀请加入同步空间",
+            isPresented: Binding(
+                get: { store.inviteJoinPrompt != nil },
+                set: { _ in }
+            ),
+            presenting: store.inviteJoinPrompt
+        ) { prompt in
+            if prompt.needsClear {
+                Button("清空本机数据并加入", role: .destructive) {
+                    Task { await store.confirmInviteJoin() }
+                }
+            } else {
+                Button("加入同步空间") {
+                    Task { await store.confirmInviteJoin() }
+                }
+            }
+            Button("取消", role: .cancel) {
+                store.cancelInviteJoin()
+            }
+        } message: { prompt in
+            Text(inviteJoinMessage(prompt))
+        }
+        .sheet(item: $presentedInvite) { invite in
+            WebDavInviteSheet(invite: invite)
+        }
     }
 
     // MARK: - 首次配置账号
@@ -117,12 +145,17 @@ struct SyncSettingsView: View {
             VStack(alignment: .leading, spacing: 22) {
                 pageHeader(
                     "跨设备",
-                    "任务在设备间端到端加密同步。每台设备先配置同一个 WebDAV 账号，之后新增设备只需要六位配对码；配对码 5 分钟内有效。"
+                    "任务在设备间端到端加密同步。已有设备邀请时，粘贴邀请文本即可直接加入；也可以先配置 WebDAV 账号再建空间或输入六位配对码。"
                 )
                 if let notice = store.legacyNotice {
                     legacyNotice(notice)
                 }
                 accountCard
+                sectionHeader(
+                    "已有邀请",
+                    "邀请文本由已同步的设备生成，包含服务地址、账号、应用密码和同步密钥，10 分钟内有效。"
+                )
+                inviteJoinCard
                 privacyNote
                 feedback
             }
@@ -240,8 +273,9 @@ struct SyncSettingsView: View {
                 createSpaceCard
                 sectionHeader(
                     "加入其他空间",
-                    "已有同步空间时，用六位配对码加入。加入其他空间可能清空本机任务。"
+                    "优先粘贴邀请文本直接加入；也可以输入六位配对码。加入其他空间可能清空本机任务。"
                 )
+                inviteJoinCard
                 pathAClaimCard
                 pathBCreateCard
                 privacyNote
@@ -508,8 +542,9 @@ struct SyncSettingsView: View {
                 deviceCard
                 sectionHeader(
                     "添加设备",
-                    "先用其中一种方式完成六位码配对，新设备首次同步后会出现在设备列表。"
+                    "让新设备扫描邀请二维码最快；也可以继续使用六位配对码。"
                 )
+                inviteDeviceCard
                 pathAShowCard
                 pathBApproveCard
                 sectionHeader(
@@ -707,6 +742,86 @@ struct SyncSettingsView: View {
             return "最近成功：\(formatter.localizedString(for: date, relativeTo: Date()))"
         }
         return "网络失败不会阻塞本地任务操作。"
+    }
+
+    private var inviteDeviceCard: some View {
+        SettingsCard(title: "邀请新设备（二维码）", systemImage: "qrcode") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("新设备扫描二维码即可加入，自动带过 WebDAV 地址、账号和同步密钥，不需要再输入六位配对码。")
+                    .foregroundStyle(.secondary)
+                Button {
+                    presentedInvite = store.makeInvite()
+                } label: {
+                    Label("生成邀请二维码", systemImage: "qrcode")
+                }
+                .buttonStyle(.borderedProminent)
+                Text("邀请 10 分钟内有效，包含应用密码与同步密钥；只给自己的设备扫描或粘贴。")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private var inviteJoinCard: some View {
+        SettingsCard(title: "用邀请加入", systemImage: "qrcode.viewfinder") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("在已同步的设备上打开「邀请新设备」，复制邀请文本后粘贴到这里。")
+                    .foregroundStyle(.secondary)
+                TextField("woo-todo-invite:1:…", text: $inviteInput, axis: .vertical)
+                    .lineLimit(2...4)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout.monospaced())
+                HStack(spacing: 12) {
+                    Button {
+                        Task { await store.prepareInviteJoin(inviteInput) }
+                    } label: {
+                        if store.isJoiningWithInvite {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("验证邀请", systemImage: "checkmark.shield")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        store.isJoiningWithInvite
+                            || inviteInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                                .isEmpty
+                    )
+                    Button("从剪贴板粘贴") {
+                        if let text = NSPasteboard.general.string(forType: .string) {
+                            inviteInput = text
+                        }
+                    }
+                }
+                Text("邀请里已包含服务地址、账号和同步密钥，所以不需要再填写账号。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func inviteJoinMessage(_ prompt: WebDavInviteJoinPrompt) -> String {
+        var lines = [
+            "将加入同步空间 \(shortened(prompt.invite.vaultId))，并使用对方设备的数据。",
+        ]
+        if prompt.changesAccount {
+            lines.append(
+                "本机会改用邀请中的 WebDAV 账号（\(prompt.invite.account.username)）。"
+            )
+        }
+        if prompt.needsClear {
+            if let summary = prompt.localSummary, summary.hasAnyData {
+                lines.append(
+                    "本机现有 \(summary.taskCount) 个任务、\(summary.trashCount) 个回收站条目、\(summary.customCategoryCount) 个自定义分类。"
+                )
+            } else if store.identity != nil {
+                lines.append("本机已加入另一个同步空间。")
+            }
+            lines.append("继续后会先清空本机任务、回收站、分类和旧同步身份。")
+        }
+        lines.append("如果邀请不是来自你自己的设备，请取消。")
+        return lines.joined(separator: "\n")
     }
 
     private var pathAShowCard: some View {

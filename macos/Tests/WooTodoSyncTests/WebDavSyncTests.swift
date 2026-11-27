@@ -349,6 +349,45 @@ struct WebDavSyncTests {
         #expect(await local.appliedIDs == ["local-00000001", remote.opId])
     }
 
+    @Test("WebDAV runner 单轮最多推送 200 项，积压时先不拉取")
+    func runnerBatchesBacklog() async throws {
+        let server = FakeWebDavServer()
+        WebDavMockURLProtocol.handler = { request in
+            try server.handle(request)
+        }
+        defer { WebDavMockURLProtocol.handler = nil }
+
+        let operations = (1...205).map { index in
+            SyncPushOperation(
+                opId: "batch-\(String(format: "%08d", index))",
+                entityId: "entity-batch-\(index)",
+                kind: .upsert,
+                lamport: Int64(index),
+                ciphertext: Base64URL.encode(Data(repeating: 7, count: 20)),
+                nonce: Base64URL.encode(Data(repeating: 8, count: 12))
+            )
+        }
+        let outbox = FakeWebDavOutbox(operations: operations)
+        let local = FakeWebDavLocal()
+        let runner = WebDavSyncRunner(
+            client: try makeClient(server: server),
+            outbox: outbox,
+            local: local
+        )
+
+        let first = try await runner.synchronize()
+        #expect(first.pushed == 200)
+        #expect(first.pulled == 0)
+        #expect(first.moreWork)
+        #expect(await outbox.pending.count == 5)
+
+        let second = try await runner.synchronize()
+        #expect(second.pushed == 5)
+        #expect(second.pulled == 205)
+        #expect(second.moreWork == false)
+        #expect(await outbox.pending.isEmpty)
+    }
+
     @Test("WebDAV runner 跳过无法解码的对象并按 opId 记录")
     func runnerSkipsUndecodableOperations() async throws {
         let server = FakeWebDavServer()

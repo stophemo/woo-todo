@@ -151,6 +151,17 @@ public enum WebDavStorageLayout {
     }
 }
 
+/// MKCOL 结果缓存；目录创建成功一次后，同一客户端不再重复请求。
+private actor EnsuredCollectionCache {
+    private var values: Set<String> = []
+
+    func contains(_ key: String) -> Bool { values.contains(key) }
+
+    func insert(_ key: String) { values.insert(key) }
+
+    func removeAll() { values.removeAll() }
+}
+
 public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable {
     internal typealias RetrySleep = @Sendable (UInt64) async throws -> Void
 
@@ -160,11 +171,15 @@ public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable
     private let baseURL: URL
     private let retryDelaysNanoseconds: [UInt64]
     private let retrySleep: RetrySleep
+    private let ensuredCollections = EnsuredCollectionCache()
 
     private static let deviceLogger = Logger(
         subsystem: "io.github.stophemo.woo-todo",
         category: "跨设备"
     )
+    /// 第三方 WebDAV 服务常有并发限制：探测与拉取都用小窗口并发，既缩短首次同步又避免被限流。
+    internal static let fetchParallelism = 4
+
     private static let defaultRetryDelaysNanoseconds: [UInt64] = [
         1_000_000_000,
         2_000_000_000,
@@ -252,8 +267,27 @@ public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable
             ["v1", vaultId],
             ["v1", vaultId, "ops"],
         ] {
-            _ = try await request(method: "MKCOL", path: path, body: nil, headers: [:], accepted: [201, 405, 409])
+            try await ensureCollection(path)
         }
+    }
+
+    /// MKCOL 成功一次后记住结果；同一客户端后续请求不再重复建目录。
+    private func ensureCollection(_ path: [String]) async throws {
+        let key = path.joined(separator: "/")
+        if await ensuredCollections.contains(key) { return }
+        _ = try await request(
+            method: "MKCOL",
+            path: path,
+            body: nil,
+            headers: [:],
+            accepted: [201, 405, 409]
+        )
+        await ensuredCollections.insert(key)
+    }
+
+    /// 远端目录被删除后，下一轮重新 MKCOL，而不是永久失败。
+    private func invalidateEnsuredCollections() async {
+        await ensuredCollections.removeAll()
     }
 
     public func put(_ operation: WebDavOperation) async throws {
@@ -270,20 +304,21 @@ public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable
             throw WebDavError.encoding(error.localizedDescription)
         }
         let path = WebDavOperation.path(vaultId: vaultId, opId: operation.opId)
-        _ = try await request(
-            method: "MKCOL",
-            path: Array(path.dropLast()),
-            body: nil,
-            headers: [:],
-            accepted: [201, 405, 409]
-        )
-        let result = try await request(
-            method: "PUT",
-            path: path,
-            body: data,
-            headers: ["Content-Type": "application/json", "If-None-Match": "*"],
-            accepted: [200, 201, 204, 405, 409, 412]
-        )
+        try await ensureCollection(Array(path.dropLast()))
+        let result: (data: Data, statusCode: Int)
+        do {
+            result = try await request(
+                method: "PUT",
+                path: path,
+                body: data,
+                headers: ["Content-Type": "application/json", "If-None-Match": "*"],
+                accepted: [200, 201, 204, 405, 409, 412]
+            )
+        } catch WebDavError.http(let status) where status == 404 || status == 409 {
+            // 目录可能被远端删除：丢弃缓存，下一轮重新创建。
+            await invalidateEnsuredCollections()
+            throw WebDavError.http(status)
+        }
         guard [405, 409, 412].contains(result.statusCode) else { return }
         let existing = try await get(path: path)
         guard existing == data else { throw WebDavError.objectConflict(path.joined(separator: "/")) }
@@ -298,12 +333,32 @@ public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable
             else { return nil }
             return path.last
         }
+        let sortedShards = Set(shards).sorted()
         var result: [[String]] = []
-        for shard in Set(shards).sorted() {
-            let paths = try await propfind(path: root + [shard], depth: 1)
-            result.append(contentsOf: paths.filter { path in
-                path.count == root.count + 2 && path.last?.hasSuffix(".json") == true
-            })
+        var index = 0
+        while index < sortedShards.count {
+            let end = min(index + Self.fetchParallelism, sortedShards.count)
+            let chunk = Array(sortedShards[index..<end])
+            let listings = try await withThrowingTaskGroup(
+                of: (Int, [[String]]).self
+            ) { group in
+                for (offset, shard) in chunk.enumerated() {
+                    group.addTask {
+                        (offset, try await self.propfind(path: root + [shard], depth: 1))
+                    }
+                }
+                var items = [[[String]]](repeating: [], count: chunk.count)
+                for try await (offset, paths) in group {
+                    items[offset] = paths
+                }
+                return items
+            }
+            for paths in listings {
+                result.append(contentsOf: paths.filter { path in
+                    path.count == root.count + 2 && path.last?.hasSuffix(".json") == true
+                })
+            }
+            index = end
         }
         return result.sorted { $0.joined() < $1.joined() }
     }
@@ -329,33 +384,54 @@ public final class WebDavClient: WebDavPairingFileTransport, @unchecked Sendable
         let vaultId = try vaultId
         var operations: [WebDavOperation] = []
         var skippedOpIDs: [String] = []
-        for path in paths {
-            let operationID = path.last
-                .map { String($0.dropLast(".json".count)) } ?? ""
-            let data: Data
-            do {
-                data = try await get(path: path)
-            } catch WebDavError.http(404) {
-                // 列举后文件被删除：本轮跳过，不写入已处理记录。
-                continue
+        var index = 0
+        while index < paths.count {
+            let end = min(index + Self.fetchParallelism, paths.count)
+            let chunk = Array(paths[index..<end])
+            // 小窗口并发 GET，结果按原路径顺序合并，保持应用顺序稳定。
+            let datas = try await withThrowingTaskGroup(
+                of: (Int, Data?).self
+            ) { group in
+                for (offset, path) in chunk.enumerated() {
+                    group.addTask {
+                        do {
+                            return (offset, try await self.get(path: path))
+                        } catch WebDavError.http(404) {
+                            // 列举后文件被删除：本轮跳过，不写入已处理记录。
+                            return (offset, nil)
+                        }
+                    }
+                }
+                var items = [Data?](repeating: nil, count: chunk.count)
+                for try await (offset, data) in group {
+                    items[offset] = data
+                }
+                return items
             }
-            do {
-                let operation = try JSONDecoder().decode(WebDavOperation.self, from: data)
-                guard operation.vaultId == vaultId else {
-                    throw WebDavError.malformedObject("同步空间不匹配")
-                }
-                guard path == WebDavOperation.path(
-                    vaultId: operation.vaultId,
-                    opId: operation.opId
-                ) else {
-                    throw WebDavError.malformedObject("对象路径与 opId 不匹配")
-                }
-                operations.append(operation)
-            } catch {
-                if !operationID.isEmpty {
-                    skippedOpIDs.append(operationID)
+            for (offset, data) in datas.enumerated() {
+                guard let data else { continue }
+                let path = chunk[offset]
+                let operationID = path.last
+                    .map { String($0.dropLast(".json".count)) } ?? ""
+                do {
+                    let operation = try JSONDecoder().decode(WebDavOperation.self, from: data)
+                    guard operation.vaultId == vaultId else {
+                        throw WebDavError.malformedObject("同步空间不匹配")
+                    }
+                    guard path == WebDavOperation.path(
+                        vaultId: operation.vaultId,
+                        opId: operation.opId
+                    ) else {
+                        throw WebDavError.malformedObject("对象路径与 opId 不匹配")
+                    }
+                    operations.append(operation)
+                } catch {
+                    if !operationID.isEmpty {
+                        skippedOpIDs.append(operationID)
+                    }
                 }
             }
+            index = end
         }
         return (operations, skippedOpIDs)
     }
@@ -673,13 +749,42 @@ public final class WebDavSyncRunner: @unchecked Sendable {
             throw WebDavError.invalidCredentials
         }
         try await client.ensureCollections()
-        let pending = try await outbox.pendingOperations(limit: SyncCoordinator.maximumPushBatch)
-        for operation in pending {
-            try await client.put(WebDavOperation(
-                vaultId: identity.vaultId,
-                deviceId: identity.deviceId,
-                operation: operation
-            ))
+
+        // 单轮最多推送 200 项；每批上传成功就确认，下一批失败不会重复上传。
+        var pushed = 0
+        var hasBacklog = false
+        while pushed < Self.maximumPushOpsPerRun {
+            try Task.checkCancellation()
+            let remaining = Self.maximumPushOpsPerRun - pushed
+            let pending = try await outbox.pendingOperations(
+                limit: min(Self.pushBatchSize, remaining)
+            )
+            guard !pending.isEmpty else { break }
+            for operation in pending {
+                try await client.put(WebDavOperation(
+                    vaultId: identity.vaultId,
+                    deviceId: identity.deviceId,
+                    operation: operation
+                ))
+            }
+            try await outbox.acknowledgeOperations(opIds: pending.map(\.opId))
+            pushed += pending.count
+            if pushed >= Self.maximumPushOpsPerRun {
+                let leftover = try await outbox.pendingOperations(limit: 1)
+                hasBacklog = !leftover.isEmpty
+            }
+            if pending.count < Self.pushBatchSize { break }
+        }
+
+        // 有积压时只推不拉：先把本机改动送上去，下一轮立即继续，避免首次同步被大历史拖住。
+        if hasBacklog {
+            return SyncRunSummary(
+                pushed: pushed,
+                pulled: 0,
+                pages: 1,
+                finalCursor: 0,
+                moreWork: true
+            )
         }
 
         let paths = try await client.listOperationPaths()
@@ -701,15 +806,17 @@ public final class WebDavSyncRunner: @unchecked Sendable {
             let end = min(start + Self.webDavApplyBatchSize, operations.count)
             try await local.applyWebDavOperations(Array(operations[start..<end]))
         }
-        try await outbox.acknowledgeOperations(opIds: pending.map(\.opId))
         return SyncRunSummary(
-            pushed: pending.count,
+            pushed: pushed,
             pulled: operations.count,
             pages: Self.webDavPageCount(operations.count),
             finalCursor: 0
         )
     }
 
+    /// 与 Android 保持一致：单轮最多 200 项、每批 50 项。
+    internal static let maximumPushOpsPerRun = 200
+    internal static let pushBatchSize = SyncCoordinator.maximumPushBatch
     internal static let webDavApplyBatchSize = 500
 
     internal static func webDavPageCount(_ operationCount: Int) -> Int {

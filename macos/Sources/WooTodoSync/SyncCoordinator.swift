@@ -28,12 +28,21 @@ public struct SyncRunSummary: Equatable, Sendable {
     public let pulled: Int
     public let pages: Int
     public let finalCursor: Int64
+    /// 本轮达到推送上限且仍有积压；调用方应立即再跑一轮，而不是等待下一次触发。
+    public let moreWork: Bool
 
-    public init(pushed: Int, pulled: Int, pages: Int, finalCursor: Int64) {
+    public init(
+        pushed: Int,
+        pulled: Int,
+        pages: Int,
+        finalCursor: Int64,
+        moreWork: Bool = false
+    ) {
         self.pushed = pushed
         self.pulled = pulled
         self.pages = pages
         self.finalCursor = finalCursor
+        self.moreWork = moreWork
     }
 }
 

@@ -68,6 +68,16 @@ enum PathBCreatePhase: Equatable {
     case failed(String)
 }
 
+/// 扫码/粘贴邀请后等待用户确认的数据基准。
+struct WebDavInviteJoinPrompt: Identifiable {
+    let invite: WebDavInvite
+    let needsClear: Bool
+    let localSummary: JoinLocalDataSummary?
+    let changesAccount: Bool
+
+    var id: String { "\(invite.vaultId)-\(invite.issuedAt.timeIntervalSince1970)" }
+}
+
 /// 加入其他空间前需要用户选择的数据基准。
 enum JoinPolicyPrompt: Equatable {
     case clearLocalData(JoinLocalDataSummary)
@@ -135,6 +145,8 @@ final class SyncSettingsStore: ObservableObject {
     @Published private(set) var pathBCreateCode: String?
     @Published private(set) var pathBApprovePhase: PathBApprovePhase = .idle
     @Published private(set) var joinPolicyPrompt: JoinPolicyPrompt?
+    @Published private(set) var inviteJoinPrompt: WebDavInviteJoinPrompt?
+    @Published private(set) var isJoiningWithInvite = false
     @Published private(set) var actionErrorMessage: String?
     @Published private(set) var statusMessage: String?
     @Published private(set) var legacyNotice: String?
@@ -496,6 +508,119 @@ final class SyncSettingsStore: ObservableObject {
             : "已停止同步并保留本地任务，但本机同步身份删除失败：\(deleteError!.localizedDescription)"
     }
 
+    // MARK: - 邀请二维码 / 链接
+
+    /// 已配对设备生成一次性邀请；二维码和文本都只在用户设备之间传递。
+    func makeInvite(now: Date = Date()) -> WebDavInvite? {
+        guard let account, let identity else { return nil }
+        return try? WebDavInvite.create(
+            credentials: WebDavCredentials(account: account, identity: identity),
+            now: now
+        )
+    }
+
+    /// 校验邀请、确认远端空间存在，然后等待用户确认是否清空本机数据。
+    func prepareInviteJoin(_ source: String) async {
+        guard !isJoiningWithInvite else { return }
+        actionErrorMessage = nil
+        statusMessage = nil
+        let invite: WebDavInvite
+        do {
+            invite = try WebDavInvite.decode(source)
+        } catch {
+            actionErrorMessage = inviteMessage(for: error)
+            return
+        }
+
+        if identity?.vaultId == invite.vaultId {
+            do {
+                if account != invite.account {
+                    try credentialsStore.saveAccount(invite.account)
+                    if let identity {
+                        try activate(account: invite.account, identity: identity)
+                    }
+                }
+                statusMessage = "已经在同一个同步空间，账号信息已刷新。"
+                requestSync(.manual)
+            } catch {
+                actionErrorMessage = friendlyMessage(for: error)
+            }
+            return
+        }
+
+        isJoiningWithInvite = true
+        defer { isJoiningWithInvite = false }
+        do {
+            let client = try clientFactory(invite.account, nil)
+            guard try await client.hasVaultDirectory(vaultId: invite.vaultId) else {
+                throw WebDavInviteJoinError.missingVault
+            }
+        } catch let error as WebDavInviteJoinError {
+            actionErrorMessage = error.localizedDescription
+            return
+        } catch {
+            actionErrorMessage = friendlyMessage(for: error)
+            return
+        }
+
+        let summary = try? repository.joinLocalDataSummary()
+        let needsClear = identity != nil || (summary?.hasAnyData ?? false)
+        inviteJoinPrompt = WebDavInviteJoinPrompt(
+            invite: invite,
+            needsClear: needsClear,
+            localSummary: summary,
+            changesAccount: account != nil && account != invite.account
+        )
+    }
+
+    func cancelInviteJoin() {
+        inviteJoinPrompt = nil
+        statusMessage = "已取消加入，本机任务与同步身份均未改变。"
+    }
+
+    /// 用户确认后：需要时清空本机数据 → 保存账号与身份 → 绑定并开始首次同步。
+    func confirmInviteJoin() async {
+        guard let prompt = inviteJoinPrompt else { return }
+        inviteJoinPrompt = nil
+        guard !isJoiningWithInvite else { return }
+        isJoiningWithInvite = true
+        defer { isJoiningWithInvite = false }
+        actionErrorMessage = nil
+        statusMessage = nil
+        let invite = prompt.invite
+
+        do {
+            let newIdentity = try invite.identity(deviceId: UUID().uuidString.lowercased())
+            // 邀请加入只有两种前置状态：全新设备（没有本地任务），
+            // 或本机数据会被清空。两种情况都不需要扫描远端 Lamport 水位，
+            // 直接把本地快照绑定到新空间即可，省掉一次全量远端读取。
+            if prompt.needsClear {
+                try await clearLocalDataForJoin()
+            }
+            try credentialsStore.saveAccount(invite.account)
+            self.account = invite.account
+            try credentialsStore.saveIdentity(newIdentity)
+            do {
+                try applyBinding(newIdentity)
+            } catch {
+                try? credentialsStore.deleteIdentity()
+                throw error
+            }
+            try activate(account: invite.account, identity: newIdentity)
+            runtimeMachine.setConfigured(true)
+            publishRuntimeState()
+            statusMessage = "已通过邀请加入同步空间 \(shortVaultId(newIdentity.vaultId))，正在执行首次同步。"
+            requestSync(.manual)
+        } catch is CancellationError {
+            // 用户取消。
+        } catch {
+            actionErrorMessage = friendlyMessage(for: error)
+            logger.error(
+                "通过邀请加入同步空间失败：\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
     // MARK: - 加入其他空间的数据基准
 
     /// 加入方在 claim/join 前检查本机数据；需要用户确认时只设置提示，不写配对文件。
@@ -671,10 +796,18 @@ final class SyncSettingsStore: ObservableObject {
         bootstrapTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let floor = try await self.remoteLamportFloor(
-                    account: pending.account,
-                    identity: pending.identity
-                )
+                let floor: Int64
+                if try self.repository.isSyncBound(to: pending.identity) {
+                    // 正常启动：数据库已绑定同一身份，不需要为了水位再读一遍远端历史。
+                    floor = 0
+                } else if try self.repository.joinLocalDataSummary().hasAnyData {
+                    floor = try await self.remoteLamportFloor(
+                        account: pending.account,
+                        identity: pending.identity
+                    )
+                } else {
+                    floor = 0
+                }
                 // 等待期间用户可能已退出空间或停止同步。
                 guard self.pendingStartupBinding != nil else {
                     self.bootstrapTask = nil
@@ -727,6 +860,12 @@ final class SyncSettingsStore: ObservableObject {
                 await writeOwnDeviceHeartbeat()
                 if summary.pulled > 0 {
                     onRemoteChanges?()
+                }
+                if summary.moreWork, trigger == nil,
+                   runtimeMachine.request(.localChange) {
+                    // 本轮达到推送上限且仍有积压：立即继续，不等下一次触发。
+                    trigger = .localChange
+                    publishRuntimeState()
                 }
             } catch is CancellationError {
                 trigger = runtimeMachine.fail(message: "同步已取消")
@@ -1015,12 +1154,9 @@ final class SyncSettingsStore: ObservableObject {
                     switch state {
                     case .waiting:
                         actionErrorMessage = nil
-                    case let .approved(pendingIdentity):
+                    case .approved:
                         // approval 到达后自动保存身份，不再要求本机确认。
-                        await completeShortCodeClaim(
-                            session: session,
-                            identity: pendingIdentity
-                        )
+                        await completeShortCodeClaim(session: session)
                         return
                     case .expired:
                         pendingJoinClearsLocalData = false
@@ -1066,10 +1202,7 @@ final class SyncSettingsStore: ObservableObject {
 
     /// approval 到达后自动完成加入：先取远端 Lamport 水位，再保存身份并绑定。
     /// 用户选择了“以对方为准”时，在本机身份被替换前清空旧内容；清空失败则不保存新身份。
-    private func completeShortCodeClaim(
-        session: WebDavPathAClaimSession,
-        identity pendingIdentity: WebDavIdentity
-    ) async {
+    private func completeShortCodeClaim(session: WebDavPathAClaimSession) async {
         guard let account else {
             pendingJoinClearsLocalData = false
             pathAClaimPhase = .failed(friendlyMessage(for: WebDavError.invalidCredentials))
@@ -1078,14 +1211,20 @@ final class SyncSettingsStore: ObservableObject {
         }
         actionErrorMessage = nil
         do {
-            let floor = try await remoteLamportFloor(
-                account: account,
-                identity: pendingIdentity
-            )
             let newIdentity = try await session.confirm()
+            let floor: Int64
             if pendingJoinClearsLocalData {
                 pendingJoinClearsLocalData = false
                 try await clearLocalDataForJoin()
+                // 本机任务已清空，远端历史由随后的正常同步拉取，无需先全量扫描水位。
+                floor = 0
+            } else if try repository.joinLocalDataSummary().hasAnyData {
+                floor = try await remoteLamportFloor(
+                    account: account,
+                    identity: newIdentity
+                )
+            } else {
+                floor = 0
             }
             try credentialsStore.saveIdentity(newIdentity)
             do {
@@ -1576,6 +1715,14 @@ final class SyncSettingsStore: ObservableObject {
     }
 
     // MARK: - 提示文案
+
+    private func inviteMessage(for error: Error) -> String {
+        if let webDavError = error as? WebDavError,
+           case .malformedObject(let message) = webDavError {
+            return message
+        }
+        return friendlyMessage(for: error)
+    }
 
     private func friendlyMessage(for error: Error) -> String {
         if let pairingError = error as? WebDavPairingError {

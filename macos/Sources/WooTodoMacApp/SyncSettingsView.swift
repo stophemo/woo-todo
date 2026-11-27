@@ -55,6 +55,7 @@ struct SyncSettingsView: View {
     @State private var selectedProvider: WebDavProviderExample = .jianguoyun
     @State private var inviteInput = ""
     @State private var presentedInvite: WebDavInvite?
+    @State private var showsAdvanced = false
 
     var body: some View {
         Group {
@@ -145,18 +146,13 @@ struct SyncSettingsView: View {
             VStack(alignment: .leading, spacing: 22) {
                 pageHeader(
                     "跨设备",
-                    "任务在设备间端到端加密同步。已有设备邀请时，粘贴邀请文本即可直接加入；也可以先配置 WebDAV 账号再建空间或输入六位配对码。"
+                    "填写你的 WebDAV 账号。任务在本机加密后上传。"
                 )
                 if let notice = store.legacyNotice {
                     legacyNotice(notice)
                 }
                 accountCard
-                sectionHeader(
-                    "已有邀请",
-                    "邀请文本由已同步的设备生成，包含服务地址、账号、应用密码和同步密钥，10 分钟内有效。"
-                )
                 inviteJoinCard
-                privacyNote
                 feedback
             }
             .padding(24)
@@ -261,24 +257,18 @@ struct SyncSettingsView: View {
             VStack(alignment: .leading, spacing: 22) {
                 pageHeader(
                     "跨设备",
-                    "WebDAV 账号已配置。第一台设备建立同步空间，其他设备用六位配对码加入；配对码 5 分钟内有效。"
+                    "在这台设备开始同步，或用另一台设备的邀请加入。"
                 )
                 if let notice = store.legacyNotice {
                     legacyNotice(notice)
                 }
-                accountSummaryCard
-                if isEditingAccount {
-                    accountEditorCard
-                }
                 createSpaceCard
-                sectionHeader(
-                    "加入其他空间",
-                    "优先粘贴邀请文本直接加入；也可以输入六位配对码。加入其他空间可能清空本机任务。"
-                )
                 inviteJoinCard
-                pathAClaimCard
-                pathBCreateCard
-                privacyNote
+                advancedSection(
+                    includePairingCodeCards: true,
+                    includesNewDeviceCards: false,
+                    includeExit: false
+                )
                 feedback
             }
             .padding(24)
@@ -301,14 +291,6 @@ struct SyncSettingsView: View {
                     account.endpoint.absoluteString
                 ).title)
                 LabeledContent("用户名", value: account.username)
-                Text(WebDavStorageLayout.isAppFolder(account.endpoint)
-                    ? "同步文件只写入这个 WooTodo 专属文件夹，不会写到账号根目录。"
-                    : "当前沿用旧版目录；新建账号会自动使用 WooTodo 专属文件夹。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("账号与应用密码保存在本机加密文件中；WebDAV 供应商只能看到端到端加密密文与配对所需的公开信息（公钥、设备名、配对码）。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Button {
                     beginAccountEditing()
                 } label: {
@@ -357,8 +339,8 @@ struct SyncSettingsView: View {
     }
 
     private var createSpaceCard: some View {
-        SettingsCard(title: "建立同步空间", systemImage: "lock.shield") {
-            Text("第一台设备建立新空间，生成随机同步密钥。之后所有设备都可以用六位配对码加入，不需要再输入空间 ID 或密钥。")
+        SettingsCard(title: "开始同步", systemImage: "lock.shield") {
+            Text("在这台设备生成同步密钥。之后用邀请二维码添加其他设备。")
                 .foregroundStyle(.secondary)
             Button {
                 Task { await store.createVault() }
@@ -367,7 +349,7 @@ struct SyncSettingsView: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    Label("建立同步空间", systemImage: "lock.shield")
+                    Label("在这台设备开始", systemImage: "lock.shield")
                 }
             }
             .buttonStyle(.borderedProminent)
@@ -532,27 +514,16 @@ struct SyncSettingsView: View {
             VStack(alignment: .leading, spacing: 22) {
                 pageHeader(
                     "跨设备",
-                    "任务通过 WebDAV 端到端加密同步。添加设备时两端会显示同一个六位核对码，核对一致后再批准；配对码 5 分钟内有效。"
+                    "任务通过 WebDAV 端到端加密同步。"
                 )
                 spaceCard
-                accountSummaryCard
-                if isEditingAccount {
-                    accountEditorCard
-                }
-                deviceCard
-                sectionHeader(
-                    "添加设备",
-                    "让新设备扫描邀请二维码最快；也可以继续使用六位配对码。"
-                )
                 inviteDeviceCard
-                pathAShowCard
-                pathBApproveCard
-                sectionHeader(
-                    "加入其他空间",
-                    "本机加入另一台设备的同步空间可能清空本机任务，请先确认数据以哪台设备为准。"
+                deviceCard
+                advancedSection(
+                    includePairingCodeCards: true,
+                    includesNewDeviceCards: true,
+                    includeExit: true
                 )
-                pathAClaimCard
-                privacyNote
                 feedback
             }
             .padding(24)
@@ -561,17 +532,47 @@ struct SyncSettingsView: View {
         }
     }
 
-    private var spaceCard: some View {
-        SettingsCard(title: "同步空间", systemImage: "lock.shield.fill") {
-            if let connection = store.connection {
-                LabeledContent("空间", value: shortened(connection.vaultId))
-                LabeledContent("当前设备") {
-                    Text(connection.deviceName)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(connection.deviceName)
+    private func advancedSection(
+        includePairingCodeCards: Bool,
+        includesNewDeviceCards: Bool,
+        includeExit: Bool
+    ) -> some View {
+        DisclosureGroup(isExpanded: $showsAdvanced) {
+            VStack(alignment: .leading, spacing: 18) {
+                accountSummaryCard
+                if isEditingAccount {
+                    accountEditorCard
+                }
+                if includePairingCodeCards {
+                    Text("旧版本配对码")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    if includesNewDeviceCards {
+                        pathAShowCard
+                        pathBApproveCard
+                    }
+                    pathAClaimCard
+                    if !includeExit {
+                        pathBCreateCard
+                    }
+                }
+                privacyNote
+                if includeExit {
+                    Button("退出此同步空间", role: .destructive) {
+                        showsExitConfirmation = true
+                    }
+                    .disabled(store.isExitingSpace)
                 }
             }
+            .padding(.top, 12)
+        } label: {
+            Text("高级")
+                .font(.callout)
+        }
+    }
+
+    private var spaceCard: some View {
+        SettingsCard(title: "同步", systemImage: "lock.shield.fill") {
             HStack(spacing: 10) {
                 statusSymbol
                 VStack(alignment: .leading, spacing: 3) {
@@ -581,16 +582,6 @@ struct SyncSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-            }
-            if let summary = store.lastRunSummary {
-                Divider()
-                HStack(spacing: 18) {
-                    Label("上传 \(summary.pushed)", systemImage: "arrow.up")
-                    Label("下载 \(summary.pulled)", systemImage: "arrow.down")
-                    Label("批次 \(summary.pages)", systemImage: "number")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
             HStack {
                 Button {
@@ -604,11 +595,6 @@ struct SyncSettingsView: View {
                     }
                 }
                 .disabled(store.runtimeSnapshot.isRunning)
-                Spacer()
-                Button("退出此同步空间", role: .destructive) {
-                    showsExitConfirmation = true
-                }
-                .disabled(store.isExitingSpace)
             }
         }
     }
@@ -653,7 +639,7 @@ struct SyncSettingsView: View {
                 }
             }
             .disabled(store.isRefreshingDevices)
-            Text("设备列表来自各设备写入的加密心跳，可能不是最新状态。WebDAV 无法远程吊销设备；要阻止旧设备继续同步，请修改 WebDAV 应用密码。修改后在每台保留的设备上「编辑账号」更新密码即可，不需要重新配对。")
+            Text("设备列表来自加密心跳，可能不是最新状态。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -745,17 +731,17 @@ struct SyncSettingsView: View {
     }
 
     private var inviteDeviceCard: some View {
-        SettingsCard(title: "邀请新设备（二维码）", systemImage: "qrcode") {
+        SettingsCard(title: "邀请新设备", systemImage: "qrcode") {
             VStack(alignment: .leading, spacing: 10) {
-                Text("新设备扫描二维码即可加入，自动带过 WebDAV 地址、账号和同步密钥，不需要再输入六位配对码。")
+                Text("让新设备扫描这个二维码，自动带过地址、账号和同步密钥。")
                     .foregroundStyle(.secondary)
                 Button {
                     presentedInvite = store.makeInvite()
                 } label: {
-                    Label("生成邀请二维码", systemImage: "qrcode")
+                    Label("显示邀请二维码", systemImage: "qrcode")
                 }
                 .buttonStyle(.borderedProminent)
-                Text("邀请 10 分钟内有效，包含应用密码与同步密钥；只给自己的设备扫描或粘贴。")
+                Text("10 分钟内有效。包含应用密码，只给自己的设备扫描或粘贴。")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -1000,8 +986,8 @@ struct SyncSettingsView: View {
                 systemImage: "key.fill"
             )
             Label(
-                "备份文件不包含 WebDAV 账号与同步身份。在新设备恢复备份后，需要重新配置 WebDAV 账号并重新配对才能继续同步。",
-                systemImage: "externaldrive.badge.xmark"
+                "WebDAV 无法远程吊销设备；要阻止旧设备继续同步，请修改应用密码。",
+                systemImage: "exclamationmark.triangle"
             )
         }
         .font(.caption)

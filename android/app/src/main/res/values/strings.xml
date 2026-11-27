@@ -183,6 +183,18 @@
     <string name="cross_device_title">跨设备</string>
     <string name="cross_device_settings">跨设备</string>
     <string name="cross_device_expiry_hint">配对码 5 分钟内有效；核对码一致后由持有空间的一方批准加入。</string>
+    <string name="cross_device_simple_intro">用你自己的 WebDAV 在设备间同步。任务先保存在本机。</string>
+    <string name="cross_device_start_title">开始同步</string>
+    <string name="cross_device_start_hint">第一台设备直接开始；其他设备扫描邀请加入。</string>
+    <string name="cross_device_invite_only_hint">已经在另一台设备同步？扫描邀请二维码或用邀请文本加入。</string>
+    <string name="cross_device_start_here">在这台设备开始</string>
+    <string name="cross_device_advanced">高级</string>
+    <string name="cross_device_legacy_pairing_toggle">使用六位配对码（旧版本）</string>
+    <string name="cross_device_legacy_pairing_title">旧版本配对码</string>
+    <string name="cross_device_invite_paste_short">粘贴邀请</string>
+    <string name="cross_device_invite_device_short">邀请新设备</string>
+    <string name="cross_device_webdav_connect">连接</string>
+    <string name="cross_device_webdav_change">更换</string>
     <string name="cross_device_webdav_account">WebDAV 账号</string>
     <string name="cross_device_webdav_setup_hint">先配置同一个 WebDAV 账号；应用密码在网盘设置中生成。新账号会自动使用 WooTodo 专属文件夹，不会和同一账号下的其他应用混在一起。</string>
     <string name="cross_device_webdav_endpoint_hint">https://dav.example.com/dav/</string>
@@ -260,7 +272,7 @@
     <string name="cross_device_last_sync">上次成功：%1$s</string>
     <string name="cross_device_sync_done">同步完成</string>
     <string name="cross_device_sync_failed">同步未完成，请稍后重试</string>
-    <string name="cross_device_leave">退出此同步空间</string>
+    <string name="cross_device_leave">退出同步</string>
     <string name="cross_device_leave_confirm_title">退出同步空间？</string>
     <string name="cross_device_leave_confirm_message">本机将清除同步身份并停止同步，本地任务和 WebDAV 账号会保留；再次加入需要重新配对。\n\nWebDAV 没有服务端设备管理；要阻止旧设备继续同步，请修改 WebDAV 应用密码。</string>
     <string name="cross_device_leave_confirm">退出</string>

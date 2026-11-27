@@ -90,7 +90,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     )
 
     private lateinit var app: WooTodoApplication
-    private lateinit var expiryTopHint: TextView
     private lateinit var setupHint: TextView
     private lateinit var accountSummary: TextView
     private lateinit var endpointSummary: TextView
@@ -107,6 +106,11 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private lateinit var connectionProgress: ProgressBar
     private lateinit var connectionStatus: TextView
     private lateinit var noIdentitySection: View
+    private lateinit var startSyncHint: TextView
+    private lateinit var createSpaceButton: View
+    private lateinit var legacyPairingToggle: View
+    private lateinit var legacyPairingSection: View
+    private lateinit var advancedSection: View
     private lateinit var pairedSection: View
     private lateinit var spaceIdValue: TextView
     private lateinit var spaceDeviceValue: TextView
@@ -181,7 +185,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         setContentView(R.layout.activity_cross_device_settings)
         applySystemBarInsets(findViewById(R.id.cross_device_root))
         bindViews()
-        expiryTopHint.isVisible = false
         lastSuccessfulSyncAt = app.syncStatusPreferences.lastSuccessfulSyncAt()
         findViewById<View>(R.id.cross_device_back_button).setOnClickListener { finish() }
         bindActions()
@@ -203,7 +206,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     }
 
     private fun bindViews() {
-        expiryTopHint = findViewById(R.id.cross_device_expiry_top)
         setupHint = findViewById(R.id.webdav_setup_hint)
         accountSummary = findViewById(R.id.webdav_account_summary)
         endpointSummary = findViewById(R.id.webdav_endpoint_summary)
@@ -220,6 +222,11 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         connectionProgress = findViewById(R.id.webdav_connection_progress)
         connectionStatus = findViewById(R.id.webdav_connection_status)
         noIdentitySection = findViewById(R.id.no_identity_section)
+        startSyncHint = findViewById(R.id.start_sync_hint)
+        createSpaceButton = findViewById(R.id.action_create_space)
+        legacyPairingToggle = findViewById(R.id.action_legacy_pairing_toggle)
+        legacyPairingSection = findViewById(R.id.legacy_pairing_section)
+        advancedSection = findViewById(R.id.advanced_section)
         pairedSection = findViewById(R.id.paired_section)
         spaceIdValue = findViewById(R.id.space_id_value)
         spaceDeviceValue = findViewById(R.id.space_device_value)
@@ -316,6 +323,12 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                 acceptInvite(text)
             }
         }
+        findViewById<View>(R.id.action_legacy_pairing_toggle).setOnClickListener {
+            legacyPairingSection.isVisible = !legacyPairingSection.isVisible
+        }
+        findViewById<View>(R.id.action_advanced_toggle).setOnClickListener {
+            advancedSection.isVisible = !advancedSection.isVisible
+        }
         findViewById<View>(R.id.action_show_pairing_code).setOnClickListener {
             startShowOffer()
         }
@@ -353,7 +366,18 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             currentCredentials = credentials
             renderAccount(account)
             val hasIdentity = credentials != null
-            noIdentitySection.isVisible = account != null && !hasIdentity
+            // 邀请扫描不要求本机先有账号：新设备可以直接扫码/粘贴加入。
+            noIdentitySection.isVisible = !hasIdentity
+            // 没有账号时只能靠邀请加入；建空间和旧版配对码都要求先配置账号。
+            createSpaceButton.isVisible = account != null
+            legacyPairingToggle.isVisible = account != null
+            startSyncHint.setText(
+                if (account == null) {
+                    R.string.cross_device_invite_only_hint
+                } else {
+                    R.string.cross_device_start_hint
+                },
+            )
             pairedSection.isVisible = account != null && hasIdentity
             if (credentials != null) {
                 renderSpaceCard(credentials)
@@ -365,7 +389,6 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
 
     private fun renderAccount(account: WebDavAccount?) {
         setupHint.isVisible = account == null
-        expiryTopHint.isVisible = account != null
         if (account == null) {
             if (!accountFormInitialized) {
                 accountFormInitialized = true
@@ -385,8 +408,8 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
         }
         accountFormInitialized = false
         accountSummary.isVisible = true
-        endpointSummary.isVisible = true
-        folderNote.isVisible = true
+        endpointSummary.isVisible = false
+        folderNote.isVisible = false
         editAccount.isVisible = true
         accountForm.isVisible = false
         accountSummary.text = getString(

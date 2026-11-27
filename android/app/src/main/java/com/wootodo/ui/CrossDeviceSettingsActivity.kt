@@ -3,6 +3,7 @@ package com.wootodo.ui
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
@@ -18,6 +19,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -29,8 +31,7 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
+import com.wootodo.BuildConfig
 import com.wootodo.R
 import com.wootodo.WooTodoApplication
 import com.wootodo.data.LocalJoinDataSummary
@@ -128,10 +129,16 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
     private val timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
     private var operationJob: Job? = null
-    private val scanInviteLauncher =
-        registerForActivityResult(ScanContract()) { result ->
-            result.contents?.takeIf(String::isNotBlank)?.let(::acceptInvite)
+    private val scanInviteLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            result.data
+                ?.getStringExtra(SyncScanActivity.EXTRA_RESULT)
+                ?.takeIf(String::isNotBlank)
+                ?.let(::acceptInvite)
         }
+    }
     private var devicesJob: Job? = null
     @Volatile
     private var panelGeneration = 0
@@ -284,13 +291,7 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
             showInviteDialog()
         }
         findViewById<View>(R.id.action_scan_invite).setOnClickListener {
-            scanInviteLauncher.launch(
-                ScanOptions()
-                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                    .setPrompt(getString(R.string.cross_device_invite_scan_prompt))
-                    .setBeepEnabled(false)
-                    .setOrientationLocked(false),
-            )
+            scanInviteLauncher.launch(Intent(this, SyncScanActivity::class.java))
         }
         findViewById<View>(R.id.action_paste_invite).setOnClickListener {
             val clipboard = getSystemService(ClipboardManager::class.java)
@@ -410,17 +411,38 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
 
     private fun renderDevices(devices: List<WebDavDeviceInfo>) {
         val now = System.currentTimeMillis()
-        val otherDevices = devices.filterNot { it.isCurrent }
+        val credentials = currentCredentials ?: return
+        // 本机心跳可能还没写入或已经很久没更新；始终把本机补进列表。
+        val merged = devices.toMutableList()
+        if (merged.none { it.isCurrent }) {
+            merged += WebDavDeviceInfo(
+                deviceId = credentials.identity.deviceId,
+                name = DeviceName.current(this),
+                platform = DevicePlatform.ANDROID,
+                lastSeenAt = now,
+                appVersion = BuildConfig.VERSION_NAME,
+                isCurrent = true,
+            )
+        }
+        val ordered = merged.sortedWith(
+            compareByDescending<WebDavDeviceInfo> { it.isCurrent }
+                .thenByDescending { it.lastSeenAt },
+        )
         deviceList.removeAllViews()
         devicesStatus.isVisible = false
-        deviceList.isVisible = otherDevices.isNotEmpty()
-        otherDevices.forEach { device ->
+        deviceList.isVisible = true
+        ordered.forEach { device ->
             val row = layoutInflater.inflate(
                 R.layout.item_cross_device_device,
                 deviceList,
                 false,
             )
-            row.findViewById<TextView>(R.id.device_name).text = device.name
+            row.findViewById<TextView>(R.id.device_name).text =
+                if (device.isCurrent) {
+                    getString(R.string.cross_device_device_current_name, device.name)
+                } else {
+                    device.name
+                }
             row.findViewById<TextView>(R.id.device_meta).text = getString(
                 R.string.cross_device_device_meta,
                 platformLabel(device.platform),
@@ -433,14 +455,16 @@ class CrossDeviceSettingsActivity : AppCompatActivity() {
                 ),
             )
             row.findViewById<TextView>(R.id.device_last_seen).text =
-                if (now - device.lastSeenAt > STALE_DEVICE_MILLIS) {
+                if (device.isCurrent) {
+                    getString(R.string.cross_device_device_last_seen_current)
+                } else if (now - device.lastSeenAt > STALE_DEVICE_MILLIS) {
                     getString(R.string.cross_device_device_last_seen_stale, lastSeen)
                 } else {
                     lastSeen
                 }
             deviceList.addView(row)
         }
-        devicesEmpty.isVisible = otherDevices.isEmpty()
+        devicesEmpty.isVisible = ordered.none { !it.isCurrent }
     }
 
     private fun renderSyncState(state: SyncRuntimeState) {

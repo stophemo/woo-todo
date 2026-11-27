@@ -33,6 +33,12 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
+            android:name=".ui.SyncScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.WooTodo.Scanner" />
+
+        <activity
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTop">

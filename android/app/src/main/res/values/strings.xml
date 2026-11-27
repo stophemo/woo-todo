@@ -265,11 +265,16 @@
     <string name="cross_device_devices_empty">只有当前设备；新设备同步后会出现在这里</string>
     <string name="cross_device_devices_note">WebDAV 无法远程吊销设备；要阻止旧设备继续同步，请修改 WebDAV 应用密码。修改后在每台保留的设备上「修改账号」更新密码即可，不需要重新配对。</string>
     <string name="cross_device_device_meta">%1$s · 版本 %2$s</string>
+    <string name="cross_device_device_current_name">%1$s（本机）</string>
+    <string name="cross_device_device_last_seen_current">本机 · 正在使用</string>
     <string name="cross_device_device_last_seen">最近同步：%1$s</string>
     <string name="cross_device_device_last_seen_stale">%1$s · 很久未同步</string>
     <string name="cross_device_sync_not_yet">尚未同步</string>
     <string name="cross_device_last_sync_none">上次同步：—</string>
     <string name="cross_device_start_sync">开始同步</string>
+    <string name="scan_sync_title">扫码同步</string>
+    <string name="scan_sync_hint">对准另一台设备上的同步二维码</string>
+    <string name="scan_camera_required">需要相机权限才能扫描同步二维码</string>
     <string name="cross_device_scan_sync">已有连接设备？扫码同步</string>
     <string name="cross_device_paste_sync">粘贴同步信息</string>
     <string name="cross_device_scan_sync_short">扫码同步</string>

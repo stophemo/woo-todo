@@ -67,7 +67,7 @@ class TaskDatabaseInstrumentedTest {
     }
 
     @Test
-    fun `升级到十三版会删除旧WebDAV应用表并保留任务`() = runBlocking {
+    fun `升级会补齐WebDAV应用表并保留任务`() = runBlocking {
         val store = SQLiteTaskStore(database)
         val task = TaskEntity(
             id = "task-db-upgrade-13",
@@ -96,7 +96,8 @@ class TaskDatabaseInstrumentedTest {
                 "AND name = 'sync_webdav_applied_operations' LIMIT 1",
             null,
         ).use { it.moveToFirst() }
-        assertFalse(legacyTableExists)
+        // v0.2.20 恢复 WebDAV 同步后，升级会幂等重建该表而不是删除。
+        assertTrue(legacyTableExists)
         assertEquals(task, store.getById(task.id))
     }
 

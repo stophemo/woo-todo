@@ -25,6 +25,7 @@ class SyncJobSchedulerContractInstrumentedTest {
         assertTrue(requested.contains(Manifest.permission.ACCESS_NETWORK_STATE))
         assertTrue(requested.contains(Manifest.permission.INTERNET))
         assertFalse(requested.contains(Manifest.permission.CHANGE_WIFI_MULTICAST_STATE))
-        assertFalse(requested.contains(Manifest.permission.CAMERA))
+        // 邀请二维码扫描需要相机；只在用户点「扫描邀请二维码」时申请。
+        assertTrue(requested.contains(Manifest.permission.CAMERA))
     }
 }

@@ -16,7 +16,7 @@ usage() {
 
 可选环境变量：
   BUNDLE_ID          Bundle Identifier，默认 io.github.stophemo.woo-todo
-  MARKETING_VERSION  显示版本，默认 0.2.24
+  MARKETING_VERSION  显示版本，默认读取 Info.plist
   BUILD_NUMBER       构建号，仅允许数字，默认 59
   CODE_SIGN_IDENTITY 签名身份；默认 -（ad-hoc），正式 Developer ID 可保持 Keychain 授权
 EOF
@@ -72,7 +72,7 @@ EXECUTABLE_NAME="woo-todo-mac"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 
 BUNDLE_ID="${BUNDLE_ID:-io.github.stophemo.woo-todo}"
-MARKETING_VERSION="${MARKETING_VERSION:-0.2.24}"
+MARKETING_VERSION="${MARKETING_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$TEMPLATE_PLIST")}"
 BUILD_NUMBER="${BUILD_NUMBER:-59}"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 

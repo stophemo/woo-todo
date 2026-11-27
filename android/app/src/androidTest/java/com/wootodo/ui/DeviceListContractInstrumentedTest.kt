@@ -41,7 +41,7 @@ class DeviceListContractInstrumentedTest {
     }
 
     @Test
-    fun `跨设备页设备列表保持只读说明`() {
+    fun `跨设备页设备列表保持只读`() {
         val page = LayoutInflater.from(context).inflate(
             R.layout.activity_cross_device_settings,
             FrameLayout(context),
@@ -49,11 +49,6 @@ class DeviceListContractInstrumentedTest {
         )
 
         assertNotNull(page.findViewById<View>(R.id.device_list))
-        val expectedNote = context.getString(R.string.cross_device_devices_note)
-        val notes = page.allViews()
-            .filterIsInstance<TextView>()
-            .filter { it.text.toString() == expectedNote }
-        assertEquals(1, notes.count())
         assertFalse(page.findViewById<View>(R.id.device_list).allViews().any {
             it is Button || it is ImageButton
         })
